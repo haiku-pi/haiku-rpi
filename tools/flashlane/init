@@ -1,0 +1,75 @@
+#!/bin/busybox sh
+# Haiku-Pi flash lane: a Linux initramfs that writes an image to the Pi 4's SD card.
+#
+# Netbooted by scripts/flash-sd.sh (Pi firmware -> TFTP kernel8.img + this initramfs).
+# It fetches http://<host>:<port>/job.txt (IMAGE=, SIZE=, SHA256=), streams IMAGE onto
+# /dev/mmcblk0, reads the written bytes back and compares the SHA-256, then powers off.
+# Every line it prints starts with "HFL " (grading on the UART).
+/bin/busybox --install -s /bin
+mkdir -p /proc /sys /dev /tmp
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev 2>/dev/null
+exec > /dev/console 2>&1
+
+say() { echo "HFL $*"; }
+die() { say "fail $*"; sync; sleep 2; poweroff -f; }
+
+arg() {	# value of hfl.<name>= on the kernel command line, or $2
+	for w in $(cat /proc/cmdline); do
+		case "$w" in "hfl.$1="*) echo "${w#*=}"; return ;; esac
+	done
+	echo "$2"
+}
+HOST=$(arg host 10.42.0.1)
+PORT=$(arg port 8099)
+DEV=$(arg dev /dev/mmcblk0)
+
+say "start kernel=$(uname -r) host=$HOST:$PORT dev=$DEV"
+
+ip link set lo up
+ip link set eth0 up || die "no eth0"
+n=0
+until grep -q 1 /sys/class/net/eth0/carrier 2>/dev/null; do
+	n=$((n + 1)); [ $n -gt 40 ] && die "no ethernet link"; sleep 0.5
+done
+cat > /tmp/udhcpc.sh <<'EOF'
+#!/bin/sh
+case "$1" in
+bound|renew)
+	ip addr flush dev "$interface"
+	ip addr add "$ip/${mask:-24}" dev "$interface"
+	[ -n "$router" ] && ip route add default via "${router%% *}" 2>/dev/null
+	;;
+esac
+EOF
+chmod +x /tmp/udhcpc.sh
+udhcpc -i eth0 -n -q -t 10 -s /tmp/udhcpc.sh > /dev/null 2>&1 || die "dhcp"
+say "net $(ip -4 addr show eth0 | grep -o 'inet [0-9./]*')"
+
+wget -q -O /tmp/job.txt "http://$HOST:$PORT/job.txt" || die "no job.txt"
+IMAGE= SIZE= SHA256=
+. /tmp/job.txt
+[ -n "$IMAGE" ] && [ -n "$SIZE" ] && [ -n "$SHA256" ] || die "bad job.txt"
+say "job image=$IMAGE size=$SIZE"
+
+n=0
+until [ -b "$DEV" ]; do n=$((n + 1)); [ $n -gt 40 ] && die "no $DEV"; sleep 0.5; done
+
+t0=$(date +%s)
+wget -q -O - "http://$HOST:$PORT/$IMAGE" | dd of="$DEV" bs=4M conv=fsync 2> /tmp/dd.err || die "write: $(tail -n 1 /tmp/dd.err)"
+sync
+t1=$(date +%s)
+say "written secs=$((t1 - t0)) $(tail -n 1 /tmp/dd.err)"
+
+echo 3 > /proc/sys/vm/drop_caches
+got=$(head -c "$SIZE" "$DEV" | sha256sum | cut -d' ' -f1)
+t2=$(date +%s)
+if [ "$got" = "$SHA256" ]; then
+	say "done ok=1 sha256=$got verify_secs=$((t2 - t1))"
+else
+	say "done ok=0 sha256=$got want=$SHA256"
+fi
+sync
+sleep 1
+poweroff -f

@@ -1,0 +1,9 @@
+# sibling repos (separate git repos: haiku fork, buildtools fork)
+/sources/
+# build outputs, images, captures
+/artifacts/
+/generated/
+*.log
+*.image
+*.img
+*.efi
