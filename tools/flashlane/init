@@ -4,7 +4,7 @@
 # Netbooted by scripts/flash-sd.sh (Pi firmware -> TFTP kernel8.img + this initramfs).
 # It fetches http://<host>:<port>/job.txt (IMAGE=, SIZE=, SHA256=), streams IMAGE onto
 # /dev/mmcblk0, reads the written bytes back and compares the SHA-256, then powers off.
-# Every line it prints starts with "HFL " (grading on the UART).
+# Every line it prints starts with "HFL " (grading on the UART); the last one is "HFL end".
 /bin/busybox --install -s /bin
 mkdir -p /proc /sys /dev /tmp
 mount -t proc proc /proc
@@ -13,7 +13,7 @@ mount -t devtmpfs dev /dev 2>/dev/null
 exec > /dev/console 2>&1
 
 say() { echo "HFL $*"; }
-die() { say "fail $*"; sync; sleep 2; poweroff -f; }
+die() { say "fail $*"; say end; sync; sleep 2; poweroff -f; }
 
 arg() {	# value of hfl.<name>= on the kernel command line, or $2
 	for w in $(cat /proc/cmdline); do
@@ -70,6 +70,7 @@ if [ "$got" = "$SHA256" ]; then
 else
 	say "done ok=0 sha256=$got want=$SHA256"
 fi
+say end	# the capture waits for this line; the verdict above is complete by then
 sync
 sleep 1
 poweroff -f

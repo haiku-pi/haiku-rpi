@@ -24,12 +24,15 @@ chmod 755 "$lane/initramfs/init" "$lane/initramfs/bin/busybox"
 (cd "$lane/initramfs" && find . | cpio -o -H newc --quiet | gzip -9 > "$tftp/initramfs.cpio.gz")
 
 cp "$fw/start4.elf" "$fw/fixup4.dat" "$fw/bcm2711-rpi-4-b.dtb" "$fw/kernel8.img" "$tftp/"
+mkdir -p "$tftp/overlays"; cp "$fw/overlays/disable-bt.dtbo" "$tftp/overlays/"
 cat > "$tftp/config.txt" <<'EOF'
 # Haiku-Pi flash lane (scripts/flashlane-build.sh)
 arm_64bit=1
 enable_uart=1
+dtoverlay=disable-bt
 kernel=kernel8.img
 initramfs initramfs.cpio.gz followkernel
 EOF
-echo "console=serial0,115200 console=tty1 rdinit=/init loglevel=4 hfl.host=10.42.0.1 hfl.port=8099" > "$tftp/cmdline.txt"
+# The LAST console= is /dev/console, where init (and its HFL lines) writes: keep serial0 last.
+echo "console=tty1 console=serial0,115200 rdinit=/init loglevel=4 hfl.host=10.42.0.1 hfl.port=8099" > "$tftp/cmdline.txt"
 echo "flashlane: $(ls "$tftp" | tr '\n' ' ')"

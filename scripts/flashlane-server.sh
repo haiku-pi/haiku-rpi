@@ -21,7 +21,7 @@ stop() {
 
 case "${1:-}" in
 up)
-	[ -f "$tftp/kernel8.img" ] || "$HAIKU_RPI_ROOT/scripts/flashlane-build.sh"
+	"$HAIKU_RPI_ROOT/scripts/flashlane-build.sh" >/dev/null	# ~1 s; always current
 	stop
 	[ -x "$PEER_NETBOOT_DOWN" ] && (cd "$PEER_ROOT" && "$PEER_NETBOOT_DOWN") >/dev/null 2>&1 || true
 	if pgrep -x dnsmasq -a | grep -q -- "$PI_LAN_IFACE\|pi-netboot\|netboot/dnsmasq.conf"; then

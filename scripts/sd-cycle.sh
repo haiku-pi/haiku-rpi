@@ -52,7 +52,7 @@ if [ -n "$flash" ]; then
 	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" up
 	pi_power on
 	flog="$uart_dir/$ts-$label-flash.log"
-	"$PYTHON" "$cap" --dev "$PI_UART" --log "$flog" --secs 900 --until '^HFL done' --fail '^HFL fail' || true
+	"$PYTHON" "$cap" --dev "$PI_UART" --log "$flog" --secs 900 --until '^HFL end' || true
 	grep -a '^\[.*\] HFL' "$flog" || true
 	pi_power off
 	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" down
