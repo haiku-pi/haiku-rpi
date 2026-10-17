@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # flashlane-server.sh up|down|status — the Pi LAN DHCP+TFTP server for the Linux flash lane
 # (TFTP root artifacts/flashlane/tftp, from scripts/flashlane-build.sh) plus an HTTP server on
-# $PI_LAN_HOST:$FLASHLANE_PORT serving artifacts/flashlane/www (job.txt + the image).
+# $PI_LAN_HOST:$FLASHLANE_PORT serving artifacts/flashlane/www (job.txt + the image) and taking
+# uploads into artifacts/flashlane/www/upload (tools/flashlane/httpd.py).
 #
 # Only one DHCP server may run on the Pi LAN: `up` stops the peer project's netboot server
 # first. Callers hold the bench lock (scripts/lib/bench.sh) and restore the peer afterwards.
@@ -49,8 +50,8 @@ group=$(id -gn)
 CONF
 	: > "$st/dnsmasq.log"
 	sudo dnsmasq -C "$st/dnsmasq.conf"
-	setsid nohup "$PYTHON" -m http.server "$FLASHLANE_PORT" --bind "$PI_LAN_HOST" --directory "$www" \
-		> "$st/http.log" 2>&1 < /dev/null 9>&- &
+	setsid nohup "$PYTHON" "$HAIKU_RPI_ROOT/tools/flashlane/httpd.py" "$www" "$FLASHLANE_PORT" \
+		"$PI_LAN_HOST" > "$st/http.log" 2>&1 < /dev/null 9>&- &
 	echo $! > "$st/http.pid"
 	sleep 1
 	kill -0 "$(cat "$st/http.pid")" || { echo "flashlane: http server died: $(cat "$st/http.log")" >&2; exit 1; }

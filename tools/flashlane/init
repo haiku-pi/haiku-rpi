@@ -1,9 +1,11 @@
 #!/bin/busybox sh
 # Haiku-Pi flash lane: a Linux initramfs that writes an image to the Pi 4's SD card.
 #
-# Netbooted by scripts/flash-sd.sh (Pi firmware -> TFTP kernel8.img + this initramfs).
-# It fetches http://<host>:<port>/job.txt (IMAGE=, SIZE=, SHA256=), streams IMAGE onto
-# /dev/mmcblk0, reads the written bytes back and compares the SHA-256, then powers off.
+# Netbooted by scripts/sd-cycle.sh (Pi firmware -> TFTP kernel8.img + this initramfs).
+# It fetches http://<host>:<port>/job.txt and then either (MODE=write, the default; IMAGE=, SIZE=,
+# SHA256=) streams IMAGE onto /dev/mmcblk0, reads the written bytes back and compares the SHA-256,
+# or (MODE=read; OFFSET=, SIZE= in MiB, READ_PORT=) streams that part of the card to
+# <host>:READ_PORT (where the host listens with nc). Then it powers off.
 # Every line it prints starts with "HFL " (grading on the UART); the last one is "HFL end".
 /bin/busybox --install -s /bin
 mkdir -p /proc /sys /dev /tmp
@@ -48,13 +50,26 @@ udhcpc -i eth0 -n -q -t 10 -s /tmp/udhcpc.sh > /dev/null 2>&1 || die "dhcp"
 say "net $(ip -4 addr show eth0 | grep -o 'inet [0-9./]*')"
 
 wget -q -O /tmp/job.txt "http://$HOST:$PORT/job.txt" || die "no job.txt"
-IMAGE= SIZE= SHA256=
+MODE=write IMAGE= SIZE= SHA256= OFFSET=0 READ_PORT=
 . /tmp/job.txt
-[ -n "$IMAGE" ] && [ -n "$SIZE" ] && [ -n "$SHA256" ] || die "bad job.txt"
-say "job image=$IMAGE size=$SIZE"
 
 n=0
 until [ -b "$DEV" ]; do n=$((n + 1)); [ $n -gt 40 ] && die "no $DEV"; sleep 0.5; done
+
+if [ "$MODE" = read ]; then
+	[ -n "$SIZE" ] && [ -n "$READ_PORT" ] || die "bad job.txt"
+	say "job read offset=${OFFSET}M size=${SIZE}M to $HOST:$READ_PORT"
+	t0=$(date +%s)
+	dd if="$DEV" bs=1M skip="$OFFSET" count="$SIZE" 2> /tmp/dd.err | nc "$HOST" "$READ_PORT" \
+		|| die "read: $(tail -n 1 /tmp/dd.err)"
+	say "done ok=1 read secs=$(($(date +%s) - t0)) $(tail -n 1 /tmp/dd.err)"
+	say end
+	sync
+	poweroff -f
+fi
+
+[ -n "$IMAGE" ] && [ -n "$SIZE" ] && [ -n "$SHA256" ] || die "bad job.txt"
+say "job image=$IMAGE size=$SIZE"
 
 t0=$(date +%s)
 wget -q -O - "http://$HOST:$PORT/$IMAGE" | dd of="$DEV" bs=4M conv=fsync 2> /tmp/dd.err || die "write: $(tail -n 1 /tmp/dd.err)"
