@@ -1,0 +1,20 @@
+From: haiku-rpi
+Subject: [PATCH] video: bcm2835: request the BGR pixel order that U-Boot and its EFI GOP assume
+
+U-Boot draws 32-bit pixels as 0x00RRGGBB (blue in the low byte) and its EFI GOP
+reports EFI_GOT_BGRA8, but the framebuffer was requested in RGB order (red in the
+low byte), so EFI applications (Haiku) showed red and blue swapped.
+---
+diff --git a/drivers/video/bcm2835.c b/drivers/video/bcm2835.c
+index 0e0cc197..e174232b 100644
+--- a/drivers/video/bcm2835.c
++++ b/drivers/video/bcm2835.c
+@@ -24,7 +24,7 @@ static int bcm2835_video_probe(struct udevice *dev)
+ 		return -EIO;
+ 
+ 	debug("bcm2835: Setting up display for %d x %d\n", w, h);
+-	ret = bcm2835_set_video_params(&w, &h, 32, BCM2835_MBOX_PIXEL_ORDER_RGB,
++	ret = bcm2835_set_video_params(&w, &h, 32, BCM2835_MBOX_PIXEL_ORDER_BGR,
+ 				       BCM2835_MBOX_ALPHA_MODE_IGNORED,
+ 				       &fb_base, &fb_size, &pitch);
+ 	if (ret)
