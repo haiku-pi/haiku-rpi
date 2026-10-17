@@ -69,6 +69,13 @@ def main():
                 if any(r.search(text) for r in until):
                     rc, done = 0, True
                     break
+            # A prompt ("kdebug> ") has no newline: match the unterminated tail too.
+            if not done and buf:
+                tail = buf.decode("utf-8", "replace")
+                if any(r.search(tail) for r in fail):
+                    rc, done = 3, True
+                elif any(r.search(tail) for r in until):
+                    rc, done = 0, True
         if buf:
             log.write("[%8.3f] %s\n" % (time.monotonic() - t0, buf.decode("utf-8", "replace")))
     if last_rx is None:

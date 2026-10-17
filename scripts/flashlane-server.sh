@@ -50,7 +50,7 @@ CONF
 	: > "$st/dnsmasq.log"
 	sudo dnsmasq -C "$st/dnsmasq.conf"
 	setsid nohup "$PYTHON" -m http.server "$FLASHLANE_PORT" --bind "$PI_LAN_HOST" --directory "$www" \
-		> "$st/http.log" 2>&1 < /dev/null &
+		> "$st/http.log" 2>&1 < /dev/null 9>&- &
 	echo $! > "$st/http.pid"
 	sleep 1
 	kill -0 "$(cat "$st/http.pid")" || { echo "flashlane: http server died: $(cat "$st/http.log")" >&2; exit 1; }
