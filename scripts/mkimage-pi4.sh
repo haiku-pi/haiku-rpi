@@ -12,6 +12,8 @@
 # U-Boot; U-Boot's bootflow then starts EFI/BOOT/BOOTAA64.EFI (haiku_loader) from the same partition,
 # and the loader boots Haiku from the BFS partition (p2). p1's MBR type is set to 0x0c (FAT32 LBA),
 # which every Pi firmware accepts (Haiku's image uses 0xef).
+# The BFS partition gets the WiFi chip's firmware (scripts/fetch-wifi-firmware.sh) in
+# /boot/system/non-packaged/data/firmware/broadcomfmac/.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 in="$root/sources/haiku/generated.arm64/haiku-mmc.image"
@@ -30,6 +32,8 @@ done
 fw="$root/artifacts/pi-firmware"
 uboot="$root/sources/u-boot/u-boot.bin"
 [ -f "$fw/start4.elf" ] || "$root/scripts/fetch-pi-firmware.sh"
+wifi="$root/artifacts/wifi-firmware"
+"$root/scripts/fetch-wifi-firmware.sh" > /dev/null
 [ -f "$uboot" ] || { echo "mkimage-pi4: build U-Boot first (scripts/build-uboot.sh)" >&2; exit 1; }
 mkdir -p "$(dirname "$out")"
 cp "$in" "$out.tmp"
@@ -50,12 +54,25 @@ CFG
 mcopy -o -i "$fat" "$fw/start4.elf" "$fw/fixup4.dat" "$fw/bcm2711-rpi-4-b.dtb" "$uboot" "$tmp/config.txt" ::
 mmd -i "$fat" ::overlays 2>/dev/null || true
 mcopy -o -i "$fat" "$fw"/overlays/*.dtbo ::overlays/
+
+p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
+bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
+# (bfs_shell may report a busy unmount at the end of its input: check the results instead)
+wifiDir=/myfs/system/non-packaged/data/firmware/broadcomfmac
+{
+	echo "mkdir -p $wifiDir"
+	for f in brcmfmac43455-sdio.bin brcmfmac43455-sdio.clm_blob brcmfmac43455-sdio.txt LICENCE.cypress GPL-2.0; do
+		echo "cp :$wifi/$f $wifiDir/$f"
+	done
+	echo sync
+} | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-wifi.log" 2>&1 || true
+echo "ls $wifiDir" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
+	| grep -q "$(stat -c %s "$wifi/brcmfmac43455-sdio.bin").*brcmfmac43455-sdio.bin" \
+	|| { cat "$tmp/bfs-wifi.log" >&2; echo "mkimage-pi4: WiFi firmware not written" >&2; exit 1; }
+
 if [ ${#settings[@]} -gt 0 ]; then
 	# kernel settings file on the BFS partition (also read for safemode options)
 	printf '%s\n' "${settings[@]}" > "$tmp/kernel"
-	p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
-	bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
-	# (bfs_shell may report a busy unmount at the end of its input: check the result instead)
 	printf 'mkdir -p /myfs/home/config/settings/kernel/drivers\ncp %s /myfs/home/config/settings/kernel/drivers/kernel\nsync\n' \
 		":$tmp/kernel" | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs.log" 2>&1 || true
 	echo "cat /myfs/home/config/settings/kernel/drivers/kernel" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
@@ -63,8 +80,6 @@ if [ ${#settings[@]} -gt 0 ]; then
 	echo "mkimage-pi4: kernel settings: ${settings[*]}"
 fi
 if [ -n "$bootscript" ]; then
-	bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
-	p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
 	printf 'mkdir -p /myfs/home/config/settings/boot\ncp %s /myfs/home/config/settings/boot/UserBootscript\nsync\n' \
 		":$bootscript" | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-boot.log" 2>&1 || true
 	echo "cat /myfs/home/config/settings/boot/UserBootscript" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
