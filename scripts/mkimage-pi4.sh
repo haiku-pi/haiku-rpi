@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # mkimage-pi4.sh — turn Haiku's arm64 MMC image into a bootable Raspberry Pi 4 SD image.
 #
-#   scripts/mkimage-pi4.sh [--in haiku-mmc.image] [--out artifacts/images/haiku-pi4.img] [--grow MB]
+#   scripts/mkimage-pi4.sh [--in haiku-mmc.image] [--out artifacts/images/haiku-pi4.img]
+#                          [--kernel-setting "name value"]...   (e.g. "disable_smp true")
 #
 # Adds to the image's FAT partition (p1): the pinned Pi firmware (scripts/fetch-pi-firmware.sh),
 # the bcm2711 DTB + overlays, U-Boot (sources/u-boot/u-boot.bin) and config.txt, which loads
@@ -12,10 +13,12 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 in="$root/sources/haiku/generated.arm64/haiku-mmc.image"
 out="$root/artifacts/images/haiku-pi4.img"
+settings=()
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--in) in="$2"; shift 2 ;;
 	--out) out="$2"; shift 2 ;;
+	--kernel-setting) settings+=("$2"); shift 2 ;;
 	*) echo "mkimage-pi4: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -42,6 +45,18 @@ CFG
 mcopy -o -i "$fat" "$fw/start4.elf" "$fw/fixup4.dat" "$fw/bcm2711-rpi-4-b.dtb" "$uboot" "$tmp/config.txt" ::
 mmd -i "$fat" ::overlays 2>/dev/null || true
 mcopy -o -i "$fat" "$fw"/overlays/*.dtbo ::overlays/
+if [ ${#settings[@]} -gt 0 ]; then
+	# kernel settings file on the BFS partition (also read for safemode options)
+	printf '%s\n' "${settings[@]}" > "$tmp/kernel"
+	p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
+	bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
+	# (bfs_shell may report a busy unmount at the end of its input: check the result instead)
+	printf 'mkdir -p /myfs/home/config/settings/kernel/drivers\ncp %s /myfs/home/config/settings/kernel/drivers/kernel\nsync\n' \
+		":$tmp/kernel" | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs.log" 2>&1 || true
+	echo "cat /myfs/home/config/settings/kernel/drivers/kernel" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
+		| grep -q -F "${settings[0]}" || { cat "$tmp/bfs.log" >&2; echo "mkimage-pi4: kernel settings not written" >&2; exit 1; }
+	echo "mkimage-pi4: kernel settings: ${settings[*]}"
+fi
 mv "$out.tmp" "$out"
 echo "mkimage-pi4: $out ($(stat -c %s "$out") bytes, firmware $(cut -c1-12 "$fw/COMMIT"), u-boot $(git -C "$root/sources/u-boot" rev-parse --short HEAD))"
 mdir -/ -b -i "$out@@$off" ::
