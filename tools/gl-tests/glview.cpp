@@ -12,6 +12,7 @@
  *   -b  with -f: the texture in B, G, R, A order
  *   -n  no depth buffer          -a  an alpha channel
  *   -S  clear the stencil buffer too (the whole depth/stencil buffer)
+ *   -d  with -f: a depth/stencil renderbuffer (GL_DEPTH24_STENCIL8), like the window's
  *   -c  no glClear at all (the corner check then fails: only the triangle is drawn)
  */
 
@@ -39,6 +40,7 @@ static bool sOffscreen = false;
 static bool sFlipY = false;
 static bool sBgra = false;
 static bool sClear = true;
+static bool sOffscreenDepth = false;
 static GLbitfield sClearMask = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
 
 
@@ -96,6 +98,25 @@ render_thread(void* data)
 		bindFramebuffer(GL_FRAMEBUFFER, fbo);
 		framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
 			texture, 0);
+		if (sOffscreenDepth) {
+			PFNGLGENRENDERBUFFERSPROC genRenderbuffers
+				= (PFNGLGENRENDERBUFFERSPROC)view->GetGLProcAddress("glGenRenderbuffers");
+			PFNGLBINDRENDERBUFFERPROC bindRenderbuffer
+				= (PFNGLBINDRENDERBUFFERPROC)view->GetGLProcAddress("glBindRenderbuffer");
+			PFNGLRENDERBUFFERSTORAGEPROC renderbufferStorage
+				= (PFNGLRENDERBUFFERSTORAGEPROC)view->GetGLProcAddress(
+					"glRenderbufferStorage");
+			PFNGLFRAMEBUFFERRENDERBUFFERPROC framebufferRenderbuffer
+				= (PFNGLFRAMEBUFFERRENDERBUFFERPROC)view->GetGLProcAddress(
+					"glFramebufferRenderbuffer");
+			GLuint depth;
+			genRenderbuffers(1, &depth);
+			bindRenderbuffer(GL_RENDERBUFFER, depth);
+			renderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kSize, kSize);
+			framebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+				GL_RENDERBUFFER, depth);
+			SAY("offscreen fbo depth/stencil renderbuffer, error 0x%x", glGetError());
+		}
 		if (sFlipY) {
 			// render upside down, as Mesa does into window framebuffers
 			PFNGLFRAMEBUFFERPARAMETERIPROC framebufferParameteri
@@ -180,7 +201,7 @@ main(int argc, char** argv)
 {
 	int opt;
 	uint32 options = BGL_RGB | BGL_DOUBLE | BGL_DEPTH;
-	while ((opt = getopt(argc, argv, "s:nafSybc")) != -1) {
+	while ((opt = getopt(argc, argv, "s:nafSybcd")) != -1) {
 		if (opt == 's')
 			sSeconds = atof(optarg);
 		else if (opt == 'n')
@@ -197,6 +218,8 @@ main(int argc, char** argv)
 			sBgra = true;
 		else if (opt == 'c')
 			sClear = false;
+		else if (opt == 'd')
+			sOffscreenDepth = true;
 		else {
 			fprintf(stderr, "usage: %s [-s seconds] [-n (no depth buffer)] [-a (alpha)]\n",
 				argv[0]);
