@@ -9,6 +9,15 @@ say "begin $(uname -a)"
 for f in /dev/power/bcm2835_thermal/*; do
 	[ -e "$f" ] && cat "$f" | while read -r line; do say "thermal $line"; done
 done
+for g in /dev/gpio/bcm2835/*; do
+	[ -e "$g" ] || continue
+	head -n 16 "$g" | while read -r line; do say "gpio $line"; done
+	# (the minimum image has no grep)
+	pin() { while read -r n f l p; do [ "$n" = "$1" ] && echo "$f $l $p"; done < "$g"; }
+	echo "out 21 1" > "$g"; say "gpio21 high: $(pin 21)"
+	echo "out 21 0" > "$g"; say "gpio21 low: $(pin 21)"
+	echo "in 21" > "$g"; say "gpio21 input: $(pin 21)"
+done
 listusb 2>/dev/null | while read -r line; do say "usb $line"; done
 ls /dev/disk/usb/*/*/raw 2>/dev/null | while read -r line; do say "usbdisk $line"; done
 ls /dev/net 2>/dev/null | while read -r line; do say "net $line"; done
