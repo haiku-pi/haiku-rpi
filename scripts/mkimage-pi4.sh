@@ -49,11 +49,14 @@ kernel=u-boot.bin
 # PL011 (uart0) on GPIO14/15 = the console; Bluetooth gets no UART.
 enable_uart=1
 dtoverlay=disable-bt
+# Lets the ARM side power the V3D GPU on (tools/overlays/haiku-v3d.dts)
+dtoverlay=haiku-v3d
 disable_overscan=1
 CFG
+dtc -@ -q -I dts -O dtb -o "$tmp/haiku-v3d.dtbo" "$root/tools/overlays/haiku-v3d.dts"
 mcopy -o -i "$fat" "$fw/start4.elf" "$fw/fixup4.dat" "$fw/bcm2711-rpi-4-b.dtb" "$uboot" "$tmp/config.txt" ::
 mmd -i "$fat" ::overlays 2>/dev/null || true
-mcopy -o -i "$fat" "$fw"/overlays/*.dtbo ::overlays/
+mcopy -o -i "$fat" "$fw"/overlays/*.dtbo "$tmp/haiku-v3d.dtbo" ::overlays/
 
 p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
 bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"

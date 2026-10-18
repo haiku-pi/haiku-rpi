@@ -1,0 +1,17 @@
+// haiku-v3d — enables the V3D GPU node of the Raspberry Pi 4's device tree, and nothing else.
+// The VideoCore firmware only lets the ARM side power the GPU on when the device tree it boots
+// with enables V3D; its own vc4-*-v3d overlays also replace the display (they disable /soc/fb,
+// the framebuffer U-Boot hands to Haiku), which this one leaves alone.
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2711";
+
+	fragment@0 {
+		target-path = "/v3dbus/v3d@7ec04000";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+};
