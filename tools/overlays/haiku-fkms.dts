@@ -1,0 +1,17 @@
+// haiku-fkms — enables the firmware's KMS node and nothing else: the VideoCore firmware then signals
+// every vertical blank through the SMI block's interrupt (what Linux's vc4_firmware_kms and Haiku's
+// bcm2711_display driver take). The stock vc4-fkms-v3d overlay also disables /soc/fb (the framebuffer
+// U-Boot hands to Haiku); this one leaves it alone.
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2711";
+
+	fragment@0 {
+		target-path = "/soc/firmwarekms@7e600000";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+};

@@ -12,6 +12,9 @@
 #                                                 add-ons/kernel/drivers/graphics/v3d: /boot/system/
 #                                                 settings/packages BlockedEntries)
 #                          [--no-v3d]            (leave the V3D GPU disabled: no haiku-v3d overlay)
+#                          [--no-fkms]           (no haiku-fkms overlay: the firmware's KMS node stays
+#                                                 disabled, so no SMI vblank interrupt; the display driver
+#                                                 then waits on SET_VSYNC)
 #                          [--add-tree DIR]...   (DIR's files, with their relative paths, copied into
 #                                                 /boot/system/non-packaged/, e.g. the GL stack of
 #                                                 scripts/build-gl-stack.sh: artifacts/gl-stack/non-packaged)
@@ -32,6 +35,7 @@ bootscript=""
 bins=()
 trees=()
 v3dOverlay=haiku-v3d
+fkmsOverlay=haiku-fkms
 blocked=()
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -42,6 +46,7 @@ while [ $# -gt 0 ]; do
 	--add-bin) bins+=("$(realpath "$2")"); shift 2 ;;
 	--add-tree) trees+=("$(realpath "$2")"); shift 2 ;;
 	--no-v3d) v3dOverlay=""; shift ;;
+	--no-fkms) fkmsOverlay=""; shift ;;
 	--block-entry) blocked+=("$2"); shift 2 ;;
 	*) echo "mkimage-pi4: unknown option $1" >&2; exit 2 ;;
 	esac
@@ -68,12 +73,15 @@ enable_uart=1
 dtoverlay=disable-bt
 # Lets the ARM side power the V3D GPU on (tools/overlays/haiku-v3d.dts)
 dtoverlay=$v3dOverlay
+# The firmware's KMS node: vertical blanks as SMI interrupts (tools/overlays/haiku-fkms.dts)
+dtoverlay=$fkmsOverlay
 disable_overscan=1
 CFG
 dtc -@ -q -I dts -O dtb -o "$tmp/haiku-v3d.dtbo" "$root/tools/overlays/haiku-v3d.dts"
+dtc -@ -q -I dts -O dtb -o "$tmp/haiku-fkms.dtbo" "$root/tools/overlays/haiku-fkms.dts"
 mcopy -o -i "$fat" "$fw/start4.elf" "$fw/fixup4.dat" "$fw/bcm2711-rpi-4-b.dtb" "$uboot" "$tmp/config.txt" ::
 mmd -i "$fat" ::overlays 2>/dev/null || true
-mcopy -o -i "$fat" "$fw"/overlays/*.dtbo "$tmp/haiku-v3d.dtbo" ::overlays/
+mcopy -o -i "$fat" "$fw"/overlays/*.dtbo "$tmp/haiku-v3d.dtbo" "$tmp/haiku-fkms.dtbo" ::overlays/
 
 p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
 bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
