@@ -8,6 +8,7 @@
 #                                                 reaches the serial console: a test channel)
 #                          [--add-bin FILE]...   (installed into ~/config/non-packaged/bin, e.g. a
 #                                                 test tool built by jam)
+#                          [--no-v3d]            (leave the V3D GPU disabled: no haiku-v3d overlay)
 #                          [--add-tree DIR]...   (DIR's files, with their relative paths, copied into
 #                                                 /boot/system/non-packaged/, e.g. the GL stack of
 #                                                 scripts/build-gl-stack.sh: artifacts/gl-stack/non-packaged)
@@ -27,6 +28,7 @@ settings=()
 bootscript=""
 bins=()
 trees=()
+v3dOverlay=haiku-v3d
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--in) in="$2"; shift 2 ;;
@@ -35,6 +37,7 @@ while [ $# -gt 0 ]; do
 	--bootscript) bootscript="$(realpath "$2")"; shift 2 ;;
 	--add-bin) bins+=("$(realpath "$2")"); shift 2 ;;
 	--add-tree) trees+=("$(realpath "$2")"); shift 2 ;;
+	--no-v3d) v3dOverlay=""; shift ;;
 	*) echo "mkimage-pi4: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -51,7 +54,7 @@ off=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sy
 fat="$out.tmp@@$off"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-cat > "$tmp/config.txt" <<'CFG'
+cat > "$tmp/config.txt" <<CFG
 # Haiku on the Raspberry Pi 4 (haiku-rpi scripts/mkimage-pi4.sh)
 arm_64bit=1
 kernel=u-boot.bin
@@ -59,7 +62,7 @@ kernel=u-boot.bin
 enable_uart=1
 dtoverlay=disable-bt
 # Lets the ARM side power the V3D GPU on (tools/overlays/haiku-v3d.dts)
-dtoverlay=haiku-v3d
+dtoverlay=$v3dOverlay
 disable_overscan=1
 CFG
 dtc -@ -q -I dts -O dtb -o "$tmp/haiku-v3d.dtbo" "$root/tools/overlays/haiku-v3d.dts"
