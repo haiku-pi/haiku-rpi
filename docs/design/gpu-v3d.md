@@ -297,6 +297,11 @@ retrace semaphore, EDID modes + plane-scaled modes, cursor plane, overlay hooks 
 *Exit:* `Screen` preferences lists ≥ 3 modes and switching works and reverts; retrace semaphore measures
 59.9–60.1 Hz; hardware cursor follows the mouse (owner check) or a scripted `set_mouse_position`; MediaPlayer
 plays a clip through an overlay; KDL still prints on HDMI after a mode change.
+*Status 2026-10-19:* `drivers/graphics/bcm2711_display` + `bcm2711_display.accelerant` (haiku c9b4bfe234,
+716633f51b, 7a37185fe7): retrace semaphore from the SMI interrupt (needs `tools/overlays/haiku-fkms.dts`,
+now the default) at 60.00 Hz; modes up to native via a scaled primary plane (`screenmode` lists 40+, switch
+and back verified on HDMI); hardware cursor on plane 7 (scripted moves, clipping, scaled modes); KDL prints
+after a mode change. Open: overlays (needs MediaPlayer, i.e. H14), flips (stage 6), owner check with a mouse.
 
 **Stage 5 — zero-copy into BBitmaps, P2 (1–1.5 weeks).** Area-import ioctl (pins pages, maps them into the
 V3D MMU, quarantine on release), GPU blit into the imported bitmap, cache maintenance around the job.
