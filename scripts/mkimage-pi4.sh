@@ -8,6 +8,9 @@
 #                                                 reaches the serial console: a test channel)
 #                          [--add-bin FILE]...   (installed into ~/config/non-packaged/bin, e.g. a
 #                                                 test tool built by jam)
+#                          [--add-tree DIR]...   (DIR's files, with their relative paths, copied into
+#                                                 /boot/system/non-packaged/, e.g. the GL stack of
+#                                                 scripts/build-gl-stack.sh: artifacts/gl-stack/non-packaged)
 #
 # Adds to the image's FAT partition (p1): the pinned Pi firmware (scripts/fetch-pi-firmware.sh),
 # the bcm2711 DTB + overlays, U-Boot (sources/u-boot/u-boot.bin) and config.txt, which loads
@@ -23,6 +26,7 @@ out="$root/artifacts/images/haiku-pi4.img"
 settings=()
 bootscript=""
 bins=()
+trees=()
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--in) in="$2"; shift 2 ;;
@@ -30,6 +34,7 @@ while [ $# -gt 0 ]; do
 	--kernel-setting) settings+=("$2"); shift 2 ;;
 	--bootscript) bootscript="$(realpath "$2")"; shift 2 ;;
 	--add-bin) bins+=("$(realpath "$2")"); shift 2 ;;
+	--add-tree) trees+=("$(realpath "$2")"); shift 2 ;;
 	*) echo "mkimage-pi4: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -106,6 +111,27 @@ if [ ${#bins[@]} -gt 0 ]; then
 	done
 	echo "mkimage-pi4: added ${bins[*]##*/}"
 fi
+for tree in ${trees[@]+"${trees[@]}"}; do
+	[ -d "$tree" ] || { echo "mkimage-pi4: --add-tree $tree is not a directory" >&2; exit 1; }
+	npDir=/myfs/system/non-packaged
+	{
+		(cd "$tree" && find . -mindepth 1 -type d -printf '%P\n') | sort | while read -r d; do
+			echo "mkdir -p $npDir/$d"
+		done
+		(cd "$tree" && find . -type f -printf '%P\n') | sort | while read -r f; do
+			echo "cp :$tree/$f $npDir/$f"
+			echo "chmod 755 $npDir/$f"
+		done
+		echo sync
+	} | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-tree.log" 2>&1 || true
+	# verify every file by its size
+	(cd "$tree" && find . -type f -printf '%P\n') | while read -r f; do
+		echo "ls $npDir/$f" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
+			| grep -q " $(stat -c %s "$tree/$f") .*$(basename "$f")" \
+			|| { cat "$tmp/bfs-tree.log" >&2; echo "mkimage-pi4: $f of $tree not written" >&2; exit 1; }
+	done
+	echo "mkimage-pi4: added $(cd "$tree" && find . -type f | wc -l) files of $tree to /boot/system/non-packaged"
+done
 mv "$out.tmp" "$out"
 echo "mkimage-pi4: $out ($(stat -c %s "$out") bytes, firmware $(cut -c1-12 "$fw/COMMIT"), u-boot $(git -C "$root/sources/u-boot" rev-parse --short HEAD))"
 mdir -/ -b -i "$out@@$off" ::

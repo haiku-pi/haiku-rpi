@@ -1,0 +1,39 @@
+# Meson cross file: Haiku arm64 (aarch64-unknown-haiku) on the Linux host, with the jam-built cross
+# compiler and the sysroot from scripts/haiku-sysroot.sh. Ports built with it install with
+#   --prefix=/boot/system/non-packaged  and  DESTDIR=<sysroot>  (scripts/build-gl-stack.sh does),
+# so later ports find earlier ones through pkg-config. Paths assume the checkout at
+# /home/houp/haiku-rpi; change `root` below if it lives elsewhere.
+
+[constants]
+root = '/home/houp/haiku-rpi'
+cross = root / 'sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-'
+sysroot = root / 'artifacts/sysroot-arm64'
+
+[binaries]
+c = cross + 'gcc'
+cpp = cross + 'g++'
+ar = cross + 'ar'
+nm = cross + 'nm'
+strip = cross + 'strip'
+objcopy = cross + 'objcopy'
+ld = cross + 'ld'
+pkg-config = 'pkg-config'
+
+[built-in options]
+c_args = ['--sysroot=' + sysroot]
+cpp_args = ['--sysroot=' + sysroot]
+c_link_args = ['--sysroot=' + sysroot]
+cpp_link_args = ['--sysroot=' + sysroot]
+
+[properties]
+sys_root = sysroot
+pkg_config_libdir = [sysroot / 'boot/system/non-packaged/develop/lib/pkgconfig',
+                     sysroot / 'boot/system/develop/lib/pkgconfig']
+needs_exe_wrapper = true
+
+[host_machine]
+system = 'haiku'
+kernel = 'haiku'
+cpu_family = 'aarch64'
+cpu = 'cortex-a72'
+endian = 'little'
