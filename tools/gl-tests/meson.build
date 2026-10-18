@@ -11,3 +11,6 @@ executable('gltri', 'gltri.c', dependencies : [dep_egl, dep_glesv2], install : t
 dep_gl = dependency('gl')
 dep_be = meson.get_compiler('cpp').find_library('be')
 executable('glview', 'glview.cpp', dependencies : [dep_gl, dep_be], install : true)
+
+# the display's retrace semaphore (BScreen::WaitForRetrace)
+executable('retrace', 'retrace.cpp', dependencies : [dep_be], install : true)
