@@ -68,7 +68,11 @@ Grade by positive markers: `GLT renderer: V3D 4.2…`, `GLT version: OpenGL ES 3
 four `GLT check … ok` + `GLT check coverage … ok`, `GLT PASS`, `GLT hw-exit 0`; `GLW … PASS`.
 
 QEMU `virt` (no V3D → softpipe), 2026-10-18: `gltri` PASS (renderer softpipe, OpenGL ES 3.1, GL 3.3 compat),
-`glview` PASS at ~100 fps.
+`glview` PASS at ~100 fps, and its window shows the rotating triangle (QEMU screendump).
+
+Not run anywhere yet (needs the GPU): `egl_haiku_hw.c` (driconf set-up, `v3d_drm_screen_create`), the v3d
+MMAP_BO-address and fence-wait patches, and the hardware window present (`haiku_present_copy`).
+First-run knobs: `V3D_DEBUG=sync` (every submit waits), `LIBGL_ALWAYS_SOFTWARE=1` (softpipe).
 
 ## Known gaps
 
@@ -77,3 +81,5 @@ QEMU `virt` (no V3D → softpipe), 2026-10-18: `gltri` PASS (renderer softpipe, 
 - The driver has no TFU/CSD yet but GET_PARAM says it does: TFU blits/mipmaps log "Failed to submit TFU job"
   and fall back; compute dispatches fail (GLES 3.1 is still advertised).
 - No `mesa`/`libglvnd` hpkg yet, so GLInfo/GLTeapot stay out of the arm64 build (`BuildFeatures`).
+- The driver ignores SUBMIT_CL's in-syncs: correct while it runs one file's jobs in submission order.
+- Phoenix's NPOT-mipmap fix (TFU) is not carried: unreachable while TFU is missing.
