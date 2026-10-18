@@ -5,13 +5,14 @@
  * prints "GLW " lines (send them to /dev/dprintf from a boot script). On a hardware screen the
  * frames reach the window through egl_haiku's copy present; HDMI shows whether they do.
  *
- *   glview [-s SECONDS] [-f] [-y] [-b] [-n] [-a] [-S]     exit status 0 = PASS
+ *   glview [-s SECONDS] [-f] [-y] [-b] [-n] [-a] [-S] [-c]     exit status 0 = PASS
  *
  *   -f  draw into a framebuffer object instead of the window (and check that)
  *   -y  with -f: y-flipped, as Mesa renders into window framebuffers
  *   -b  with -f: the texture in B, G, R, A order
  *   -n  no depth buffer          -a  an alpha channel
  *   -S  clear the stencil buffer too (the whole depth/stencil buffer)
+ *   -c  no glClear at all (the corner check then fails: only the triangle is drawn)
  */
 
 #include <Application.h>
@@ -37,6 +38,7 @@ static double sSeconds = 5;
 static bool sOffscreen = false;
 static bool sFlipY = false;
 static bool sBgra = false;
+static bool sClear = true;
 static GLbitfield sClearMask = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
 
 
@@ -108,13 +110,29 @@ render_thread(void* data)
 		view->UnlockGL();
 	}
 
+	{
+		// what decides between a hardware clear and a quad drawn by Mesa
+		view->LockGL();
+		GLint scissor[4], viewport[4];
+		GLboolean mask[4];
+		glGetIntegerv(GL_SCISSOR_BOX, scissor);
+		glGetIntegerv(GL_VIEWPORT, viewport);
+		glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+		SAY("state: scissor test %d box %d,%d %dx%d, viewport %d,%d %dx%d, color mask %d%d%d%d",
+			glIsEnabled(GL_SCISSOR_TEST), scissor[0], scissor[1], scissor[2], scissor[3],
+			viewport[0], viewport[1], viewport[2], viewport[3], mask[0], mask[1], mask[2],
+			mask[3]);
+		view->UnlockGL();
+	}
+
 	const bigtime_t start = system_time();
 	int frames = 0;
 	while (system_time() - start < (bigtime_t)(sSeconds * 1000000)) {
 		view->LockGL();
 		glViewport(0, 0, kSize, kSize);
 		glClearColor(0.0f, 0.0f, 0.25f, 1.0f);
-		glClear(sClearMask);
+		if (sClear)
+			glClear(sClearMask);
 		glMatrixMode(GL_MODELVIEW);
 		glLoadIdentity();
 		glRotatef(frames * 2.0f, 0.0f, 0.0f, 1.0f);
@@ -162,7 +180,7 @@ main(int argc, char** argv)
 {
 	int opt;
 	uint32 options = BGL_RGB | BGL_DOUBLE | BGL_DEPTH;
-	while ((opt = getopt(argc, argv, "s:nafSyb")) != -1) {
+	while ((opt = getopt(argc, argv, "s:nafSybc")) != -1) {
 		if (opt == 's')
 			sSeconds = atof(optarg);
 		else if (opt == 'n')
@@ -177,6 +195,8 @@ main(int argc, char** argv)
 			sFlipY = true;
 		else if (opt == 'b')
 			sBgra = true;
+		else if (opt == 'c')
+			sClear = false;
 		else {
 			fprintf(stderr, "usage: %s [-s seconds] [-n (no depth buffer)] [-a (alpha)]\n",
 				argv[0]);
