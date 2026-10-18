@@ -3,6 +3,9 @@
 #
 #   scripts/mkimage-pi4.sh [--in haiku-mmc.image] [--out artifacts/images/haiku-pi4.img]
 #                          [--kernel-setting "name value"]...   (e.g. "disable_smp true")
+#                          [--bootscript FILE]   (installed as ~/config/settings/boot/UserBootscript,
+#                                                 run at every boot; its output to /dev/dprintf
+#                                                 reaches the serial console: a test channel)
 #
 # Adds to the image's FAT partition (p1): the pinned Pi firmware (scripts/fetch-pi-firmware.sh),
 # the bcm2711 DTB + overlays, U-Boot (sources/u-boot/u-boot.bin) and config.txt, which loads
@@ -14,11 +17,13 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 in="$root/sources/haiku/generated.arm64/haiku-mmc.image"
 out="$root/artifacts/images/haiku-pi4.img"
 settings=()
+bootscript=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--in) in="$2"; shift 2 ;;
 	--out) out="$2"; shift 2 ;;
 	--kernel-setting) settings+=("$2"); shift 2 ;;
+	--bootscript) bootscript="$(realpath "$2")"; shift 2 ;;
 	*) echo "mkimage-pi4: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -56,6 +61,15 @@ if [ ${#settings[@]} -gt 0 ]; then
 	echo "cat /myfs/home/config/settings/kernel/drivers/kernel" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
 		| grep -q -F "${settings[0]}" || { cat "$tmp/bfs.log" >&2; echo "mkimage-pi4: kernel settings not written" >&2; exit 1; }
 	echo "mkimage-pi4: kernel settings: ${settings[*]}"
+fi
+if [ -n "$bootscript" ]; then
+	bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
+	p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
+	printf 'mkdir -p /myfs/home/config/settings/boot\ncp %s /myfs/home/config/settings/boot/UserBootscript\nsync\n' \
+		":$bootscript" | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-boot.log" 2>&1 || true
+	echo "cat /myfs/home/config/settings/boot/UserBootscript" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
+		| grep -q -F "$(head -n 1 "$bootscript")" || { cat "$tmp/bfs-boot.log" >&2; echo "mkimage-pi4: bootscript not written" >&2; exit 1; }
+	echo "mkimage-pi4: bootscript $(basename "$bootscript")"
 fi
 mv "$out.tmp" "$out"
 echo "mkimage-pi4: $out ($(stat -c %s "$out") bytes, firmware $(cut -c1-12 "$fw/COMMIT"), u-boot $(git -C "$root/sources/u-boot" rev-parse --short HEAD))"
