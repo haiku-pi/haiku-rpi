@@ -20,7 +20,7 @@
 #                                 libOpenGL.so.0 libGLESv1_CM.so.1 libdrm.so.2
 #   add-ons/opengl/egl_vendor.d/  libEGL_mesa.so.0 + 50_mesa.json (libglvnd's EGL vendor search
 #                                 path includes this directory)
-#   bin/gltri bin/glview bin/retrace
+#   bin/gltri bin/glview bin/retrace bin/cursor-move
 # Shared-library symlinks are resolved: each library is a file named by its soname.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -119,7 +119,7 @@ if want stage; then
 	    }
 	}
 	JSON
-	for b in gltri glview retrace; do
+	for b in gltri glview retrace cursor-move; do
 		cp "$src/bin/$b" "$stage/bin/$b"
 		"$tools-strip" "$stage/bin/$b"
 	done

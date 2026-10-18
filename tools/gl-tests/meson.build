@@ -14,3 +14,6 @@ executable('glview', 'glview.cpp', dependencies : [dep_gl, dep_be], install : tr
 
 # the display's retrace semaphore (BScreen::WaitForRetrace)
 executable('retrace', 'retrace.cpp', dependencies : [dep_be], install : true)
+
+# the mouse pointer moved from a program (the hardware cursor plane's test)
+executable('cursor-move', 'cursor-move.cpp', dependencies : [dep_be], install : true)
