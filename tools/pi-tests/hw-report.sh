@@ -17,6 +17,7 @@ for g in /dev/gpio/bcm2835/*; do
 	echo "out 21 1" > "$g"; say "gpio21 high: $(pin 21)"
 	echo "out 21 0" > "$g"; say "gpio21 low: $(pin 21)"
 	echo "in 21" > "$g"; say "gpio21 input: $(pin 21)"
+	for p in 34 35 36 37 38 39; do say "gpio$p (wifi sdio): $(pin $p)"; done
 done
 listusb 2>/dev/null | while read -r line; do say "usb $line"; done
 ls /dev/disk/usb/*/*/raw 2>/dev/null | while read -r line; do say "usbdisk $line"; done
