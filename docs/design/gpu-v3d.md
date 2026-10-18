@@ -288,6 +288,9 @@ local `mesa`/`mesa_devel` hpkg so `BuildFeatures` brings GLTeapot/GLInfo back ([
 flush, wait the out-syncobj, copy the linear colour BO into the `BBitmap`, `SetBitmap`.
 *Exit:* GLTeapot animates on HDMI (snapshot sequence shows motion) for 5 minutes with 0 GPU resets; fps
 logged and compared with softpipe on the same image (expect a large gap even with 3 copies).
+*Done 2026-10-18:* `glview` (BGLView, desktop GL, 256×256 window) for 300 s: 145 676 frames = **485.6 fps**,
+PASS, 0 GPU resets, the rotating triangle on HDMI (`img-gl-stage3-hdmi.png`, two frames 20 s apart);
+softpipe 125.5 fps (`tools/pi-tests/gl-screen.sh`). GLTeapot is not in the minimum image (H14).
 
 **Stage 4 — firmware display driver (2–3 weeks).** §2.2 option B: adopt the boot buffer, SMI vblank →
 retrace semaphore, EDID modes + plane-scaled modes, cursor plane, overlay hooks (RGB + YCbCr), flips.
