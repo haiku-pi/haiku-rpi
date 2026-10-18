@@ -64,7 +64,10 @@ for GENET (or any other `/scb` device) until it learns to pick the RAM range.
 
 ### Cache coherency
 
-GENET does not snoop the CPU caches. The buffers are mapped
+GENET does not snoop the CPU caches. **Update 2026-10-19:** the receive buffers are
+cacheable now and each frame's lines are invalidated before the copy (TCP download
+250 → 735 Mbit/s); what follows describes the transmit buffers and the original design.
+The buffers are mapped
 **non-cacheable** (`arm64_dcache_flush_range()` then
 `vm_set_area_memory_type(B_WRITE_COMBINING_MEMORY)` = Normal-NC, the pattern
 of `usb/PhysicalMemoryAllocator.cpp`). This needs no per-frame cache
