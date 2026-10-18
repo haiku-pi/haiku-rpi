@@ -11,13 +11,15 @@
 #   scripts/sd-cycle.sh [--flash IMG] [--no-boot] [--secs N] [--label L] [--until RE]... [--fail RE]...
 #                       [--send SECS:TEXT]...   (typed into the UART, see uart-capture.py; three
 #                       Ctrl-] then 'd' enters Haiku's kernel debugger: --send '150:\x1d\x1d\x1dd')
+#                       [--no-probe]   (by default Ctrl-T is typed at 150 and 155 s: a kernel with the
+#                                       freeze probe makes every CPU print its timer/interrupt state)
 #
 # Logs: artifacts/uart/<ts>-<label>.log (+ -flash.log), HDMI: artifacts/hdmi/<ts>-<label>-*.png.
 # Exit: 0 boot capture ended on --until (or ran its full --secs with no --until), 1 flash failed,
 # 3 a --fail line, 2 the UART stayed silent, 4 UART went quiet.
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
-flash="" boot=1 secs=120 label=sd hdmi_every=20 quiet=0 readback="" readmb=400 readskip=0
+flash="" boot=1 secs=120 label=sd hdmi_every=20 quiet=0 readback="" readmb=400 readskip=0 probe=1
 caps=()
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -31,9 +33,11 @@ while [ $# -gt 0 ]; do
 	--until|--fail|--send) caps+=("$1" "$2"); shift 2 ;;
 	--quiet-secs) quiet="$2"; shift 2 ;;
 	--hdmi-every) hdmi_every="$2"; shift 2 ;;
+	--no-probe) probe=0; shift ;;
 	*) echo "sd-cycle: unknown option $1" >&2; exit 2 ;;
 	esac
 done
+[ "$probe" = 1 ] && caps+=(--send '150:\x14' --send '155:\x14')
 ts="$(date +%Y%m%d-%H%M%S)"
 uart_dir="$HAIKU_RPI_ROOT/artifacts/uart"; hdmi_dir="$HAIKU_RPI_ROOT/artifacts/hdmi"
 mkdir -p "$uart_dir" "$hdmi_dir"

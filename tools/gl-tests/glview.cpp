@@ -29,6 +29,9 @@ static const int kSize = 256;
 static int sFailures = 0;
 static double sSeconds = 5;
 static bool sOffscreen = false;
+static bool sFlipY = false;
+static bool sBgra = false;
+static GLbitfield sClearMask = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
 
 
 static bool
@@ -77,13 +80,24 @@ render_thread(void* data)
 		GLuint texture, fbo;
 		glGenTextures(1, &texture);
 		glBindTexture(GL_TEXTURE_2D, texture);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA,
-			GL_UNSIGNED_BYTE, NULL);
+		// -b: B, G, R, A order, like the window buffers
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kSize, kSize, 0,
+			sBgra ? GL_BGRA : GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		genFramebuffers(1, &fbo);
 		bindFramebuffer(GL_FRAMEBUFFER, fbo);
 		framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
 			texture, 0);
+		if (sFlipY) {
+			// render upside down, as Mesa does into window framebuffers
+			PFNGLFRAMEBUFFERPARAMETERIPROC framebufferParameteri
+				= (PFNGLFRAMEBUFFERPARAMETERIPROC)view->GetGLProcAddress(
+					"glFramebufferParameteri");
+			if (framebufferParameteri != NULL)
+				framebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_FLIP_Y_MESA, 1);
+			SAY("offscreen fbo flip y %s, error 0x%x",
+				framebufferParameteri != NULL ? "set" : "unavailable", glGetError());
+		}
 		SAY("offscreen fbo status 0x%x", checkFramebufferStatus(GL_FRAMEBUFFER));
 		view->UnlockGL();
 	}
@@ -94,7 +108,7 @@ render_thread(void* data)
 		view->LockGL();
 		glViewport(0, 0, kSize, kSize);
 		glClearColor(0.0f, 0.0f, 0.25f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glClear(sClearMask);
 		glMatrixMode(GL_MODELVIEW);
 		glLoadIdentity();
 		glRotatef(frames * 2.0f, 0.0f, 0.0f, 1.0f);
@@ -142,7 +156,7 @@ main(int argc, char** argv)
 {
 	int opt;
 	uint32 options = BGL_RGB | BGL_DOUBLE | BGL_DEPTH;
-	while ((opt = getopt(argc, argv, "s:naf")) != -1) {
+	while ((opt = getopt(argc, argv, "s:nafSyb")) != -1) {
 		if (opt == 's')
 			sSeconds = atof(optarg);
 		else if (opt == 'n')
@@ -151,6 +165,12 @@ main(int argc, char** argv)
 			options |= BGL_ALPHA;
 		else if (opt == 'f')
 			sOffscreen = true;
+		else if (opt == 'S')
+			sClearMask |= GL_STENCIL_BUFFER_BIT;
+		else if (opt == 'y')
+			sFlipY = true;
+		else if (opt == 'b')
+			sBgra = true;
 		else {
 			fprintf(stderr, "usage: %s [-s seconds] [-n (no depth buffer)] [-a (alpha)]\n",
 				argv[0]);
