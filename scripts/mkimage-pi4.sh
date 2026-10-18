@@ -8,6 +8,9 @@
 #                                                 reaches the serial console: a test channel)
 #                          [--add-bin FILE]...   (installed into ~/config/non-packaged/bin, e.g. a
 #                                                 test tool built by jam)
+#                          [--block-entry PATH]... (hides PATH of the haiku package, e.g.
+#                                                 add-ons/kernel/drivers/graphics/v3d: /boot/system/
+#                                                 settings/packages BlockedEntries)
 #                          [--no-v3d]            (leave the V3D GPU disabled: no haiku-v3d overlay)
 #                          [--add-tree DIR]...   (DIR's files, with their relative paths, copied into
 #                                                 /boot/system/non-packaged/, e.g. the GL stack of
@@ -29,6 +32,7 @@ bootscript=""
 bins=()
 trees=()
 v3dOverlay=haiku-v3d
+blocked=()
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--in) in="$2"; shift 2 ;;
@@ -38,6 +42,7 @@ while [ $# -gt 0 ]; do
 	--add-bin) bins+=("$(realpath "$2")"); shift 2 ;;
 	--add-tree) trees+=("$(realpath "$2")"); shift 2 ;;
 	--no-v3d) v3dOverlay=""; shift ;;
+	--block-entry) blocked+=("$2"); shift 2 ;;
 	*) echo "mkimage-pi4: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -93,6 +98,15 @@ if [ ${#settings[@]} -gt 0 ]; then
 	echo "cat /myfs/home/config/settings/kernel/drivers/kernel" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
 		| grep -q -F "${settings[0]}" || { cat "$tmp/bfs.log" >&2; echo "mkimage-pi4: kernel settings not written" >&2; exit 1; }
 	echo "mkimage-pi4: kernel settings: ${settings[*]}"
+fi
+if [ ${#blocked[@]} -gt 0 ]; then
+	{ echo "Package haiku {"; echo "	BlockedEntries {"; printf '		%s\n' "${blocked[@]}"; echo "	}"; echo "}"; } \
+		> "$tmp/packages"
+	printf 'mkdir -p /myfs/system/settings\ncp %s /myfs/system/settings/packages\nsync\n' ":$tmp/packages" \
+		| "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-pkg.log" 2>&1 || true
+	echo "cat /myfs/system/settings/packages" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
+		| grep -q -F "${blocked[0]}" || { cat "$tmp/bfs-pkg.log" >&2; echo "mkimage-pi4: package settings not written" >&2; exit 1; }
+	echo "mkimage-pi4: blocked entries: ${blocked[*]}"
 fi
 if [ -n "$bootscript" ]; then
 	printf 'mkdir -p /myfs/home/config/settings/boot\ncp %s /myfs/home/config/settings/boot/UserBootscript\nsync\n' \
