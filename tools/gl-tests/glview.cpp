@@ -13,7 +13,9 @@
 #include <OS.h>
 #include <Window.h>
 
+#define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
+#include <GL/glext.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +28,7 @@
 static const int kSize = 256;
 static int sFailures = 0;
 static double sSeconds = 5;
+static bool sOffscreen = false;
 
 
 static bool
@@ -57,6 +60,33 @@ render_thread(void* data)
 	SAY("renderer: %s", (const char*)glGetString(GL_RENDERER));
 	SAY("version: %s", (const char*)glGetString(GL_VERSION));
 	view->UnlockGL();
+
+	if (sOffscreen) {
+		// the same drawing, into a framebuffer object instead of the window
+		view->LockGL();
+		PFNGLGENFRAMEBUFFERSPROC genFramebuffers
+			= (PFNGLGENFRAMEBUFFERSPROC)view->GetGLProcAddress("glGenFramebuffers");
+		PFNGLBINDFRAMEBUFFERPROC bindFramebuffer
+			= (PFNGLBINDFRAMEBUFFERPROC)view->GetGLProcAddress("glBindFramebuffer");
+		PFNGLFRAMEBUFFERTEXTURE2DPROC framebufferTexture2D
+			= (PFNGLFRAMEBUFFERTEXTURE2DPROC)view->GetGLProcAddress(
+				"glFramebufferTexture2D");
+		PFNGLCHECKFRAMEBUFFERSTATUSPROC checkFramebufferStatus
+			= (PFNGLCHECKFRAMEBUFFERSTATUSPROC)view->GetGLProcAddress(
+				"glCheckFramebufferStatus");
+		GLuint texture, fbo;
+		glGenTextures(1, &texture);
+		glBindTexture(GL_TEXTURE_2D, texture);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA,
+			GL_UNSIGNED_BYTE, NULL);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		genFramebuffers(1, &fbo);
+		bindFramebuffer(GL_FRAMEBUFFER, fbo);
+		framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+			texture, 0);
+		SAY("offscreen fbo status 0x%x", checkFramebufferStatus(GL_FRAMEBUFFER));
+		view->UnlockGL();
+	}
 
 	const bigtime_t start = system_time();
 	int frames = 0;
@@ -111,21 +141,31 @@ int
 main(int argc, char** argv)
 {
 	int opt;
-	while ((opt = getopt(argc, argv, "s:")) != -1) {
+	uint32 options = BGL_RGB | BGL_DOUBLE | BGL_DEPTH;
+	while ((opt = getopt(argc, argv, "s:naf")) != -1) {
 		if (opt == 's')
 			sSeconds = atof(optarg);
+		else if (opt == 'n')
+			options &= ~BGL_DEPTH;
+		else if (opt == 'a')
+			options |= BGL_ALPHA;
+		else if (opt == 'f')
+			sOffscreen = true;
 		else {
-			fprintf(stderr, "usage: %s [-s seconds]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-s seconds] [-n (no depth buffer)] [-a (alpha)]\n",
+				argv[0]);
 			return 2;
 		}
 	}
 
 	BApplication app("application/x-vnd.haiku-rpi-glview");
-	SAY("begin%s", getenv("LIBGL_ALWAYS_SOFTWARE") != NULL ? " (LIBGL_ALWAYS_SOFTWARE)" : "");
+	SAY("begin%s%s%s", getenv("LIBGL_ALWAYS_SOFTWARE") != NULL ? " (LIBGL_ALWAYS_SOFTWARE)" : "",
+		(options & BGL_DEPTH) == 0 ? " (no depth buffer)" : "",
+		(options & BGL_ALPHA) != 0 ? " (alpha)" : "");
 	BWindow* window = new BWindow(BRect(100, 100, 100 + kSize - 1, 100 + kSize - 1),
 		"glview", B_TITLED_WINDOW, B_NOT_RESIZABLE | B_NOT_ZOOMABLE | B_QUIT_ON_WINDOW_CLOSE);
 	BGLView* view = new BGLView(window->Bounds(), (const char*)"gl", B_FOLLOW_ALL_SIDES, 0,
-		BGL_RGB | BGL_DOUBLE | BGL_DEPTH);
+		options);
 	window->AddChild(view);
 	window->Show();
 

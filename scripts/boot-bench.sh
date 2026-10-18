@@ -16,7 +16,7 @@ done
 pass=0
 for t in $(seq 1 "$n"); do
 	"$root/scripts/sd-cycle.sh" --flash "$img" --label "$label-t$t" --secs 200 \
-		--send '170:\x1d\x1d\x1dd' --send '174:teams\n' --send '178:threads\n' > /dev/null 2>&1 || true
+		--send '170:\x1d\x1d\x1dd' --send '174:teams\n' --send '178:threads\n' --send '184:timers\n' --send '188:gic\n' --send '190:arm64_timer\n' > /dev/null 2>&1 || true
 	log="$(ls -t "$root"/artifacts/uart/*-"$label-t$t".log | head -n 1)"
 	if grep -aq 'app_server: Use' "$log" && grep -aq 'desklink' "$log"; then
 		verdict=PASS; pass=$((pass + 1))
