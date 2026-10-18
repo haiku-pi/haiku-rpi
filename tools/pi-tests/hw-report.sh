@@ -27,6 +27,11 @@ for n in /dev/net/genet/*; do
 	ifconfig "$n" 10.42.0.50 255.255.255.0 up
 	sleep 8
 	ping -c 4 10.42.0.1 2>&1 | while read -r line; do say "ping $line"; done
+	# NFSv4: the bench host exports a file system to the Pi LAN (read-only use)
+	mkdir -p /nfs
+	mount -t nfs4 -p "10.42.0.1:/" /nfs 2>&1 | while read -r line; do say "nfs mount $line"; done
+	ls /nfs 2>&1 | head -n 12 | while read -r line; do say "nfs ls $line"; done
+	df /nfs 2>&1 | while read -r line; do say "nfs df $line"; done
 done
 ifconfig 2>/dev/null | while read -r line; do say "ifconfig $line"; done
 sysinfo -cpu 2>/dev/null | head -n 12 | while read -r line; do say "cpu $line"; done
