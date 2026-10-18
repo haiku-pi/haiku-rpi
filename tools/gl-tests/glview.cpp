@@ -5,7 +5,13 @@
  * prints "GLW " lines (send them to /dev/dprintf from a boot script). On a hardware screen the
  * frames reach the window through egl_haiku's copy present; HDMI shows whether they do.
  *
- *   glview [-s SECONDS]          exit status 0 = PASS
+ *   glview [-s SECONDS] [-f] [-y] [-b] [-n] [-a] [-S]     exit status 0 = PASS
+ *
+ *   -f  draw into a framebuffer object instead of the window (and check that)
+ *   -y  with -f: y-flipped, as Mesa renders into window framebuffers
+ *   -b  with -f: the texture in B, G, R, A order
+ *   -n  no depth buffer          -a  an alpha channel
+ *   -S  clear the stencil buffer too (the whole depth/stencil buffer)
  */
 
 #include <Application.h>
