@@ -21,6 +21,13 @@ done
 listusb 2>/dev/null | while read -r line; do say "usb $line"; done
 ls /dev/disk/usb/*/*/raw 2>/dev/null | while read -r line; do say "usbdisk $line"; done
 ls /dev/net 2>/dev/null | while read -r line; do say "net $line"; done
+# Ethernet: a static address on the bench's Pi LAN (no DHCP server runs there during SD boots)
+for n in /dev/net/genet/*; do
+	[ -e "$n" ] || continue
+	ifconfig "$n" 10.42.0.50 255.255.255.0 up
+	sleep 8
+	ping -c 4 10.42.0.1 2>&1 | while read -r line; do say "ping $line"; done
+done
 ifconfig 2>/dev/null | while read -r line; do say "ifconfig $line"; done
 sysinfo -cpu 2>/dev/null | head -n 12 | while read -r line; do say "cpu $line"; done
 say end
