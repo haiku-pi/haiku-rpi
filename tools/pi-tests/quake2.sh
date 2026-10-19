@@ -8,7 +8,7 @@ out=/dev/dprintf
 dir=/boot/system/non-packaged/apps/quake2
 say() { echo "Q2 $*" > $out; }
 cd $dir || { say "no $dir"; exit 1; }
-for size in "640 480" "1280 720"; do
+for size in ${QUAKE2_SIZES:-"640 480" "1280 720"}; do
 	set -- $size
 	renderer=${1}x$2
 	say "gl1 $renderer"

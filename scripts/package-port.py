@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """package-port.py — package a port built by scripts/cross-port.sh as HaikuPorts-style hpkgs.
 
-    scripts/package-port.py RECIPE [--revision N] [--static-suffix SUFFIX]
+    scripts/package-port.py RECIPE [--revision N] [--static-suffix SUFFIX] [--provides P]... [--requires R]...
 
 From artifacts/cross-ports/<port>-<version>/install/boot/system/non-packaged (what cross-port.sh
 installed) it makes, in artifacts/packages/:
@@ -38,7 +38,8 @@ nonPackaged = '/boot/system/non-packaged'
 
 def recipe_field(text, key):
     m = re.search(r'^' + key + r'="(.*?)"', text, re.M | re.S)
-    return m.group(1).strip() if m else ''
+    # a backslash-newline inside the quotes continues the line, as bash reads it
+    return re.sub(r'\s*\\\n\s*', ' ', m.group(1)).strip() if m else ''
 
 
 def elf_dynamic(path):
@@ -47,6 +48,18 @@ def elf_dynamic(path):
     soname = re.findall(r'\(SONAME\).*\[(.*)\]', out)
     needed = re.findall(r'\(NEEDED\).*\[(.*)\]', out)
     return (soname[0] if soname else None), needed
+
+
+def has_resources(path):
+    # Haiku resources (xres, rc) sit after the ELF's last byte, the section header table: strip
+    # rewrites the file and drops them (NetSurf: its CSS, icons, messages)
+    data = open(path, 'rb').read(64)
+    if data[4] != 2:    # ELFCLASS64 only (arm64)
+        return False
+    shoff = int.from_bytes(data[0x28:0x30], 'little')
+    shentsize = int.from_bytes(data[0x3a:0x3c], 'little')
+    shnum = int.from_bytes(data[0x3c:0x3e], 'little')
+    return os.path.getsize(path) > shoff + shentsize * shnum
 
 
 def lib_base(soname):
@@ -103,6 +116,11 @@ def main():
     parser.add_argument('--source-package', action='store_true',
         help='also <port>_source: the patched sources, as HaikuPorts source packages hold them '
             '(jam builds parts of some, e.g. zstd for packagefs)')
+    parser.add_argument('--provides', action='append', default=[],
+        help='a further resolvable of the runtime package, at the port\'s version (e.g. app:NetSurf)')
+    parser.add_argument('--requires', action='append', default=[],
+        help='a further requirement of the runtime package, one that NEEDED entries cannot show '
+            '(e.g. ca_root_certificates for openssl3 and curl)')
     parser.add_argument('--devel-bin', action='append', default=[],
         help='a program of bin/ that goes into the _devel package (e.g. sdl2-config)')
     args = parser.parse_args()
@@ -173,11 +191,14 @@ def main():
                     path = os.path.join(dirpath, f)
                     if not os.path.islink(path) and open(path, 'rb').read(4) == b'\x7fELF':
                         programNeeded.extend(elf_dynamic(path)[1])
-                        subprocess.run([tools + 'strip', path], check=True)
+                        if has_resources(path):
+                            print(f'package-port: {path}: has resources, not stripped')
+                        else:
+                            subprocess.run([tools + 'strip', path], check=True)
 
-    provides = [f'{port} = {version}-{args.revision}']
+    provides = [f'{port} = {version}-{args.revision}'] + [f'{p} = {version}' for p in args.provides]
     develProvides = [f'{port}_devel = {version}-{args.revision}']
-    requires = {'haiku'}
+    requires = {'haiku'} | set(args.requires)
     for soname, libVersion, needed in libs:
         base = lib_base(soname)
         major = libVersion.split('.')[0]

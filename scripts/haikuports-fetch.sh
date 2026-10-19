@@ -23,7 +23,10 @@ if not uris:
     sys.exit(f'{recipe}: no SOURCE_URI')
 rev = field('srcGitRev') or ''
 home = field('HOMEPAGE') or ''
-subst = lambda s: s.replace('${portVersion}', version).replace('$portVersion', version) \
+# ${portVersion//./_}: bash's replace-all expansion (curl: curl-8_22_0)
+subst = lambda s: re.sub(r'\$\{portVersion//\\?(.)/([^}]*)\}',
+        lambda m: version.replace(m.group(1), m.group(2)), s) \
+    .replace('${portVersion}', version).replace('$portVersion', version) \
     .replace('${portName}', port).replace('$portName', port) \
     .replace('${srcGitRev}', rev).replace('$srcGitRev', rev) \
     .replace('${HOMEPAGE}', home).replace('$HOMEPAGE', home)
