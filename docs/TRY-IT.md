@@ -40,6 +40,9 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB).
 
+These steps are the scripts the port is built with every day, but the sequence has not yet been run
+from scratch on a clean machine; report what breaks.
+
 ## Flash and boot
 
 Write it to an SD card (all data on the card is lost; check the device name first):
