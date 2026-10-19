@@ -136,22 +136,25 @@ if [ ${#bins[@]} -gt 0 ]; then
 	done
 	echo "mkimage-pi4: added ${bins[*]##*/}"
 fi
+# one bfs_shell argument, double-quoted (bfs_shell splits on blanks; inside quotes only \ and " are
+# escaped)
+fssh_quote() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "$s"; }
 for tree in ${trees[@]+"${trees[@]}"}; do
 	[ -d "$tree" ] || { echo "mkimage-pi4: --add-tree $tree is not a directory" >&2; exit 1; }
 	npDir=/myfs/system/non-packaged
 	{
 		(cd "$tree" && find . -mindepth 1 -type d -printf '%P\n') | sort | while read -r d; do
-			echo "mkdir -p $npDir/$d"
+			echo "mkdir -p $(fssh_quote "$npDir/$d")"
 		done
 		(cd "$tree" && find . -type f -printf '%P\n') | sort | while read -r f; do
-			echo "cp :$tree/$f $npDir/$f"
-			echo "chmod 755 $npDir/$f"
+			echo "cp $(fssh_quote ":$tree/$f") $(fssh_quote "$npDir/$f")"
+			echo "chmod 755 $(fssh_quote "$npDir/$f")"
 		done
 		echo sync
 	} | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-tree.log" 2>&1 || true
 	# verify every file by its size
 	(cd "$tree" && find . -type f -printf '%P\n') | while read -r f; do
-		echo "ls $npDir/$f" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
+		echo "ls $(fssh_quote "$npDir/$f")" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
 			| grep -q " $(stat -c %s "$tree/$f") .*$(basename "$f")" \
 			|| { cat "$tmp/bfs-tree.log" >&2; echo "mkimage-pi4: $f of $tree not written" >&2; exit 1; }
 	done
