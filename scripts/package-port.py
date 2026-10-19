@@ -81,7 +81,7 @@ requires {{
 '''
 
 
-def create(directory, info, out):
+def create(directory, info, out, extract=True):
     with open(os.path.join(directory, '.PackageInfo'), 'w') as f:
         f.write(info)
     if os.path.exists(out):
@@ -89,8 +89,9 @@ def create(directory, info, out):
     subprocess.run([pkgtool, 'create', '-q', '-C', directory, '-i',
         os.path.join(directory, '.PackageInfo'), out], check=True)
     os.remove(os.path.join(directory, '.PackageInfo'))
-    subprocess.run([pkgtool, 'extract', '-C', os.path.join(sysroot, 'boot/system'), out],
-        check=True)
+    if extract:
+        subprocess.run([pkgtool, 'extract', '-C', os.path.join(sysroot, 'boot/system'), out],
+            check=True)
     print(f'package-port: {out} ({os.path.getsize(out)} bytes)')
 
 
@@ -99,6 +100,9 @@ def main():
     parser.add_argument('recipe')
     parser.add_argument('--revision', default='1')
     parser.add_argument('--static-suffix', default='')
+    parser.add_argument('--source-package', action='store_true',
+        help='also <port>_source: the patched sources, as HaikuPorts source packages hold them '
+            '(jam builds parts of some, e.g. zstd for packagefs)')
     parser.add_argument('--devel-bin', action='append', default=[],
         help='a program of bin/ that goes into the _devel package (e.g. sdl2-config)')
     args = parser.parse_args()
@@ -236,6 +240,16 @@ def main():
                 shutil.copy(text, os.path.join(directory, 'data/licenses', license))
 
     out = os.path.join(root, 'artifacts/packages')
+    if args.source_package:
+        source = os.path.join(work, 'source')
+        revisioned = f'{port}-{version}-{args.revision}'
+        shutil.copytree(os.path.join(root, 'artifacts/cross-ports', recipeName, 'source'),
+            os.path.join(source, 'develop/sources', revisioned, 'sources'), symlinks=True)
+        info = package_info(port + '_source', version, args.revision, summary
+            + ' (source)', licenses, copyrights, [f'{port}_source = {version}-{args.revision}'],
+            []).replace('architecture\tarm64', 'architecture\tsource')
+        create(source, info, os.path.join(out, f'{port}_source-{version}-{args.revision}-source.hpkg'),
+            extract=False)
     runtimeFiles = [f for d, _, fs in os.walk(runtime) for f in fs if '/data/licenses' not in d]
     if runtimeFiles:
         create(runtime, package_info(port, version, args.revision, summary, licenses,

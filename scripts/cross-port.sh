@@ -16,7 +16,8 @@
 #   e.g. scripts/cross-port.sh sources/haikuports/media-libs/libsdl2/libsdl2-2.32.10.recipe cmake \
 #            -DSDL_STATIC=OFF -DSDL_RPATH=OFF
 #
-# Build directory: artifacts/cross-ports/<port>-<version>/ (src/, build/, install/), recreated each run.
+# Build directory: artifacts/cross-ports/<port>-<version>/ (src/, source/: src/ before the build,
+# build/, install/), recreated each run.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -ge 2 ] || { echo "usage: $0 RECIPE cmake|meson|autotools|script [args...]" >&2; exit 2; }
@@ -61,6 +62,9 @@ for p in $(field PATCHES | subst); do
 	echo "cross-port: applying $p"
 	patch -s -p1 -d "$work/src" < "$portDir/patches/$p"
 done
+
+# the patched, unbuilt sources (package-port.py --source-package)
+cp -a "$work/src" "$work/source"
 
 tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
 case "$system" in

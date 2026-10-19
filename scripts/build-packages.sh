@@ -6,6 +6,7 @@
 #   mesa, mesa_devel, glu, glu_devel       scripts/build-gl-stack.sh + scripts/package-gl-stack.sh
 #   libogg, libvorbis, fluidlite (+_devel) scripts/cross-port.sh + scripts/package-port.py
 #   libsdl2, ffmpeg6                       scripts/cross-port.sh + scripts/package-port.py
+#   zstd (+ zstd_source)                   scripts/cross-port.sh + scripts/package-port.py
 #   gzip, tar, bzip2, unzip                scripts/build-base-ports.sh
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
 #
@@ -54,6 +55,17 @@ fi
 make -j"$(nproc)"
 make install DESTDIR="${DEST%/boot/system/non-packaged}"'
 "$root/scripts/package-port.py" "$ports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
+
+# zstd: the packages from Haiku's servers are zstd-compressed, and packagefs and the package kit
+# read them only with jam's zstd feature (zstd_devel + zstd_source: packagefs compiles the decoder)
+"$root/scripts/cross-port.sh" "$ports/app-arch/zstd/zstd-1.5.7.recipe" script '
+make -j"$(nproc)" CC="$CC" AR="$AR" RANLIB="$RANLIB" prefix=/boot/system/non-packaged lib-release \
+	zstd-release
+make CC="$CC" AR="$AR" RANLIB="$RANLIB" prefix=/boot/system/non-packaged \
+	DESTDIR="${DEST%/boot/system/non-packaged}" install
+rm -f "$DEST"/lib/libzstd.a
+rm -rf "$DEST/share"'
+"$root/scripts/package-port.py" "$ports/app-arch/zstd/zstd-1.5.7.recipe" --source-package
 
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/fetch-any-packages.sh"

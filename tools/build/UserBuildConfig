@@ -36,6 +36,9 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	AddHaikuImageSystemPackages libsdl2 ;
 	# ffmpeg: the media kit's ffmpeg plugin (MediaPlayer's decoders)
 	AddHaikuImageSystemPackages ffmpeg6 ;
+	# as the nightly profile: the system sounds and the MIDI soundfont (zstd-compressed "any" packages
+	# from the x86_64 repository: packagefs reads them with the zstd feature)
+	AddHaikuImageSystemPackages sounds_community_default timgmsoundfont ;
 	# default locale settings: no first-boot prompt (it would hold the desktop back until someone
 	# picks a language)
 	# (tools/build/make-locale-settings.py wrote it: language "en")
