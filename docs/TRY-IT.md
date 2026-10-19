@@ -23,9 +23,7 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver |
 
 Known limits: no HDMI audio, no package repository for `pkgman` yet (software comes in the image), no
-WebKit browser (WebPositive) yet — NetSurf is the browser, the games are not packaged (see below), and
-short CPU stalls under heavy SD-card load (about one a minute in a 15-minute stress test, 25–50 ms
-each, ended by a kernel watchdog: an interrupt-controller problem whose cause is still open).
+WebKit browser (WebPositive) yet — NetSurf is the browser, and the games are not packaged (see below).
 
 ## Build the image
 
