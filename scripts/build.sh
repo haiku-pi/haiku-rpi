@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build.sh [jam args...] — build Haiku arm64 in sources/haiku/generated.arm64 under the heavy-build
 # guard (default target: @minimum-mmc), then make the Pi SD image (scripts/mkimage-pi4.sh; for
-# @pi-mmc, the regular image: artifacts/images/haiku-pi4-regular.img; @nightly-mmc: -nightly.img).
+# @pi-mmc, the regular image: artifacts/images/haiku-pi4-regular.img, or $PI_IMAGE_OUT; @nightly-mmc:
+# -nightly.img).
 # Log: artifacts/build/<ts>.log; prints the log's warnings count and the JAM rc.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,6 +33,7 @@ case " $* " in
 *pi-mmc*)
 	# (an haiku-mmc-image profile always writes haiku-mmc.image)
 	"$root/scripts/mkimage-pi4.sh" --in "$root/sources/haiku/generated.arm64/haiku-mmc.image" \
-		--out "$root/artifacts/images/haiku-pi4-regular.img" > "$log.mkimage" && head -n 1 "$log.mkimage" ;;
+		--out "${PI_IMAGE_OUT:-$root/artifacts/images/haiku-pi4-regular.img}" > "$log.mkimage" \
+		&& head -n 1 "$log.mkimage" ;;
 *mmc*) "$root/scripts/mkimage-pi4.sh" > "$log.mkimage" && head -n 1 "$log.mkimage" ;;
 esac
