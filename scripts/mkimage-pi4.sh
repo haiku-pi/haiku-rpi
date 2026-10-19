@@ -26,7 +26,8 @@
 # and the loader boots Haiku from the BFS partition (p2). p1's MBR type is set to 0x0c (FAT32 LBA),
 # which every Pi firmware accepts (Haiku's image uses 0xef).
 # The BFS partition gets the WiFi chip's firmware (scripts/fetch-wifi-firmware.sh) in
-# /boot/system/non-packaged/data/firmware/broadcomfmac/.
+# /boot/system/non-packaged/data/firmware/broadcomfmac/, and its Bluetooth patch RAM file
+# (BCM4345C0.hcd, for the bcm2711_bt driver) in /boot/system/non-packaged/data/firmware/brcm/.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 in="$root/sources/haiku/generated.arm64/haiku-mmc.image"
@@ -103,6 +104,17 @@ wifiDir=/myfs/system/non-packaged/data/firmware/broadcomfmac
 echo "ls $wifiDir" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
 	| grep -q "$(stat -c %s "$wifi/brcmfmac43455-sdio.bin").*brcmfmac43455-sdio.bin" \
 	|| { cat "$tmp/bfs-wifi.log" >&2; echo "mkimage-pi4: WiFi firmware not written" >&2; exit 1; }
+btDir=/myfs/system/non-packaged/data/firmware/brcm
+{
+	echo "mkdir -p $btDir"
+	for f in BCM4345C0.hcd BCM-LEGAL.txt copyright.bluez-firmware; do
+		echo "cp :$wifi/$f $btDir/$f"
+	done
+	echo sync
+} | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-bt.log" 2>&1 || true
+echo "ls $btDir" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
+	| grep -q "$(stat -c %s "$wifi/BCM4345C0.hcd").*BCM4345C0.hcd" \
+	|| { cat "$tmp/bfs-bt.log" >&2; echo "mkimage-pi4: Bluetooth firmware not written" >&2; exit 1; }
 
 if [ ${#settings[@]} -gt 0 ]; then
 	# kernel settings file on the BFS partition (also read for safemode options)
