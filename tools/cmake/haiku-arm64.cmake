@@ -27,6 +27,13 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 set(CMAKE_LIBRARY_PATH "/develop/lib" "/lib")
 set(CMAKE_INCLUDE_PATH "/develop/headers")
 
-set(ENV{PKG_CONFIG_SYSROOT_DIR} "")
+# the .pc files hold the paths on the target: pkg-config puts the sysroot in front
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "${HAIKU_PI_SYSROOT}")
 set(ENV{PKG_CONFIG_LIBDIR}
-	"${HAIKU_PI_SYSROOT}/boot/system/non-packaged/develop/lib/pkgconfig:${HAIKU_PI_SYSROOT}/boot/system/develop/lib/pkgconfig")
+	"${HAIKU_PI_SYSROOT}/boot/system/non-packaged/develop/lib/pkgconfig:${HAIKU_PI_SYSROOT}/boot/system/non-packaged/lib/pkgconfig:${HAIKU_PI_SYSROOT}/boot/system/develop/lib/pkgconfig")
+
+# libraries that a pkg-config module names without a directory (e.g. -lvorbis) are found in the
+# non-packaged ports too
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-L${HAIKU_PI_SYSROOT}/boot/system/non-packaged/lib")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-L${HAIKU_PI_SYSROOT}/boot/system/non-packaged/lib")
+set(CMAKE_MODULE_LINKER_FLAGS_INIT "-L${HAIKU_PI_SYSROOT}/boot/system/non-packaged/lib")

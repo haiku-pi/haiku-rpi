@@ -21,8 +21,12 @@ uris = (field('SOURCE_URI') or '').split()
 checksum = field('CHECKSUM_SHA256')
 if not uris:
     sys.exit(f'{recipe}: no SOURCE_URI')
+rev = field('srcGitRev') or ''
+home = field('HOMEPAGE') or ''
 subst = lambda s: s.replace('${portVersion}', version).replace('$portVersion', version) \
-    .replace('${portName}', port).replace('$portName', port)
+    .replace('${portName}', port).replace('$portName', port) \
+    .replace('${srcGitRev}', rev).replace('$srcGitRev', rev) \
+    .replace('${HOMEPAGE}', home).replace('$HOMEPAGE', home)
 download = os.path.join(os.path.dirname(recipe), 'download')
 os.makedirs(download, exist_ok=True)
 filename = field('SOURCE_FILENAME')

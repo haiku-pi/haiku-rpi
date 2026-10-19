@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""package-port.py — package a port built by scripts/cross-port.sh as HaikuPorts-style hpkgs.
+
+    scripts/package-port.py RECIPE [--revision N] [--static-suffix SUFFIX]
+
+From artifacts/cross-ports/<port>-<version>/install/boot/system/non-packaged (what cross-port.sh
+installed) it makes, in artifacts/packages/:
+
+  <port>-<version>-<N>-arm64.hpkg        the shared libraries (named by their soname, stripped)
+  <port>_devel-<version>-<N>-arm64.hpkg  headers (develop/headers), static libraries, develop/lib
+                                         symlinks (lib<name>.so and the soname, as HaikuPorts'
+                                         prepareInstalledDevelLibs makes them), pkg-config files
+                                         with the packaged paths
+
+Provides come from the sonames, requires from the libraries' NEEDED entries (other ports in the
+sysroot, libstdc++/libgcc_s; the system's own libraries need nothing but "haiku"), the license
+and summary from the recipe. --static-suffix renames lib<name>.a to lib<name><SUFFIX>.a (fluidlite:
+"-static", as jam's fluidlite build feature expects). Both packages are also extracted into the
+sysroot's boot/system, as the image will have them. The vendor is the HaikuPorts repository's
+("Haiku Project"): package_repo refuses another one in it; the packager says who built them.
+"""
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+gen = os.path.join(root, 'sources/haiku/generated.arm64')
+tools = os.path.join(gen, 'cross-tools-arm64/bin/aarch64-unknown-haiku-')
+pkgtool = os.path.join(gen, 'objects/linux/x86_64/release/tools/package/package')
+sysroot = os.path.join(root, 'artifacts/sysroot-arm64')
+nonPackaged = '/boot/system/non-packaged'
+
+
+def recipe_field(text, key):
+    m = re.search(r'^' + key + r'="(.*?)"', text, re.M | re.S)
+    return m.group(1).strip() if m else ''
+
+
+def elf_dynamic(path):
+    out = subprocess.run([tools + 'readelf', '-d', path], capture_output=True, text=True,
+        check=True).stdout
+    soname = re.findall(r'\(SONAME\).*\[(.*)\]', out)
+    needed = re.findall(r'\(NEEDED\).*\[(.*)\]', out)
+    return (soname[0] if soname else None), needed
+
+
+def lib_base(soname):
+    return soname.split('.so')[0]
+
+
+def package_info(name, version, revision, summary, licenses, copyrights, provides, requires):
+    def block(items):
+        return '\n'.join('\t' + i for i in items)
+    licenses = ' '.join('"%s"' % l for l in licenses)
+    copyrights = ' '.join('"%s"' % c.replace('"', "'") for c in copyrights)
+    return f'''name			{name}
+version			{version}-{revision}
+architecture	arm64
+summary			"{summary}"
+description		"{summary}. Cross-built for the Raspberry Pi 4 by the haiku-pi project from the HaikuPorts recipe."
+packager		"haiku-pi build farm <build@haiku-pi.invalid>"
+vendor			"Haiku Project"
+licenses		{{ {licenses} }}
+copyrights		{{ {copyrights} }}
+provides {{
+{block(provides)}
+}}
+requires {{
+{block(requires)}
+}}
+'''
+
+
+def create(directory, info, out):
+    with open(os.path.join(directory, '.PackageInfo'), 'w') as f:
+        f.write(info)
+    if os.path.exists(out):
+        os.remove(out)
+    subprocess.run([pkgtool, 'create', '-q', '-C', directory, '-i',
+        os.path.join(directory, '.PackageInfo'), out], check=True)
+    os.remove(os.path.join(directory, '.PackageInfo'))
+    subprocess.run([pkgtool, 'extract', '-C', os.path.join(sysroot, 'boot/system'), out],
+        check=True)
+    print(f'package-port: {out} ({os.path.getsize(out)} bytes)')
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('recipe')
+    parser.add_argument('--revision', default='1')
+    parser.add_argument('--static-suffix', default='')
+    args = parser.parse_args()
+
+    recipeName = os.path.basename(args.recipe)[:-len('.recipe')]
+    port, version = recipeName.rsplit('-', 1)
+    text = open(args.recipe).read()
+    summary = recipe_field(text, 'SUMMARY') or port
+    licenses = [l.strip() for l in recipe_field(text, 'LICENSE').split('\n') if l.strip()]
+    copyrights = [c.strip() for c in recipe_field(text, 'COPYRIGHT').split('\n') if c.strip()] \
+        or [f'The {port} authors']
+
+    install = os.path.join(root, 'artifacts/cross-ports', recipeName, 'install') + nonPackaged
+    if not os.path.isdir(install):
+        sys.exit(f'package-port: {install} missing: run scripts/cross-port.sh first')
+    work = os.path.join(root, 'artifacts/packages/build', port)
+    shutil.rmtree(work, ignore_errors=True)
+    runtime = os.path.join(work, 'runtime')
+    devel = os.path.join(work, 'devel')
+    os.makedirs(os.path.join(runtime, 'lib'))
+    os.makedirs(os.path.join(devel, 'develop/lib'))
+
+    # shared libraries: the real files, by soname
+    libs = []
+    libDir = os.path.join(install, 'lib')
+    for f in sorted(os.listdir(libDir)):
+        path = os.path.join(libDir, f)
+        if os.path.islink(path) or not os.path.isfile(path) or '.so' not in f:
+            continue
+        soname, needed = elf_dynamic(path)
+        if soname is None:
+            continue
+        subprocess.run([tools + 'strip', '--strip-unneeded', '-o',
+            os.path.join(runtime, 'lib', soname), path], check=True)
+        libVersion = f.split('.so')[1].lstrip('.') or version
+        libs.append((soname, libVersion, needed))
+    sonames = {s for s, _, _ in libs}
+
+    provides = [f'{port} = {version}-{args.revision}']
+    develProvides = [f'{port}_devel = {version}-{args.revision}']
+    requires = {'haiku'}
+    for soname, libVersion, needed in libs:
+        base = lib_base(soname)
+        major = libVersion.split('.')[0]
+        compat = f' compat >= {major}' if major.isdigit() else ''
+        provides.append(f'lib:{base} = {libVersion}{compat}')
+        develProvides.append(f'devel:{base} = {libVersion}{compat}')
+        for n in needed:
+            if n in sonames:
+                continue
+            if os.path.exists(os.path.join(sysroot + nonPackaged, 'lib', n)) \
+                    or lib_base(n) in ('libstdc++', 'libgcc_s'):
+                requires.add(f'lib:{lib_base(n)}')
+            # else: a system library (libroot, libbe, ...), in "haiku"
+
+    # devel: headers, static libraries, symlinks, pkg-config
+    if os.path.isdir(os.path.join(install, 'include')):
+        shutil.copytree(os.path.join(install, 'include'), os.path.join(devel, 'develop/headers'),
+            symlinks=True)
+    for f in sorted(os.listdir(libDir)):
+        if f.endswith('.a'):
+            target = f[:-2] + args.static_suffix + '.a'
+            shutil.copy(os.path.join(libDir, f), os.path.join(devel, 'develop/lib', target))
+    for soname, _, _ in libs:
+        for linkName in {lib_base(soname) + '.so', soname}:
+            os.symlink('../../lib/' + soname, os.path.join(devel, 'develop/lib', linkName))
+    pkgconfigDir = os.path.join(libDir, 'pkgconfig')
+    if os.path.isdir(pkgconfigDir):
+        os.makedirs(os.path.join(devel, 'develop/lib/pkgconfig'))
+        for f in sorted(os.listdir(pkgconfigDir)):
+            pc = open(os.path.join(pkgconfigDir, f)).read()
+            pc = re.sub(r'^prefix=.*$', 'prefix=/boot/system', pc, flags=re.M)
+            pc = re.sub(r'^libdir=.*$', 'libdir=${prefix}/develop/lib', pc, flags=re.M)
+            pc = re.sub(r'^includedir=.*$', 'includedir=${prefix}/develop/headers', pc,
+                flags=re.M)
+            pc = pc.replace(nonPackaged + '/include', '/boot/system/develop/headers')
+            pc = pc.replace(nonPackaged + '/lib', '/boot/system/develop/lib')
+            open(os.path.join(devel, 'develop/lib/pkgconfig', f), 'w').write(pc)
+
+    out = os.path.join(root, 'artifacts/packages')
+    if libs:
+        create(runtime, package_info(port, version, args.revision, summary, licenses,
+            copyrights, provides, sorted(requires)),
+            os.path.join(out, f'{port}-{version}-{args.revision}-arm64.hpkg'))
+        develRequires = [f'{port} == {version}-{args.revision}']
+    else:
+        develRequires = ['haiku']
+    create(devel, package_info(port + '_devel', version, args.revision, summary
+        + ' (development files)', licenses, copyrights, develProvides, develRequires),
+        os.path.join(out, f'{port}_devel-{version}-{args.revision}-arm64.hpkg'))
+
+
+main()
