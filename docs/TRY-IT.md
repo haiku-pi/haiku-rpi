@@ -30,8 +30,9 @@ comes up).
 On an x86-64 Linux host (Ubuntu or similar) with a systemd user session (the heavy build steps run
 in a memory-capped `systemd-run --user` scope).
 
-**Host prerequisites:** Haiku's own `jam` (build it from the buildtools sources after
-`bootstrap.sh`: `make -C sources/buildtools/jam` and put the binary on your `PATH`), and the packages
+**Host prerequisites:** Haiku's own `jam` — after `bootstrap.sh`, `make -C sources/buildtools/jam` and
+`export PATH="$PWD/sources/buildtools/jam/bin.linuxx86:$PATH"` (the directory is called that on x86-64
+too) — and the packages
 `git curl xz-utils gcc g++ make bison flex texinfo autoconf automake libtool pkgconf nasm zlib1g-dev
 libssl-dev libgnutls28-dev uuid-dev gcc-aarch64-linux-gnu meson ninja-build cmake python3-mako
 python3-yaml mtools fdisk device-tree-compiler unzip`.
@@ -47,9 +48,10 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB).
 
-A from-scratch run in a fresh clone (2026-10-19) produced the image in about 30 minutes on a 16-thread
-host after four workarounds; their fixes are in the scripts now, and a second run without workarounds
-is in progress.
+Verified from scratch in a fresh clone on 2026-10-19: about 24 minutes on a 16-thread host (bootstrap
+15 of them), same image. Expected noise while jam still exits 0: on a fresh tree the first build prints
+a few `stdlib.h`/`math.h: No such file` lines (catalog extraction running before the toolchain packages
+are unpacked), and the regular build prints WonderBrush's `bitmap_compression.h`/`blending.h` lines.
 
 ## Flash and boot
 
