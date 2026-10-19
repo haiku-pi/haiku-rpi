@@ -24,7 +24,8 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 
 Known limits: no HDMI audio; no public package repository yet (software comes in the image —
 `scripts/make-repo.sh` + `scripts/serve-repo.sh` serve our packages to `pkgman` on a local network, and
-`pkgman add-repo http://<host>:8090/arm64` works); no WebKit browser (WebPositive) yet — NetSurf is the
+`pkgman add-repo http://<host>:8090/arm64` works after `pkgman drop-repo HaikuPorts`, whose server has no
+arm64 repository); no WebKit browser (WebPositive) yet — NetSurf is the
 browser; the games are not packaged (see below).
 
 ## Build the image
