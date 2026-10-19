@@ -30,7 +30,7 @@ do
 	port=${test%%|*}
 	say "building $port"
 	start=$(date +%s)
-	haikuporter -C -G -y -j4 --no-source-packages $port > /boot/home/haikuporter-$port.log 2>&1
+	haikuporter -G -y -j4 --no-source-packages $port > /boot/home/haikuporter-$port.log 2>&1
 	rc=$?
 	say "$port: haikuporter-exit $rc in $(( $(date +%s) - start )) s"
 	tail -n 25 /boot/home/haikuporter-$port.log | while read -r line; do say "log: $line"; done
