@@ -16,7 +16,8 @@
 #   jam @pi-mmc
 #       the regular image (the regular build type: media kit and servers, MediaPlayer, the full set of
 #       applications and preferences) without the nightly profile's extra packages that arm64 does not
-#       have yet (the Development and Git bundles, nano, openssh, ...): haiku-pi.mmc. Combine with
+#       have yet (the Development and Git bundles, nano, openssh, ...), as haiku-mmc.image (the
+#       profile type ignores the name). Combine with
 #       HAIKU_PI_GL (and HAIKU_PI_DEV).
 #
 # build.sh always adds -sHAIKU_NO_DOWNLOADS=1: our arm64 repository definition lists packages Haiku's

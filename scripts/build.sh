@@ -30,7 +30,8 @@ case " $* " in
 	"$root/scripts/mkimage-pi4.sh" --in "$root/sources/haiku/generated.arm64/haiku-nightly.mmc" \
 		--out "$root/artifacts/images/haiku-pi4-nightly.img" > "$log.mkimage" && head -n 1 "$log.mkimage" ;;
 *pi-mmc*)
-	"$root/scripts/mkimage-pi4.sh" --in "$root/sources/haiku/generated.arm64/haiku-pi.mmc" \
+	# (an haiku-mmc-image profile always writes haiku-mmc.image)
+	"$root/scripts/mkimage-pi4.sh" --in "$root/sources/haiku/generated.arm64/haiku-mmc.image" \
 		--out "$root/artifacts/images/haiku-pi4-regular.img" > "$log.mkimage" && head -n 1 "$log.mkimage" ;;
 *mmc*) "$root/scripts/mkimage-pi4.sh" > "$log.mkimage" && head -n 1 "$log.mkimage" ;;
 esac
