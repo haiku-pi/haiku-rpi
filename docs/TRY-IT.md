@@ -71,6 +71,19 @@ Put the card in the Pi, connect HDMI (and USB keyboard/mouse, Ethernet), power o
 screen, U-Boot and the Haiku boot log pass by; the desktop appears after about 80 s. A serial console
 (115200 8N1 on GPIO 14/15) shows the kernel log.
 
+## Without a monitor: HDMI capture card + serial console
+
+`scripts/pi-test.sh` runs an interactive session on a bench like ours (settings in `local.conf`, from
+`local.conf.example`: serial device, a power switch command, the capture card): it can first write an
+image to the card (`--regular`, or `--flash IMG`), powers the Pi on, shows the serial console live in the
+terminal (and logs it) and opens a live window from the HDMI capture card; close the window to power the
+Pi off.
+
+```sh
+scripts/pi-test.sh --regular        # write the regular image, then boot it and watch
+scripts/pi-test.sh                  # boot whatever the card holds
+```
+
 ## The games
 
 ```sh

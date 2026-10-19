@@ -43,7 +43,7 @@ cap="$HAIKU_RPI_ROOT/scripts/uart-capture.py"
 bench_lock
 hdmi_pid=""
 cleanup() {
-	[ -n "$hdmi_pid" ] && kill "$hdmi_pid" 2>/dev/null || true
+	[ -n "$hdmi_pid" ] && { pkill -P "$hdmi_pid" 2>/dev/null; kill "$hdmi_pid" 2>/dev/null; } || true
 	pi_power off || true
 	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" down >/dev/null 2>&1 || true
 	peer_netboot_restore
@@ -103,7 +103,8 @@ log="$uart_dir/$ts-$label.log"
 cap_pid=$!
 sleep 0.5
 pi_power on
-( n=0; while sleep "$hdmi_every"; do n=$((n + 1)); hdmi_snap "$hdmi_dir/$ts-$label-$(printf %02d $n).png" || true; done ) &
+# (without the bench lock's fd 9: a sleep outliving the cycle would hold the bench)
+( n=0; while sleep "$hdmi_every"; do n=$((n + 1)); hdmi_snap "$hdmi_dir/$ts-$label-$(printf %02d $n).png" || true; done ) 9>&- &
 hdmi_pid=$!
 rc=0; wait "$cap_pid" || rc=$?
 hdmi_snap "$hdmi_dir/$ts-$label-final.png" || true

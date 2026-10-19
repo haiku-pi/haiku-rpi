@@ -25,6 +25,7 @@ PYTHON="${PYTHON:-python3}"
 # bench_lock: take the bench lock on fd 9 for the rest of the calling script.
 bench_lock() {
 	exec 9>"$PI_BENCH_LOCK"
+	flock -n 9 || echo "bench: waiting for the bench lock ($PI_BENCH_LOCK: another Pi cycle)" >&2
 	if ! flock -w "${PI_BENCH_LOCK_WAIT:-3600}" 9; then
 		echo "bench: could not get $PI_BENCH_LOCK (another Pi cycle running?)" >&2
 		exit 75
