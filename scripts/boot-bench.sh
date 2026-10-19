@@ -46,8 +46,6 @@ for t in $(seq 1 "$n"); do
 	else
 		verdict=FAIL
 	fi
-	# a stuck CPU the kernel's GIC watchdog got going again (arch_int_gicv2.cpp)
-	recovered=$(grep -a -c -E 'after the SGI|gic watchdog: CPU [0-9]+ stalled' "$log" || true)
-	echo "boot-bench: trial $t/$n $verdict  $(grep -a -c . "$log") lines  $recovered recovered  $log"
+	echo "boot-bench: trial $t/$n $verdict  $(grep -a -c . "$log") lines  $log"
 done
 echo "boot-bench: $pass/$n reached the desktop ($(basename "$img"))"
