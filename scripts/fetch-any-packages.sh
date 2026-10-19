@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # fetch-any-packages.sh — put the architecture-independent ("any") HaikuPorts packages the regular
 # (@nightly) arm64 image needs, and that the arm64 build-packages repository lacks, into jam's
-# download directory: fonts, sounds, the MIDI soundfont, the user guide and welcome pages. They are
+# download directory: fonts, sounds, the MIDI soundfont, the user guide and welcome pages, the
+# firmware of the USB/PCI WiFi drivers the haiku package requires. They are
 # the x86_64 repository's files (an "any" package is the same everywhere), checked against the
 # SHA-256s below; sources/haiku's arm64 repository definition lists them.
 #
@@ -19,6 +20,9 @@ packages=(
 	"haiku_userguide-2026_08_11-1 e150dea40b72757277b7899830e40b8829596897e46c3631010c13ccdaa9886f"
 	"haiku_userguide_en-2026_08_11-1 6bb65e86c3a7ae7f421b859a020feb1dc9ba1025273985c8067909a432911ac9"
 	"haiku_welcome-2026_08_11-1 d977c5402d3f582d3a7d5a5dc912252626e728022d9d98de9a2557e48b0a5cfa"
+	"intel_wifi_firmwares-2025_02_11-1 8a8a5cb0aeed4f3ad2cb95b87e980dd85b143c7382985127606d3abacef637a1"
+	"realtek_wifi_firmwares-2019_01_02-1 1e5218b7edd1b7e8d5c0e24b718a22ce104a766608272b35446915efcde17c40"
+	"ralink_wifi_firmwares-2023_08_04-1 b96ff9d0fc8eb1e3a397a0f62b1e7d0d2cd084cc5d063d7a269afd754f302b1f"
 )
 mkdir -p "$download"
 for entry in "${packages[@]}"; do

@@ -30,8 +30,19 @@ subst = lambda s: s.replace('${portVersion}', version).replace('$portVersion', v
 download = os.path.join(os.path.dirname(recipe), 'download')
 os.makedirs(download, exist_ok=True)
 filename = field('SOURCE_FILENAME')
+# ftpmirror.gnu.org redirects to a random mirror, some of which serve something else: also try the
+# main server
+candidates = []
 for uri in map(subst, uris):
+    candidates.append(uri)
+    if '://ftpmirror.gnu.org/' in uri:
+        candidates.append(uri.replace('://ftpmirror.gnu.org/', '://ftp.gnu.org/gnu/'))
+for uri in candidates:
     target = os.path.join(download, subst(filename) if filename else uri.split('#')[0].rsplit('/', 1)[1])
+    if os.path.exists(target) and checksum \
+            and hashlib.sha256(open(target, 'rb').read()).hexdigest() == checksum:
+        print(f'haikuports-fetch: {target} ({os.path.getsize(target)} bytes, sha256 ok)')
+        break
     try:
         data = urllib.request.urlopen(uri, timeout=60).read()
     except Exception as e:

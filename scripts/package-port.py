@@ -6,7 +6,8 @@
 From artifacts/cross-ports/<port>-<version>/install/boot/system/non-packaged (what cross-port.sh
 installed) it makes, in artifacts/packages/:
 
-  <port>-<version>-<N>-arm64.hpkg        the shared libraries (named by their soname, stripped)
+  <port>-<version>-<N>-arm64.hpkg        the shared libraries (named by their soname, stripped) and
+                                         the programs in bin/ (stripped; provides cmd:<name>)
   <port>_devel-<version>-<N>-arm64.hpkg  headers (develop/headers), static libraries, develop/lib
                                          symlinks (lib<name>.so and the soname, as HaikuPorts'
                                          prepareInstalledDevelLibs makes them), pkg-config files
@@ -115,8 +116,9 @@ def main():
 
     # shared libraries: the real files, by soname
     libs = []
+    programNeeded = []
     libDir = os.path.join(install, 'lib')
-    for f in sorted(os.listdir(libDir)):
+    for f in (sorted(os.listdir(libDir)) if os.path.isdir(libDir) else []):
         path = os.path.join(libDir, f)
         if os.path.islink(path) or not os.path.isfile(path) or '.so' not in f:
             continue
@@ -129,6 +131,24 @@ def main():
         libs.append((soname, libVersion, needed))
     sonames = {s for s, _, _ in libs}
 
+    # programs (symlinks between them kept: gunzip -> gzip)
+    commands = []
+    binDir = os.path.join(install, 'bin')
+    if os.path.isdir(binDir):
+        os.makedirs(os.path.join(runtime, 'bin'))
+        for f in sorted(os.listdir(binDir)):
+            path = os.path.join(binDir, f)
+            target = os.path.join(runtime, 'bin', f)
+            if os.path.islink(path):
+                os.symlink(os.readlink(path), target)
+            elif open(path, 'rb').read(4) == b'\x7fELF':
+                subprocess.run([tools + 'strip', '-o', target, path], check=True)
+                libs_needed = elf_dynamic(path)[1]
+                programNeeded.extend(libs_needed)
+            else:
+                shutil.copy(path, target)
+            commands.append(f)
+
     provides = [f'{port} = {version}-{args.revision}']
     develProvides = [f'{port}_devel = {version}-{args.revision}']
     requires = {'haiku'}
@@ -138,19 +158,22 @@ def main():
         compat = f' compat >= {major}' if major.isdigit() else ''
         provides.append(f'lib:{base} = {libVersion}{compat}')
         develProvides.append(f'devel:{base} = {libVersion}{compat}')
-        for n in needed:
-            if n in sonames:
-                continue
-            if os.path.exists(os.path.join(sysroot + nonPackaged, 'lib', n)) \
-                    or lib_base(n) in ('libstdc++', 'libgcc_s'):
-                requires.add(f'lib:{lib_base(n)}')
-            # else: a system library (libroot, libbe, ...), in "haiku"
+        programNeeded.extend(needed)
+    for c in commands:
+        provides.append(f'cmd:{c.replace("+", "_")} = {version}')
+    for n in programNeeded:
+        if n in sonames:
+            continue
+        if os.path.exists(os.path.join(sysroot + nonPackaged, 'lib', n)) \
+                or lib_base(n) in ('libstdc++', 'libgcc_s'):
+            requires.add(f'lib:{lib_base(n)}')
+        # else: a system library (libroot, libbe, ...), in "haiku"
 
     # devel: headers, static libraries, symlinks, pkg-config
     if os.path.isdir(os.path.join(install, 'include')):
         shutil.copytree(os.path.join(install, 'include'), os.path.join(devel, 'develop/headers'),
             symlinks=True)
-    for f in sorted(os.listdir(libDir)):
+    for f in (sorted(os.listdir(libDir)) if os.path.isdir(libDir) else []):
         if f.endswith('.a'):
             target = f[:-2] + args.static_suffix + '.a'
             shutil.copy(os.path.join(libDir, f), os.path.join(devel, 'develop/lib', target))
@@ -170,14 +193,29 @@ def main():
             pc = pc.replace(nonPackaged + '/lib', '/boot/system/develop/lib')
             open(os.path.join(devel, 'develop/lib/pkgconfig', f), 'w').write(pc)
 
+    # licenses that are not among the system's come with the port (as haikuporter does)
+    portLicenses = os.path.join(os.path.dirname(os.path.realpath(args.recipe)), 'licenses')
+    for license in licenses:
+        text = os.path.join(portLicenses, license)
+        if os.path.isfile(text):
+            for directory in (runtime, devel):
+                os.makedirs(os.path.join(directory, 'data/licenses'), exist_ok=True)
+                shutil.copy(text, os.path.join(directory, 'data/licenses', license))
+
     out = os.path.join(root, 'artifacts/packages')
-    if libs:
+    if libs or commands:
         create(runtime, package_info(port, version, args.revision, summary, licenses,
             copyrights, provides, sorted(requires)),
             os.path.join(out, f'{port}-{version}-{args.revision}-arm64.hpkg'))
         develRequires = [f'{port} == {version}-{args.revision}']
     else:
         develRequires = ['haiku']
+    develFiles = [os.path.join(d, f) for d, _, fs in os.walk(devel) for f in fs
+            if '/data/licenses' not in d] \
+        + [os.path.join(d, x) for d, xs, _ in os.walk(devel) for x in xs
+            if os.path.islink(os.path.join(d, x))]
+    if not develFiles:
+        return
     create(devel, package_info(port + '_devel', version, args.revision, summary
         + ' (development files)', licenses, copyrights, develProvides, develRequires),
         os.path.join(out, f'{port}_devel-{version}-{args.revision}-arm64.hpkg'))

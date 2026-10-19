@@ -7,7 +7,11 @@
 #
 #   scripts/cross-port.sh RECIPE cmake [cmake args...]
 #   scripts/cross-port.sh RECIPE meson [meson args...]
-#   scripts/cross-port.sh RECIPE autotools [configure args...]   (autoreconf -fi first, as recipes do)
+#   scripts/cross-port.sh RECIPE script 'COMMANDS'   (bespoke Makefiles: COMMANDS run in the source
+#                                     tree with CC, CXX, AR, RANLIB, STRIP and DEST, the install prefix
+#                                     inside the staging tree, in the environment)
+#   scripts/cross-port.sh RECIPE autotools [configure args...]   (autoreconf -fi first, as recipes do;
+#                                                                 AUTORECONF=0 in the environment: not)
 #
 #   e.g. scripts/cross-port.sh sources/haikuports/media-libs/libsdl2/libsdl2-2.32.10.recipe cmake \
 #            -DSDL_STATIC=OFF -DSDL_RPATH=OFF
@@ -15,7 +19,7 @@
 # Build directory: artifacts/cross-ports/<port>-<version>/ (src/, build/, install/), recreated each run.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-[ $# -ge 2 ] || { echo "usage: $0 RECIPE cmake|meson|autotools [args...]" >&2; exit 2; }
+[ $# -ge 2 ] || { echo "usage: $0 RECIPE cmake|meson|autotools|script [args...]" >&2; exit 2; }
 recipe="$(realpath "$1")" system="$2"; shift 2
 sysroot="$root/artifacts/sysroot-arm64"
 prefix=/boot/system/non-packaged
@@ -34,16 +38,18 @@ subst() {
 		-e "s|\\\$HOMEPAGE|$homepage|g; s|\\\${HOMEPAGE}|$homepage|g"
 }
 
-"$root/scripts/haikuports-fetch.sh" "$recipe" >/dev/null
-uri="$(field SOURCE_URI | subst)"
-archive="$portDir/download/$(field SOURCE_FILENAME | subst)"
-[ -f "$archive" ] || archive="$portDir/download/$(basename "${uri%%#*}")"
+# the fetch script names the file it got (or found)
+archive="$("$root/scripts/haikuports-fetch.sh" "$recipe" | sed -n 's/^haikuports-fetch: \(.*\) ([0-9]* bytes, sha256 ok)$/\1/p' | head -n 1)"
+[ -f "$archive" ] || { echo "cross-port: no source for $recipe" >&2; exit 1; }
 sourceDir="$(field SOURCE_DIR | subst)"
 
 work="$root/artifacts/cross-ports/$name"
 rm -rf "$work"
 mkdir -p "$work/unpack"
-tar -xf "$archive" -C "$work/unpack"
+case "$archive" in
+*.zip) unzip -q "$archive" -d "$work/unpack" ;;
+*) tar -xf "$archive" -C "$work/unpack" ;;
+esac
 if [ -n "$sourceDir" ]; then
 	mv "$work/unpack/$sourceDir" "$work/src"
 else
@@ -56,7 +62,18 @@ for p in $(field PATCHES | subst); do
 	patch -s -p1 -d "$work/src" < "$portDir/patches/$p"
 done
 
+tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
 case "$system" in
+script)
+	mkdir -p "$work/install$prefix"
+	(cd "$work/src" && CC="$tools-gcc --sysroot=$sysroot" CXX="$tools-g++ --sysroot=$sysroot" \
+		AR="$tools-ar" RANLIB="$tools-ranlib" STRIP="$tools-strip" DEST="$work/install$prefix" SYSROOT="$sysroot" \
+		bash -euo pipefail -c "$1") > "$work/build.log" 2>&1 || { tail -n 30 "$work/build.log" >&2; exit 1; }
+	echo "cross-port: compiler warnings: $(grep -c 'warning:' "$work/build.log" || true)"
+	cp -a "$work/install/." "$sysroot/"
+	echo "cross-port: $name built and installed into $sysroot$prefix and $work/install"
+	exit 0
+	;;
 cmake)
 	cmake -S "$work/src" -B "$work/build" -G Ninja \
 		-DCMAKE_TOOLCHAIN_FILE="$root/tools/cmake/haiku-arm64.cmake" \
@@ -67,8 +84,10 @@ meson)
 		--prefix="$prefix" --libdir=lib --buildtype=release -Db_ndebug=true "$@" > "$work/configure.log"
 	;;
 autotools)
-	tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
-	(cd "$work/src" && autoreconf -fi) > "$work/autoreconf.log" 2>&1
+	# AUTORECONF=0 for recipes that use the shipped configure
+	if [ "${AUTORECONF:-1}" != 0 ]; then
+		(cd "$work/src" && autoreconf -fi) > "$work/autoreconf.log" 2>&1
+	fi
 	mkdir -p "$work/build"
 	(cd "$work/build" && PKG_CONFIG_LIBDIR="$sysroot$prefix/develop/lib/pkgconfig:$sysroot$prefix/lib/pkgconfig:$sysroot/boot/system/develop/lib/pkgconfig" \
 		PKG_CONFIG_SYSROOT_DIR="$sysroot" "$work/src/configure" --host=aarch64-unknown-haiku \
