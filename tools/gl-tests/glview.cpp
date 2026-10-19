@@ -5,7 +5,7 @@
  * prints "GLW " lines (send them to /dev/dprintf from a boot script). On a hardware screen the
  * frames reach the window through egl_haiku's copy present; HDMI shows whether they do.
  *
- *   glview [-s SECONDS] [-f] [-y] [-b] [-n] [-a] [-S] [-c]     exit status 0 = PASS
+ *   glview [-s SECONDS] [-f] [-y] [-b] [-n] [-a] [-S] [-c] [-W SIZE] [-H FILE]   exit status 0 = PASS
  *
  *   -f  draw into a framebuffer object instead of the window (and check that)
  *   -y  with -f: y-flipped, as Mesa renders into window framebuffers
@@ -15,11 +15,16 @@
  *   -d  with -f: a depth/stencil renderbuffer (GL_DEPTH24_STENCIL8), like the window's
  *   -W  SIZE: a SIZE x SIZE window (default 256)
  *   -c  no glClear at all (the corner check then fails: only the triangle is drawn)
+ *   -H  FILE: afterwards present the unrotated frame and read the window back from the screen
+ *       (what reached it, whichever present path); write it to FILE, or, when FILE exists, compare
+ *       with it: "GLW screen ..." with the differing pixels and the largest channel difference
  */
 
 #include <Application.h>
+#include <Bitmap.h>
 #include <GLView.h>
 #include <OS.h>
+#include <Screen.h>
 #include <Window.h>
 
 #define GL_GLEXT_PROTOTYPES
@@ -30,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define SAY(...) do { printf("GLW " __VA_ARGS__); printf("\n"); fflush(stdout); } while (0)
@@ -43,6 +49,7 @@ static bool sBgra = false;
 static bool sClear = true;
 static bool sOffscreenDepth = false;
 static GLbitfield sClearMask = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
+static const char* sScreenFile = NULL;
 
 
 static bool
@@ -60,6 +67,102 @@ check(const char* name, const uint8_t* pixel, uint8_t r, uint8_t g, uint8_t b)
 		ok ? "ok" : "BAD");
 	if (!ok)
 		sFailures++;
+}
+
+
+static void
+draw_frame(int frame)
+{
+	glViewport(0, 0, kSize, kSize);
+	glClearColor(0.0f, 0.0f, 0.25f, 1.0f);
+	if (sClear)
+		glClear(sClearMask);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	glRotatef(frame * 2.0f, 0.0f, 0.0f, 1.0f);
+	glBegin(GL_TRIANGLES);
+	glColor3f(1.0f, 0.0f, 0.0f);
+	glVertex2f(0.0f, 0.8f);
+	glColor3f(0.0f, 1.0f, 0.0f);
+	glVertex2f(-0.7f, -0.6f);
+	glColor3f(0.0f, 0.0f, 1.0f);
+	glVertex2f(0.7f, -0.6f);
+	glEnd();
+}
+
+
+/*!	Reads the view's area back from the screen (B_RGB32 rows of kSize pixels) and
+	writes it to sScreenFile, or compares it with the file's.
+*/
+static void
+check_screen(BGLView* view)
+{
+	view->LockGL();
+	draw_frame(0);
+	view->SwapBuffers();
+	glFinish();
+	view->UnlockGL();
+	snooze(500000);
+		// let app_server draw it
+
+	if (!view->LockLooper())
+		return;
+	BRect frame = view->ConvertToScreen(view->Bounds());
+	view->UnlockLooper();
+	BBitmap* bitmap = NULL;
+	status_t status = BScreen(view->Window()).GetBitmap(&bitmap, false, &frame);
+	if (status != B_OK || bitmap == NULL) {
+		SAY("screen read back failed: %s BAD", strerror(status));
+		sFailures++;
+		return;
+	}
+	const size_t rowBytes = kSize * 4;
+	uint8_t* pixels = (uint8_t*)malloc(rowBytes * kSize);
+	for (int y = 0; y < kSize; y++)
+		memcpy(pixels + y * rowBytes, (uint8_t*)bitmap->Bits() + y * bitmap->BytesPerRow(), rowBytes);
+	delete bitmap;
+	uint32_t hash = 2166136261u;
+	for (size_t i = 0; i < rowBytes * kSize; i++) {
+		if (i % 4 != 3)
+			hash = (hash ^ pixels[i]) * 16777619u;
+	}
+
+	struct stat st;
+	if (stat(sScreenFile, &st) != 0) {
+		FILE* file = fopen(sScreenFile, "wb");
+		bool written = file != NULL && fwrite(pixels, rowBytes, kSize, file) == (size_t)kSize;
+		if (file != NULL)
+			fclose(file);
+		SAY("screen %dx%d hash %08x written to %s %s", kSize, kSize, hash, sScreenFile,
+			written ? "ok" : "BAD");
+		if (!written)
+			sFailures++;
+	} else {
+		uint8_t* reference = (uint8_t*)malloc(rowBytes * kSize);
+		FILE* file = fopen(sScreenFile, "rb");
+		bool read = file != NULL && fread(reference, rowBytes, kSize, file) == (size_t)kSize;
+		if (file != NULL)
+			fclose(file);
+		int differing = 0, largest = 0;
+		for (int i = 0; read && i < kSize * kSize; i++) {
+			int pixelLargest = 0;
+			for (int c = 0; c < 3; c++) {
+				int delta = abs(pixels[i * 4 + c] - reference[i * 4 + c]);
+				if (delta > pixelLargest)
+					pixelLargest = delta;
+			}
+			if (pixelLargest > 0)
+				differing++;
+			if (pixelLargest > largest)
+				largest = pixelLargest;
+		}
+		SAY("screen %dx%d hash %08x vs %s: %d pixels differ, largest difference %d%s", kSize, kSize,
+			hash, sScreenFile, differing, largest, read ? "" : " (unreadable) BAD");
+		if (!read)
+			sFailures++;
+		free(reference);
+	}
+	free(pixels);
 }
 
 
@@ -151,21 +254,7 @@ render_thread(void* data)
 	int frames = 0;
 	while (system_time() - start < (bigtime_t)(sSeconds * 1000000)) {
 		view->LockGL();
-		glViewport(0, 0, kSize, kSize);
-		glClearColor(0.0f, 0.0f, 0.25f, 1.0f);
-		if (sClear)
-			glClear(sClearMask);
-		glMatrixMode(GL_MODELVIEW);
-		glLoadIdentity();
-		glRotatef(frames * 2.0f, 0.0f, 0.0f, 1.0f);
-		glBegin(GL_TRIANGLES);
-		glColor3f(1.0f, 0.0f, 0.0f);
-		glVertex2f(0.0f, 0.8f);
-		glColor3f(0.0f, 1.0f, 0.0f);
-		glVertex2f(-0.7f, -0.6f);
-		glColor3f(0.0f, 0.0f, 1.0f);
-		glVertex2f(0.7f, -0.6f);
-		glEnd();
+		draw_frame(frames);
 
 		if (frames == 0) {
 			// frame 0 is unrotated: the corner is clear colour, the centre inside
@@ -189,6 +278,8 @@ render_thread(void* data)
 	}
 	const double elapsed = (system_time() - start) / 1000000.0;
 	SAY("frames %d in %.2f s = %.1f fps", frames, elapsed, frames / elapsed);
+	if (sScreenFile != NULL)
+		check_screen(view);
 	SAY("%s (%d failure%s)", sFailures == 0 ? "PASS" : "FAIL", sFailures,
 		sFailures == 1 ? "" : "s");
 
@@ -202,7 +293,7 @@ main(int argc, char** argv)
 {
 	int opt;
 	uint32 options = BGL_RGB | BGL_DOUBLE | BGL_DEPTH;
-	while ((opt = getopt(argc, argv, "s:nafSybcdW:")) != -1) {
+	while ((opt = getopt(argc, argv, "s:nafSybcdW:H:")) != -1) {
 		if (opt == 's')
 			sSeconds = atof(optarg);
 		else if (opt == 'n')
@@ -223,6 +314,8 @@ main(int argc, char** argv)
 			sOffscreenDepth = true;
 		else if (opt == 'W')
 			kSize = atoi(optarg);
+		else if (opt == 'H')
+			sScreenFile = optarg;
 		else {
 			fprintf(stderr, "usage: %s [-s seconds] [-n (no depth buffer)] [-a (alpha)]\n",
 				argv[0]);
