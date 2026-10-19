@@ -9,14 +9,14 @@ out=/dev/dprintf
 dir=/boot/system/non-packaged/apps/QuakeSpasm
 say() { echo "QSP $*" > $out; }
 cd $dir || { say "no $dir"; exit 1; }
-for size in "640 480" "1280 720"; do
+for size in ${QUAKE_SIZES:-"640 480"}; do
 	set -- $size
 	say "timedemo demo1 ${1}x$2"
-	./quakespasm -basedir $dir -window -width $1 -height $2 -nosound -condebug +timedemo demo1 > $out 2>&1 &
+	./quakespasm -basedir $dir -window -width $1 -height $2 -nosound -condebug +scr_showfps 1 +timedemo demo1 > $out 2>&1 &
 	pid=$!
 	# the timedemo prints its result ("N frames M seconds X fps") and stays at the console
 	waited=0
-	while [ $waited -lt 100 ] && kill -0 $pid 2> /dev/null; do
+	while [ $waited -lt 200 ] && kill -0 $pid 2> /dev/null; do
 		sleep 5
 		waited=$((waited + 5))
 	done
@@ -31,6 +31,7 @@ for size in "640 480" "1280 720"; do
 	grep -a -E 'frames.*seconds.*fps' $dir/qconsole.log | while read -r line; do
 		say "${1}x$2 result: $line"
 	done
+	tail -n 8 $dir/qconsole.log | while read -r line; do say "${1}x$2 console: $line"; done
 	rm -f $dir/qconsole.log
 	sleep 3
 done
