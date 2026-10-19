@@ -3,18 +3,23 @@
 # (mkimage-pi4.sh --add-tree artifacts/games/non-packaged). The image must come from a
 # `jam -sHAIKU_PI_GL=1 @pi-mmc` build: the mesa and libsdl2 packages, libmedia/libgame.
 #
-#   scripts/build-games.sh [--quake-data DIR]   (DIR/id1/pak0.pak: the shareware data, not in git;
-#                                                default /home/houp/srv-assets-backup/quake)
+#   scripts/build-games.sh [--quake-data DIR] [--quake2-data DIR]
+#       DIR/id1/pak0.pak: Quake's shareware data, DIR/baseq2/pak0.pak: Quake II's demo data (not in
+#       git; defaults /home/houp/srv-assets-backup/quake and .../quake2)
 #
 #   SDL2 2.32.10   HaikuPorts recipe + patchset (scripts/cross-port.sh)
 #   QuakeSpasm 0.96.3  HaikuPorts recipe's source, its Makefile (no MP3/Vorbis codecs: no
 #                  libmad/libvorbis yet), into apps/QuakeSpasm with the shareware id1/pak0.pak
+#   Yamagi Quake II 8.60  HaikuPorts recipe + patchset (CMake; no curl/OpenAL yet), into apps/quake2
+#                  as the recipe installs it, with the demo's baseq2/pak0.pak
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 quakeData=/home/houp/srv-assets-backup/quake
+quake2Data=/home/houp/srv-assets-backup/quake2
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--quake-data) quakeData="$2"; shift 2 ;;
+	--quake2-data) quake2Data="$2"; shift 2 ;;
 	*) echo "build-games: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -51,4 +56,21 @@ mkdir -p "$stage/apps/QuakeSpasm/id1"
 # SDL2 itself is a package (libsdl2, scripts/build-packages.sh) in the pi-mmc image
 cp "$quake/quakespasm" "$quake/quakespasm.pak" "$stage/apps/QuakeSpasm/"
 cp "$quakeData/id1/pak0.pak" "$stage/apps/QuakeSpasm/id1/"
+# Quake II: the recipe's CMake build has no install target; its INSTALL() copies the binaries
+"$root/scripts/cross-port.sh" "$ports/games-fps/yamagi-quake2/yamagi_quake2-8.60.recipe" script '
+cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$SYSROOT/../../tools/cmake/haiku-arm64.cmake" \
+	-DCMAKE_BUILD_TYPE=Release -DCURL_SUPPORT=OFF -DOPENAL_SUPPORT=OFF \
+	-DSDL2_INCLUDE_DIR="$SYSROOT/boot/system/non-packaged/include/SDL2"
+ninja -C build
+mkdir -p "$DEST/apps/quake2/baseq2"
+cp build/release/quake2 "$DEST/apps/quake2/Quake2"
+cp build/release/q2ded "$DEST/apps/quake2/Quake2_dedicated"
+cp build/release/*.so "$DEST/apps/quake2/"
+cp build/release/baseq2/game.so "$DEST/apps/quake2/baseq2/"'
+cp -r "$root/artifacts/cross-ports/yamagi_quake2-8.60/install/boot/system/non-packaged/apps/quake2" \
+	"$stage/apps/"
+"$tools-strip" "$stage/apps/quake2/Quake2" "$stage/apps/quake2/Quake2_dedicated" \
+	"$stage"/apps/quake2/*.so "$stage/apps/quake2/baseq2/game.so"
+cp "$quake2Data/baseq2/pak0.pak" "$stage/apps/quake2/baseq2/"
+
 find "$stage" -type f -printf 'build-games: %P %s\n' | sort
