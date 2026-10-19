@@ -1,0 +1,112 @@
+diff --git a/headers/private/kernel/arch/arm64/arch_cpu.h b/headers/private/kernel/arch/arm64/arch_cpu.h
+index 70de577a9b..f23d1ebcc8 100644
+--- a/headers/private/kernel/arch/arm64/arch_cpu.h
++++ b/headers/private/kernel/arch/arm64/arch_cpu.h
+@@ -145,8 +145,13 @@ static inline void arch_cpu_pause(void)
+ }
+ 
+ 
++// DIAGNOSTIC (GIC stall): the interrupt controller's per-CPU snapshot
++extern void (*gArm64BeforeIdle)(void);
++
+ static inline void arch_cpu_idle(void)
+ {
++	if (gArm64BeforeIdle != NULL)
++		gArm64BeforeIdle();
+ 	// Complete the outstanding writes first (as Linux's cpu_do_idle): the
+ 	// end-of-interrupt write to the GIC can otherwise wait in a buffer while
+ 	// the CPU sleeps, and the GIC delivers it nothing else until then
+diff --git a/src/system/kernel/arch/arm/arch_int_gicv2.cpp b/src/system/kernel/arch/arm/arch_int_gicv2.cpp
+index 73b346ade8..903057a528 100644
+--- a/src/system/kernel/arch/arm/arch_int_gicv2.cpp
++++ b/src/system/kernel/arch/arm/arch_int_gicv2.cpp
+@@ -45,6 +45,32 @@ static int32 sReports[SMP_MAX_CPUS];
+ static timer sWatchdog[SMP_MAX_CPUS];
+ static int32 sWatchdogStarted[SMP_MAX_CPUS];
+ 
++// DIAGNOSTIC (GIC stall): each CPU's own view before it sleeps, and SPIs still
++// active at the distributor right after their end of interrupt
++struct IdleSnapshot {
++	bigtime_t	time;
++	uint32		rpr;
++	uint32		hppir;
++	uint32		pending;
++	uint32		active;
++};
++static IdleSnapshot sIdleSnapshot[SMP_MAX_CPUS];
++static int32 sEoiStuck[SMP_MAX_CPUS];
++static uint32 sEoiStuckIrq[SMP_MAX_CPUS];
++static bigtime_t sEoiStuckTime[SMP_MAX_CPUS];
++
++
++static void
++gic_before_idle()
++{
++	IdleSnapshot& snapshot = sIdleSnapshot[smp_get_current_cpu()];
++	snapshot.rpr = sGiccRegs[GICC_REG_RPR];
++	snapshot.hppir = sGiccRegs[GICC_REG_HPPIR];
++	snapshot.pending = sGicdRegs[GICD_REG_ISPENDR];
++	snapshot.active = sGicdRegs[GICD_REG_ISACTIVER];
++	snapshot.time = system_time();
++}
++
+ 
+ static int32
+ gic_watchdog(timer* /*unused*/)
+@@ -81,6 +107,15 @@ gic_watchdog(timer* /*unused*/)
+ 				sGicdRegs[GICD_REG_ISPENDR + 3], sGicdRegs[GICD_REG_ISPENDR + 4],
+ 				sGicdRegs[GICD_REG_ISACTIVER + 1], sGicdRegs[GICD_REG_ISACTIVER + 2],
+ 				sGicdRegs[GICD_REG_ISACTIVER + 3], sGicdRegs[GICD_REG_ISACTIVER + 4]);
++			const IdleSnapshot& snapshot = sIdleSnapshot[cpu];
++			dprintf("gic watchdog: CPU %" B_PRId32 " before its last sleep (%"
++				B_PRId64 " us ago): running priority %#" B_PRIx32 ", highest "
++				"pending %#" B_PRIx32 ", SGI/PPI pending %#" B_PRIx32 " active %#"
++				B_PRIx32 "; EOIs that left the SPI active: %" B_PRId32 " (last %"
++				B_PRIu32 ", %" B_PRId64 " us ago); CPU 0's: %" B_PRId32 "\n", cpu,
++				now - snapshot.time, snapshot.rpr, snapshot.hppir,
++				snapshot.pending, snapshot.active, sEoiStuck[cpu],
++				sEoiStuckIrq[cpu], now - sEoiStuckTime[cpu], sEoiStuck[0]);
+ 		}
+ 		atomic_test_and_set64(&sNudged[cpu], now, 0);
+ 		// SGI 0 (an empty ICI) to that CPU's interface (identity on the Pi)
+@@ -142,6 +177,7 @@ GICv2InterruptController::GICv2InterruptController(phys_addr_t gicd_addr, phys_a
+ 
+ 	sGicdRegs = fGicdRegs;
+ 	sGiccRegs = fGiccRegs;
++	gArm64BeforeIdle = &gic_before_idle;
+ 	add_debugger_command("gic", &dump_gic,
+ 		"Dumps the current CPU's view of the GICv2 interrupt controller");
+ 
+@@ -270,6 +306,17 @@ void GICv2InterruptController::HandleInterrupt()
+ 	}
+ 
+ 	fGiccRegs[GICC_REG_EOIR] = iar;
++
++	// DIAGNOSTIC (GIC stall)
++	if (irqnr >= 32 && irqnr < 1020) {
++		arm64_dsb(sy);
++		if ((sGicdRegs[GICD_REG_ISACTIVER + irqnr / 32] & (1u << (irqnr % 32)))
++				!= 0) {
++			sEoiStuck[cpu]++;
++			sEoiStuckIrq[cpu] = irqnr;
++			sEoiStuckTime[cpu] = system_time();
++		}
++	}
+ }
+ 
+ 
+diff --git a/src/system/kernel/arch/arm64/arch_int.cpp b/src/system/kernel/arch/arm64/arch_int.cpp
+index 515c42f8b1..6cc31db5ee 100644
+--- a/src/system/kernel/arch/arm64/arch_int.cpp
++++ b/src/system/kernel/arch/arm64/arch_int.cpp
+@@ -180,6 +180,10 @@ fixup_entry(phys_addr_t ptPa, int level, addr_t va, bool wr)
+ }
+ 
+ 
++// DIAGNOSTIC (GIC stall)
++void (*gArm64BeforeIdle)(void) = NULL;
++
++
+ void
+ after_exception()
+ {
