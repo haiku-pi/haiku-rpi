@@ -13,6 +13,7 @@
  *   -n  no depth buffer          -a  an alpha channel
  *   -S  clear the stencil buffer too (the whole depth/stencil buffer)
  *   -d  with -f: a depth/stencil renderbuffer (GL_DEPTH24_STENCIL8), like the window's
+ *   -W  SIZE: a SIZE x SIZE window (default 256)
  *   -c  no glClear at all (the corner check then fails: only the triangle is drawn)
  */
 
@@ -33,7 +34,7 @@
 
 #define SAY(...) do { printf("GLW " __VA_ARGS__); printf("\n"); fflush(stdout); } while (0)
 
-static const int kSize = 256;
+static int kSize = 256;
 static int sFailures = 0;
 static double sSeconds = 5;
 static bool sOffscreen = false;
@@ -201,7 +202,7 @@ main(int argc, char** argv)
 {
 	int opt;
 	uint32 options = BGL_RGB | BGL_DOUBLE | BGL_DEPTH;
-	while ((opt = getopt(argc, argv, "s:nafSybcd")) != -1) {
+	while ((opt = getopt(argc, argv, "s:nafSybcdW:")) != -1) {
 		if (opt == 's')
 			sSeconds = atof(optarg);
 		else if (opt == 'n')
@@ -220,6 +221,8 @@ main(int argc, char** argv)
 			sClear = false;
 		else if (opt == 'd')
 			sOffscreenDepth = true;
+		else if (opt == 'W')
+			kSize = atoi(optarg);
 		else {
 			fprintf(stderr, "usage: %s [-s seconds] [-n (no depth buffer)] [-a (alpha)]\n",
 				argv[0]);
