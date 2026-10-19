@@ -6,6 +6,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -gt 0 ] || set -- @minimum-mmc
 mkdir -p "$root/artifacts/build"
+# the port's build options (tools/build/UserBuildConfig: jam -sHAIKU_PI_DEV=1 ...)
+ln -sfn "$root/tools/build/UserBuildConfig" "$root/sources/haiku/build/jam/UserBuildConfig"
 log="$root/artifacts/build/$(date +%Y%m%d-%H%M%S).log"
 rc=0
 (cd "$root/sources/haiku/generated.arm64" && "$root/scripts/heavy-build.sh" --mem-per-job 1 -- jam -q "-j{JOBS}" "$@") > "$log" 2>&1 || rc=$?
