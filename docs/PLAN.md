@@ -20,23 +20,27 @@ SD layout: MBR, p1 FAT32 (type 0x0c/0xef, firmware + U-Boot + EFI), p2 BFS (0xeb
 
 ## Milestones
 
-| ID | Milestone | Exit criterion |
-|---|---|---|
-| H0 | Infrastructure | coord repo + forks on GitHub, bench scripts (flash lane, SD cycle, QEMU), crons |
-| H1 | Build + reference boot | `@minimum-mmc` arm64 image boots to Tracker on QEMU virt ✅ 2026-10-17 |
-| H2 | Pi boot chain | Pi SD image: U-Boot starts `haiku_loader.efi`, loader menu/log on UART |
-| H3 | Kernel early boot on Pi | kernel reaches the kernel debugger / init on Pi UART (GIC-400, arch timer, PL011, memory map, caches) |
-| H4 | SD boot volume → Desktop | emmc2 SDHCI attached via FDT, BFS boot volume mounted, app_server on the EFI GOP framebuffer, Tracker on HDMI. **First testable build → tell the owner** |
-| H5 | SMP | 4 cores via PSCI/spin-table, stable under load |
-| H6 | PCIe + USB | brcmstb PCIe host + VL805 xHCI (firmware reset via mailbox); keyboard + mouse |
-| H7 | Ethernet | BCM2711 GENET v5 driver (BSD-derived via Haiku's FreeBSD compat layer) |
-| H8 | NFS | NFSv4 client (Haiku `nfs4`) mounting the bench export; netboot-to-NFS-root optional |
-| H9 | SD performance | ADMA2, high-speed modes, correct DMA addressing (bus vs CPU physical) |
-| H10 | GPIO + thermal + mailbox | `/dev` interfaces for GPIO, SoC temperature/clocks via VideoCore mailbox |
-| H11 | WiFi | BCM43455 over SDIO (brcmfmac-style, firmware load) via the FreeBSD/OpenBSD-derived stack ✅ 2026-10-18 (WPA2 + DHCP) |
-| H12 | GPU | KMS-like modesetting via firmware + V3D 4.2 via Mesa (`v3d` gallium) — accelerated OpenGL |
-| H13 | Stability + performance | soak tests, boot time, I/O and graphics benchmarks vs the Phoenix port |
-| H14 | arm64 package farm | There is no official HaikuPorts repository for arm64 (only riscv64/x86_64/x86_gcc2, checked 2026-10-18), and the build references 71 bootstrap packages. Build HaikuPorts with haikuporter natively (QEMU virt with many CPUs, or the Pi itself) into our own repo: Mesa, WebPositive/HaikuWebKit, SDL2, games, dev tools — what the GPU and showcase work need |
+| ID | Milestone | Exit criterion | State (2026-10-19) |
+|---|---|---|---|
+| H0 | Infrastructure | coord repo + forks on GitHub, bench scripts (flash lane, SD cycle, QEMU), crons | ✅ |
+| H1 | Build + reference boot | `@minimum-mmc` arm64 image boots to Tracker on QEMU virt | ✅ 10-17 |
+| H2 | Pi boot chain | Pi SD image: U-Boot starts `haiku_loader.efi`, loader menu/log on UART | ✅ 10-18 |
+| H3 | Kernel early boot on Pi | kernel reaches the kernel debugger / init on Pi UART (GIC-400, arch timer, PL011, memory map, caches) | ✅ 10-18 |
+| H4 | SD boot volume → Desktop | emmc2 SDHCI attached via FDT, BFS boot volume mounted, app_server on the EFI GOP framebuffer, Tracker on HDMI. **First testable build → tell the owner** | ✅ 10-18 (owner told); the regular image since 10-19 |
+| H5 | SMP | 4 cores via PSCI/spin-table, stable under load | ✅ 4 cores; the CPU stall under load (an LL/SC livelock) fixed 10-19, 20-min soak clean |
+| H6 | PCIe + USB | brcmstb PCIe host + VL805 xHCI (firmware reset via mailbox); keyboard + mouse | ✅ drivers, USB 3 storage ~90 MB/s; keyboard/mouse by hand: owner |
+| H7 | Ethernet | BCM2711 GENET v5 driver (BSD-derived via Haiku's FreeBSD compat layer) | ✅ 603 up / 757 down Mbit/s |
+| H8 | NFS | NFSv4 client (Haiku `nfs4`) mounting the bench export; netboot-to-NFS-root optional | ✅ client (NFS root: not done) |
+| H9 | SD performance | ADMA2, high-speed modes, correct DMA addressing (bus vs CPU physical) | ✅ UHS-I DDR50, 31 MB/s |
+| H10 | GPIO + thermal + mailbox | `/dev` interfaces for GPIO, SoC temperature/clocks via VideoCore mailbox | ✅ (+ cpufreq: ARM 1.5 GHz held) |
+| H11 | WiFi | BCM43455 over SDIO (brcmfmac-style, firmware load) via the FreeBSD/OpenBSD-derived stack | ✅ 10-18 WPA2 + DHCP; 37 up / 46 down Mbit/s |
+| H12 | GPU | KMS-like modesetting via firmware + V3D 4.2 via Mesa (`v3d` gallium) — accelerated OpenGL | ✅ GL 2.1 / GLES 3.1 on the V3D; QuakeSpasm 30–43 fps at 1080p, Quake II 81–89 at 720p; plane flips / async queues open |
+| H13 | Stability + performance | soak tests, boot time, I/O and graphics benchmarks vs the Phoenix port | ✅ boot bench 10/10, 20-min load soak; ongoing |
+| H14 | arm64 package farm | There is no official HaikuPorts repository for arm64 (only riscv64/x86_64/x86_gcc2, checked 2026-10-18), and the build references 71 bootstrap packages. Build HaikuPorts with haikuporter natively (QEMU virt with many CPUs, or the Pi itself) into our own repo: Mesa, WebPositive/HaikuWebKit, SDL2, games, dev tools — what the GPU and showcase work need | 🔶 ~80 cross-built packages, our repo works with pkgman on the bench; HaikuWebKit in progress; public hosting: owner |
+
+Also done beyond the list: audio on the 3.5 mm jack (media kit), media playback (ffmpeg 6.1), HTTPS
+and the NetSurf browser, Bluetooth through Haiku's stack (BCM43455 over UART). See
+[TRY-IT.md](TRY-IT.md) and the weekly logs in [log/](log/).
 
 Order is flexible after H4. H5–H7 can overlap; H12 is the longest.
 
