@@ -8,6 +8,7 @@
 #   libsdl2, ffmpeg6                       scripts/cross-port.sh + scripts/package-port.py
 #   zstd (+ zstd_source)                   scripts/cross-port.sh + scripts/package-port.py
 #   gzip, tar, bzip2, unzip                scripts/build-base-ports.sh
+#   netsurf + OpenSSL 3, curl, ...         scripts/build-netsurf.sh
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
 #
 #   scripts/build-packages.sh [--sysroot]   (--sysroot: recreate the sysroot first)
@@ -73,6 +74,7 @@ rm -rf "$DEST/share"'
 "$root/scripts/package-port.py" "$ports/app-arch/zstd/zstd-1.5.7.recipe" --source-package
 
 "$root/scripts/build-base-ports.sh"
+"$root/scripts/build-netsurf.sh"
 "$root/scripts/fetch-any-packages.sh"
 
 mkdir -p "$download"
