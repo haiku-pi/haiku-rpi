@@ -12,7 +12,8 @@
 #               feature extracts only mesa and mesa_devel
 #   mesa_devel  headers (develop/headers/os/opengl, libdrm), develop/lib symlinks, pkg-config files
 #   glu, glu_devel  GLU 9.0.3
-# The libraries are those build-gl-stack.sh stages (stripped, named by soname).
+# The libraries are those build-gl-stack.sh stages (stripped, named by soname). The packages are also
+# extracted into the sysroot (artifacts/sysroot-arm64/boot/system), for ports built against them.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 revision=1
@@ -151,3 +152,13 @@ packageInfo glu_devel "$gluVersion" "The OpenGL Utility library: development fil
 	devel:libGLU = 1.3.1 compat >= 1" \
 "	glu == $gluVersion-$revision" > "$d/.PackageInfo"
 create glu_devel "$gluVersion" "$d"
+
+# and into the sysroot as the image has them (/boot/system): the compiler searches the system's
+# develop/headers/os/... (BGLView: <opengl/GLView.h>), not non-packaged's
+for p in mesa mesa_devel; do
+	"$pkgtool" extract -C "$root/artifacts/sysroot-arm64/boot/system" "$out/$p-$mesaVersion-$revision-arm64.hpkg"
+done
+for p in glu glu_devel; do
+	"$pkgtool" extract -C "$root/artifacts/sysroot-arm64/boot/system" "$out/$p-$gluVersion-$revision-arm64.hpkg"
+done
+echo "package-gl-stack: extracted into the sysroot's boot/system"
