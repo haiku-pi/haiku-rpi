@@ -11,17 +11,18 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 | Boot | SD card → U-Boot → Haiku loader → desktop in about 80 s (first boot a little longer) |
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences, scaled by the firmware; hardware cursor; 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1. GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
-| Games (test images) | QuakeSpasm: 61–71 frames/s at 640×480. Yamagi Quake II, GL1 renderer: 80–148 frames/s at 640×480, 36–46 at 1280×720 |
+| Games (test images) | QuakeSpasm: 61–71 frames/s at 640×480. Yamagi Quake II, GL1 renderer: 87–163 frames/s at 640×480, 42–52 at 1280×720 |
 | Audio | 3.5 mm headphone jack through the media kit ("Raspberry Pi headphones", 44.1 kHz stereo); measured on the bench, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ... (software decoding) |
 | CPU | 4 cores (SMP) |
 | Storage | SD card at UHS-I DDR50 (~32 MB/s reads); USB 3 storage through the VL805 (~80–90 MB/s) |
 | USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); keyboard/mouse input still needs a hands-on check |
 | Network | Gigabit Ethernet (GENET, DHCP); WiFi (BCM43455: scan, WPA2, DHCP, verified by a boot script that joins through net_server, `scripts/wifi-join-image.sh`; joining from Network preferences takes the same path but has not been tried by hand); NFSv4 client |
+| Web | NetSurf 3.11 (`/boot/system/apps/NetSurf`): HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver |
 
 Known limits: no HDMI audio, no package repository for `pkgman` yet (software comes in the image), no
-web browser yet (WebKit needs the package farm), the games are not packaged (see below), and a rare
+WebKit browser (WebPositive) yet — NetSurf is the browser, the games are not packaged (see below), and a rare
 boot-time stall of CPU 0 that the kernel's GIC watchdog recovers (about 1 boot in 20; the desktop still
 comes up).
 
@@ -48,7 +49,7 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB).
 
-Verified from scratch in a fresh clone on 2026-10-19: about 24 minutes on a 16-thread host (bootstrap
+Verified from scratch in a fresh clone on 2026-10-19 (before NetSurf joined `build-packages.sh`; a re-run is pending): about 24 minutes on a 16-thread host (bootstrap
 15 of them), same image. Expected noise while jam still exits 0: on a fresh tree the first build prints
 a few `stdlib.h`/`math.h: No such file` lines (catalog extraction running before the toolchain packages
 are unpacked), and the regular build prints WonderBrush's `bitmap_compression.h`/`blending.h` lines.
