@@ -4,7 +4,9 @@ Coordination repository for porting [Haiku](https://www.haiku-os.org) to the Ras
 build and test scripts, bench tools, documentation and integration manifests.
 
 The Haiku sources live in the fork [haiku-pi/haiku](https://github.com/haiku-pi/haiku), branch `rpi4`;
-clone it to `sources/haiku` (see `scripts/bootstrap.sh`).
+`scripts/bootstrap.sh` clones it and the other sources into `sources/`.
+
+- **Try it: [docs/TRY-IT.md](docs/TRY-IT.md)** — what works, how to build the image and flash an SD card
 
 - Plan and milestones: [docs/PLAN.md](docs/PLAN.md)
 - Current progress: [docs/log/](docs/log/)
