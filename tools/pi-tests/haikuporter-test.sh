@@ -22,6 +22,9 @@ say "python: $(python3 -c 'import zlib, bz2, lzma; d = b"haiku" * 1000; print("z
 say "tools: $(for t in patch tar gzip xz bzip2 diff; do $t --version 2>&1 | head -n 1 | tr '\n' ';'; done)"
 cd /tmp && echo haiku > t.txt && tar -cJf t.tar.xz t.txt && rm t.txt && tar -xf t.tar.xz \
 	&& say "tools: tar+xz round trip $(cat t.txt)"; cd /
+# the bootstrap haikuporter's chroot setup copies the font settings unconditionally (under set -e);
+# newer ones check that they exist first
+mkdir -p /boot/system/settings/fonts
 # port|command line that runs what it built
 for test in \
 	"hoedown|echo '# Hello *Haiku* on the Pi' | hoedown" \
