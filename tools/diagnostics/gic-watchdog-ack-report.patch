@@ -1,0 +1,46 @@
+# Diagnostic (2026-10-19, not in the tree): the GIC watchdog report also lists, for each active SPI,
+# its target CPUs and the CPU that acknowledged it last. Benched 10/10 boots without a freeze, so it
+# caught nothing; apply with `git -C sources/haiku apply` when chasing the CPU 0 freeze again.
+diff --git a/src/system/kernel/arch/arm/arch_int_gicv2.cpp b/src/system/kernel/arch/arm/arch_int_gicv2.cpp
+index 73b346ade8..a5a1b1f860 100644
+--- a/src/system/kernel/arch/arm/arch_int_gicv2.cpp
++++ b/src/system/kernel/arch/arm/arch_int_gicv2.cpp
+@@ -40,6 +40,9 @@ extern bigtime_t timer_debug_next_event(int32 cpu);
+ static const bigtime_t kWatchdogPeriod = 250000;
+ static bigtime_t sLastInterrupt[SMP_MAX_CPUS];
+ static uint32 sLastIrq[SMP_MAX_CPUS];
++// per interrupt: the CPU that acknowledged it last, and when
++static int8 sLastAckCpu[1020];
++static bigtime_t sLastAckTime[1020];
+ static bigtime_t sNudged[SMP_MAX_CPUS];
+ static int32 sReports[SMP_MAX_CPUS];
+ static timer sWatchdog[SMP_MAX_CPUS];
+@@ -71,6 +74,19 @@ gic_watchdog(timer* /*unused*/)
+ 		}
+ 
+ 		if (atomic_add(&sReports[cpu], 1) < 4) {
++			// who acknowledged the SPIs that are active, and where they go
++			for (int32 word = 1; word < 8; word++) {
++				uint32 active = sGicdRegs[GICD_REG_ISACTIVER + word];
++				for (int32 bit = 0; active != 0; bit++, active >>= 1) {
++					if ((active & 1) == 0)
++						continue;
++					const int32 irq = word * 32 + bit;
++					dprintf("gic watchdog: SPI %" B_PRId32 " active, targets %#x,"
++						" last acknowledged by CPU %d %" B_PRId64 " us ago\n", irq,
++						((volatile uint8*)&sGicdRegs[GICD_REG_ITARGETSR])[irq],
++						sLastAckCpu[irq], now - sLastAckTime[irq]);
++				}
++			}
+ 			dprintf("gic watchdog (CPU %" B_PRId32 "): CPU %" B_PRId32 " has a "
+ 				"timer event %" B_PRId64 " us overdue, last interrupt %" B_PRIu32
+ 				" %" B_PRId64 " us ago; SPI pending %#" B_PRIx32 " %#" B_PRIx32
+@@ -251,6 +267,8 @@ void GICv2InterruptController::HandleInterrupt()
+ 	if (irqnr < 1020) {
+ 		sLastInterrupt[cpu] = system_time();
+ 		sLastIrq[cpu] = irqnr;
++		sLastAckCpu[irqnr] = cpu;
++		sLastAckTime[irqnr] = sLastInterrupt[cpu];
+ 		if (sWatchdogStarted[cpu] == 0 && sLastInterrupt[cpu] > 10000000) {
+ 			sWatchdogStarted[cpu] = 1;
+ 			add_timer(&sWatchdog[cpu], &gic_watchdog, kWatchdogPeriod,
