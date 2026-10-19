@@ -7,9 +7,11 @@
 #   Mesa      sources/mesa      (branch rpi4: v3d + softpipe, egl_haiku opens /dev/dri/renderD128)
 #   GLU       glu-9.0.3 release (unchanged; fetched into artifacts/gl-build/dl, SHA-256 pinned)
 #   vulkan    the Khronos Vulkan loader + headers 1.4.311 (HaikuPorts' sys-libs/vulkan recipe: same
-#             release, its patches; fetched into artifacts/gl-build/dl, SHA-256 pinned)
+#             release, its patches, plus patches/vulkan-loader; fetched into artifacts/gl-build/dl,
+#             SHA-256 pinned)
 #   gl-tests  tools/gl-tests    (gltri: headless GLES render + readback check; glview: BGLView window;
-#                                vktest: headless Vulkan render/compute/queries)
+#                                vktest: headless Vulkan render/compute/queries; vkcube: Vulkan
+#                                in a window)
 #
 #   scripts/build-gl-stack.sh [--sysroot] [--reconfigure]
 #                             [--only libdrm|libglvnd|mesa|glu|vulkan|gl-tests|stage]
@@ -27,7 +29,7 @@
 #                                 path includes this directory)
 #   lib/libvulkan.so.1            the Vulkan loader; it finds drivers in the add-ons directories'
 #   add-ons/vulkan/icd.d/         vulkan/icd.d: broadcom_icd.*.json names lib/libvulkan_broadcom.so (V3DV)
-#   bin/gltri bin/glview bin/retrace bin/cursor-move bin/vktest
+#   bin/gltri bin/glview bin/retrace bin/cursor-move bin/vktest bin/vkcube
 # Shared-library symlinks are resolved: each library is a file named by its soname.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -141,9 +143,18 @@ if want vulkan; then
 		Vulkan-Loader-$vk.tar.gz bcebd281753384a2b019a633e6a81dca0e75414f0c8ec49f56edfcda8020ec20
 	mkdir -p "$build/src"
 	[ -d "$build/src/Vulkan-Headers-$vk" ] || tar -xf "$build/dl/Vulkan-Headers-$vk.tar.gz" -C "$build/src"
-	if [ ! -d "$build/src/Vulkan-Loader-$vk" ]; then
+	# the recipe's patchset, then ours (patches/vulkan-loader: the Haiku view surfaces of Mesa's WSI);
+	# the source is unpacked again when the patches change
+	loaderSrc="$build/src/Vulkan-Loader-$vk"
+	loaderPatches=("$recipe/patches/vulkan-$vk.patchset" "$root"/patches/vulkan-loader/*.patch)
+	patchSum=$(cat "${loaderPatches[@]}" | sha256sum | cut -d' ' -f1)
+	if [ ! -d "$loaderSrc" ] || [ "$(cat "$loaderSrc/.patches" 2>/dev/null)" != "$patchSum" ]; then
+		rm -rf "$loaderSrc"
 		tar -xf "$build/dl/Vulkan-Loader-$vk.tar.gz" -C "$build/src"
-		patch -s -p1 -d "$build/src/Vulkan-Loader-$vk" < "$recipe/patches/vulkan-$vk.patchset"
+		for p in "${loaderPatches[@]}"; do
+			patch -s -p1 -d "$loaderSrc" < "$p"
+		done
+		echo "$patchSum" > "$loaderSrc/.patches"
 	fi
 	cmake_project vulkan-headers "$build/src/Vulkan-Headers-$vk" -DCMAKE_INSTALL_INCLUDEDIR=develop/headers
 	cmake_project vulkan-loader "$build/src/Vulkan-Loader-$vk" -DCMAKE_INSTALL_INCLUDEDIR=develop/headers \
@@ -185,7 +196,7 @@ if want stage; then
 	    }
 	}
 	JSON
-	for b in gltri glview retrace cursor-move vktest; do
+	for b in gltri glview retrace cursor-move vktest vkcube; do
 		cp "$src/bin/$b" "$stage/bin/$b"
 		"$tools-strip" "$stage/bin/$b"
 	done

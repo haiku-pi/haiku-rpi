@@ -1,0 +1,24 @@
+From: Haiku Pi port
+Subject: wsi: pass Mesa's Haiku view surface info on to the driver
+
+Haiku has no registered Vulkan surface extension; Mesa's Haiku WSI takes the
+BView of a surface as a VkHaikuSurfaceCreateInfoMESA chained to
+VkHeadlessSurfaceCreateInfoEXT (Mesa's <vulkan/vk_haiku_surface.h>). The loader
+copies a surface's create info for the drivers' lazily created surfaces and
+leaves out the whole chain when it holds a struct it does not know, so it must
+know this one.
+
+--- a/loader/wsi.c
++++ b/loader/wsi.c
+@@ -1486,6 +1486,11 @@
+ 
+     const struct loader_struct_type_info ci_types[] = {
+         {VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT, sizeof(VkHeadlessSurfaceCreateInfoEXT)},
++#if defined(__HAIKU__)
++        // Mesa's Haiku view surfaces: a VkHaikuSurfaceCreateInfoMESA in the chain (Mesa's
++        // <vulkan/vk_haiku_surface.h>; sType, pNext, flags, the BView)
++        {(VkStructureType)1000256900, sizeof(VkHeadlessSurfaceCreateInfoEXT) + sizeof(void *)},
++#endif
+     };
+     copy_surface_create_info(loader_inst, icd_surface, pCreateInfo, sizeof(ci_types) / sizeof(ci_types[0]), ci_types,
+                              "VkHeadlessSurfaceCreateInfoEXT", pAllocator);

@@ -21,3 +21,6 @@ executable('cursor-move', 'cursor-move.cpp', dependencies : [dep_be], install : 
 # headless Vulkan: the Khronos loader (scripts/build-gl-stack.sh "vulkan") and V3DV
 dep_vulkan = dependency('vulkan')
 executable('vktest', 'vktest.c', dependencies : [dep_vulkan], install : true)
+
+# windowed Vulkan: a BWindow's view as the surface (Mesa's <vulkan/vk_haiku_surface.h>)
+executable('vkcube', 'vkcube.cpp', dependencies : [dep_vulkan, dep_be], install : true)

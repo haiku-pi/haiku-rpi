@@ -74,6 +74,31 @@ Not run anywhere yet (needs the GPU): `egl_haiku_hw.c` (driconf set-up, `v3d_drm
 MMAP_BO-address and fence-wait patches, and the hardware window present (`haiku_present_copy`).
 First-run knobs: `V3D_DEBUG=sync` (every submit waits), `LIBGL_ALWAYS_SOFTWARE=1` (softpipe).
 
+## Vulkan in a window (Mesa's Haiku WSI)
+
+Neither Vulkan nor HaikuPorts has a Haiku surface extension (X512's 2021 lavapipe WSI add-on opened a window
+of its own; no API for apps). Ours, `src/vulkan/wsi/wsi_common_haiku.cpp` + the installed header
+`<vulkan/vk_haiku_surface.h>`:
+
+- Surface API: `VK_EXT_headless_surface` with a `VkHaikuSurfaceCreateInfoMESA { sType, pNext, flags, view }`
+  (a `BView *`, attached to a window) in `VkHeadlessSurfaceCreateInfoEXT::pNext`; sType 1000256900 (in
+  headless_surface's range, unused by it). No new entry point, so the loader's trampolines and surface
+  wrapping work unchanged; the loader only has to copy the struct
+  (`patches/vulkan-loader/…haiku-view-surface.patch`; without it the chain is dropped and the surface is a
+  plain headless one: `vkcube` says "none: a headless surface, not the view"). Inside Mesa the surface is
+  its own platform (`VK_ICD_WSI_PLATFORM_HAIKU_MESA`, `-DVK_USE_PLATFORM_HAIKU_MESA`).
+- Present: CPU images with the common buffer blit (GPU copy of the tiled image into a linear buffer). With
+  `VK_EXT_external_memory_host` (V3DV on Haiku: the kernel's `IMPORT_MEMORY`) the buffer is a BBitmap's own
+  area (ours, `BBitmap(area_id, …)`, page aligned), so no CPU touches the frame; otherwise the presenter
+  copies from the mapped buffer. A presenter thread waits for the present fence, invalidates the CPU cache
+  (`vkInvalidateMappedMemoryRanges` → `SYNC_BO`), locks the window (BMessenger, 100 ms, else the frame is
+  dropped) and `DrawBitmap` + `Sync`; the image is acquirable again after that (acquire needs no GPU wait).
+  When the window's own thread presents, it draws in place. FIFO = every frame in order (no retrace
+  pacing); MAILBOX/IMMEDIATE = newest frame. A view size change → `VK_SUBOPTIMAL_KHR` (the old swapchain
+  is drawn scaled meanwhile). `HAIKU_VK_FPS=1`: drawn/dropped rate; `HAIKU_VK_NO_IMPORT=1`: the copy path.
+- Test: `vkcube` (`-m`, `-w` window thread, `-r` resize) with a screen read-back check;
+  `tools/pi-tests/vkwindow.sh`.
+
 ## Known gaps
 
 - libdrm's `-errno` returns are positive on Haiku (negative errno values): callers testing the sign are wrong.
