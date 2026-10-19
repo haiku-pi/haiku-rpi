@@ -33,7 +33,9 @@ do
 	haikuporter -G -y -j4 --no-source-packages $port > /boot/home/haikuporter-$port.log 2>&1
 	rc=$?
 	say "$port: haikuporter-exit $rc in $(( $(date +%s) - start )) s"
-	tail -n 25 /boot/home/haikuporter-$port.log | while read -r line; do say "log: $line"; done
+	grep -n -i -E 'error|fail|unable|abort|traceback|cannot|not found' /boot/home/haikuporter-$port.log \
+		| head -n 30 | while read -r line; do say "err: $line"; done
+	tail -n 40 /boot/home/haikuporter-$port.log | while read -r line; do say "log: $line"; done
 	for p in $tree/packages/$port-*.hpkg; do
 		[ -e "$p" ] || continue
 		say "package: $(basename $p) $(stat -c %s $p) bytes"

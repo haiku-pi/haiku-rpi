@@ -62,6 +62,6 @@ meson)
 *) echo "cross-port: unknown build system $system" >&2; exit 2 ;;
 esac
 ninja -C "$work/build" > "$work/build.log" || { tail -n 30 "$work/build.log" >&2; exit 1; }
-grep -c 'warning:' "$work/build.log" | sed 's/^/cross-port: compiler warnings: /'
+echo "cross-port: compiler warnings: $(grep -c 'warning:' "$work/build.log" || true)"
 DESTDIR="$sysroot" ninja -C "$work/build" install > "$work/install.log"
 echo "cross-port: $name built and installed into $sysroot$prefix"
