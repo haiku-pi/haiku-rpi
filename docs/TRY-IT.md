@@ -18,15 +18,14 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 | Storage | SD card at UHS-I DDR50 (~32 MB/s reads); USB 3 storage through the VL805 (~80–90 MB/s) |
 | USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); keyboard/mouse input still needs a hands-on check |
 | Network | Gigabit Ethernet (GENET, DHCP); WiFi (BCM43455: scan, WPA2, DHCP, verified by a boot script that joins through net_server, `scripts/wifi-join-image.sh`; joining from Network preferences takes the same path but has not been tried by hand); NFSv4 client |
-| Web | NetSurf 3.11 (Applications menu): HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders |
+| Web | **WebPositive** (HaikuWebKit 1.10, JavaScript JIT on) and NetSurf 3.11, both in the Applications menu: HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders in both |
 | Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver |
 
 Known limits: no HDMI audio; no public package repository yet (software comes in the image —
 `scripts/make-repo.sh` + `scripts/serve-repo.sh` serve our packages to `pkgman` on a local network, and
 `pkgman add-repo http://<host>:8090/arm64` works after `pkgman drop-repo HaikuPorts`, whose server has no
-arm64 repository); no WebKit browser (WebPositive) yet — NetSurf is the
-browser; the games are not packaged (see below).
+arm64 repository); the games are not packaged (see below).
 
 ## Build the image
 
@@ -37,7 +36,7 @@ in a memory-capped `systemd-run --user` scope).
 `export PATH="$PWD/sources/buildtools/jam/bin.linuxx86:$PATH"` (the directory is called that on x86-64
 too) — and the packages
 `git curl xz-utils gcc g++ make bison flex texinfo autoconf automake libtool pkgconf nasm zlib1g-dev
-perl libssl-dev libgnutls28-dev uuid-dev gcc-aarch64-linux-gnu meson ninja-build cmake python3-mako
+perl ruby unifdef libssl-dev libgnutls28-dev uuid-dev gcc-aarch64-linux-gnu meson ninja-build cmake python3-mako
 python3-yaml mtools fdisk device-tree-compiler unzip`.
 
 ```sh
@@ -52,7 +51,8 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB).
 
 Verified from scratch in a fresh clone on 2026-10-19, NetSurf included: about 28 minutes on a 16-thread
-host (bootstrap 16 of them, `build-packages.sh` 8). Expected noise while every step still exits 0: a GNU
+host (bootstrap 16 of them, `build-packages.sh` 8). Since WebKit joined `build-packages.sh`, add about an
+hour (its compile; `scripts/build-webkit.sh` resumes where an interrupted build stopped). Expected noise while every step still exits 0: a GNU
 mirror's certificate error while fetching tar and libiconv (the fetch falls back to ftp.gnu.org), three
 `arm64/Jamfile: No such file` lines (hyperv, disasm, ltrace), and in the regular build `jpeglib.h`/`png.h`
 and WonderBrush's `bitmap_compression.h`/`blending.h` "No such file" lines from catalog extraction.
