@@ -78,6 +78,7 @@ rm -rf "$DEST/share"'
 "$root/scripts/build-netsurf.sh"
 "$root/scripts/build-webkit.sh"
 "$root/scripts/fetch-any-packages.sh"
+"$root/scripts/make-icu-shim.sh"
 
 mkdir -p "$download"
 cp "$root"/artifacts/packages/*.hpkg "$download/"
