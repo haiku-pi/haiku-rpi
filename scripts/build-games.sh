@@ -5,7 +5,7 @@
 #
 #   scripts/build-games.sh [--quake-data DIR] [--quake2-data DIR]
 #       DIR/id1/pak0.pak: Quake's shareware data, DIR/baseq2/pak0.pak: Quake II's demo data (not in
-#       git; defaults /home/houp/srv-assets-backup/quake and .../quake2)
+#       git; defaults: QUAKE_DATA and QUAKE2_DATA from local.conf or the environment)
 #
 #   SDL2 2.32.10   HaikuPorts recipe + patchset (scripts/cross-port.sh)
 #   QuakeSpasm 0.96.3  HaikuPorts recipe's source, its Makefile (no MP3/Vorbis codecs: no
@@ -14,8 +14,10 @@
 #                  as the recipe installs it, with the demo's baseq2/pak0.pak
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-quakeData=/home/houp/srv-assets-backup/quake
-quake2Data=/home/houp/srv-assets-backup/quake2
+# shellcheck source=/dev/null
+[ -f "$(dirname "$0")/../local.conf" ] && . "$(dirname "$0")/../local.conf"
+quakeData="${QUAKE_DATA:-}"
+quake2Data="${QUAKE2_DATA:-}"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--quake-data) quakeData="$2"; shift 2 ;;
@@ -23,6 +25,8 @@ while [ $# -gt 0 ]; do
 	*) echo "build-games: unknown option $1" >&2; exit 2 ;;
 	esac
 done
+[ -f "$quakeData/id1/pak0.pak" ] && [ -f "$quake2Data/baseq2/pak0.pak" ] \
+	|| { echo "build-games: no game data (--quake-data/--quake2-data or QUAKE_DATA/QUAKE2_DATA)" >&2; exit 2; }
 tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
 sysroot="$root/artifacts/sysroot-arm64"
 np="$sysroot/boot/system/non-packaged"

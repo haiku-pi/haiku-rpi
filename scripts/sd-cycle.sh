@@ -97,7 +97,7 @@ fi
 [ "$boot" = 1 ] || exit 0
 
 # SD boot: no DHCP server may answer on the Pi LAN, or the firmware netboots instead.
-[ -x "$PEER_NETBOOT_DOWN" ] && (cd "$PEER_ROOT" && "$PEER_NETBOOT_DOWN") >/dev/null 2>&1 || true
+peer_netboot_down
 log="$uart_dir/$ts-$label.log"
 "$PYTHON" "$cap" --dev "$PI_UART" --log "$log" --secs "$secs" --quiet-secs "$quiet" "${caps[@]}" &
 cap_pid=$!

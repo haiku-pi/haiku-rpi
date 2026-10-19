@@ -7,11 +7,11 @@ Haiku's normal NetServer / wpa_supplicant path.
 Citation keys (file:line). Haiku paths are relative to `sources/haiku/` at `bf3a1d0bdb`.
 - **[OB]** OpenBSD `sys/dev/ic/bwfm.c`, **[OBR]** `bwfmreg.h`, **[OS]** `sys/dev/sdmmc/if_bwfm_sdio.c`,
   **[OIO]** `sys/dev/sdmmc/sdmmc_io.c`, **[OF]** `sys/dev/fdt/sdhc_fdt.c` — from
-  `/home/houp/phoenix-rpi/external/openbsd-src` (HEAD `3d80b15`; the sdmmc files are outside the
+  `<phoenix-rpi>/external/openbsd-src` (HEAD `3d80b15`; the sdmmc files are outside the
   sparse checkout: `git show HEAD:sys/dev/sdmmc/<file>`).
 - **[LS]** Linux `drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c`, **[LC]** `.../cfg80211.c`,
-  **[LI]** `drivers/mmc/host/sdhci-iproc.c` — `/home/houp/phoenix-rpi/external/linux` (raspberrypi/linux).
-- **[PX]** `/home/houp/phoenix-rpi/sources/phoenix-rtos-devices/wifi/rpi4-wifi/rpi4-wifi.c` (Phoenix driver,
+  **[LI]** `drivers/mmc/host/sdhci-iproc.c` — `<phoenix-rpi>/external/linux` (raspberrypi/linux).
+- **[PX]** `<phoenix-rpi>/sources/phoenix-rtos-devices/wifi/rpi4-wifi/rpi4-wifi.c` (Phoenix driver,
   WPA2 + DHCP + 3 MB/s proven); **[PM]** `~/.claude/projects/-home-houp-phoenix-rpi/memory/project_wifi_fw_exec_gate_91.md`;
   **[PK]** `docs/knowledge/from-phoenix/wifi-bcm43455-non-linux.md`.
 - **[DTS]** `artifacts/pi-firmware/bcm2711-rpi-4-b.dts` (the DT the firmware hands to U-Boot/Haiku).
@@ -111,7 +111,7 @@ bwfm asks for (`[OB]:3153-3269`, chip name from chipcommon rev, [OS]:377-382):
 `brcmfmac43455-sdio.bin`, `brcmfmac43455-sdio.raspberrypi,4-model-b.txt` (else `...-sdio.txt`),
 `brcmfmac43455-sdio.clm_blob`. Haiku looks in `/boot/system/{non-packaged/,}data/firmware/<driver>/`
 (`src/libs/compat/freebsd_network/firmware.c:63-86`, wrapped by `openbsd_network/compat/sys/device.h:13`).
-The Phoenix-pinned set (`/home/houp/phoenix-rpi/.firmware/`): `.bin` 643651 B sha256 `d408faa9…`
+The Phoenix-pinned set (`<phoenix-rpi>/.firmware/`): `.bin` 643651 B sha256 `d408faa9…`
 (= linux-firmware `cypress/cyfmac43455-sdio.bin`, fw 7.45.234), `.clm_blob` 4733 B `15f50a27…`,
 `.txt` 1883 B. Licence: `LICENCE.cypress` permits redistributing the object code "solely for use
 in connection with Cypress integrated circuit products" — fine for an image, not for the MIT

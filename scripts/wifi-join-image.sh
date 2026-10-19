@@ -4,9 +4,9 @@
 #
 #   scripts/wifi-join-image.sh [--out IMG] [--script tools/pi-tests/net-perf.sh]
 #
-# The passphrase comes from the peer project's AP configuration (psk= in wifi.conf, or the
-# environment: WIFI_SSID / WIFI_PSK / WIFI_GATEWAY); it only lands in a temporary file and the
-# (git-ignored) test image.
+# The network and its passphrase come from local.conf or the environment (WIFI_SSID, WIFI_PSK or
+# WIFI_PSK_FILE, WIFI_GATEWAY); the passphrase only lands in a temporary file and the (git-ignored)
+# test image.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/artifacts/images/haiku-pi4-test.img"
@@ -19,12 +19,16 @@ while [ $# -gt 0 ]; do
 	*) extra+=("$1"); shift ;;	# passed on to mkimage-pi4.sh (e.g. --add-bin FILE)
 	esac
 done
-conf=/srv/phoenix-rpi4-nfs-gcc16/etc/wifi.conf
-[ -f "$conf" ] || conf="$conf.off"
-ssid="${WIFI_SSID:-PhoenixNet}"
-psk="${WIFI_PSK:-$(sed -n 's/^psk=//p' "$conf" 2>/dev/null || true)}"
-gateway="${WIFI_GATEWAY:-10.43.0.1}"
-[ -n "$psk" ] || { echo "wifi-join-image: no passphrase (WIFI_PSK or $conf)" >&2; exit 1; }
+# shellcheck source=/dev/null
+[ -f "$root/local.conf" ] && . "$root/local.conf"
+# the passphrase: WIFI_PSK, or the "psk=" line of WIFI_PSK_FILE (or of WIFI_PSK_FILE.off)
+conf="${WIFI_PSK_FILE:-}"
+[ -n "$conf" ] && [ ! -f "$conf" ] && [ -f "$conf.off" ] && conf="$conf.off"
+ssid="${WIFI_SSID:-}"
+psk="${WIFI_PSK:-$( [ -n "$conf" ] && sed -n 's/^psk=//p' "$conf" 2>/dev/null || true)}"
+gateway="${WIFI_GATEWAY:-}"
+[ -n "$ssid" ] && [ -n "$psk" ] && [ -n "$gateway" ] \
+	|| { echo "wifi-join-image: set WIFI_SSID, WIFI_PSK (or WIFI_PSK_FILE) and WIFI_GATEWAY (local.conf)" >&2; exit 1; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 python3 - "$script" "$tmp/$(basename "$script")" "$ssid" "$psk" "$gateway" <<'PY'
 import sys

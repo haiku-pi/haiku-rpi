@@ -24,7 +24,7 @@ case "${1:-}" in
 up)
 	"$HAIKU_RPI_ROOT/scripts/flashlane-build.sh" >/dev/null	# ~1 s; always current
 	stop
-	[ -x "$PEER_NETBOOT_DOWN" ] && (cd "$PEER_ROOT" && "$PEER_NETBOOT_DOWN") >/dev/null 2>&1 || true
+	peer_netboot_down
 	if pgrep -x dnsmasq -a | grep -q -- "$PI_LAN_IFACE\|pi-netboot\|netboot/dnsmasq.conf"; then
 		echo "flashlane: another dnsmasq still serves the Pi LAN:" >&2; pgrep -x dnsmasq -a >&2; exit 1
 	fi

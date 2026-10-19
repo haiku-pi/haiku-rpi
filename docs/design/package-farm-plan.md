@@ -401,7 +401,7 @@ An arm64 KVM cloud host (if Haiku boots under KVM) would cut the QEMU column by 
    force rebuilds; the riscv64/x86_64 HaikuPorts trees assume upstream Haiku.
 6. HaikuPorts recipes marked `all` were never built on arm64: expect per-port patches (aarch64 asm, config.sub,
    `-mcpu`). Keep them in a haikuports fork under `haiku-pi` and upstream nothing for now (AGENTS.md policy).
-7. Sustained builds on the shared bench: Pi-based builds must hold `/home/houp/.pi-bench.lock` for hours. That's
+7. Sustained builds on the shared bench: Pi-based builds must hold the bench lock (`$PI_BENCH_LOCK`) for hours. That's
    another reason to build in QEMU.
 
 ### Sources (web)

@@ -7,3 +7,5 @@
 *.image
 *.img
 *.efi
+# this machine's settings (local.conf.example)
+/local.conf

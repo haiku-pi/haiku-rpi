@@ -4,10 +4,10 @@ Status: design only (2026-10-18). Nothing here has been built or run on hardware
 Goal: Haiku's existing xHCI driver drives the on-board VIA VL805 (USB keyboard and mouse).
 
 Citation keys (file:line):
-- **[L]** `/home/houp/phoenix-rpi/external/linux/drivers/pci/controller/pcie-brcmstb.c`
+- **[L]** `<phoenix-rpi>/external/linux/drivers/pci/controller/pcie-brcmstb.c`
 - **[U]** `sources/u-boot/drivers/pci/pcie_brcmstb.c`
 - **[DTS]** `artifacts/pi-firmware/bcm2711-rpi-4-b.dts`
-- **[PX]** `/home/houp/phoenix-rpi/sources/phoenix-rtos-devices/usb/xhci/bcm2711-pcie.c`
+- **[PX]** `<phoenix-rpi>/sources/phoenix-rtos-devices/usb/xhci/bcm2711-pcie.c`
 - **[PG]** `docs/knowledge/from-phoenix/rpi4-os-development-guide.md`
 - **[FB]** FreeBSD `sys/arm/broadcom/bcm2835/bcm2838_pci.c` (fetched from GitHub; no line numbers available)
 - Haiku paths are relative to `sources/haiku/`.

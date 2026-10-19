@@ -26,7 +26,7 @@ HDMI via a capture card (`/dev/video4`), and the Pi's private LAN `10.42.0.0/24`
 adapter (`10.42.0.1`). **The bench is shared with another project on this host:**
 
 - Every Pi power/UART cycle and every change to the Pi LAN's DHCP/TFTP server runs under
-  `flock /home/houp/.pi-bench.lock` — `scripts/lib/bench.sh` `bench_lock` does it. One cycle at a time.
+  `flock $PI_BENCH_LOCK` (local.conf) — `scripts/lib/bench.sh` `bench_lock` does it. One cycle at a time.
 - That project's netboot server is the bench's default state; every cycle restores it on exit.
 - Never run a DHCP server on any interface other than the Pi LAN adapter.
 - Never commit secrets (WiFi PSKs, tokens). Never change the host soft-AP.
@@ -63,3 +63,7 @@ scripts/sd-cycle.sh --flash IMG --secs 180 --label x   # flash the Pi's card, bo
 - `docs/log/WEEK-<ISO week>.md` — the current weekly log: plan, progress, blockers, decisions
   needed from the owner. Single source of truth for "what now".
 - `docs/knowledge/` — reference; `docs/knowledge/from-phoenix/` is imported reference material.
+- `<phoenix-rpi>` in the design notes: a checkout of the Phoenix-RTOS Raspberry Pi 4 port (the earlier
+  port on the same board), cited as reference.
+- Machine-specific settings (UART, power switch, capture device, peer project, data paths) live in the
+  git-ignored `local.conf` (`local.conf.example`); nothing in git names a path on one machine.

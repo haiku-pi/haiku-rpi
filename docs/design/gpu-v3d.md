@@ -8,19 +8,19 @@ Vulkan (`v3dv`). The desktop today runs on the EFI GOP framebuffer handed over b
 Citation keys (file:line):
 - **[H]** `sources/haiku/` (our `rpi4` branch, hrev60262 base).
 - **[U]** `sources/u-boot/`. **[DTS]** `artifacts/pi-firmware/bcm2711-rpi-4-b.dts` (firmware `6c87074`).
-- **[PX]** `/home/houp/phoenix-rpi/sources/phoenix-rtos-devices/gpu/rpi4-v3d-async/` — the Phoenix-RTOS
+- **[PX]** `<phoenix-rpi>/sources/phoenix-rtos-devices/gpu/rpi4-v3d-async/` — the Phoenix-RTOS
   V3D render server, HW-proven on this board (STK at Raspberry Pi OS parity).
-- **[PR]** `/home/houp/phoenix-rpi/docs/research/2026-09-26-gpu-drm-architecture.md` (Phoenix GPU architecture study).
-- **[PL]** `/home/houp/phoenix-rpi/docs/gpu-new-lane/` (`M1-async-render-server.md`, `E3-firmware-planes-vblank.md`,
+- **[PR]** `<phoenix-rpi>/docs/research/2026-09-26-gpu-drm-architecture.md` (Phoenix GPU architecture study).
+- **[PL]** `<phoenix-rpi>/docs/gpu-new-lane/` (`M1-async-render-server.md`, `E3-firmware-planes-vblank.md`,
   `M3-libdrm-phoenix.md`, `PLAN.md`).
-- **[PB]** `/home/houp/phoenix-rpi/docs/done/2026-06-10-v3d-direct-power-bringup-draft.md`.
-- **[PN]** `/home/houp/.claude/projects/-home-houp-phoenix-rpi/memory/<note>.md` (Phoenix project notes).
-- **[M]** `/home/houp/phoenix-rpi/external/mesa` — Mesa 26.2.0 (`9f0a761020b`) + 22 Phoenix commits (HEAD
+- **[PB]** `<phoenix-rpi>/docs/done/2026-06-10-v3d-direct-power-bringup-draft.md`.
+- **[PN]** `<phoenix notes>` (the Phoenix project's private working notes; not public).
+- **[M]** `<phoenix-rpi>/external/mesa` — Mesa 26.2.0 (`9f0a761020b`) + 22 Phoenix commits (HEAD
   `51c5ee977ba`); "(up:N)" = line in the upstream tag. No Haiku file is touched by the Phoenix commits.
-- **[L]** `/home/houp/phoenix-rpi/external/linux` (raspberrypi/linux rpi-6.18.y). Facts only — GPL.
+- **[L]** `<phoenix-rpi>/external/linux` (raspberrypi/linux rpi-6.18.y). Facts only — GPL.
 - **[G]** libglvnd `src/HGL/` (github.com/NVIDIA/libglvnd mirror of gitlab.freedesktop.org/glvnd, master).
 - **[HP]** HaikuPorts `sys-libs/mesa/mesa-25.3.6.recipe` (fetched 2026-10-18 with `gh api`).
-- **[X]** `/home/houp/phoenix-rpi/external/haiku-{libdrm2,radeongfx,nvidia}` (X512's community DRM work).
+- **[X]** `<phoenix-rpi>/external/haiku-{libdrm2,radeongfx,nvidia}` (X512's community DRM work).
 
 ## 0. Key findings
 
@@ -136,7 +136,7 @@ Citation keys (file:line):
 | Power-on (HW-proven) | mailbox `SET_QPU_ENABLE(1)` (0x30012), `SET_DOMAIN_STATE(10,on)` (0x38030), `SET_CLOCK_STATE(5,on)`; clock on → 50 µs → off; `PM_GRAFX(0x10c) \|= PM_V3DRSTN(bit 6)` with password `0x5a000000`; **clock on + read-back** (`GET_CLOCK_STATE` bit 0, ≤ 20 tries); ASB master (+0x0c) and slave (+0x08) on `rpivid_asb`: clear `REQ_STOP`, poll `ACK`→0; 2 ms | [PX] `v3da_hw.c:42-63,176-219`; [PL] `M1…`:408-414 |
 | The PM island sequence | POWUP/ISPOW… is a **no-op on BCM2711**; mailbox calls + overlay alone are **not** sufficient — the PM_V3DRSTN + ASB writes are load-bearing | [PB]:12-20 |
 | PM/ASB addresses | DT `watchdog@7e100000` (`brcm,bcm2711-pm`), `reg-names = "pm", "asb", "rpivid_asb"` (`0x7ec11000` → CPU `0xfec11000`); it is the V3D node's `power-domains`/`resets` provider | [DTS]:1526-1536,2466-2467 |
-| Config | Phoenix boots with `dtoverlay=vc4-fkms-v3d` ("fake-KMS so the firmware ungates V3D — its MMIO reads 0xdeadbeef otherwise"); the overlay sets cma 256 MiB, disables `/soc/fb`, enables `firmwarekms`, `v3d`, `vc4` | `/home/houp/phoenix-rpi/docs/PHOENIX-RTOS-RPI4-CHANGES.md:1617`; decompiled `vc4-fkms-v3d.dtbo` |
+| Config | Phoenix boots with `dtoverlay=vc4-fkms-v3d` ("fake-KMS so the firmware ungates V3D — its MMIO reads 0xdeadbeef otherwise"); the overlay sets cma 256 MiB, disables `/soc/fb`, enables `firmwarekms`, `v3d`, `vc4` | `<phoenix-rpi>/docs/PHOENIX-RTOS-RPI4-CHANGES.md:1617`; decompiled `vc4-fkms-v3d.dtbo` |
 | Core register set-up | `MMU_PT_PA_BASE = pt_pa>>12`; `MMU_CTL = ENABLE\|PTI_ENABLE` + abort/int on PTI, write-violation, cap-exceeded; `MMU_ILLEGAL_ADDR = scratch>>12 \| bit31`; `MMUC_CONTROL = ENABLE`; `L2CACTL = L2CCLR\|L2CENA`; L2T flush range 0..~0; `HUB_AXICFG = 0xf` (GFXH-1383); `MISCCFG = QRMAXCNT(2)<<1 \| OVRTMUOUT` (proven, keep) | [PX] `v3da_hw.c:251-265`; [PL] `M1…`:293-296 |
 | MMU | one flat page table for all clients (as Linux), PTE = `PA>>12 \| VALID(28) \| WRITE(29)`; flush = `dsb sy`, `MMUC_CONTROL = FLUSH\|ENABLE` (wait `FLUSHING`), `MMU_CTL \|= TLB_CLEAR` (wait `TLB_CLEARING`). PA width is read by Linux from `MMU_DEBUG_INFO` | [PX] `v3da_hw.c:303-316`, `v3da_regs.h:74-98`; [L] `drivers/gpu/drm/v3d/v3d_drv.c:409-416`, `v3d_mmu.c:27-30` |
 | DMA window | `v3dbus dma-ranges = <0x0 0x0 0x4 0x0>`: identity, 16 GiB — **no `0xC0000000` alias** (unlike emmc2/soc) | [DTS]:2453-2460 |

@@ -36,7 +36,9 @@ while [ $# -gt 0 ]; do
 done
 [ $# -gt 0 ] || { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-lock="${HEAVY_BUILD_LOCK:-/tmp/phoenix-heavy-build.lock}"
+# shellcheck source=/dev/null
+[ -z "${HEAVY_BUILD_LOCK:-}" ] && [ -f "$(dirname "$0")/../local.conf" ] && . "$(dirname "$0")/../local.conf"
+lock="${HEAVY_BUILD_LOCK:-/tmp/heavy-build.lock}"
 exec 9>"${lock}"
 if ! flock -n 9; then
 	printf 'heavy-build: waiting for another heavy build (%s)\n' "${lock}" >&2

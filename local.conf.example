@@ -1,0 +1,30 @@
+# local.conf — this machine's bench and data settings (copy to local.conf, which git ignores).
+# scripts/lib/bench.sh, scripts/heavy-build.sh, scripts/build-games.sh and scripts/wifi-join-image.sh
+# read it; every setting can also come from the environment. Unset settings disable what needs them.
+
+# The Pi's serial console (PL011 on GPIO 14/15, 115200 8N1)
+#PI_UART=/dev/ttyUSB0
+# A program that switches the Pi's power: called as "$PI_PLUG on" / "$PI_PLUG off"
+#PI_PLUG=/path/to/plug-control
+# The HDMI capture device (V4L2), for snapshots and the live preview (scripts/pi-test.sh)
+#HDMI_GRABBER=/dev/video0
+# The host's address on the Pi's private LAN; the interface is found from it unless PI_LAN_IFACE is set
+#PI_LAN_HOST=10.42.0.1
+#PI_LAN_IFACE=eth1
+# Shared bench: the lock every Pi cycle holds (share it with any other project using the same Pi)
+#PI_BENCH_LOCK=$HOME/.pi-bench.lock
+# Another project's netboot server to restore after each cycle (optional): its checkout, or the scripts
+#PEER_ROOT=/path/to/other/project
+#PEER_NETBOOT_UP=$PEER_ROOT/scripts/netboot-server-up.sh
+#PEER_NETBOOT_DOWN=$PEER_ROOT/scripts/netboot-server-down.sh
+#PEER_SD_IMAGE=/path/to/their/sd-card.img
+# Heavy builds wait for each other on this lock (share it with other projects building on this host)
+#HEAVY_BUILD_LOCK=/tmp/heavy-build.lock
+# Game data for scripts/build-games.sh (not in git): DIR/id1/pak0.pak, DIR/baseq2/pak0.pak
+#QUAKE_DATA=/path/to/quake
+#QUAKE2_DATA=/path/to/quake2
+# WiFi for test images (scripts/wifi-join-image.sh): the passphrase only lands in the git-ignored image
+#WIFI_SSID=MyNetwork
+#WIFI_PSK=...
+#WIFI_PSK_FILE=/path/to/file/with/psk=line
+#WIFI_GATEWAY=10.43.0.1
