@@ -65,6 +65,8 @@ if [ -n "$flash" ]; then
 	grep -a '^\[.*\] HFL' "$flog" || true
 	pi_power off
 	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" down
+	# the served link would keep a deleted image's 1-2 GB alive
+	rm -f "$www/$name"
 	if ! grep -aq "HFL done ok=1 sha256=$sha" "$flog"; then
 		echo "sd-cycle: FLASH FAILED ($flog)" >&2; exit 1
 	fi
