@@ -15,9 +15,9 @@
 #
 #   jam @pi-mmc
 #       the regular image (the regular build type: media kit and servers, MediaPlayer, the full set of
-#       applications and preferences) without the nightly profile's extra packages that arm64 does not
-#       have yet (the Development and Git bundles, nano, openssh, ...), as haiku-mmc.image (the
-#       profile type ignores the name). Combine with
+#       applications and preferences, NetSurf and WebPositive) without the nightly profile's extra
+#       packages that arm64 does not have yet (the Development and Git bundles, nano, openssh, ...),
+#       as haiku-mmc.image (the profile type ignores the name). Combine with
 #       HAIKU_PI_GL (and HAIKU_PI_DEV).
 #
 # build.sh always adds -sHAIKU_NO_DOWNLOADS=1: our arm64 repository definition lists packages Haiku's
@@ -41,6 +41,10 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	AddHaikuImageSystemPackages sounds_community_default timgmsoundfont ;
 	# a web browser (scripts/build-netsurf.sh) and the CA certificates HTTPS needs
 	AddHaikuImageSystemPackages netsurf ca_root_certificates ;
+	# WebPositive (scripts/build-webkit.sh): jam builds it when haikuwebkit_devel is in the
+	# repository (the webkit build feature); the nightly profile adds it for x86 only. Its package
+	# requires haikuwebkit, which brings the libraries WebKit needs.
+	AddOptionalHaikuImagePackages WebPositive ;
 	# default locale settings: no first-boot prompt (it would hold the desktop back until someone
 	# picks a language)
 	# (tools/build/flatten-message.py wrote it: language "en"); and the Time preferences' defaults,
@@ -48,6 +52,10 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	AddFilesToHaikuImage home config settings
 		: $(HAIKU_TOP)/../../tools/build/data/Locale\ settings
 		  $(HAIKU_TOP)/../../tools/build/data/networktime\ settings ;
+	# ICU_DATA for the desktop's programs: the icu74 bootstrap package looks for its data in the
+	# wrong place, and WebKit cannot start without it (see the file)
+	AddFilesToHaikuImage home config settings boot
+		: $(HAIKU_TOP)/../../tools/build/data/UserSetupEnvironment ;
 }
 
 if $(HAIKU_PI_DEV) = 1 {

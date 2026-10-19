@@ -14,9 +14,9 @@ installed) it makes, in artifacts/packages/:
                                          with the packaged paths
 
 Provides come from the sonames, requires from the libraries' NEEDED entries (other ports in the
-sysroot, libstdc++/libgcc_s; the system's own libraries need nothing but "haiku"), the license
-and summary from the recipe. --static-suffix renames lib<name>.a to lib<name><SUFFIX>.a (fluidlite:
-"-static", as jam's fluidlite build feature expects). Both packages are also extracted into the
+sysroot, libstdc++/libgcc_s/libatomic; the system's own libraries need nothing but "haiku"), the
+license and summary from the recipe. --static-suffix renames lib<name>.a to lib<name><SUFFIX>.a
+(fluidlite: "-static", as jam's fluidlite build feature expects). Both packages are also extracted into the
 sysroot's boot/system, as the image will have them. The vendor is the HaikuPorts repository's
 ("Haiku Project"): package_repo refuses another one in it; the packager says who built them.
 """
@@ -214,7 +214,7 @@ def main():
         if n in sonames:
             continue
         if os.path.exists(os.path.join(sysroot + nonPackaged, 'lib', n)) \
-                or lib_base(n) in ('libstdc++', 'libgcc_s'):
+                or lib_base(n) in ('libstdc++', 'libgcc_s', 'libatomic'):
             requires.add(f'lib:{resolvable(lib_base(n))}')
         # else: a system library (libroot, libbe, ...), in "haiku"
 

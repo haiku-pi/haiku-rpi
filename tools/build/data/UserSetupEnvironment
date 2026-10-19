@@ -1,0 +1,9 @@
+# Sourced by /boot/system/boot/SetupEnvironment for the desktop's programs (tools/build/UserBuildConfig
+# puts it into the pi-mmc image).
+#
+# ICU's data: the arm64 icu74 bootstrap package was built with its data directory as
+# /packages/icu74_bootstrap-74.1-1/.self/data/icu/74.1, but it is activated as
+# icu74-74.1_bootstrap-1, so ICU finds no data at all (time zones, collation, break iterators:
+# U_MISSING_RESOURCE_ERROR). WebKit's JavaScriptCore cannot start without it. Until icu74 is rebuilt
+# with the right path, tell ICU where the package puts its data.
+export ICU_DATA=/boot/system/data/icu/74.1
