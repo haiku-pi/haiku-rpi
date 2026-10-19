@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build-games.sh — cross-build SDL2 and the games on this host and stage them for the Pi image
 # (mkimage-pi4.sh --add-tree artifacts/games/non-packaged). The image must come from a
-# `jam -sHAIKU_PI_GL=1` build: the mesa package and libmedia/libgame.
+# `jam -sHAIKU_PI_GL=1 @pi-mmc` build: the mesa and libsdl2 packages, libmedia/libgame.
 #
 #   scripts/build-games.sh [--quake-data DIR]   (DIR/id1/pak0.pak: the shareware data, not in git;
 #                                                default /home/houp/srv-assets-backup/quake)
@@ -47,8 +47,8 @@ make -C "$quake" -j"$(nproc)" HOST_OS=haiku CC="$tools-gcc --sysroot=$sysroot" S
 echo "build-games: quakespasm built, $(grep -c 'warning:' "$work/build.log" || true) compiler warnings"
 
 rm -rf "$stage"
-mkdir -p "$stage/lib" "$stage/apps/QuakeSpasm/id1"
-"$tools-strip" --strip-unneeded -o "$stage/lib/libSDL2-2.0.so.0" "$np/lib/libSDL2-2.0.so.0"
+mkdir -p "$stage/apps/QuakeSpasm/id1"
+# SDL2 itself is a package (libsdl2, scripts/build-packages.sh) in the pi-mmc image
 cp "$quake/quakespasm" "$quake/quakespasm.pak" "$stage/apps/QuakeSpasm/"
 cp "$quakeData/id1/pak0.pak" "$stage/apps/QuakeSpasm/id1/"
 find "$stage" -type f -printf 'build-games: %P %s\n' | sort

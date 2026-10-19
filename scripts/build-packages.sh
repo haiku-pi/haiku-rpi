@@ -5,6 +5,7 @@
 #
 #   mesa, mesa_devel, glu, glu_devel       scripts/build-gl-stack.sh + scripts/package-gl-stack.sh
 #   libogg, libvorbis, fluidlite (+_devel) scripts/cross-port.sh + scripts/package-port.py
+#   libsdl2                                scripts/cross-port.sh + scripts/package-port.py
 #   gzip, tar, bzip2, unzip                scripts/build-base-ports.sh
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
 #
@@ -34,6 +35,12 @@ fi
 # jam's fluidlite build feature links the static library as libfluidlite-static.a
 "$root/scripts/package-port.py" "$ports/media-sound/fluidlite/fluidlite-1.0.9.recipe" \
 	--static-suffix=-static
+
+# SDL2 (the games): links libmedia/libgame, which haiku_devel has only in the regular build type
+"$root/scripts/cross-port.sh" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
+	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF
+"$root/scripts/package-port.py" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" \
+	--devel-bin sdl2-config
 
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/fetch-any-packages.sh"

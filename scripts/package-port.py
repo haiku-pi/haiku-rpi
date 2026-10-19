@@ -53,6 +53,11 @@ def lib_base(soname):
     return soname.split('.so')[0]
 
 
+def resolvable(name):
+    # '-' is not allowed in package resolvable names (HaikuPorts: libSDL2-2.0 -> libSDL2_2.0)
+    return name.replace('-', '_')
+
+
 def package_info(name, version, revision, summary, licenses, copyrights, provides, requires):
     def block(items):
         return '\n'.join('\t' + i for i in items)
@@ -94,6 +99,8 @@ def main():
     parser.add_argument('recipe')
     parser.add_argument('--revision', default='1')
     parser.add_argument('--static-suffix', default='')
+    parser.add_argument('--devel-bin', action='append', default=[],
+        help='a program of bin/ that goes into the _devel package (e.g. sdl2-config)')
     args = parser.parse_args()
 
     recipeName = os.path.basename(args.recipe)[:-len('.recipe')]
@@ -138,6 +145,10 @@ def main():
         os.makedirs(os.path.join(runtime, 'bin'))
         for f in sorted(os.listdir(binDir)):
             path = os.path.join(binDir, f)
+            if f in args.devel_bin:
+                os.makedirs(os.path.join(devel, 'bin'), exist_ok=True)
+                shutil.copy(path, os.path.join(devel, 'bin', f))
+                continue
             target = os.path.join(runtime, 'bin', f)
             if os.path.islink(path):
                 os.symlink(os.readlink(path), target)
@@ -149,6 +160,17 @@ def main():
                 shutil.copy(path, target)
             commands.append(f)
 
+    # applications and their data go in as they are (QuakeSpasm: apps/QuakeSpasm/...)
+    for d in ('apps', 'data'):
+        if os.path.isdir(os.path.join(install, d)):
+            shutil.copytree(os.path.join(install, d), os.path.join(runtime, d), symlinks=True)
+            for dirpath, _, files in os.walk(os.path.join(runtime, d)):
+                for f in files:
+                    path = os.path.join(dirpath, f)
+                    if not os.path.islink(path) and open(path, 'rb').read(4) == b'\x7fELF':
+                        programNeeded.extend(elf_dynamic(path)[1])
+                        subprocess.run([tools + 'strip', path], check=True)
+
     provides = [f'{port} = {version}-{args.revision}']
     develProvides = [f'{port}_devel = {version}-{args.revision}']
     requires = {'haiku'}
@@ -156,17 +178,19 @@ def main():
         base = lib_base(soname)
         major = libVersion.split('.')[0]
         compat = f' compat >= {major}' if major.isdigit() else ''
-        provides.append(f'lib:{base} = {libVersion}{compat}')
-        develProvides.append(f'devel:{base} = {libVersion}{compat}')
+        provides.append(f'lib:{resolvable(base)} = {libVersion}{compat}')
+        develProvides.append(f'devel:{resolvable(base)} = {libVersion}{compat}')
         programNeeded.extend(needed)
     for c in commands:
-        provides.append(f'cmd:{c.replace("+", "_")} = {version}')
+        provides.append(f'cmd:{resolvable(c.replace("+", "_"))} = {version}')
+    for c in args.devel_bin:
+        develProvides.append(f'cmd:{resolvable(c)} = {version}')
     for n in programNeeded:
         if n in sonames:
             continue
         if os.path.exists(os.path.join(sysroot + nonPackaged, 'lib', n)) \
                 or lib_base(n) in ('libstdc++', 'libgcc_s'):
-            requires.add(f'lib:{lib_base(n)}')
+            requires.add(f'lib:{resolvable(lib_base(n))}')
         # else: a system library (libroot, libbe, ...), in "haiku"
 
     # devel: headers, static libraries, symlinks, pkg-config
@@ -180,6 +204,15 @@ def main():
     for soname, _, _ in libs:
         for linkName in {lib_base(soname) + '.so', soname}:
             os.symlink('../../lib/' + soname, os.path.join(devel, 'develop/lib', linkName))
+    # other link names the port installs for its libraries (SDL2: libSDL2.so)
+    for f in (sorted(os.listdir(libDir)) if os.path.isdir(libDir) else []):
+        path = os.path.join(libDir, f)
+        if not os.path.islink(path) or not f.endswith('.so') \
+                or os.path.lexists(os.path.join(devel, 'develop/lib', f)):
+            continue
+        soname, _ = elf_dynamic(os.path.realpath(path))
+        if soname in sonames:
+            os.symlink('../../lib/' + soname, os.path.join(devel, 'develop/lib', f))
     pkgconfigDir = os.path.join(libDir, 'pkgconfig')
     if os.path.isdir(pkgconfigDir):
         os.makedirs(os.path.join(devel, 'develop/lib/pkgconfig'))
@@ -203,7 +236,8 @@ def main():
                 shutil.copy(text, os.path.join(directory, 'data/licenses', license))
 
     out = os.path.join(root, 'artifacts/packages')
-    if libs or commands:
+    runtimeFiles = [f for d, _, fs in os.walk(runtime) for f in fs if '/data/licenses' not in d]
+    if runtimeFiles:
         create(runtime, package_info(port, version, args.revision, summary, licenses,
             copyrights, provides, sorted(requires)),
             os.path.join(out, f'{port}-{version}-{args.revision}-arm64.hpkg'))

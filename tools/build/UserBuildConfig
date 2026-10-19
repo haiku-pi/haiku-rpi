@@ -32,6 +32,8 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	HAIKU_IMAGE_SIZE ?= 1000 ;
 	# libmidi (Media preferences, MIDI) links libvorbisfile, which the haiku package does not require
 	AddHaikuImageSystemPackages libogg libvorbis ;
+	# the games' SDL2 (scripts/build-packages.sh)
+	AddHaikuImageSystemPackages libsdl2 ;
 	# default locale settings: no first-boot prompt (it would hold the desktop back until someone
 	# picks a language)
 	# (tools/build/make-locale-settings.py wrote it: language "en")
