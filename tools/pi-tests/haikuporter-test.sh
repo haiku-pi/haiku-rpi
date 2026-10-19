@@ -19,6 +19,9 @@ PACKAGER="haiku-pi build farm <build@haiku-pi.invalid>"
 TARGET_ARCHITECTURE="arm64"
 CONF
 say "python: $(python3 -c 'import zlib, bz2, lzma; d = b"haiku" * 1000; print("zlib bz2 lzma round trip", all(m.decompress(m.compress(d)) == d for m in (zlib, bz2, lzma)))' 2>&1 | tail -n 1)"
+say "tools: $(for t in patch tar gzip xz bzip2 diff; do $t --version 2>&1 | head -n 1 | tr '\n' ';'; done)"
+cd /tmp && echo haiku > t.txt && tar -cJf t.tar.xz t.txt && rm t.txt && tar -xf t.tar.xz \
+	&& say "tools: tar+xz round trip $(cat t.txt)"; cd /
 say "building $port"
 start=$(date +%s)
 haikuporter -C -G -y -j4 --no-source-packages $port > /boot/home/haikuporter.log 2>&1

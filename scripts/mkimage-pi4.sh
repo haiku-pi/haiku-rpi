@@ -15,7 +15,7 @@
 #                          [--no-fkms]           (no haiku-fkms overlay: the firmware's KMS node stays
 #                                                 disabled, so no SMI vblank interrupt; the display driver
 #                                                 then waits on SET_VSYNC)
-#                          [--add-tree DIR]...   (DIR's files, with their relative paths, copied into
+#                          [--add-tree DIR]...   (DIR's files and symlinks, with their relative paths, into
 #                                                 /boot/system/non-packaged/, e.g. the GL stack of
 #                                                 scripts/build-gl-stack.sh: artifacts/gl-stack/non-packaged)
 #
@@ -150,6 +150,9 @@ for tree in ${trees[@]+"${trees[@]}"}; do
 			echo "cp $(fssh_quote ":$tree/$f") $(fssh_quote "$npDir/$f")"
 			echo "chmod 755 $(fssh_quote "$npDir/$f")"
 		done
+		(cd "$tree" && find . -type l -printf '%P\t%l\n') | sort | while IFS=$'\t' read -r l target; do
+			echo "ln -sf $(fssh_quote "$target") $(fssh_quote "$npDir/$l")"
+		done
 		echo sync
 	} | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-tree.log" 2>&1 || true
 	# verify every file by its size
@@ -158,7 +161,7 @@ for tree in ${trees[@]+"${trees[@]}"}; do
 			| grep -q " $(stat -c %s "$tree/$f") .*$(basename "$f")" \
 			|| { cat "$tmp/bfs-tree.log" >&2; echo "mkimage-pi4: $f of $tree not written" >&2; exit 1; }
 	done
-	echo "mkimage-pi4: added $(cd "$tree" && find . -type f | wc -l) files of $tree to /boot/system/non-packaged"
+	echo "mkimage-pi4: added $(cd "$tree" && find . -type f | wc -l) files and $(cd "$tree" && find . -type l | wc -l) symlinks of $tree to /boot/system/non-packaged"
 done
 mv "$out.tmp" "$out"
 echo "mkimage-pi4: $out ($(stat -c %s "$out") bytes, firmware $(cut -c1-12 "$fw/COMMIT"), u-boot $(git -C "$root/sources/u-boot" rev-parse --short HEAD))"
