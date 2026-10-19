@@ -19,12 +19,13 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 | USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); keyboard/mouse input still needs a hands-on check |
 | Network | Gigabit Ethernet (GENET, DHCP); WiFi (BCM43455: scan, WPA2, DHCP, verified by a boot script that joins through net_server, `scripts/wifi-join-image.sh`; joining from Network preferences takes the same path but has not been tried by hand); NFSv4 client |
 | Web | NetSurf 3.11 (Applications menu): HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders |
+| Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver |
 
 Known limits: no HDMI audio, no package repository for `pkgman` yet (software comes in the image), no
-WebKit browser (WebPositive) yet — NetSurf is the browser, the games are not packaged (see below), and a rare
-boot-time stall of CPU 0 that the kernel's GIC watchdog recovers (about 1 boot in 20; the desktop still
-comes up).
+WebKit browser (WebPositive) yet — NetSurf is the browser, the games are not packaged (see below), and
+short CPU stalls under heavy SD-card load (about one a minute in a 15-minute stress test, 25–50 ms
+each, ended by a kernel watchdog: an interrupt-controller problem whose cause is still open).
 
 ## Build the image
 
