@@ -37,7 +37,12 @@ fi
 "$root/scripts/package-port.py" "$ports/media-sound/fluidlite/fluidlite-1.0.9.recipe" \
 	--static-suffix=-static
 
-# SDL2 (the games): links libmedia/libgame, which haiku_devel has only in the regular build type
+# SDL2 (the games) and ffmpeg link libmedia and libgame, which the sysroot's haiku_devel (from the
+# minimum build) does not have: the libraries jam built (as scripts/build-games.sh does)
+objects="$root/sources/haiku/generated.arm64/objects/haiku/arm64/release/kits"
+for l in game/libgame.so media/libmedia.so; do
+	cp "$objects/$l" "$root/artifacts/sysroot-arm64/boot/system/develop/lib/"
+done
 "$root/scripts/cross-port.sh" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
 	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF
 "$root/scripts/package-port.py" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" \

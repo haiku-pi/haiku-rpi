@@ -16,9 +16,9 @@ mkdir -p "$download"
 
 commit="$(git -C "$haiku" log -1 --format=%H --invert-grep --grep=haiku-pi -- "$definition")"
 git -C "$haiku" show "$commit:$definition" > "$download/upstream-arm64-definition"
-python3 - "$download/upstream-arm64-definition" "$download" <<'PY'
+python3 - "$download/upstream-arm64-definition" "$download" "$haiku/build/jam/BuildFeatures" <<'PY'
 import hashlib, os, re, sys, urllib.request
-path, download = sys.argv[1], sys.argv[2]
+path, download, featuresPath = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(path, 'rb').read()
 checksum = hashlib.sha256(text).hexdigest()
 # RemotePackageRepository NAME : ARCH : URL : any packages : arch packages : source packages ...
@@ -32,6 +32,14 @@ for token in ' '.join(lines).replace(';', ' ').split():
 url = sections[2][0]
 anyPackages, archPackages = sections[3], sections[4]
 files = [p + '-any.hpkg' for p in anyPackages] + [p + '-arm64.hpkg' for p in archPackages]
+# source packages are listed by port name, at the version of that port's package; only those jam's
+# build features use (zlib: the boot loader) are needed
+features = open(featuresPath).read()
+used = set(re.findall(r'file: source (\w+)_source', features))
+versions = {p.split('-', 1)[0]: p.split('-', 1)[1] for p in archPackages + anyPackages}
+for name in (sections[5] if len(sections) > 5 else []):
+    if name in versions and name in used:
+        files.append(f'{name}_source-{versions[name]}-source.hpkg')
 for f in files:
     target = os.path.join(download, f)
     if os.path.exists(target):

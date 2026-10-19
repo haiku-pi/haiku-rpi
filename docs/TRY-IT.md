@@ -27,21 +27,28 @@ comes up).
 
 ## Build the image
 
-On an x86-64 Linux host (Ubuntu or similar):
+On an x86-64 Linux host (Ubuntu or similar) with a systemd user session (the heavy build steps run
+in a memory-capped `systemd-run --user` scope).
+
+**Host prerequisites:** Haiku's own `jam` (build it from the buildtools sources after
+`bootstrap.sh`: `make -C sources/buildtools/jam` and put the binary on your `PATH`), and the packages
+`git curl xz-utils gcc g++ make bison flex texinfo autoconf automake libtool pkgconf nasm zlib1g-dev
+libssl-dev libgnutls28-dev uuid-dev gcc-aarch64-linux-gnu meson ninja-build cmake python3-mako
+python3-yaml mtools fdisk device-tree-compiler unzip`.
 
 ```sh
 git clone https://github.com/haiku-pi/haiku-rpi.git && cd haiku-rpi
-scripts/bootstrap.sh            # sources, Haiku's arm64 cross tools, Pi firmware, upstream packages
+scripts/bootstrap.sh            # sources (pinned), Haiku's arm64 cross tools, upstream packages, firmware
 scripts/build-uboot.sh          # U-Boot for the Pi 4 (needs aarch64-linux-gnu-gcc)
-scripts/build.sh @minimum-mmc   # first Haiku build: the cross compiler, haiku_devel, host tools
+scripts/build.sh @minimum-mmc   # first Haiku build: haiku_devel and the host tools the next step uses
 scripts/build-packages.sh --sysroot   # our packages: Mesa, SDL2, ffmpeg, zstd, base tools, ...
 scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 ```
 
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB).
 
-These steps are the scripts the port is built with every day, but the sequence has not yet been run
-from scratch on a clean machine; report what breaks.
+A from-scratch run of this sequence in a fresh clone (2026-10-19) took about 30 minutes on a 16-thread
+host and produced the same image; the fixes it needed are in the scripts now.
 
 ## Flash and boot
 
