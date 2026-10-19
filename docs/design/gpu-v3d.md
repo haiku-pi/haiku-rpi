@@ -306,6 +306,13 @@ after a mode change. Open: overlays (needs MediaPlayer, i.e. H14), flips (stage 
 **Stage 5 — zero-copy into BBitmaps, P2 (1–1.5 weeks).** Area-import ioctl (pins pages, maps them into the
 V3D MMU, quarantine on release), GPU blit into the imported bitmap, cache maintenance around the job.
 *Exit:* GLTeapot fps at 1080p window ≥ 1.5× stage 3; `md5` of a readback equals the softpipe frame.
+*Status 2026-10-19:* `DRM_V3D_HAIKU_IMPORT_MEMORY` (lock_memory_etc, pages wired into the V3D page
+table, a BO handle back) and `DRM_V3D_HAIKU_SYNC_BO` (cache maintenance through the kernel's physical map)
+in haiku bf6e4efdd2; Mesa 2e5fc430445: the v3d winsys opens `WINSYS_HANDLE_TYPE_KMS` handles, egl_haiku
+imports the window's BBitmap once and presents with a GPU blit + `WAIT_BO` + sync (`HAIKU_EGL_NO_IMPORT=1`
+= old copy path). `tools/pi-tests/gl-present.sh`, `glview` same binary, A/B by the environment variable:
+**256² 1122 fps (copy 763), 800² 151.8 fps (copy 39.9) = 3.8×**, all PASS, triangle correct on HDMI.
+Open: the md5 readback-vs-softpipe check; GLTeapot at 1080p needs H14 (not in the minimum image).
 
 **Stage 6 — full-screen and overlay GL, P3 (1–1.5 weeks).** Full-screen: GL renders into plane buffers,
 swap = fence-gated `SET_PLANE` flip (never render into the buffer on screen). Windowed overlay GL is optional
