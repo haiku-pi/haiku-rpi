@@ -1,11 +1,11 @@
 # Meson cross file: Haiku arm64 (aarch64-unknown-haiku) on the Linux host, with the jam-built cross
 # compiler and the sysroot from scripts/haiku-sysroot.sh. Ports built with it install with
 #   --prefix=/boot/system/non-packaged  and  DESTDIR=<sysroot>  (scripts/build-gl-stack.sh does),
-# so later ports find earlier ones through pkg-config. Paths assume the checkout at
-# /home/houp/haiku-rpi; change `root` below if it lives elsewhere.
+# so later ports find earlier ones through pkg-config. Paths are relative to this file's checkout
+# (@DIRNAME@: the directory of this file, meson >= 0.56).
 
 [constants]
-root = '/home/houp/haiku-rpi'
+root = '@DIRNAME@' / '..' / '..'
 cross = root / 'sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-'
 sysroot = root / 'artifacts/sysroot-arm64'
 

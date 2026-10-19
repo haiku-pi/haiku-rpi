@@ -9,7 +9,7 @@ a sysroot made from the jam build's packages, and copied into the image as a pla
 | What | Where | Branch / state |
 |---|---|---|
 | Sysroot (headers + libs of `haiku`, `haiku_devel`, `gcc_syslibs(_devel)`, `zlib(_devel)` hpkgs) | `artifacts/sysroot-arm64/boot/system/` | `scripts/haiku-sysroot.sh` |
-| Meson cross file | `tools/meson/haiku-arm64.cross` | absolute paths under `/home/houp/haiku-rpi` (`root` constant) |
+| Meson cross file | `tools/meson/haiku-arm64.cross` | paths relative to the checkout (`root = '@DIRNAME@' / '..' / '..'`) |
 | libdrm 2.4.134 | `sources/libdrm` | `rpi4`: builds on Haiku; `drmIoctl` passes the size (4th `ioctl()` argument); no device enumeration |
 | libglvnd master (1.7.0 + HaikuPorts' HGL patch, upstreamed) | `sources/libglvnd` | `rpi4`: builds against current Haiku headers / cross |
 | Mesa 26.2.0 | `sources/mesa` | `rpi4`: v3d + softpipe; `egl_haiku` uses v3d on `/dev/dri/renderD128` |
