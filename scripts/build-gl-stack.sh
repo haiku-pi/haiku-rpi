@@ -5,9 +5,10 @@
 #   libdrm    sources/libdrm    (branch rpi4: Haiku build fixes)
 #   libglvnd  sources/libglvnd  (branch rpi4: EGL/GLES dispatch + HGL: libGL.so with BGLView)
 #   Mesa      sources/mesa      (branch rpi4: v3d + softpipe, egl_haiku opens /dev/dri/renderD128)
+#   GLU       glu-9.0.3 release (unchanged; fetched into artifacts/gl-build/dl, SHA-256 pinned)
 #   gl-tests  tools/gl-tests    (gltri: headless GLES render + readback check; glview: BGLView window)
 #
-#   scripts/build-gl-stack.sh [--sysroot] [--reconfigure] [--only libdrm|libglvnd|mesa|gl-tests|stage]
+#   scripts/build-gl-stack.sh [--sysroot] [--reconfigure] [--only libdrm|libglvnd|mesa|glu|gl-tests|stage]
 #
 # Uses tools/meson/haiku-arm64.cross and the sysroot of scripts/haiku-sysroot.sh (created when
 # missing, recreated with --sysroot). Build dirs: artifacts/gl-build/<name>; each project is
@@ -89,6 +90,16 @@ if want mesa; then
 		-Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled \
 		-Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Dbuild-tests=false \
 		-Dtools= -Dperfetto=false -Dspirv-tools=disabled
+fi
+if want glu; then
+	# headers in develop/headers/GL, as HaikuPorts' glu recipe and jam's glu build feature have them
+	glu=glu-9.0.3
+	archive="$build/dl/$glu.tar.xz"
+	mkdir -p "$build/dl" "$build/src"
+	[ -f "$archive" ] || curl -sSfL -o "$archive" "https://archive.mesa3d.org/glu/$glu.tar.xz"
+	echo "bd43fe12f374b1192eb15fe20e45ff456b9bc26ab57f0eee919f96ca0f8a330f  $archive" | sha256sum -c --quiet
+	[ -d "$build/src/$glu" ] || tar -xf "$archive" -C "$build/src"
+	meson_project glu "$build/src/$glu" --includedir=develop/headers -Dgl_provider=glvnd
 fi
 if want gl-tests; then
 	meson_project gl-tests "$root/tools/gl-tests"

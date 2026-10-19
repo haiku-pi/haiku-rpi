@@ -5,6 +5,15 @@
 #       a development image: the arm64 build packages that Haiku's servers carry (cross-built gcc,
 #       binutils, make, python3.10, haikuporter, ...) and haiku_devel, on a larger volume — the
 #       first step of the package farm (docs/design/package-farm-plan.md, stage 1)
+#
+#   jam -sHAIKU_PI_GL=1 @minimum-mmc
+#       the OpenGL stack as packages (mesa, glu: scripts/package-gl-stack.sh, staged in
+#       generated.arm64/download and listed in repositories/HaikuPorts/arm64) and what jam builds once
+#       their mesa and glu build features are on: GLTeapot, GLInfo, libglut and the GL screen savers
+#       (in non-packaged/, as the minimum image's haiku package does not list them)
+#
+# build.sh always adds -sHAIKU_NO_DOWNLOADS=1: our arm64 repository definition lists packages Haiku's
+# servers do not have, so jam builds the repository from the download directory.
 
 if $(HAIKU_PI_DEV) = 1 {
 	Echo "Raspberry Pi development image (HAIKU_PI_DEV)" ;
@@ -16,4 +25,12 @@ if $(HAIKU_PI_DEV) = 1 {
 		;
 	# our own haiku_devel (headers, libraries), active, as the bootstrap image does
 	AddPackageFilesToHaikuImage system packages : haiku_devel.hpkg : nameFromMetaInfo ;
+}
+
+if $(HAIKU_PI_GL) = 1 {
+	Echo "Raspberry Pi OpenGL packages and applications (HAIKU_PI_GL)" ;
+	AddHaikuImageSystemPackages mesa glu ;
+	AddFilesToHaikuImage system non-packaged apps : GLTeapot GLInfo ;
+	AddLibrariesToHaikuImage system non-packaged lib : libglut.so ;
+	AddFilesToHaikuImage system non-packaged add-ons Screen\ Savers : Flurry GLife Gravity ;
 }
