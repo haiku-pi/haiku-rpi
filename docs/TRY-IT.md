@@ -47,8 +47,9 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB).
 
-A from-scratch run of this sequence in a fresh clone (2026-10-19) took about 30 minutes on a 16-thread
-host and produced the same image; the fixes it needed are in the scripts now.
+A from-scratch run in a fresh clone (2026-10-19) produced the image in about 30 minutes on a 16-thread
+host after four workarounds; their fixes are in the scripts now, and a second run without workarounds
+is in progress.
 
 ## Flash and boot
 
