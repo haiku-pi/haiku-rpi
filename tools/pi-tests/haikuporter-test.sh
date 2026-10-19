@@ -10,12 +10,15 @@ port=${PORT:-hoedown}
 # the cross-built python3.10 package: see devtools-test.sh
 export LIBRARY_PATH="$LIBRARY_PATH:/boot/system/develop/lib"
 export PYTHONHOME=/boot/system
+# its missing compression modules (scripts/build-python-modules.sh)
+export PYTHONPATH=/boot/system/non-packaged/lib/python3.10/lib-dynload
 tree=/boot/system/non-packaged/haikuports
 cat > /boot/home/config/settings/haikuports.conf <<CONF
 TREE_PATH="$tree"
 PACKAGER="haiku-pi build farm <build@haiku-pi.invalid>"
 TARGET_ARCHITECTURE="arm64"
 CONF
+say "python: $(python3 -c 'import zlib, bz2, lzma; d = b"haiku" * 1000; print("zlib bz2 lzma round trip", all(m.decompress(m.compress(d)) == d for m in (zlib, bz2, lzma)))' 2>&1 | tail -n 1)"
 say "building $port"
 start=$(date +%s)
 haikuporter -C -G -y -j4 --no-source-packages $port > /boot/home/haikuporter.log 2>&1

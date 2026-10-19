@@ -10,6 +10,8 @@ cd /tmp || exit 1
 # and computes its prefix from the package's renamed directory (python3.10_bootstrap-...)
 export LIBRARY_PATH="$LIBRARY_PATH:/boot/system/develop/lib"
 export PYTHONHOME=/boot/system
+# its missing compression modules (scripts/build-python-modules.sh)
+export PYTHONPATH=/boot/system/non-packaged/lib/python3.10/lib-dynload
 say "gcc: $(gcc --version 2>&1 | head -n 1)"
 printf '#include <stdio.h>\nint main(void) { printf("hello from gcc on Haiku arm64\\n"); return 0; }\n' > hello.c
 gcc -O2 -o hello hello.c > $out 2>&1; say "gcc-exit $?"

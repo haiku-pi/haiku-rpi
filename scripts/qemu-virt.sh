@@ -25,16 +25,19 @@ while [ $# -gt 0 ]; do
 done
 out="$root/artifacts/qemu"; mkdir -p "$out"
 ts="$(date +%Y%m%d-%H%M%S)"
-disk="$out/virt-disk.img"
+# a copy per run (and its own monitor socket), so that runs can overlap
+disk="$out/$ts-virt-disk.img"
+qmp="$out/$ts-qmp.sock"
+trap 'rm -f "$disk" "$qmp"' EXIT
 cp --reflink=auto "$img" "$disk"
 cmd=(qemu-system-aarch64 -M virt -cpu cortex-a72 -smp "$smp" -m 2G
 	-bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
 	-drive "file=$disk,if=none,format=raw,id=hd0" -device virtio-blk-device,drive=hd0
 	-device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet
-	-serial stdio -monitor none -qmp "unix:$out/qmp.sock,server,nowait" "${display[@]}" "${gdb[@]}" "$@")
+	-serial stdio -monitor none -qmp "unix:$qmp,server,nowait" "${display[@]}" "${gdb[@]}" "$@")
 echo "qemu-virt: ${cmd[*]}" >&2
 if [ "$secs" -gt 0 ]; then
-	( sleep "$((secs - 3))"; "$root/scripts/qmp-screendump.py" "$out/qmp.sock" "$out/$ts-virt.png" ) &
+	( sleep "$((secs - 3))"; "$root/scripts/qmp-screendump.py" "$qmp" "$out/$ts-virt.png" ) &
 	timeout --foreground "$secs" "${cmd[@]}" < /dev/null 2>&1 | tee "$out/$ts-virt.log" || true
 	wait
 	[ -f "$out/$ts-virt.png" ] && echo "qemu-virt: screenshot $out/$ts-virt.png" >&2
