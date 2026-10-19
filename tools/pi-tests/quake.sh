@@ -13,13 +13,18 @@ for size in "640 480" "1280 720"; do
 	say "timedemo demo1 ${1}x$2"
 	./quakespasm -basedir $dir -window -width $1 -height $2 -nosound +timedemo demo1 > $out 2>&1 &
 	pid=$!
-	sleep 75
+	# the timedemo prints its result ("N frames M seconds X fps") and stays at the console
+	waited=0
+	while [ $waited -lt 150 ] && kill -0 $pid 2> /dev/null; do
+		sleep 5
+		waited=$((waited + 5))
+	done
 	if kill -0 $pid 2> /dev/null; then
-		say "${1}x$2 still running after 75 s"
+		say "${1}x$2 still running after $waited s"
 		kill $pid
 	else
 		wait $pid
-		say "${1}x$2 exited (status $?)"
+		say "${1}x$2 exited after $waited s (status $?)"
 	fi
 	sleep 3
 done
