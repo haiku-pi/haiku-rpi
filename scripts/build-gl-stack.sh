@@ -6,9 +6,13 @@
 #   libglvnd  sources/libglvnd  (branch rpi4: EGL/GLES dispatch + HGL: libGL.so with BGLView)
 #   Mesa      sources/mesa      (branch rpi4: v3d + softpipe, egl_haiku opens /dev/dri/renderD128)
 #   GLU       glu-9.0.3 release (unchanged; fetched into artifacts/gl-build/dl, SHA-256 pinned)
-#   gl-tests  tools/gl-tests    (gltri: headless GLES render + readback check; glview: BGLView window)
+#   vulkan    the Khronos Vulkan loader + headers 1.4.311 (HaikuPorts' sys-libs/vulkan recipe: same
+#             release, its patches; fetched into artifacts/gl-build/dl, SHA-256 pinned)
+#   gl-tests  tools/gl-tests    (gltri: headless GLES render + readback check; glview: BGLView window;
+#                                vktest: headless Vulkan render/compute/queries)
 #
-#   scripts/build-gl-stack.sh [--sysroot] [--reconfigure] [--only libdrm|libglvnd|mesa|glu|gl-tests|stage]
+#   scripts/build-gl-stack.sh [--sysroot] [--reconfigure]
+#                             [--only libdrm|libglvnd|mesa|glu|vulkan|gl-tests|stage]
 #
 # Uses tools/meson/haiku-arm64.cross and the sysroot of scripts/haiku-sysroot.sh (created when
 # missing, recreated with --sysroot). Build dirs: artifacts/gl-build/<name>; each project is
@@ -21,7 +25,9 @@
 #                                 libOpenGL.so.0 libGLESv1_CM.so.1 libdrm.so.2
 #   add-ons/opengl/egl_vendor.d/  libEGL_mesa.so.0 + 50_mesa.json (libglvnd's EGL vendor search
 #                                 path includes this directory)
-#   bin/gltri bin/glview bin/retrace bin/cursor-move
+#   lib/libvulkan.so.1            the Vulkan loader; it finds drivers in the add-ons directories'
+#   add-ons/vulkan/icd.d/         vulkan/icd.d: broadcom_icd.*.json names lib/libvulkan_broadcom.so (V3DV)
+#   bin/gltri bin/glview bin/retrace bin/cursor-move bin/vktest
 # Shared-library symlinks are resolved: each library is a file named by its soname.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,6 +51,28 @@ want() { [ -z "$only" ] || [ "$only" = "$1" ]; }
 if [ "$newSysroot" = 1 ] || [ ! -e "$sysroot/boot/system/develop/lib/libroot.so" ]; then
 	"$root/scripts/haiku-sysroot.sh" --out "$sysroot"
 fi
+
+# fetch URL FILE SHA256: download into $build/dl once, check the checksum
+fetch() {
+	local archive="$build/dl/$2"
+	mkdir -p "$build/dl"
+	[ -f "$archive" ] || curl -sSfL -o "$archive" "$1"
+	echo "$3  $archive" | sha256sum -c --quiet
+}
+
+# cmake_project NAME SOURCE [cmake options...]: configure (once), build, install into the sysroot.
+cmake_project() {
+	local name="$1" src="$2"; shift 2
+	local dir="$build/$name"
+	if [ "$reconfigure" = 1 ] || [ ! -f "$dir/build.ninja" ]; then
+		rm -rf "$dir"
+		cmake -S "$src" -B "$dir" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$root/tools/cmake/haiku-arm64.cmake" \
+			-DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_BUILD_TYPE=Release "$@" > "$build/$name-configure.log"
+	fi
+	ninja -C "$dir"
+	DESTDIR="$sysroot" ninja -C "$dir" install > "$dir/install.log"
+	echo "build-gl-stack: $name built and installed into the sysroot"
+}
 
 # meson_project NAME SOURCE [meson options...]: configure (once), build, install into the sysroot.
 meson_project() {
@@ -85,21 +113,43 @@ fi
 if want mesa; then
 	meson_project mesa "$root/sources/mesa" --includedir=develop/headers/os/opengl \
 		-Dplatforms=haiku -Degl=enabled -Dglvnd=enabled -Dglx=disabled -Dgbm=disabled \
-		-Dgallium-drivers=v3d,softpipe -Dvulkan-drivers= -Dllvm=disabled \
+		-Dgallium-drivers=v3d,softpipe -Dvulkan-drivers=broadcom -Dllvm=disabled \
 		-Dgallium-rusticl=false -Dgallium-va=disabled -Dvideo-codecs= \
 		-Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled \
 		-Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Dbuild-tests=false \
-		-Dtools= -Dperfetto=false -Dspirv-tools=disabled
+		-Dtools= -Dperfetto=false -Dspirv-tools=disabled \
+		-Dvulkan-icd-dir="$prefix/add-ons/vulkan/icd.d"
 fi
 if want glu; then
 	# headers in develop/headers/GL, as HaikuPorts' glu recipe and jam's glu build feature have them
 	glu=glu-9.0.3
-	archive="$build/dl/$glu.tar.xz"
-	mkdir -p "$build/dl" "$build/src"
-	[ -f "$archive" ] || curl -sSfL -o "$archive" "https://archive.mesa3d.org/glu/$glu.tar.xz"
-	echo "bd43fe12f374b1192eb15fe20e45ff456b9bc26ab57f0eee919f96ca0f8a330f  $archive" | sha256sum -c --quiet
-	[ -d "$build/src/$glu" ] || tar -xf "$archive" -C "$build/src"
+	fetch "https://archive.mesa3d.org/glu/$glu.tar.xz" $glu.tar.xz \
+		bd43fe12f374b1192eb15fe20e45ff456b9bc26ab57f0eee919f96ca0f8a330f
+	mkdir -p "$build/src"
+	[ -d "$build/src/$glu" ] || tar -xf "$build/dl/$glu.tar.xz" -C "$build/src"
 	meson_project glu "$build/src/$glu" --includedir=develop/headers -Dgl_provider=glvnd
+fi
+if want vulkan; then
+	# The loader as HaikuPorts' sys-libs/vulkan recipe builds it (release, sources, patches: its
+	# FindDirectory patch makes it look for drivers in <add-ons>/vulkan/icd.d, where Mesa's
+	# -Dvulkan-icd-dir puts V3DV's), without X11/Wayland, against the matching headers.
+	vk=1.4.311
+	recipe="$root/sources/haikuports/sys-libs/vulkan"
+	fetch "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$vk.tar.gz" \
+		Vulkan-Headers-$vk.tar.gz 7989c360b870bcc2de52b9fd626fd2ba7a212fe177ade3aa3a10b2bcb61f8689
+	fetch "https://github.com/KhronosGroup/Vulkan-Loader/archive/refs/tags/v$vk.tar.gz" \
+		Vulkan-Loader-$vk.tar.gz bcebd281753384a2b019a633e6a81dca0e75414f0c8ec49f56edfcda8020ec20
+	mkdir -p "$build/src"
+	[ -d "$build/src/Vulkan-Headers-$vk" ] || tar -xf "$build/dl/Vulkan-Headers-$vk.tar.gz" -C "$build/src"
+	if [ ! -d "$build/src/Vulkan-Loader-$vk" ]; then
+		tar -xf "$build/dl/Vulkan-Loader-$vk.tar.gz" -C "$build/src"
+		patch -s -p1 -d "$build/src/Vulkan-Loader-$vk" < "$recipe/patches/vulkan-$vk.patchset"
+	fi
+	cmake_project vulkan-headers "$build/src/Vulkan-Headers-$vk" -DCMAKE_INSTALL_INCLUDEDIR=develop/headers
+	cmake_project vulkan-loader "$build/src/Vulkan-Loader-$vk" -DCMAKE_INSTALL_INCLUDEDIR=develop/headers \
+		-DBUILD_WSI_XCB_SUPPORT=OFF -DBUILD_WSI_XLIB_SUPPORT=OFF -DBUILD_WSI_XLIB_XRANDR_SUPPORT=OFF \
+		-DBUILD_WSI_WAYLAND_SUPPORT=OFF -DBUILD_TESTS=OFF \
+		-DVulkanHeaders_DIR="$sysroot$prefix/share/cmake/VulkanHeaders"
 fi
 if want gl-tests; then
 	meson_project gl-tests "$root/tools/gl-tests"
@@ -117,9 +167,14 @@ if want stage; then
 		cp -L "$file" "$dir/$soname"
 		"$tools-strip" --strip-unneeded "$dir/$soname"
 	}
-	for l in libEGL.so libGLESv2.so libGL.so libGLdispatch.so libOpenGL.so libGLESv1_CM.so libdrm.so; do
+	for l in libEGL.so libGLESv2.so libGL.so libGLdispatch.so libOpenGL.so libGLESv1_CM.so libdrm.so \
+			libvulkan.so libvulkan_broadcom.so; do
 		put_lib "$src/lib/$l" "$stage/lib"
 	done
+	# V3DV's ICD file (the loader's search path, see "vulkan" above); it names the library by its
+	# absolute path in lib/
+	mkdir -p "$stage/add-ons/vulkan/icd.d"
+	cp "$src/add-ons/vulkan/icd.d/"broadcom_icd.*.json "$stage/add-ons/vulkan/icd.d/"
 	put_lib "$src/lib/libEGL_mesa.so" "$stage/add-ons/opengl/egl_vendor.d"
 	# the vendor file of HaikuPorts' mesa recipe (additional-files/50_mesa.json)
 	cat > "$stage/add-ons/opengl/egl_vendor.d/50_mesa.json" <<-'JSON'
@@ -130,7 +185,7 @@ if want stage; then
 	    }
 	}
 	JSON
-	for b in gltri glview retrace cursor-move; do
+	for b in gltri glview retrace cursor-move vktest; do
 		cp "$src/bin/$b" "$stage/bin/$b"
 		"$tools-strip" "$stage/bin/$b"
 	done
