@@ -22,8 +22,10 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 | Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver |
 
-Known limits: no HDMI audio, no package repository for `pkgman` yet (software comes in the image), no
-WebKit browser (WebPositive) yet — NetSurf is the browser, and the games are not packaged (see below).
+Known limits: no HDMI audio; no public package repository yet (software comes in the image —
+`scripts/make-repo.sh` + `scripts/serve-repo.sh` serve our packages to `pkgman` on a local network, and
+`pkgman add-repo http://<host>:8090/arm64` works); no WebKit browser (WebPositive) yet — NetSurf is the
+browser; the games are not packaged (see below).
 
 ## Build the image
 
