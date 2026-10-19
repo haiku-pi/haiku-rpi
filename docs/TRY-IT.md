@@ -22,10 +22,12 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 | Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver |
 
-Known limits: no HDMI audio; no public package repository yet (software comes in the image —
-`scripts/make-repo.sh` + `scripts/serve-repo.sh` serve our packages to `pkgman` on a local network, and
-`pkgman add-repo http://<host>:8090/arm64` works after `pkgman drop-repo HaikuPorts`, whose server has no
-arm64 repository); the games are not packaged (see below).
+Known limits: no HDMI audio; the games are not packaged (see below).
+
+**Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
+[haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts
+recipes: Mesa, SDL2, ffmpeg, HaikuWebKit, NetSurf, OpenSSL, curl, ...), and Haiku's own arm64 system
+repository is reachable too; e.g. `pkgman install sqlite_devel`.
 
 ## Build the image
 
