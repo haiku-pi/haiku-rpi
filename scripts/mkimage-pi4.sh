@@ -15,6 +15,7 @@
 #                          [--no-fkms]           (no haiku-fkms overlay: the firmware's KMS node stays
 #                                                 disabled, so no SMI vblank interrupt; the display driver
 #                                                 then waits on SET_VSYNC)
+#                          [--config LINE]...    (appended to config.txt, e.g. "force_turbo=1")
 #                          [--add-tree DIR]...   (DIR's files and symlinks, with their relative paths, into
 #                                                 /boot/system/non-packaged/, e.g. the GL stack of
 #                                                 scripts/build-gl-stack.sh: artifacts/gl-stack/non-packaged)
@@ -37,6 +38,7 @@ trees=()
 v3dOverlay=haiku-v3d
 fkmsOverlay=haiku-fkms
 blocked=()
+configLines=()
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--in) in="$2"; shift 2 ;;
@@ -45,6 +47,7 @@ while [ $# -gt 0 ]; do
 	--bootscript) bootscript="$(realpath "$2")"; shift 2 ;;
 	--add-bin) bins+=("$(realpath "$2")"); shift 2 ;;
 	--add-tree) trees+=("$(realpath "$2")"); shift 2 ;;
+	--config) configLines+=("$2"); shift 2 ;;
 	--no-v3d) v3dOverlay=""; shift ;;
 	--no-fkms) fkmsOverlay=""; shift ;;
 	--block-entry) blocked+=("$2"); shift 2 ;;
@@ -77,6 +80,9 @@ dtoverlay=$v3dOverlay
 dtoverlay=$fkmsOverlay
 disable_overscan=1
 CFG
+for line in "${configLines[@]}"; do
+	echo "$line" >> "$tmp/config.txt"
+done
 dtc -@ -q -I dts -O dtb -o "$tmp/haiku-v3d.dtbo" "$root/tools/overlays/haiku-v3d.dts"
 dtc -@ -q -I dts -O dtb -o "$tmp/haiku-fkms.dtbo" "$root/tools/overlays/haiku-fkms.dts"
 mcopy -o -i "$fat" "$fw/start4.elf" "$fw/fixup4.dat" "$fw/bcm2711-rpi-4-b.dtb" "$uboot" "$tmp/config.txt" ::

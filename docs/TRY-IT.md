@@ -11,14 +11,14 @@ bench Pi (4 GB, rev 1.4) on 2026-10-19 unless it says otherwise.
 | Boot | SD card → U-Boot → Haiku loader → desktop in about 80 s (first boot a little longer) |
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences, scaled by the firmware; hardware cursor; 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1. GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
-| Games (test images) | QuakeSpasm: 61–71 frames/s at 640×480. Yamagi Quake II, GL1 renderer: 87–163 frames/s at 640×480, 42–52 at 1280×720 |
+| Games (test images) | QuakeSpasm (demo1, in a window): 66–72 frames/s at 640×480, 56–70 at 1280×720, 30–43 at 1920×1080. Yamagi Quake II, GL1 renderer: 135–171 frames/s at 640×480, 81–89 at 1280×720 |
 | Audio | 3.5 mm headphone jack through the media kit ("Raspberry Pi headphones", 44.1 kHz stereo); measured on the bench, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ... (software decoding) |
-| CPU | 4 cores (SMP) |
+| CPU | 4 cores (SMP) at 1.5 GHz: the firmware lowers the clocks two minutes after power-on unless asked, so a cpufreq module asks for the maximum (the minimum in the power saving scheduler mode); the firmware still throttles when hot. `cat /dev/power/bcm2835_thermal/0`: temperature, throttling, clocks |
 | Storage | SD card at UHS-I DDR50 (~32 MB/s reads); USB 3 storage through the VL805 (~80–90 MB/s) |
 | USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); keyboard/mouse input still needs a hands-on check |
 | Network | Gigabit Ethernet (GENET, DHCP); WiFi (BCM43455: scan, WPA2, DHCP, verified by a boot script that joins through net_server, `scripts/wifi-join-image.sh`; joining from Network preferences takes the same path but has not been tried by hand); NFSv4 client |
-| Web | NetSurf 3.11 (`/boot/system/apps/NetSurf`): HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders |
+| Web | NetSurf 3.11 (Applications menu): HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver |
 
 Known limits: no HDMI audio, no package repository for `pkgman` yet (software comes in the image), no
@@ -35,7 +35,7 @@ in a memory-capped `systemd-run --user` scope).
 `export PATH="$PWD/sources/buildtools/jam/bin.linuxx86:$PATH"` (the directory is called that on x86-64
 too) — and the packages
 `git curl xz-utils gcc g++ make bison flex texinfo autoconf automake libtool pkgconf nasm zlib1g-dev
-libssl-dev libgnutls28-dev uuid-dev gcc-aarch64-linux-gnu meson ninja-build cmake python3-mako
+perl libssl-dev libgnutls28-dev uuid-dev gcc-aarch64-linux-gnu meson ninja-build cmake python3-mako
 python3-yaml mtools fdisk device-tree-compiler unzip`.
 
 ```sh
@@ -49,10 +49,11 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB).
 
-Verified from scratch in a fresh clone on 2026-10-19 (before NetSurf joined `build-packages.sh`; a re-run is pending): about 24 minutes on a 16-thread host (bootstrap
-15 of them), same image. Expected noise while jam still exits 0: on a fresh tree the first build prints
-a few `stdlib.h`/`math.h: No such file` lines (catalog extraction running before the toolchain packages
-are unpacked), and the regular build prints WonderBrush's `bitmap_compression.h`/`blending.h` lines.
+Verified from scratch in a fresh clone on 2026-10-19, NetSurf included: about 28 minutes on a 16-thread
+host (bootstrap 16 of them, `build-packages.sh` 8). Expected noise while every step still exits 0: a GNU
+mirror's certificate error while fetching tar and libiconv (the fetch falls back to ftp.gnu.org), three
+`arm64/Jamfile: No such file` lines (hyperv, disasm, ltrace), and in the regular build `jpeglib.h`/`png.h`
+and WonderBrush's `bitmap_compression.h`/`blending.h` "No such file" lines from catalog extraction.
 
 ## Flash and boot
 
