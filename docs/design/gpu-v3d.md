@@ -312,7 +312,12 @@ in haiku bf6e4efdd2; Mesa 2e5fc430445: the v3d winsys opens `WINSYS_HANDLE_TYPE_
 imports the window's BBitmap once and presents with a GPU blit + `WAIT_BO` + sync (`HAIKU_EGL_NO_IMPORT=1`
 = old copy path). `tools/pi-tests/gl-present.sh`, `glview` same binary, A/B by the environment variable:
 **256² 1122 fps (copy 763), 800² 151.8 fps (copy 39.9) = 3.8×**, all PASS, triangle correct on HDMI.
-Open: the md5 readback-vs-softpipe check; GLTeapot at 1080p needs H14 (not in the minimum image).
+*Correctness 2026-10-19* (`glview -H`, `tools/pi-tests/gl-readback.sh`: the window read back from the
+screen): **import vs copy 0 pixels differ** at 256² and 800² (same hash); softpipe vs v3d differs by at most
+1 (920 / 5486 edge-gradient pixels), as expected of two rasterisers. A 1000² window: **import 59.4 fps,
+copy 20.7** (2.9×) — 59.4 is suspiciously near the refresh rate (800² ran at 149, area scaling predicts ~95):
+look for a cap in app_server's bitmap drawing before stage 6. GLTeapot/GLInfo now build (packaged mesa,
+`jam -sHAIKU_PI_GL=1`).
 
 **Stage 6 — full-screen and overlay GL, P3 (1–1.5 weeks).** Full-screen: GL renders into plane buffers,
 swap = fence-gated `SET_PLANE` flip (never render into the buffer on screen). Windowed overlay GL is optional
