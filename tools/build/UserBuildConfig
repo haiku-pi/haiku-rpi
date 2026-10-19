@@ -41,6 +41,10 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	AddHaikuImageSystemPackages sounds_community_default timgmsoundfont ;
 	# a web browser (scripts/build-netsurf.sh) and the CA certificates HTTPS needs
 	AddHaikuImageSystemPackages netsurf ca_root_certificates ;
+	# TLS in Haiku's network kit (pkgman, the package kit, WebPositive's downloads): the ssl build
+	# feature only follows an openssl3 that is added explicitly, not one that comes as a dependency
+	AddHaikuImageSystemPackages openssl3 ;
+	HAIKU_BUILD_FEATURE_SSL = 1 ;
 	# WebPositive (scripts/build-webkit.sh): jam builds it when haikuwebkit_devel is in the
 	# repository (the webkit build feature); the nightly profile adds it for x86 only. Its package
 	# requires haikuwebkit, which brings the libraries WebKit needs.
