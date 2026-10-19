@@ -34,6 +34,8 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	AddHaikuImageSystemPackages libogg libvorbis ;
 	# the games' SDL2 (scripts/build-packages.sh)
 	AddHaikuImageSystemPackages libsdl2 ;
+	# ffmpeg: the media kit's ffmpeg plugin (MediaPlayer's decoders)
+	AddHaikuImageSystemPackages ffmpeg6 ;
 	# default locale settings: no first-boot prompt (it would hold the desktop back until someone
 	# picks a language)
 	# (tools/build/make-locale-settings.py wrote it: language "en")

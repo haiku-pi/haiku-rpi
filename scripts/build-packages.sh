@@ -5,7 +5,7 @@
 #
 #   mesa, mesa_devel, glu, glu_devel       scripts/build-gl-stack.sh + scripts/package-gl-stack.sh
 #   libogg, libvorbis, fluidlite (+_devel) scripts/cross-port.sh + scripts/package-port.py
-#   libsdl2                                scripts/cross-port.sh + scripts/package-port.py
+#   libsdl2, ffmpeg6                       scripts/cross-port.sh + scripts/package-port.py
 #   gzip, tar, bzip2, unzip                scripts/build-base-ports.sh
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
 #
@@ -41,6 +41,19 @@ fi
 	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF
 "$root/scripts/package-port.py" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" \
 	--devel-bin sdl2-config
+
+# ffmpeg (the media kit's ffmpeg plugin, MediaPlayer): its own decoders + libvorbis; the recipe's other
+# external libraries (lame, opus, speex, theora, openssl, ...) are not ported yet
+"$root/scripts/cross-port.sh" "$ports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe" script '
+./configure --enable-cross-compile --target-os=haiku --arch=aarch64 \
+	--cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --strip="$STRIP" --pkg-config=pkg-config \
+	--prefix=/boot/system/non-packaged --disable-debug --disable-stripping --disable-static \
+	--enable-shared --enable-version3 --enable-pic --enable-libvorbis --disable-ffplay \
+	--disable-doc --extra-cflags="-I$SYSROOT/boot/system/non-packaged/include" \
+	--extra-ldflags="-L$SYSROOT/boot/system/non-packaged/lib"
+make -j"$(nproc)"
+make install DESTDIR="${DEST%/boot/system/non-packaged}"'
+"$root/scripts/package-port.py" "$ports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
 
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/fetch-any-packages.sh"
