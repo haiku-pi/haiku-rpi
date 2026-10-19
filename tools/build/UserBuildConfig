@@ -13,8 +13,23 @@
 #       plus libmedia and libgame for SDL2 (in non-packaged/, as the minimum image's haiku package
 #       does not list them)
 #
+#   jam @pi-mmc
+#       the regular image (the regular build type: media kit and servers, MediaPlayer, the full set of
+#       applications and preferences) without the nightly profile's extra packages that arm64 does not
+#       have yet (the Development and Git bundles, nano, openssh, ...): haiku-pi.mmc. Combine with
+#       HAIKU_PI_GL (and HAIKU_PI_DEV).
+#
 # build.sh always adds -sHAIKU_NO_DOWNLOADS=1: our arm64 repository definition lists packages Haiku's
 # servers do not have, so jam builds the repository from the download directory.
+
+DefineBuildProfile pi-mmc : haiku-mmc-image : "haiku-pi.mmc" ;
+if $(HAIKU_BUILD_PROFILE) = pi-mmc {
+	Echo "Raspberry Pi regular image (pi-mmc)" ;
+	HAIKU_ROOT_USER_NAME ?= user ;
+	HAIKU_ROOT_USER_REAL_NAME ?= "Yourself" ;
+	HAIKU_IMAGE_HOST_NAME ?= shredder ;
+	HAIKU_IMAGE_SIZE ?= 1000 ;
+}
 
 if $(HAIKU_PI_DEV) = 1 {
 	Echo "Raspberry Pi development image (HAIKU_PI_DEV)" ;
