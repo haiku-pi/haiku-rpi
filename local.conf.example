@@ -28,3 +28,5 @@
 #WIFI_PSK=...
 #WIFI_PSK_FILE=/path/to/file/with/psk=line
 #WIFI_GATEWAY=10.43.0.1
+# Network boot (scripts/netboot-server.sh): the DNS server DHCP offers and the served image's resolv.conf names
+#NETBOOT_DNS=1.1.1.1

@@ -63,8 +63,9 @@ is the boot volume, nothing is copied to the card.
 
 - The netmask: U-Boot passes `ip=<address>:<server>:<gateway>:<netmask>` and the loader hands the mask
   on ("net mask", 255.255.255.0 on the bench); before, the kernel picked the classful 255.0.0.0.
-- No DNS resolver on a network boot: net_server does not run DHCP on the boot interface, so the
-  resolver stays unconfigured (and Time cannot reach an NTP server by name).
+- DNS and the internet: the default route goes through the gateway from `ip=` (before, it had none:
+  nothing off the Pi LAN was reachable), and netboot-server.sh writes a resolv.conf into the served
+  copy (NETBOOT_DNS), since net_server leaves the boot interface without DHCP. `pkgman refresh` works.
 - Speed: about 90 s to the desktop, a remote disk request per KiB (UDP, one outstanding request).
   Larger requests or several in flight would be faster.
 - The remote_disk driver is in every image now (the same image boots both ways), so an SD boot probes
