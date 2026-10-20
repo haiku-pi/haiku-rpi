@@ -17,6 +17,8 @@
 #   Yamagi Quake II 8.60  HaikuPorts recipe + patchset (CMake; no curl/OpenAL yet), into apps/quake2
 #                  as the recipe installs it, with the demo's baseq2/pak0.pak
 #   vkQuake 1.35.0 scripts/build-vkquake.sh, into apps/vkQuake with the shareware id1/pak0.pak
+#   ioquake3 1.36  scripts/build-q3.sh, into apps/OpenArena with OpenArena 0.8.8's free data, and into
+#                  apps/Quake3 with Quake III's data when QUAKE3_DATA is set
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=/dev/null
@@ -100,5 +102,6 @@ cp "$root/artifacts/cross-ports/sdlvk/sdlvk" "$stage/bin/"
 "$tools-strip" "$stage/bin/sdlvk"
 
 "$root/scripts/build-vkquake.sh" --quake-data "$quakeData"
+"$root/scripts/build-q3.sh"
 
 find "$stage" -type f -printf 'build-games: %P %s\n' | sort

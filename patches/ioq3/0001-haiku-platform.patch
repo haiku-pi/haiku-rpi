@@ -1,0 +1,93 @@
+Haiku: build and run ioquake3 on Haiku
+
+- q_platform.h: a Haiku block (OS_STRING "haiku"; ARCH_STRING as on Linux, so
+  arm64 is "arm64" and runs QVMs interpreted, as ioquake3 does on Linux arm64;
+  byte order from <endian.h>, which has BYTE_ORDER but no __FLOAT_WORD_ORDER).
+- net_ip.c: Haiku has getifaddrs() (in libnetwork); its struct ifaddrs'
+  ifa_name is const, so NET_AddLocalAddress takes a const name.
+- cmake/platforms/haiku.cmake: BSD sockets are in libnetwork, not libroot.
+
+diff -ruN a/cmake/platforms/all.cmake b/cmake/platforms/all.cmake
+--- a/cmake/platforms/all.cmake
++++ b/cmake/platforms/all.cmake
+@@ -1,4 +1,5 @@
+ include(platforms/emscripten)
++include(platforms/haiku)
+ include(platforms/linux)
+ include(platforms/macos)
+ include(platforms/unix)
+diff -ruN a/cmake/platforms/haiku.cmake b/cmake/platforms/haiku.cmake
+--- a/cmake/platforms/haiku.cmake
++++ b/cmake/platforms/haiku.cmake
+@@ -0,0 +1,8 @@
++# Haiku specific settings
++
++if(NOT CMAKE_SYSTEM_NAME STREQUAL "Haiku")
++    return()
++endif()
++
++# BSD sockets (and getifaddrs) are in libnetwork, not libroot
++list(APPEND COMMON_LIBRARIES network)
+diff -ruN a/code/qcommon/net_ip.c b/code/qcommon/net_ip.c
+--- a/code/qcommon/net_ip.c
++++ b/code/qcommon/net_ip.c
+@@ -1238,7 +1238,7 @@
+ NET_AddLocalAddress
+ =====================
+ */
+-static void NET_AddLocalAddress(char *ifname, struct sockaddr *addr, struct sockaddr *netmask)
++static void NET_AddLocalAddress(const char *ifname, struct sockaddr *addr, struct sockaddr *netmask)
+ {
+ 	int addrlen;
+ 	sa_family_t family;
+@@ -1275,7 +1275,7 @@
+ 	}
+ }
+ 
+-#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
++#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__) || defined(__HAIKU__)
+ static void NET_GetLocalAddress(void)
+ {
+ 	struct ifaddrs *ifap, *search;
+diff -ruN a/code/qcommon/q_platform.h b/code/qcommon/q_platform.h
+--- a/code/qcommon/q_platform.h
++++ b/code/qcommon/q_platform.h
+@@ -265,6 +265,38 @@
+ 
+ #endif
+ 
++//================================================================= HAIKU ===
++
++#ifdef __HAIKU__
++
++#include <endian.h>
++
++#define OS_STRING "haiku"
++#define ID_INLINE inline
++#define PATH_SEP '/'
++
++#if defined(__x86_64__)
++#undef idx64
++#define idx64 1
++#define ARCH_STRING "x86_64"
++#define HAVE_VM_COMPILED
++#elif defined(__i386__)
++#define ARCH_STRING "x86"
++#define HAVE_VM_COMPILED
++#elif defined(__aarch64__)
++#define ARCH_STRING "arm64"
++#endif
++
++#if BYTE_ORDER == BIG_ENDIAN
++#define Q3_BIG_ENDIAN
++#else
++#define Q3_LITTLE_ENDIAN
++#endif
++
++#define DLL_EXT ".so"
++
++#endif
++
+ //================================================================= SUNOS ===
+ 
+ #ifdef __sun
