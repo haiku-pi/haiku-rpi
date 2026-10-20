@@ -441,8 +441,9 @@ the rebuilt ICU on 2026-10-20). A JavaScript loop that takes 7 s without the JIT
 
 ![WebPositive](screenshots/05-webpositive.png)
 
-Limits: its user agent says "Intel Haiku" (hard-coded in upstream's Haiku WebKit); the Web
-Inspector's files are not installed.
+Limits: the Web Inspector's files are not installed (as on x86 Haiku; the HaikuPorts recipe leaves them out). Its user agent says "Macintosh; Intel Haiku/…"
+on purpose: upstream's Haiku WebKit poses as Safari for site compatibility, and Safari on Apple Silicon
+Macs also says "Intel".
 
 ### 8.4 NetSurf and curl
 
