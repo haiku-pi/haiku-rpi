@@ -19,7 +19,7 @@ sleep 3
 /boot/system/preferences/Time --update > $out 2>&1
 say "date: $(date)"
 say "ifconfig: $(ifconfig /dev/net/genet/0 2>&1 | grep -a 'inet addr' | head -n 1)"
-# ICU's data comes through the icu74_bootstrap package (scripts/make-icu-shim.sh), not ICU_DATA
+# ICU's data is in libicudata (scripts/build-icu.sh), not ICU_DATA
 say "ICU_DATA=$ICU_DATA, packages: $(ls /packages | grep -a icu | tr '\n' ' ')"
 
 # JavaScriptCore: the interpreter (LLInt) alone, then with the baseline/DFG/FTL JITs (the default);

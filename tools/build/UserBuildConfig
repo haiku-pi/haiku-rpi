@@ -64,10 +64,8 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	AddFilesToHaikuImage home config settings
 		: $(HAIKU_TOP)/../../tools/build/data/Locale\ settings
 		  $(HAIKU_TOP)/../../tools/build/data/networktime\ settings ;
-	# ICU's data for every process: the icu74 bootstrap package looks for it under
-	# /packages/icu74_bootstrap-74.1-1, which this package makes exist (scripts/make-icu-shim.sh);
-	# WebKit cannot start without it
-	AddHaikuImageSystemPackages icu74_bootstrap ;
+	# ICU (WebKit, the locale kit): scripts/build-icu.sh's, its data in libicudata
+	AddHaikuImageSystemPackages icu74 ;
 }
 
 if $(HAIKU_PI_DEV) = 1 {

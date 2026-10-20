@@ -8,7 +8,6 @@
 # to /boot/system, where PACKAGE puts its data. The shim requires PACKAGE. Remove a shim once its
 # package is rebuilt for arm64.
 #
-#   scripts/make-bootstrap-shim.sh icu74_bootstrap 74.1-1 icu74 "ICU's data (data/icu/74.1)"
 #   scripts/make-bootstrap-shim.sh ncurses6_bootstrap 6.6-1 ncurses6 "the terminfo database (data/terminfo)"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

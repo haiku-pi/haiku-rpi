@@ -13,7 +13,9 @@
 #   haikuwebkit + libxml2, sqlite, ...     scripts/build-webkit.sh (several hours)
 #   libedit (+_devel)                      scripts/cross-port.sh + scripts/package-port.py
 #   python3.14 (+_devel)                   scripts/build-python.sh (after OpenSSL, sqlite, libedit)
-#   icu74_bootstrap, ncurses6_bootstrap    scripts/make-bootstrap-shim.sh (data paths of bootstrap packages)
+#   icu74 (+_devel)                        scripts/build-icu.sh (its data in libicudata)
+#   ncurses6_bootstrap                     scripts/make-bootstrap-shim.sh (the terminfo path of ncurses6's
+#                                          bootstrap package)
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
 #   openarena, supertuxkart                scripts/package-games.sh (not run here: needs build-games.sh and
 #                                          build-stk.sh; only for -sHAIKU_PI_GAMES=1 images)
@@ -83,7 +85,7 @@ rm -rf "$DEST/share"'
 	--requires lib:libncursesw
 "$root/scripts/build-python.sh"
 "$root/scripts/fetch-any-packages.sh"
-"$root/scripts/make-icu-shim.sh"
+"$root/scripts/build-icu.sh"
 # ncurses6 is upstream's bootstrap package (the build's download directory); published with ours, as
 # python3.14 and libedit need it, with the shim that gives it its terminfo database
 cp "$download"/ncurses6-6.6_bootstrap-1-arm64.hpkg "$root/artifacts/packages/"
