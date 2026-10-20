@@ -1,0 +1,31 @@
+From: haiku-rpi
+Subject: [PATCH] net: bcmgenet: delay the transmit clock in the MAC for rgmii-rxid
+
+With phy-mode "rgmii-rxid" (the Pi 4 device tree) the PHY delays only the
+receive clock, and the Broadcom PHY driver turns its transmit delay off, but
+the MAC's transmit delay was disabled as well (ID_MODE_DIS): nothing delayed
+the transmit clock, and at 1000 Mbit/s no frame reached the link partner
+(BOOTP broadcasts never arrived). Disable it only for "rgmii", as Linux does.
+---
+diff --git a/drivers/net/bcmgenet.c b/drivers/net/bcmgenet.c
+index a0264dc3..8600a39a 100644
+--- a/drivers/net/bcmgenet.c
++++ b/drivers/net/bcmgenet.c
+@@ -461,9 +461,15 @@ static int bcmgenet_adjust_link(struct bcmgenet_eth_priv *priv)
+ 	clrsetbits_32(priv->mac_reg + EXT_RGMII_OOB_CTRL, OOB_DISABLE,
+ 			RGMII_LINK | RGMII_MODE_EN);
+ 
+-	if (phy_dev->interface == PHY_INTERFACE_MODE_RGMII ||
+-	    phy_dev->interface == PHY_INTERFACE_MODE_RGMII_RXID)
++	/*
++	 * The MAC delays the transmit clock unless the PHY does: only with
++	 * "rgmii" (the PHY delays both clocks) is that delay disabled, as in
++	 * Linux. With "rgmii-rxid" the PHY driver turns its transmit delay off.
++	 */
++	if (phy_dev->interface == PHY_INTERFACE_MODE_RGMII)
+ 		setbits_32(priv->mac_reg + EXT_RGMII_OOB_CTRL, ID_MODE_DIS);
++	else
++		clrbits_32(priv->mac_reg + EXT_RGMII_OOB_CTRL, ID_MODE_DIS);
+ 
+ 	writel(speed << CMD_SPEED_SHIFT, (priv->mac_reg + UMAC_CMD));
+ 

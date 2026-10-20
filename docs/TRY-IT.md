@@ -84,6 +84,25 @@ scripts/pi-test.sh --regular        # write the regular image, then boot it and 
 scripts/pi-test.sh                  # boot whatever the card holds
 ```
 
+## Boot from the network (no SD card writing)
+
+For fast iteration the Pi can boot an image straight from the build host: the Pi's firmware loads its
+boot files and a netboot U-Boot by TFTP, U-Boot loads the Haiku loader, and the loader and kernel read
+the boot volume from the host as a remote disk (Haiku's `remote_disk`, served by
+`remote_disk_server`). A freshly built image boots a minute later, without touching the card; whatever
+Haiku writes goes to a copy of the image, made afresh each time. Desktop in about 90 s.
+
+```sh
+scripts/build-uboot.sh                    # also builds artifacts/uboot/u-boot-netboot.bin
+scripts/build.sh remote_disk_server       # the server, built for the host
+scripts/pi-test.sh --netboot artifacts/images/haiku-pi4-regular.img
+```
+
+Needs: the Pi LAN on its own host interface (`PI_LAN_HOST` in `local.conf`; the scripts run dnsmasq
+for DHCP and TFTP on it) and a Pi whose boot order tries the network (the EEPROM's `BOOT_ORDER`; while
+nothing answers on the network it boots from the card). Agents use `scripts/netboot-cycle.sh`. It is
+not an NFS root: why, in [design/netboot.md](design/netboot.md).
+
 ## The games
 
 ```sh
