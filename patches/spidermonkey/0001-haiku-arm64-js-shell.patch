@@ -1,0 +1,87 @@
+SpiderMonkey on Haiku arm64: wasm trap context, JIT icache flush, libbe for DateTime
+
+On top of HaikuPorts' firefox-157.0.1.patchset (x86_64 only):
+- WasmSignalHandlers.cpp: the XP_HAIKU block defines only x86 registers. On arm64,
+  mcontext_t is struct vregs (headers/posix/arch/arm64/signal.h): pc = elr, fp = x[29],
+  lr, sp; the kernel restores all four on sigreturn (arch_restore_signal_frame), so the
+  wasm trap handler can redirect the pc.
+- MozCpu-vixl.cpp: EnsureIAndDCacheCoherency #errors for OSes other than Linux/Android/
+  FreeBSD. Haiku allows EL0 cache maintenance and CTR_EL0 reads (the EFI loader sets
+  SCTLR_EL1.UCI and UCT), so the user-mode dc civac / ic ivau sequence applies as is.
+- vm/moz.build: the patchset's DateTime.cpp asks BLocaleRoster for the time zone; the
+  standalone shell must then link libbe (libxul gets it from toolkit/library).
+- rust/moz.build: jsrust carries the Rust standard library, which needs libbsd
+  (arc4random_buf; toolkit/library/rust does the same for gkrust) and libnetwork (sockets).
+
+diff --git a/js/src/jit/arm64/vixl/MozCpu-vixl.cpp b/js/src/jit/arm64/vixl/MozCpu-vixl.cpp
+index 2839823785..c315bfeecb 100644
+--- a/js/src/jit/arm64/vixl/MozCpu-vixl.cpp
++++ b/js/src/jit/arm64/vixl/MozCpu-vixl.cpp
+@@ -115,7 +115,7 @@ void CPU::EnsureIAndDCacheCoherency(void* address, size_t length) {
+   FlushInstructionCache(GetCurrentProcess(), address, length);
+ #elif defined(XP_DARWIN)
+   sys_icache_invalidate(address, length);
+-#elif defined(__aarch64__) && (defined(__linux__) || defined(__android__) || defined(__FreeBSD__))
++#elif defined(__aarch64__) && (defined(__linux__) || defined(__android__) || defined(__FreeBSD__) || defined(__HAIKU__))
+   // Implement the cache synchronisation for all targets where AArch64 is the
+   // host, even if we're building the simulator for an AAarch64 host. This
+   // allows for cases where the user wants to simulate code as well as run it
+@@ -125,7 +125,8 @@ void CPU::EnsureIAndDCacheCoherency(void* address, size_t length) {
+     return;
+   }
+ 
+-  // The code below assumes user space cache operations are allowed.
++  // The code below assumes user space cache operations are allowed (on Haiku,
++  // the kernel sets SCTLR_EL1.UCI and UCT).
+ 
+   // Work out the line sizes for each cache, and use them to determine the
+   // start addresses.
+diff --git a/js/src/rust/moz.build b/js/src/rust/moz.build
+index 6d73d29e19..8fe5975720 100644
+--- a/js/src/rust/moz.build
++++ b/js/src/rust/moz.build
+@@ -25,6 +25,13 @@ if CONFIG["OS_ARCH"] == "Darwin":
+     # The Rust standard library references libresolv on macOS, so we need to
+     # link it as a workaround. See also bug 1367932.
+     OS_LIBS += ["-lresolv"]
++elif CONFIG["OS_ARCH"] == "Haiku":
++    # The Rust standard library uses arc4random_buf() (libbsd) and the socket
++    # functions (libnetwork).
++    OS_LIBS += [
++        "bsd",
++        "network",
++    ]
+ elif CONFIG["OS_ARCH"] == "WINNT":
+     # Extra libraries used by Rust bindings libs in debug builds.
+     OS_LIBS += [
+diff --git a/js/src/vm/moz.build b/js/src/vm/moz.build
+index b0646c7575..a862cd1c7f 100644
+--- a/js/src/vm/moz.build
++++ b/js/src/vm/moz.build
+@@ -155,3 +155,7 @@ if CONFIG["USE_LIBZ_RS"]:
+ 
+ if CONFIG["FUZZING_JS_FUZZILLI"]:
+     include("/tools/fuzzing/libfuzzer-config.mozbuild")
++
++if CONFIG["OS_ARCH"] == "Haiku":
++    # DateTime.cpp reads the default time zone through BLocaleRoster.
++    OS_LIBS += ["be"]
+diff --git a/js/src/wasm/WasmSignalHandlers.cpp b/js/src/wasm/WasmSignalHandlers.cpp
+index 4d3ec85eb8..0cb2c921c2 100644
+--- a/js/src/wasm/WasmSignalHandlers.cpp
++++ b/js/src/wasm/WasmSignalHandlers.cpp
+@@ -248,6 +248,14 @@ using namespace js::wasm;
+ #    define R13_sig(p) ((p)->uc_mcontext.r13)
+ #    define R14_sig(p) ((p)->uc_mcontext.r14)
+ #    define R15_sig(p) ((p)->uc_mcontext.r15)
++#    if defined(__aarch64__)
++// mcontext_t is struct vregs (<arch/arm64/signal.h>): x[0..29] (x29 = fp),
++// lr, sp, elr (the faulting pc).
++#      define EPC_sig(p) ((p)->uc_mcontext.elr)
++#      define RFP_sig(p) ((p)->uc_mcontext.x[29])
++#      define RLR_sig(p) ((p)->uc_mcontext.lr)
++#      define R31_sig(p) ((p)->uc_mcontext.sp)
++#    endif
+ #  elif defined(XP_DARWIN)
+ #    define EIP_sig(p) ((p)->thread.uts.ts32.__eip)
+ #    define EBP_sig(p) ((p)->thread.uts.ts32.__ebp)
