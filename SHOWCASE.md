@@ -139,9 +139,8 @@ This is a three-day-old port, not a release. It runs on one bench Pi 4 (4 GB). O
 - **Not checked by a person:** typing and pointing with the USB keyboard and mouse (they enumerate),
   sound from the headphone jack (the clock is measured), Bluetooth pairing, and whether faint
   off-colour pixels in the HDMI capture during GL rendering appear on a real monitor.
-- **Firefox** drops many frames on H.264 video (decoding keeps up; presentation does not); it is in the
-  image but not in the public repository, pending a decision on its branding.
-- The **game packages** are over GitHub's 100 MB file limit and are not published.
+- **Firefox** drops video frames in the first seconds after it starts (a cold start; warm, from the SD card, a
+  720p H.264 clip plays with 0 of 300 dropped).
 - No hardware H.264 decoding (on the BCM2711 that is VideoCore firmware only); no HDMI audio.
 - Everything else known is listed in the "Next" section of the newest
   [weekly log](docs/log/WEEK-2026-W43.md).

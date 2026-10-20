@@ -25,10 +25,9 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 | Web | **WebPositive** (HaikuWebKit 1.10, JavaScript JIT on) and NetSurf 3.11, both in the Applications menu: HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders in both |
 | Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver, the hardware random number generator (feeds `/dev/random`) |
-| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; https://www.haiku-os.org/ in 8–10 s once started before; **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — though H.264 drops frames; `scripts/build-firefox.sh`) |
+| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; https://www.haiku-os.org/ in 8–10 s once started before; **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — frames drop only in the first seconds after the browser starts; `scripts/build-firefox.sh`) |
 
-Known limits: no HDMI audio; the games are packaged but too large for the public repository (images with
-`-sHAIKU_PI_GAMES=1`, below); Firefox is in the image but not in the public repository (branding question);
+Known limits: no HDMI audio; video in Firefox drops frames for the first seconds after the browser starts;
 about 1 in 20 network boots stops while the drivers load (SD boots are not affected; [KNOWN-ISSUES.md](KNOWN-ISSUES.md)).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
@@ -60,8 +59,9 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB). Firefox is in it only if you ran
 `scripts/build-rust.sh` and `scripts/build-firefox.sh` before the last step (about 1.5 hours more). With the games (OpenArena and
 SuperTuxKart in the Applications menu; about 1.8 GB): `scripts/build-games.sh`, `scripts/build-stk.sh` and
-`scripts/package-games.sh` once, then `scripts/build.sh -sHAIKU_PI_GL=1 -sHAIKU_PI_GAMES=1 @pi-mmc`. They are
-not in the published repository: both packages are over GitHub's 100 MB file limit.
+`scripts/package-games.sh` once, then `scripts/build.sh -sHAIKU_PI_GL=1 -sHAIKU_PI_GAMES=1 @pi-mmc`. Or
+install them on a running system: `pkgman install openarena supertuxkart` (their data comes in parts, each under
+GitHub's 100 MiB file limit).
 
 Verified from scratch in a fresh clone on 2026-10-19, NetSurf included: about 28 minutes on a 16-thread
 host (bootstrap 16 of them, `build-packages.sh` 8). Since WebKit joined `build-packages.sh`, add about an

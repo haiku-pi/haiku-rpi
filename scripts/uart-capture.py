@@ -12,7 +12,8 @@ Exit 2 = nothing at all was received. --send types TEXT (Python escapes: \\n, \\
 UART SECS seconds after the capture began; e.g. the kernel debugger on Haiku:
 --send '200:\\x1d\\x1d\\x1dd' --send '203:threads\\n'. Lines get a "[  12.345] " host timestamp prefix
 (seconds since the capture began) so boot stages can be timed; the raw bytes are kept too,
-in FILE.raw.
+in FILE.raw, and FILE.raw.times gives each chunk's arrival ("<seconds> <offset in FILE.raw> <bytes>"):
+when the bytes of a line that never ended arrived.
 --silence-after N: when the line has been silent for N seconds (after something was received,
 once per capture), type the --silence-send texts, each OFFSET seconds after that moment: the
 kernel debugger's dumps of a boot that stopped, whenever it stops. A line matching a
@@ -69,7 +70,8 @@ def main():
     buf = b""
     rc = 1
     done = False
-    with open(a.log, "w", encoding="utf-8", errors="replace") as log, open(a.log + ".raw", "wb") as raw:
+    with open(a.log, "w", encoding="utf-8", errors="replace") as log, open(a.log + ".raw", "wb") as raw, \
+            open(a.log + ".raw.times", "w") as times:
         while not done:
             now = time.monotonic()
             if now - t0 >= a.secs:
@@ -92,6 +94,8 @@ def main():
             if not data:
                 continue
             last_rx = time.monotonic()
+            times.write("%.3f %d %d\n" % (last_rx - t0, raw.tell(), len(data)))
+            times.flush()
             raw.write(data)
             raw.flush()
             buf += data

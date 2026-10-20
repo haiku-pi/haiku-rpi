@@ -309,7 +309,9 @@ day on:
   pixels off-colour, at different places in consecutive frames of a static desktop. Whether a real
   monitor shows them, or only the capture card, needs a person.
 - **Decisions.** Whether the Firefox package may be published under its official branding, and where
-  to host packages over GitHub's 100 MB file limit (the games).
+  to host packages over GitHub's 100 MB file limit (the games). The owner settled both on 2026-10-21:
+  publish Firefox as it is, and fit big packages under the limit (zstd, data split into parts) rather
+  than run another host.
 
 ## What the earlier Phoenix-RTOS port contributed
 
@@ -350,8 +352,6 @@ Each was caught by the agent's own later measurement and corrected in the log in
 - Firefox drops frames on H.264 video (121–271 of 300 in tests; VP9 and AV1 about 4 %); decoding keeps
   up, presentation does not (no GPU compositor in Firefox on Haiku).
 - Audio, keyboard, mouse and Bluetooth pairing are not checked by a person.
-- Firefox is in the image but not in the public repository (branding); the game packages are too large
-  for GitHub.
 - No hardware H.264 decoding (on the BCM2711 it is VideoCore firmware only) and no HDMI audio.
 - About one ioquake3 run in four needs SIGKILL after SIGTERM; under heavy load the audio time source
   once published nothing for 16 s.

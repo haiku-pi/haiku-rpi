@@ -27,7 +27,8 @@
 #            freetype/fontconfig/libevent), fontconfig's configuration in fontconfig/ (Firefox sets
 #            FONTCONFIG_PATH to it), and the HaikuPorts launcher "Firefox Browser"
 #            (scripts/mkimage-pi4.sh --add-tree artifacts/firefox/non-packaged)
-#   package  artifacts/firefox/firefox-157.0.1-<revision>-arm64.hpkg from the staged app (vendor "Haiku Project")
+#   package  artifacts/firefox/firefox-157.0.1-<revision>-arm64.hpkg from the staged app (vendor "Haiku Project";
+#            zstd), copied to jam's download directory and artifacts/packages (published)
 #
 # Toolchain: C/C++ = the Haiku cross gcc 13.3 (artifacts/rust/bin wrappers; see build-spidermonkey.sh
 # for why not clang); Rust = scripts/build-rust.sh's rustc 1.90.0; bindgen parses the headers with the
@@ -40,8 +41,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version=157.0.1
-# the package's revision (3: WebGL on an OpenGL ES context)
-revision=3
+# the package's revision (3: WebGL on an OpenGL ES context; 4: zstd, 112 -> 102 MB, under GitHub's
+# 100 MiB file limit, so the published repository carries it)
+revision=4
 target=aarch64-unknown-haiku
 src="$root/sources/firefox/firefox-$version"
 out="$root/artifacts/firefox"
@@ -314,13 +316,16 @@ requires {
 INFO
 	rm -f "$hpkg"
 	LD_LIBRARY_PATH="$gen/objects/linux/lib" "$gen/objects/linux/x86_64/release/tools/package/package" \
-		create -q -C "$pkg" -i "$pkg/.PackageInfo" "$hpkg"
+		create -q -z zstd -C "$pkg" -i "$pkg/.PackageInfo" "$hpkg"
 	rm -rf "$pkg"
-	# where the image build takes it from (the arm64 repository definition lists this revision)
-	if [ -d "$gen/download" ]; then
-		rm -f "$gen/download"/firefox-"$version"-*-arm64.hpkg
-		cp "$hpkg" "$gen/download/"
-	fi
+	# where the image build takes it from (the arm64 repository definition lists this revision), and
+	# where scripts/publish-repo.sh takes the published packages from
+	local dir
+	for dir in "$gen/download" "$root/artifacts/packages"; do
+		[ -d "$dir" ] || continue
+		rm -f "$dir"/firefox-"$version"-*-arm64.hpkg
+		cp "$hpkg" "$dir/"
+	done
 	ls -l "$hpkg"
 }
 

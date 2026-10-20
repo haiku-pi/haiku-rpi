@@ -30,8 +30,9 @@ fi
 # would only churn the history (and the checksums pkgman has cached)
 staged="$root/artifacts/publish/staging"
 rm -rf "$staged"; mkdir -p "$staged"
-# GitHub refuses files over 100 MiB: those packages (the games, scripts/package-games.sh) stay out
-maxBytes=100000000
+# GitHub refuses files over 100 MiB (104857600 bytes): a package that big stays out (the games are split
+# into data packages below that, scripts/package-games.sh; Firefox is zstd-compressed to ~102 MB)
+maxBytes=104857600
 for f in "$root"/artifacts/packages/*.hpkg; do
 	name="$(basename "$f")"
 	if [ "$(stat -c %s "$f")" -gt "$maxBytes" ]; then

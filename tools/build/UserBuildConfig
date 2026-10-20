@@ -81,11 +81,13 @@ if $(HAIKU_PI_DEV) = 1 {
 }
 
 if $(HAIKU_PI_GAMES) = 1 {
-	# the free games (scripts/package-games.sh): too large for the published repository, so images
-	# carry them; with the GL stack (-sHAIKU_PI_GL=1)
+	# the free games (scripts/package-games.sh; also in the published repository, their data split
+	# into parts): with the GL stack (-sHAIKU_PI_GL=1)
 	Echo "Raspberry Pi games: OpenArena, SuperTuxKart (HAIKU_PI_GAMES)" ;
 	HAIKU_IMAGE_SIZE = 1700 ;
-	AddHaikuImageSystemPackages openarena supertuxkart ;
+	AddHaikuImageSystemPackages openarena openarena_data_1 openarena_data_2 openarena_data_3
+		openarena_data_4 openarena_data_5 supertuxkart supertuxkart_data_1 supertuxkart_data_2
+		supertuxkart_data_3 ;
 }
 
 if $(HAIKU_PI_GL) = 1 {

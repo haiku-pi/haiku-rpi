@@ -227,9 +227,9 @@ scripts/build-firefox.sh               # Firefox 157.0.1, ~1 h of compiling; res
 `build-firefox.sh` fetches and patches the Firefox source and builds `cbindgen` itself (through
 `build-spidermonkey.sh`'s `source` and `hosttools` steps). It writes its package to
 `artifacts/firefox/`, not to `artifacts/packages/` (so the public repository does not pick it up:
-publishing Firefox waits for a decision on Mozilla's branding), and copies it into
-`sources/haiku/generated.arm64/download/`, where the image build takes it from (since 2026-10-21; before,
-that copy was a manual step). The `-3` is the package revision, which must match
+and copies it into `artifacts/packages/` (published) and `sources/haiku/generated.arm64/download/`, where
+the image build takes it from (since 2026-10-21; before, that copy was a manual step). It is
+zstd-compressed: 102 MB, under GitHub's 100 MiB file limit. The `-3` is the package revision, which must match
 the one in `sources/haiku/build/jam/repositories/HaikuPorts/arm64`; see
 [the package-bump rule](#the-package-bump-rule).
 
@@ -387,8 +387,10 @@ second packages the result as `<port>` and `<port>_devel` hpkgs. Their headers e
 
 ### The games
 
-OpenArena and SuperTuxKart are packages, but too large for the public repository (both are over
-GitHub's 100 MB file limit), so images carry them. Once:
+OpenArena and SuperTuxKart are packages in the public repository; whole, both would be over GitHub's
+100 MiB file limit, so `package-games.sh` puts their data in parts (`openarena_data_1..5`,
+`supertuxkart_data_1..3`, each under the limit, zstd) that the game package requires. To build them and
+an image with them, once:
 
 ```sh
 scripts/build-games.sh          # needs the Quake data above; builds OpenArena too
@@ -486,8 +488,8 @@ On another arm64 Haiku installation, add it first:
 pkgman add-repo https://haiku-pi.github.io/packages/arm64
 ```
 
-The packages are unsigned (nothing in Haiku checks a signature today). Not in it: the games (over
-GitHub's 100 MB file limit) and Firefox (built, not published, until the branding question is settled).
+The packages are unsigned (nothing in Haiku checks a signature today). Firefox (zstd, 102 MB) and the
+games (data in parts) are in it since 2026-10-21.
 
 ### A local repository for testing
 
@@ -510,7 +512,8 @@ scripts/publish-repo.sh               # commit and push to github.com/haiku-pi/p
 It clones the packages repository into `artifacts/publish/packages`, rebuilds `arm64/` with
 `make-repo.sh` from `artifacts/packages/*.hpkg`, and commits and pushes what changed (never a force
 push). It needs push access; for your own fork set `PACKAGES_REMOTE` (the git URL) and `PACKAGES_URL`
-(where it will be served). Packages over 100 MB are skipped with a message. A package already
+(where it will be served). Packages over 100 MiB (GitHub's file limit) are skipped with a message; split or recompress them
+(zstd: `package create -z zstd`, as `build-firefox.sh` and `package-games.sh` do). The published site must also stay under GitHub Pages' 1 GB limit (about 700 MB on 2026-10-21). A package already
 published keeps its published bytes: **a rebuilt package is only published when its version or revision
 changes** — bump the revision to publish a fix. `package_repo` only accepts packages whose vendor is
 "Haiku Project"; `package-port.py` and the other packaging scripts set it.

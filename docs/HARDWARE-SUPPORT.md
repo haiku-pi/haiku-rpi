@@ -152,7 +152,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 | Firmware + `config.txt` | pinned `start4.elf` (`scripts/fetch-pi-firmware.sh`); overlays `haiku-v3d`, `haiku-fkms`, `disable-bt` (`scripts/mkimage-pi4.sh`) | ✅ | — | — |
 | U-Boot (`rpi_4_defconfig`, EFI) | `sources/u-boot` + `patches/u-boot/` | ✅ | — | — |
 | Haiku EFI loader → kernel | upstream `haiku_loader.efi`, with the loader fixes listed under SoC | ✅ | SD boot to the desktop in ~80 s; boot bench 10/10 (10-19), 3/3 at KDEBUG level 1 (10-20, 23:50) | SD layout: MBR, p1 FAT32 (firmware, U-Boot, EFI), p2 BFS |
-| Network boot (no SD card) | dnsmasq + TFTP for firmware, U-Boot (netboot build) and loader; boot volume as a remote disk (`drivers/disk/virtual/remote_disk`, host `remote_disk_server`) | 🟡 | desktop at 54.8 s; 15/15 boots at KDEBUG level 1 (10-20, 23:50) | A wedge strikes between about 1 in 8 and 1 in 45 network boots (10-20), and 1 in 18 since the kernel-stack fix of 10-20 23:50: [KNOWN-ISSUES.md](KNOWN-ISSUES.md). A remote disk, not an NFS root: Haiku boots from a block device ([design/netboot.md](design/netboot.md)). 1 KiB per request (16 in flight in the kernel, 8 in the loader). Needs a dedicated LAN and the EEPROM's boot order to try the network |
+| Network boot (no SD card) | dnsmasq + TFTP for firmware, U-Boot (netboot build) and loader; boot volume as a remote disk (`drivers/disk/virtual/remote_disk`, host `remote_disk_server`) | 🟡 | desktop at 54.8 s; 15/15 boots at KDEBUG level 1 (10-20, 23:50) | A wedge strikes between about 1 in 8 and 1 in 45 network boots (10-20), and 2 in 22 since the kernel-stack fix of 10-20 23:50: [KNOWN-ISSUES.md](KNOWN-ISSUES.md). A remote disk, not an NFS root: Haiku boots from a block device ([design/netboot.md](design/netboot.md)). 1 KiB per request (16 in flight in the kernel, 8 in the loader). Needs a dedicated LAN and the EEPROM's boot order to try the network |
 
 ## Ported libraries and applications
 
@@ -170,15 +170,15 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
 | OpenSSL, curl | 3.5.9, 8.22.0 | TLS for the network kit and pkgman |
 | NetSurf | 3.11 | in the image |
 | WebPositive / HaikuWebKit | 1.10.0 | in the image; JavaScriptCore JIT (baseline/DFG/FTL/wasm) on |
-| Firefox | 157.0.1 (-3) | in the image, **not published** (branding question); WebGL 1 and 2 on an OpenGL ES 3.1 context; plays H.264, VP8/9, AV1, HEVC |
+| Firefox | 157.0.1 (-4) | in the image and published (zstd, 102 MB); WebGL 1 and 2 on an OpenGL ES 3.1 context; plays H.264, VP8/9, AV1, HEVC |
 | SpiderMonkey `js` shell | 157.0.1 | 11/11 tests on the Pi, JIT on (10-20) |
 | Rust | 1.90.0, target `aarch64-unknown-haiku` with std | a host cross toolchain; test programs 3/3 on the Pi |
 | CPython | python3.14 3.14.8 (-2) | in the image; ssl, sqlite3, ctypes, lzma, zstd, readline (libedit), curses (ncurses 6.6) |
 | QuakeSpasm | 0.96.3 | test images only (needs the game data) |
 | Yamagi Quake II | 8.60 | GL1 renderer; 135–171 fps at 640×480, 81–89 at 1280×720 (10-19); test images only |
 | vkQuake | 1.35.0 | Vulkan; 52 fps at 1280×720 with V3D-friendly defaults (10-20); test images only |
-| OpenArena on ioquake3 | 0.8.8 (-1) | 46 fps at 1280×720 window, 22–29 at 1920×1080 (10-20); game code in ioq3's QVM interpreter; package over 100 MB, **image-only** |
-| SuperTuxKart | 1.5 (-1) | GL 2.1 renderer 28–38 fps at 1280×720; GLES 3.1 shader renderer 16–18 fps (10-20); **image-only** |
+| OpenArena on ioquake3 | 0.8.8 (-1) | 46 fps at 1280×720 window, 22–29 at 1920×1080 (10-20); game code in ioq3's QVM interpreter; published, its data in 5 parts (each under GitHub's file limit) |
+| SuperTuxKart | 1.5 (-1) | GL 2.1 renderer 28–38 fps at 1280×720; GLES 3.1 shader renderer 16–18 fps (10-20); published, data in 3 parts |
 | llama2.c | — | stories15M 45.7 tok/s on 4 cores (10-20); test images only |
 | Native build tools (dev image) | gcc 13.3, binutils, make, python3.10, haikuporter (Haiku's arm64 build packages); patch 2.8, tar 1.35, gzip 1.13, xz 5.6.4, bzip2 1.0.8, diffutils 3.10 (ours) | haikuporter built a first port (hoedown 3.0.7) natively in QEMU (10-19) |
 
@@ -194,7 +194,7 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
   boot scripts in `tools/pi-tests/` that print graded lines on the serial console. Details: [LAB-SETUP.md](LAB-SETUP.md).
 - **Emulation**: `scripts/qemu-virt.sh` (the arm64 reference platform), `scripts/qemu-raspi.sh` (QEMU's
   raspi4b model, for the boot chain and early kernel, with gdb).
-- **Packages**: `scripts/make-repo.sh`, `scripts/publish-repo.sh` (only packages under GitHub's 100 MB limit).
+- **Packages**: `scripts/make-repo.sh`, `scripts/publish-repo.sh` (packages under GitHub's 100 MiB file limit: Firefox zstd-compressed, the games' data in parts).
 - **Upstream**: `scripts/upstream-sync.sh` merges upstream Haiku into `rpi4` weekly (build, bench, push only
   when green).
 - **Rollback**: `scripts/snapshot-state.sh` writes `manifests/<date>-<step>.md` with every repository's SHA.
@@ -205,11 +205,10 @@ From the "Next" list of [log/WEEK-2026-W43.md](log/WEEK-2026-W43.md), in its ord
 
 1. **Hands-on checks** (the owner, at the bench): audio by ear; USB keyboard and mouse; typing in Firefox
    and WebPositive; keys and mouse in an SDL game; whether the "speckles" seen in HDMI captures while a
-   GL program runs are on a real monitor too. **Owner decisions**: publishing the Firefox package (branding),
-   and hosting for packages over 100 MB (the games).
-2. **Firefox**: dropped video frames (they happen after decoding: presentation and software compositing;
-   H.264 drops most); WebRTC later.
-3. **Open defects**: the network-boot wedge (not cured by the kernel-stack fix of 10-20 23:50: 1 in 18 since); devfs reloading
+   GL program runs are on a real monitor too. (The owner's decisions on publishing Firefox and the games: taken 10-21, both published.)
+2. **Firefox**: video drops frames in the first seconds after the browser starts (a cold start: the decoder
+   process stalls while it warms up; warm, from the SD card, 0 of 300); WebRTC later.
+3. **Open defects**: the network-boot wedge (not cured by the kernel-stack fix of 10-20 23:50: 2 in 22 since); devfs reloading
    `remote_disk` on a network boot.
 4. **Ports**: native haikuporter builds (H14).
 5. **GPU**: stage 6 (page flips on firmware planes; at most ~15 % at 1080p, low priority) and stage 7

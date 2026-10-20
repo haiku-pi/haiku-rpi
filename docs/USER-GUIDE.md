@@ -100,7 +100,7 @@ program.
 | | What it contains | How it is made |
 |---|---|---|
 | **The regular image** (`haiku-pi4-regular.img`) | Haiku's full desktop: Deskbar, Tracker, Terminal, all applications and preferences, the media kit and MediaPlayer; this port's drivers; Mesa (OpenGL, OpenGL ES, Vulkan); GLTeapot, GLInfo and three GL screen savers; SDL2; ffmpeg 6.1; WebPositive, Firefox 157 and NetSurf; OpenSSL 3, curl, CA certificates; Python 3.14 | `scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc` ([TRY-IT.md](TRY-IT.md#build-the-image)) |
-| **The image with the games** | everything above, plus **OpenArena** and **SuperTuxKart** in the Applications menu | the same with `-sHAIKU_PI_GAMES=1` (about 1.8 GB). The two game packages are over GitHub's 100 MB file limit, so they are not in the public repository |
+| **The image with the games** | everything above, plus **OpenArena** and **SuperTuxKart** in the Applications menu | the same with `-sHAIKU_PI_GAMES=1` (about 1.8 GB). Both are also in the public repository: `pkgman install openarena supertuxkart` (their data comes in parts) |
 | **Test trees** | QuakeSpasm, Yamagi Quake II, vkQuake (and Quake III Arena with your own data), llama2.c, the Rust test programs, the HEVC test clips | built on the host (`scripts/build-games.sh`, `scripts/build-llama2.sh`, ...) and copied into an image with `scripts/mkimage-pi4.sh --add-tree`. They land in `/boot/system/non-packaged/`. The Quake games need id Software's data (the free shareware/demo files), which cannot be redistributed in a package |
 
 Everything in this guide that names a test tree says so.
@@ -422,13 +422,13 @@ Video playback, 10-second test clips in a window (2026-10-20; frames dropped of 
 
 **Limits:**
 
-- **H.264 drops many frames.** Decoding keeps up (7.8 ms per frame on average); the frames are lost
-  while being presented: Firefox on Haiku composites on the CPU, and the system-ffmpeg path adds a
-  copy. Setting `media.ffmpeg.customized-buffer-allocation` to false in `about:config` lowered the
-  1080p drops to 149 of 300. Prefer VP9, AV1 or HEVC where a site offers them.
+- **The first video after Firefox starts drops frames.** The table above is from first plays on
+  network boots. The same H.264 clip played a second time drops 14 of 300 (network boot) and **0 of
+  300 from the SD card** (2026-10-21); VP9 played first drops as much as H.264. Firefox's decoder
+  process stalls for up to 1.8 s at a time while it warms up, and the frames it delivers late are
+  discarded. If a video stutters at first, play it again.
 - WebRTC is untested.
-- The Firefox package is **not in the public package repository** (an open question about
-  Mozilla's branding); it reaches you only in the image.
+- Firefox is in the public package repository too (`pkgman install firefox`, 102 MB).
 - Its user agent says "Haiku aarch64".
 
 Headless use, for example from a script: `Firefox --headless --screenshot page.png <url>`.
@@ -599,8 +599,7 @@ libxml2, libxslt, sqlite, woff2, ...); NetSurf; OpenSSL 3 and curl; ICU 74; Pyth
 and ncurses; zstd; libogg, libvorbis, fluidlite; gzip, tar, bzip2, unzip; and the `_devel` packages
 (headers and link libraries) of most of them.
 
-**What it does not have:** Firefox (in the image only, §8.2) and the two games (over GitHub's 100 MB
-file limit, §3). The repository is not signed; Haiku does not check repository signatures today.
+**What it does not have:** the Quake engines (their game data is not free; §6 shows how to build them). The repository is not signed; Haiku does not check repository signatures today.
 
 ### 11.2 Python 3.14
 
@@ -730,12 +729,12 @@ work that way, which also lets you run things on a Pi without a keyboard.
 | Nothing on the monitor | Wait: the desktop takes ~80 s. Connect the monitor before power-on (the display mode comes from its EDID, read at boot; plugging a monitor in later is untested). Try the other micro-HDMI port: only one has been used on the bench. Check the serial console. |
 | The Pi waits about a minute before booting the card | Its EEPROM boot order tries the network first and nothing answers. Harmless; change `BOOT_ORDER` in the EEPROM if it bothers you. |
 | The boot stops early, the splash showing no icon lit (serial output ends after `reserve_io_interrupt_vectors`) | An early-boot hang seen once in about 20–30 boots on 2026-10-20 (on a network boot); it did not recur in the SD benches that followed. Power-cycle. |
-| A **network** boot stops at ~54 s, with no serial output and no kernel debugger | The open "network-boot wedge", while the network drivers load and the first-boot package processing reads the remote disk. Its rate: ~1 in 18 network boots (2026-10-20 afternoon), ~1 in 45 counted later that day, and 1 in 18 after a kernel-stack fix that turned out not to be its cause (2026-10-21). SD boots are not affected. Power-cycle. |
+| A **network** boot stops at ~54 s, with no serial output and no kernel debugger | The open "network-boot wedge", while the network drivers load and the first-boot package processing reads the remote disk. Its rate: ~1 in 18 network boots (2026-10-20 afternoon), ~1 in 45 counted later that day, and 2 in 22 after a kernel-stack fix that turned out not to be its cause (2026-10-21). SD boots are not affected. Power-cycle. |
 | HTTPS pages fail with "certificate not yet valid" | The clock is in 1970: the network was not up for the boot-time NTP sync. `/boot/system/preferences/Time --update`, then reload (§8.1). |
 | `pkgman` fails with "Server not found" | Only images built before 2026-10-20 pointed their HaikuPorts repository at a server with no arm64 packages. Drop it and add ours: `pkgman drop-repo HaikuPorts`, then `pkgman add-repo https://haiku-pi.github.io/packages/arm64`. |
 | A package copied by hand into `/boot/system/packages` fails to activate ("failed to init package") | The package daemon saw a half-copied file. Copy it elsewhere on the same volume first, then `mv` it into `packages/`. |
 | Firefox takes long to start | The first start creates the profile and the font cache (16 s). Later starts: 6–10 s (§8.2). |
-| Firefox drops frames in H.264 video | Known: presentation is CPU-bound (§8.2). Use VP9, AV1 or HEVC where available. |
+| Firefox drops frames in the first video after it starts | Known: a cold start (§8.2). Play it again; booting from the SD card helps. |
 | Quake II: the GL3 renderer does not start | It needs desktop OpenGL 3.2; use `+set vid_renderer gl1` (§6.3). |
 | SuperTuxKart says "OpenGL version is too old" | That is about its shader renderer; it falls back to the legacy one. For shaders, start `SuperTuxKart-GLES`. |
 | An SDL game crashed at a full-screen start with "double free" | Fixed in libsdl2 2.32.10-5 (2026-10-20). On an older image: `pkgman update libsdl2`. |

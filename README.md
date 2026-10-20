@@ -71,9 +71,10 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Web | WebPositive (HaikuWebKit, JavaScript JIT) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback |
 | Software | Python 3.14, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
 
-Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: no HDMI audio, Firefox
-drops frames on H.264 video, and the USB keyboard and mouse enumerate but have not yet been tried by hand. The
-games and Firefox are too large for the public package repository, so you have to build them yourself.
+Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: no HDMI audio, video in Firefox
+drops frames for the first seconds after the browser starts, and the USB keyboard and mouse enumerate but have
+not yet been tried by hand. Firefox and the games are in the public package repository (`pkgman install firefox`,
+`pkgman install openarena`, `pkgman install supertuxkart`).
 
 ---
 
