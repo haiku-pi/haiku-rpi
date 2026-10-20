@@ -13,6 +13,8 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 | `07-mediaplayer-hevc-1080p-hardware.png` | MediaPlayer playing a 1080p HEVC test stream (20 Mbit/s) decoded by the BCM2711's HEVC block (`hevc_rpivid`): ~115 fps possible at under half a core, vs 25 fps on all four cores in software |
 | `08-openarena-ioquake3.png` | OpenArena 0.8.8 on ioquake3 (the Quake III engine; SDL2 + OpenGL on the V3D) in a 1280×720 window: the timedemo runs at 46 fps |
 | `09-supertuxkart.png` | SuperTuxKart 1.5 racing on Hacienda (4 karts) in a 1280×720 window: STK's OpenGL 2.1 renderer on the V3D, 28–38 frames/s |
+| `10-firefox-window.png` | **Firefox 157** in a Haiku window on the Pi (HDMI capture): a local test page — JavaScript reports "Haiku aarch64" |
+| `11-firefox-haiku-os-org.png` | Firefox 157 on the Pi rendering https://www.haiku-os.org/ (its own `--screenshot` of the page, top part) |
 
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
 `scripts/sd-cycle.sh --hdmi-every 15`.

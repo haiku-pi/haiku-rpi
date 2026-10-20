@@ -38,7 +38,7 @@ SD layout: MBR, p1 FAT32 (type 0x0c/0xef, firmware + U-Boot + EFI), p2 BFS (0xeb
 | H13 | Stability + performance | soak tests, boot time, I/O and graphics benchmarks vs the Phoenix port | ✅ boot bench 10/10, 20-min load soak; ongoing |
 | H14 | arm64 package farm | There is no official HaikuPorts repository for arm64 (only riscv64/x86_64/x86_gcc2, checked 2026-10-18), and the build references 71 bootstrap packages. Build HaikuPorts with haikuporter natively (QEMU virt with many CPUs, or the Pi itself) into our own repo: Mesa, WebPositive/HaikuWebKit, SDL2, games, dev tools — what the GPU and showcase work need | 🔶 81 packages of ours incl. HaikuWebKit (WebPositive in the image); our repo works with pkgman on the bench; public hosting: owner |
 
-Also done beyond the list: Vulkan (V3DV, a Haiku WSI, SDL2's Vulkan path, vkQuake), HEVC decoding on the
+Also done beyond the list: **Firefox 157** (HaikuPorts' native Haiku port, cross-built for arm64: renders the web on the Pi), SuperTuxKart, OpenArena, Python 3.14, Vulkan (V3DV, a Haiku WSI, SDL2's Vulkan path, vkQuake), HEVC decoding on the
 BCM2711's decoder block (FFmpeg's `hevc_rpivid`, MediaPlayer), audio on the 3.5 mm jack (media kit), media playback (ffmpeg 6.1), HTTPS
 and the WebPositive and NetSurf browsers, Bluetooth through Haiku's stack (BCM43455 over UART). See
 [TRY-IT.md](TRY-IT.md) and the weekly logs in [log/](log/).
