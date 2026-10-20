@@ -1,0 +1,1045 @@
+Firefox on Haiku arm64: xptcall, NSPR/NSS in-tree, CPU-specific bits, headless mode
+
+On top of HaikuPorts' firefox-157.0.1.patchset (x86_64 only, built there with clang) and
+patches/spidermonkey:
+- xptcall (xpcom/reflect/xptcall/md/unix/moz.build): the aarch64 stubs are plain AAPCS64 and
+  OS-independent; build them for Haiku as for Linux and the BSDs.
+- Navigator.platform and the UA's oscpu said "Haiku x86_64" on every CPU: name the build's CPU
+  ("Haiku aarch64", as Linux says "Linux aarch64").
+- nsSystemInfo.cpp: get_cpuid() (vendor, family, model, brand) exists on x86 only.
+- No user-space CPU feature detection on Haiku arm64: ffvpx (config_unix_aarch64.h: neither
+  getauxval() nor sched_getaffinity(), as the patchset does for x86_64), libvpx and libaom
+  (aarch64_cpudetect.c) use the Armv8.0 baseline (Neon), as libvpx does on OpenBSD.
+- NSPR, built in-tree (config/external/nspr): the Haiku branch of nsprpub/configure.in from
+  HaikuPorts' nspr-4.39.patchset as moz.build defines, with the patchset's nsprpub changes
+  (md/_haiku.{cfg,h}, prhaiku.cpp: the time zone from BTimeZone, ...) ported to the in-tree
+  4.40 (reformatted upstream), md/_haiku.cfg extended to aarch64 (LP64, as x86_64), and
+  prhaiku.cpp's libbe header kept at default visibility (in-tree code is built hidden).
+- NSS, built in-tree by gyp: a "haiku" OS flavour (build/gyp_base.mozbuild, defines HAIKU and
+  _DEFAULT_SOURCE in coreconf/config.gypi), the library part of HaikuPorts' nss-3.129.patchset,
+  and <endian.h> for the karamel/libcrux headers on Haiku.
+- nsBrowserApp.cpp: fontconfig's configuration ships in the application directory
+  (fontconfig/fonts.conf); point FONTCONFIG_PATH there unless the environment sets it.
+- nsAppRunner.cpp: allow headless mode (--headless, --screenshot) on Haiku: HeadlessWidget with
+  the generic in-process compositor widget and the native nsLookAndFeel, as on macOS.
+
+--- a/browser/app/nsBrowserApp.cpp
++++ b/browser/app/nsBrowserApp.cpp
+@@ -22,6 +22,8 @@
+ #endif
+ 
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ #include <stdarg.h>
+ #include <time.h>
+ 
+@@ -282,6 +284,21 @@
+     return NS_ERROR_FAILURE;
+   }
+ 
++#ifdef XP_HAIKU
++  // Fontconfig's configuration comes with Firefox (fontconfig/fonts.conf in the
++  // application directory), not from a system fontconfig package. Set before
++  // any child process (or the fork server) starts, so they inherit it.
++  if (!getenv("FONTCONFIG_FILE") && !getenv("FONTCONFIG_PATH")) {
++    const char* slash = strrchr(exePath.get(), '/');
++    char fcPath[MAXPATHLEN];
++    if (slash && snprintf(fcPath, sizeof(fcPath), "%.*s/fontconfig",
++                          int(slash - exePath.get()), exePath.get()) <
++                     int(sizeof(fcPath))) {
++      setenv("FONTCONFIG_PATH", fcPath, 0);
++    }
++  }
++#endif
++
+   auto bootstrapResult =
+       mozilla::GetBootstrap(exePath.get(), aLibLoadingStrategy);
+   if (bootstrapResult.isErr()) {
+--- a/build/gyp_base.mozbuild
++++ b/build/gyp_base.mozbuild
+@@ -23,6 +23,7 @@
+     "FreeBSD": "freebsd",
+     "NetBSD": "netbsd",
+     "OpenBSD": "openbsd",
++    "Haiku": "haiku",
+ }
+ gyp_vars["OS"] = flavors.get(os)
+ 
+--- a/config/external/nspr/prcpucfg.h
++++ b/config/external/nspr/prcpucfg.h
+@@ -19,6 +19,8 @@
+ #  include "md/_netbsd.cfg"
+ #elif defined(__OpenBSD__)
+ #  include "md/_openbsd.cfg"
++#elif defined(__HAIKU__)
++#  include "md/_haiku.cfg"
+ #elif defined(__linux__)
+ #  include "md/_linux.cfg"
+ #elif defined(__sun__)
+--- a/config/external/nspr/pr/moz.build
++++ b/config/external/nspr/pr/moz.build
+@@ -40,6 +40,20 @@
+     DEFINES["HAVE_POINTER_LOCALTIME_R"] = True
+     DEFINES[CONFIG["OS_TARGET"].upper()] = True
+     SOURCES += ["/nsprpub/pr/src/md/unix/%s.c" % CONFIG["OS_TARGET"].lower()]
++elif CONFIG["OS_TARGET"] == "Haiku":
++    # As nsprpub/configure.in does for *-haiku* (HaikuPorts' NSPR patchset).
++    OS_LIBS += [
++        "be",  # BTimeZone (prhaiku.cpp)
++        "network",
++    ]
++    DEFINES["HAIKU"] = True
++    DEFINES["HAVE_SOCKLEN_T"] = True
++    DEFINES["HAVE_FCNTL_FILE_LOCKING"] = True
++    DEFINES["_REENTRANT"] = True
++    SOURCES += [
++        "/nsprpub/pr/src/md/unix/linux.c",
++        "/nsprpub/pr/src/misc/prhaiku.cpp",
++    ]
+ elif CONFIG["OS_TARGET"] == "Darwin":
+     OS_LIBS += ["-framework CoreServices"]
+     # See also IncreaseDescriptorLimits in toolkit/xre/nsAppRunner.cpp
+@@ -258,6 +272,7 @@
+ EXPORTS.nspr.md += [
+     "/nsprpub/pr/include/md/_darwin.cfg",
+     "/nsprpub/pr/include/md/_freebsd.cfg",
++    "/nsprpub/pr/include/md/_haiku.cfg",
+     "/nsprpub/pr/include/md/_linux.cfg",
+     "/nsprpub/pr/include/md/_netbsd.cfg",
+     "/nsprpub/pr/include/md/_openbsd.cfg",
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -2052,7 +2052,12 @@
+   // Always return "MacIntel", even on ARM64 macOS like Safari does.
+   aPlatform.AssignLiteral("MacIntel");
+ #elif defined(XP_HAIKU)
++  // The CPU the build targets, as on Linux ("Linux x86_64", "Linux aarch64").
++#  if defined(__aarch64__)
++  aPlatform.AssignLiteral("Haiku aarch64");
++#  else
+   aPlatform.AssignLiteral("Haiku x86_64");
++#  endif
+ #elif defined(ANDROID)
+   aPlatform.AssignLiteral("Linux armv81");
+ #else
+--- a/media/ffvpx/config_unix_aarch64.h
++++ b/media/ffvpx/config_unix_aarch64.h
+@@ -733,4 +733,12 @@
+ #define CONFIG_VP8DSP 1
+ #define CONFIG_WMA_FREQS 0
+ #define CONFIG_WMV2DSP 0
++#if defined(__HAIKU__)
++/* Haiku has neither getauxval() nor sched_getaffinity(): libavutil reports
++ * the AArch64 baseline features (NEON) and counts CPUs with sysconf(). */
++#undef HAVE_GETAUXVAL
++#define HAVE_GETAUXVAL 0
++#undef HAVE_SCHED_GETAFFINITY
++#define HAVE_SCHED_GETAFFINITY 0
++#endif
+ #endif /* FFMPEG_CONFIG_H */
+--- a/media/libvpx/libvpx/vpx_ports/aarch64_cpudetect.c
++++ b/media/libvpx/libvpx/vpx_ports/aarch64_cpudetect.c
+@@ -16,7 +16,8 @@
+ #include <sys/sysctl.h>
+ #endif
+ 
+-#if !CONFIG_RUNTIME_CPU_DETECT || defined(__OpenBSD__)
++// Haiku: no user-space way to read the CPU features; Armv8.0 baseline (Neon).
++#if !CONFIG_RUNTIME_CPU_DETECT || defined(__OpenBSD__) || defined(__HAIKU__)
+ 
+ static int arm_get_cpu_caps(void) {
+   // This function should actually be a no-op. There is no way to adjust any of
+--- a/netwerk/protocol/http/nsHttpHandler.cpp
++++ b/netwerk/protocol/http/nsHttpHandler.cpp
+@@ -1224,7 +1224,12 @@
+ #elif defined(XP_IOS)
+   mOscpu.AssignLiteral("iPhone");
+ #elif defined(XP_HAIKU)
++  // The CPU the build targets, as on Linux ("Linux x86_64", "Linux aarch64").
++#  if defined(__aarch64__)
++  mOscpu.AssignLiteral("Haiku aarch64");
++#  else
+   mOscpu.AssignLiteral("Haiku x86_64");
++#  endif
+ #else
+   mOscpu.AssignLiteral("Linux x86_64");
+ #endif
+--- /dev/null
++++ b/nsprpub/pr/include/md/_haiku.cfg
+@@ -0,0 +1,220 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef nspr_cpucfg___
++#define nspr_cpucfg___
++
++#ifndef XP_UNIX
++#define XP_UNIX
++#endif
++
++#if !defined(HAIKU) && defined(__HAIKU__)
++#define HAIKU
++#endif
++
++#define PR_AF_INET6 5  /* same as AF_INET6 */
++
++#if defined(__x86_64__) || defined(__aarch64__)
++
++#ifdef __ILP32__
++
++#define IS_LITTLE_ENDIAN 1
++#undef  IS_BIG_ENDIAN
++
++#define PR_BYTES_PER_BYTE   1
++#define PR_BYTES_PER_SHORT  2
++#define PR_BYTES_PER_INT    4
++#define PR_BYTES_PER_INT64  8
++#define PR_BYTES_PER_LONG   4
++#define PR_BYTES_PER_FLOAT  4
++#define PR_BYTES_PER_DOUBLE 8
++#define PR_BYTES_PER_WORD   4
++#define PR_BYTES_PER_DWORD  8
++
++#define PR_BITS_PER_BYTE    8
++#define PR_BITS_PER_SHORT   16
++#define PR_BITS_PER_INT     32
++#define PR_BITS_PER_INT64   64
++#define PR_BITS_PER_LONG    32
++#define PR_BITS_PER_FLOAT   32
++#define PR_BITS_PER_DOUBLE  64
++#define PR_BITS_PER_WORD    32
++
++#define PR_BITS_PER_BYTE_LOG2   3
++#define PR_BITS_PER_SHORT_LOG2  4
++#define PR_BITS_PER_INT_LOG2    5
++#define PR_BITS_PER_INT64_LOG2  6
++#define PR_BITS_PER_LONG_LOG2   5
++#define PR_BITS_PER_FLOAT_LOG2  5
++#define PR_BITS_PER_DOUBLE_LOG2 6
++#define PR_BITS_PER_WORD_LOG2   5
++
++#define PR_ALIGN_OF_SHORT   2
++#define PR_ALIGN_OF_INT     4
++#define PR_ALIGN_OF_LONG    4
++#define PR_ALIGN_OF_INT64   8
++#define PR_ALIGN_OF_FLOAT   4
++#define PR_ALIGN_OF_DOUBLE  8
++#define PR_ALIGN_OF_POINTER 4
++#define PR_ALIGN_OF_WORD    4
++
++#define PR_BYTES_PER_WORD_LOG2   2
++#define PR_BYTES_PER_DWORD_LOG2  3
++
++#else
++
++#define IS_LITTLE_ENDIAN 1
++#undef  IS_BIG_ENDIAN
++#define IS_64
++
++#define PR_BYTES_PER_BYTE   1
++#define PR_BYTES_PER_SHORT  2
++#define PR_BYTES_PER_INT    4
++#define PR_BYTES_PER_INT64  8
++#define PR_BYTES_PER_LONG   8
++#define PR_BYTES_PER_FLOAT  4
++#define PR_BYTES_PER_DOUBLE 8
++#define PR_BYTES_PER_WORD   8
++#define PR_BYTES_PER_DWORD  8
++
++#define PR_BITS_PER_BYTE    8
++#define PR_BITS_PER_SHORT   16
++#define PR_BITS_PER_INT     32
++#define PR_BITS_PER_INT64   64
++#define PR_BITS_PER_LONG    64
++#define PR_BITS_PER_FLOAT   32
++#define PR_BITS_PER_DOUBLE  64
++#define PR_BITS_PER_WORD    64
++
++#define PR_BITS_PER_BYTE_LOG2   3
++#define PR_BITS_PER_SHORT_LOG2  4
++#define PR_BITS_PER_INT_LOG2    5
++#define PR_BITS_PER_INT64_LOG2  6
++#define PR_BITS_PER_LONG_LOG2   6
++#define PR_BITS_PER_FLOAT_LOG2  5
++#define PR_BITS_PER_DOUBLE_LOG2 6
++#define PR_BITS_PER_WORD_LOG2   6
++
++#define PR_ALIGN_OF_SHORT   2
++#define PR_ALIGN_OF_INT     4
++#define PR_ALIGN_OF_LONG    8
++#define PR_ALIGN_OF_INT64   8
++#define PR_ALIGN_OF_FLOAT   4
++#define PR_ALIGN_OF_DOUBLE  8
++#define PR_ALIGN_OF_POINTER 8
++#define PR_ALIGN_OF_WORD    8
++
++#define PR_BYTES_PER_WORD_LOG2  3
++#define PR_BYTES_PER_DWORD_LOG2 3
++
++#endif
++
++#elif defined(__i386__)
++
++#define IS_LITTLE_ENDIAN 1
++#undef  IS_BIG_ENDIAN
++
++#define PR_BYTES_PER_BYTE   1
++#define PR_BYTES_PER_SHORT  2
++#define PR_BYTES_PER_INT    4
++#define PR_BYTES_PER_INT64  8
++#define PR_BYTES_PER_LONG   4
++#define PR_BYTES_PER_FLOAT  4
++#define PR_BYTES_PER_DOUBLE 8
++#define PR_BYTES_PER_WORD   4
++#define PR_BYTES_PER_DWORD  8
++
++#define PR_BITS_PER_BYTE    8
++#define PR_BITS_PER_SHORT   16
++#define PR_BITS_PER_INT     32
++#define PR_BITS_PER_INT64   64
++#define PR_BITS_PER_LONG    32
++#define PR_BITS_PER_FLOAT   32
++#define PR_BITS_PER_DOUBLE  64
++#define PR_BITS_PER_WORD    32
++
++#define PR_BITS_PER_BYTE_LOG2   3
++#define PR_BITS_PER_SHORT_LOG2  4
++#define PR_BITS_PER_INT_LOG2    5
++#define PR_BITS_PER_INT64_LOG2  6
++#define PR_BITS_PER_LONG_LOG2   5
++#define PR_BITS_PER_FLOAT_LOG2  5
++#define PR_BITS_PER_DOUBLE_LOG2 6
++#define PR_BITS_PER_WORD_LOG2   5
++
++#define PR_ALIGN_OF_SHORT   2
++#define PR_ALIGN_OF_INT     4
++#define PR_ALIGN_OF_LONG    4
++#define PR_ALIGN_OF_INT64   4
++#define PR_ALIGN_OF_FLOAT   4
++#define PR_ALIGN_OF_DOUBLE  4
++#define PR_ALIGN_OF_POINTER 4
++#define PR_ALIGN_OF_WORD    4
++
++#define PR_BYTES_PER_WORD_LOG2   2
++#define PR_BYTES_PER_DWORD_LOG2  3
++
++#else
++
++#error "Unknown CPU architecture"
++
++#endif
++
++#ifndef HAVE_LONG_LONG
++#define	HAVE_LONG_LONG
++#endif
++#if PR_ALIGN_OF_DOUBLE == 8
++#define HAVE_ALIGNED_DOUBLES
++#endif
++#if PR_ALIGN_OF_INT64 == 8
++#define HAVE_ALIGNED_LONGLONGS
++#endif
++
++#ifndef NO_NSPR_10_SUPPORT
++
++#define BYTES_PER_BYTE		PR_BYTES_PER_BYTE
++#define BYTES_PER_SHORT 	PR_BYTES_PER_SHORT
++#define BYTES_PER_INT 		PR_BYTES_PER_INT
++#define BYTES_PER_INT64		PR_BYTES_PER_INT64
++#define BYTES_PER_LONG		PR_BYTES_PER_LONG
++#define BYTES_PER_FLOAT		PR_BYTES_PER_FLOAT
++#define BYTES_PER_DOUBLE	PR_BYTES_PER_DOUBLE
++#define BYTES_PER_WORD		PR_BYTES_PER_WORD
++#define BYTES_PER_DWORD		PR_BYTES_PER_DWORD
++
++#define BITS_PER_BYTE		PR_BITS_PER_BYTE
++#define BITS_PER_SHORT		PR_BITS_PER_SHORT
++#define BITS_PER_INT		PR_BITS_PER_INT
++#define BITS_PER_INT64		PR_BITS_PER_INT64
++#define BITS_PER_LONG		PR_BITS_PER_LONG
++#define BITS_PER_FLOAT		PR_BITS_PER_FLOAT
++#define BITS_PER_DOUBLE		PR_BITS_PER_DOUBLE
++#define BITS_PER_WORD		PR_BITS_PER_WORD
++
++#define BITS_PER_BYTE_LOG2	PR_BITS_PER_BYTE_LOG2
++#define BITS_PER_SHORT_LOG2	PR_BITS_PER_SHORT_LOG2
++#define BITS_PER_INT_LOG2	PR_BITS_PER_INT_LOG2
++#define BITS_PER_INT64_LOG2	PR_BITS_PER_INT64_LOG2
++#define BITS_PER_LONG_LOG2	PR_BITS_PER_LONG_LOG2
++#define BITS_PER_FLOAT_LOG2	PR_BITS_PER_FLOAT_LOG2
++#define BITS_PER_DOUBLE_LOG2 	PR_BITS_PER_DOUBLE_LOG2
++#define BITS_PER_WORD_LOG2	PR_BITS_PER_WORD_LOG2
++
++#define ALIGN_OF_SHORT		PR_ALIGN_OF_SHORT
++#define ALIGN_OF_INT		PR_ALIGN_OF_INT
++#define ALIGN_OF_LONG		PR_ALIGN_OF_LONG
++#define ALIGN_OF_INT64		PR_ALIGN_OF_INT64
++#define ALIGN_OF_FLOAT		PR_ALIGN_OF_FLOAT
++#define ALIGN_OF_DOUBLE		PR_ALIGN_OF_DOUBLE
++#define ALIGN_OF_POINTER	PR_ALIGN_OF_POINTER
++#define ALIGN_OF_WORD		PR_ALIGN_OF_WORD
++
++#define BYTES_PER_WORD_LOG2	PR_BYTES_PER_WORD_LOG2
++#define BYTES_PER_DWORD_LOG2	PR_BYTES_PER_DWORD_LOG2
++#define WORDS_PER_DWORD_LOG2	PR_WORDS_PER_DWORD_LOG2
++
++#endif /* NO_NSPR_10_SUPPORT */
++
++#endif /* nspr_cpucfg___ */
+--- /dev/null
++++ b/nsprpub/pr/include/md/_haiku.h
+@@ -0,0 +1,86 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef nspr_haiku_defs_h___
++#define nspr_haiku_defs_h___
++
++#include "prthread.h"
++
++#define PR_LINKER_ARCH  "haiku"
++#define _PR_SI_SYSNAME  "HAIKU"
++#if defined(__i386__)
++#define _PR_SI_ARCHITECTURE "x86"
++#elif defined(__alpha__)
++#define _PR_SI_ARCHITECTURE "alpha"
++#elif defined(__sparc__)
++#define _PR_SI_ARCHITECTURE "sparc"
++#elif defined(__ia64__)
++#define _PR_SI_ARCHITECTURE "ia64"
++#elif defined(__amd64__)
++#define _PR_SI_ARCHITECTURE "amd64"
++#elif defined(__powerpc64__)
++#define _PR_SI_ARCHITECTURE "powerpc64"
++#elif defined(__powerpc__)
++#define _PR_SI_ARCHITECTURE "powerpc"
++#elif defined(__aarch64__)
++#define _PR_SI_ARCHITECTURE "aarch64"
++#elif defined(__arm__)
++#define _PR_SI_ARCHITECTURE "arm"
++#elif defined(__mips64__)
++#define _PR_SI_ARCHITECTURE "mips64"
++#elif defined(__mips__)
++#define _PR_SI_ARCHITECTURE "mips"
++#else
++#error "Unknown CPU architecture"
++#endif
++#if defined(__ELF__)
++#define PR_DLL_SUFFIX          ".so"
++#else
++#define PR_DLL_SUFFIX          ".so.1.0"
++#endif
++
++#define _PR_VMBASE              0x30000000
++#define _PR_STACK_VMBASE    0x50000000
++#define _MD_DEFAULT_STACK_SIZE  65536L
++#define _MD_MMAP_FLAGS          MAP_PRIVATE
++
++#undef  HAVE_STACK_GROWING_UP
++#define HAVE_DLL
++#define USE_DLFCN
++#define _PR_HAVE_SOCKADDR_LEN
++#define _PR_STAT_HAS_ST_ATIM
++#define _PR_HAVE_LARGE_OFF_T
++
++#define _PR_POLL_AVAILABLE
++#undef _PR_USE_POLL
++
++#define _PR_HAVE_SYSV_SEMAPHORES
++#define PR_HAVE_POSIX_NAMED_SHARED_MEMORY
++
++#define _PR_INET6
++#define _PR_HAVE_INET_NTOP
++#define _PR_HAVE_GETHOSTBYNAME2
++#define _PR_HAVE_GETADDRINFO
++#define _PR_INET6_PROBE
++#define _PR_IPV6_V6ONLY_PROBE
++
++#define USE_SETJMP
++
++extern void _MD_EarlyInit(void);
++
++#define _MD_EARLY_INIT                  _MD_EarlyInit
++#define _MD_FINAL_INIT          _PR_UnixInit
++#define _PR_HAVE_CLOCK_MONOTONIC
++
++/* freebsd has INADDR_LOOPBACK defined, but in /usr/include/rpc/types.h, and I didn't
++   want to be including that.. */
++#ifndef INADDR_LOOPBACK
++#define INADDR_LOOPBACK         (u_long)0x7F000001
++#endif
++
++/* For writev() */
++#include <sys/uio.h>
++
++#endif /* nspr_haiku_defs_h___ */
+--- a/nsprpub/pr/include/md/_linux.h
++++ b/nsprpub/pr/include/md/_linux.h
+@@ -326,7 +326,7 @@
+ #endif /* __arm__ */
+ 
+ #define USE_SETJMP
+-#if (defined(__GLIBC__) && __GLIBC__ >= 2) || defined(ANDROID)
++#if (defined(__GLIBC__) && __GLIBC__ >= 2) || defined(ANDROID) || defined(__HAIKU__)
+ #define _PR_POLL_AVAILABLE
+ #endif
+ #undef _PR_USE_POLL
+@@ -347,7 +347,7 @@
+ #define _PR_HAVE_GETADDRINFO
+ #define _PR_INET6_PROBE
+ #endif
+-#ifndef ANDROID
++#if !defined(ANDROID) && !defined(__HAIKU__)
+ #define _PR_HAVE_SYSV_SEMAPHORES
+ #define PR_HAVE_SYSV_NAMED_SHARED_MEMORY
+ #endif
+--- a/nsprpub/pr/include/md/prosdep.h
++++ b/nsprpub/pr/include/md/prosdep.h
+@@ -39,6 +39,9 @@
+ #elif defined(OPENBSD)
+ #include "md/_openbsd.h"
+ 
++#elif defined(HAIKU)
++#include "md/_haiku.h"
++
+ #elif defined(LINUX) || defined(__GNU__) || defined(__GLIBC__)
+ #include "md/_linux.h"
+ 
+--- a/nsprpub/pr/include/md/_pth.h
++++ b/nsprpub/pr/include/md/_pth.h
+@@ -62,7 +62,8 @@
+  */
+ #if defined(AIX) || defined(SOLARIS) || defined(LINUX) || defined(__GNU__) || \
+     defined(__GLIBC__) || defined(FREEBSD) || defined(NETBSD) ||              \
+-    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS)
++    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS) || \
++    defined(__HAIKU__)
+ #define _PT_PTHREAD_INVALIDATE_THR_HANDLE(t) (t) = 0
+ #define _PT_PTHREAD_THR_HANDLE_IS_INVALID(t) (t) == 0
+ #define _PT_PTHREAD_COPY_THR_HANDLE(st, dt) (dt) = (st)
+@@ -87,7 +88,7 @@
+  */
+ #if (defined(AIX) && !defined(AIX4_3_PLUS)) || defined(LINUX) ||  \
+     defined(__GNU__) || defined(__GLIBC__) || defined(FREEBSD) || \
+-    defined(NETBSD) || defined(OPENBSD) || defined(DARWIN)
++    defined(NETBSD) || defined(OPENBSD) || defined(DARWIN) || defined(__HAIKU__)
+ #define PT_NO_SIGTIMEDWAIT
+ #endif
+ 
+@@ -100,7 +101,7 @@
+ #define PT_PRIO_MIN DEFAULT_PRIO
+ #define PT_PRIO_MAX DEFAULT_PRIO
+ #elif defined(LINUX) || defined(__GNU__) || defined(__GLIBC__) || \
+-    defined(FREEBSD)
++    defined(FREEBSD) || defined(__HAIKU__)
+ #define PT_PRIO_MIN sched_get_priority_min(SCHED_OTHER)
+ #define PT_PRIO_MAX sched_get_priority_max(SCHED_OTHER)
+ #elif defined(NTO)
+@@ -140,7 +141,8 @@
+ #define _PT_PTHREAD_YIELD() (*_PT_aix_yield_fcn)()
+ #elif defined(SOLARIS) || defined(LINUX) || defined(__GNU__) ||  \
+     defined(__GLIBC__) || defined(FREEBSD) || defined(NETBSD) || \
+-    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS)
++    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS) || \
++    defined(__HAIKU__)
+ #define _PT_PTHREAD_YIELD() sched_yield()
+ #else
+ #error "Need to define _PT_PTHREAD_YIELD for this platform"
+--- a/nsprpub/pr/include/md/_unixos.h
++++ b/nsprpub/pr/include/md/_unixos.h
+@@ -14,7 +14,7 @@
+  * not be redefined.
+  */
+ #if !defined(LINUX) && !defined(__GNU__) && !defined(__GLIBC__) && \
+-    !defined(DARWIN)
++    !defined(DARWIN) && !defined(__HAIKU__)
+ #ifndef FD_SETSIZE
+ #define FD_SETSIZE 4096
+ #endif
+@@ -45,7 +45,7 @@
+  */
+ #include <sys/time.h>
+ #include <sys/types.h>
+-#if defined(AIX)
++#if defined(AIX) || defined(__HAIKU__)
+ #include <sys/select.h>
+ #endif
+ 
+--- a/nsprpub/pr/include/obsolete/protypes.h
++++ b/nsprpub/pr/include/obsolete/protypes.h
+@@ -8,6 +8,9 @@
+  * possible time. The NSPR API is implemented and documented using
+  * the new definitions.
+  */
++#if defined(__HAIKU__)
++#include <SupportDefs.h>
++#endif
+ 
+ #if !defined(PROTYPES_H)
+ #define PROTYPES_H
+@@ -55,35 +58,43 @@
+  * uint64
+  */
+ 
++#if !defined(__HAIKU__)
+ typedef PRUint64 uint64;
++#endif
+ 
+ /*
+  * uint32
+  */
+ 
++#if !defined(__HAIKU__)
+ #if !defined(_WIN32) && !defined(NTO)
+ typedef PRUint32 uint32;
+ #else
+ typedef unsigned long uint32;
+ #endif
++#endif
+ 
+ /*
+  * uint16
+  */
+ 
++#if !defined(__HAIKU__)
+ typedef PRUint16 uint16;
++#endif
+ 
+ /*
+  * uint8
+  */
+ 
++#if !defined(__HAIKU__)
+ typedef PRUint8 uint8;
++#endif
+ 
+ /*
+  * int64
+  */
+ 
+-#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES)
++#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES) && !defined(__HAIKU__)
+ typedef PRInt64 int64;
+ #endif
+ 
+@@ -91,7 +102,8 @@
+  * int32
+  */
+ 
+-#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES) && !defined(HPUX)
++#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES) && !defined(HPUX) && \
++    !defined(__HAIKU__)
+ #if !defined(_WIN32) && !defined(NTO)
+ typedef PRInt32 int32;
+ #else
+@@ -103,7 +115,8 @@
+  * int16
+  */
+ 
+-#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES) && !defined(HPUX)
++#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES) && !defined(HPUX) && \
++    !defined(__HAIKU__)
+ typedef PRInt16 int16;
+ #endif
+ 
+@@ -111,7 +124,8 @@
+  * int8
+  */
+ 
+-#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES) && !defined(HPUX)
++#if !defined(_PR_AIX_HAVE_BSD_INT_TYPES) && !defined(HPUX) && \
++    !defined(__HAIKU__)
+ typedef PRInt8 int8;
+ #endif
+ 
+--- a/nsprpub/pr/include/prio.h
++++ b/nsprpub/pr/include/prio.h
+@@ -151,6 +151,9 @@
+         PRUint16 port;   /* port number */
+         PRUint32 ip;     /* The actual 32 bits of address */
+         char pad[8];
++#if defined(HAIKU)
++        char pad2[16];
++#endif
+     } inet;
+     struct {
+         PRUint16 family;   /* address family (AF_INET6) */
+--- a/nsprpub/pr/include/prtypes.h
++++ b/nsprpub/pr/include/prtypes.h
+@@ -63,7 +63,7 @@
+ #define PR_CALLBACK_DECL
+ #define PR_STATIC_CALLBACK(__x) static __x
+ 
+-#elif defined(__declspec)
++#elif defined(__declspec) && !defined(__HAIKU__)
+ 
+ #define PR_EXPORT(__type) extern __declspec(dllexport) __type
+ #define PR_EXPORT_DATA(__type) extern __declspec(dllexport) __type
+--- a/nsprpub/pr/src/linking/prlink.c
++++ b/nsprpub/pr/src/linking/prlink.c
+@@ -248,7 +248,11 @@
+         char* p = NULL;
+         int len;
+ 
++#if defined(HAIKU)
++    ev = getenv("LIBRARY_PATH");
++#else
+         ev = getenv("LD_LIBRARY_PATH");
++#endif
+         if (!ev) {
+             ev = "/usr/lib:/lib";
+         }
+--- a/nsprpub/pr/src/md/unix/linux.c
++++ b/nsprpub/pr/src/md/unix/linux.c
+@@ -26,6 +26,7 @@
+ 
+ #ifdef _PR_PTHREADS
+ 
++#ifndef HAIKU
+ extern void _MD_unix_terminate_waitpid_daemon(void);
+ 
+ void
+@@ -33,6 +34,7 @@
+ {
+     _MD_unix_terminate_waitpid_daemon();
+ }
++#endif
+ 
+ #else  /* ! _PR_PTHREADS */
+ 
+--- a/nsprpub/pr/src/md/unix/uxrng.c
++++ b/nsprpub/pr/src/md/unix/uxrng.c
+@@ -32,7 +32,7 @@
+ 
+ #elif (defined(LINUX) || defined(FREEBSD) || defined(__FreeBSD_kernel__) || \
+        defined(NETBSD) || defined(__NetBSD_kernel__) || defined(OPENBSD) || \
+-       defined(__GNU__))
++       defined(__GNU__) || defined(__HAIKU__))
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <fcntl.h>
+--- /dev/null
++++ b/nsprpub/pr/src/misc/prhaiku.cpp
+@@ -0,0 +1,32 @@
++/*
++ * phaiku.cpp
++ * Haiku BTimeZone wrapper
++ */
++
++/* In-tree builds compile everything with hidden visibility (config/gcc_hidden.h):
++ * libbe's classes must keep the default. */
++#pragma GCC visibility push(default)
++#include <TimeZone.h>
++#pragma GCC visibility pop
++#include "prtypes.h"
++#include "prtime.h"
++
++extern "C" {
++
++PRStatus _PR_Haiku_GetLocalTimeOffset(PRInt32* aGmtOffset, PRInt32* aDstOffset) {
++  if (!aGmtOffset || !aDstOffset) {
++    return PR_FAILURE;
++  }
++
++  BTimeZone tz;
++  if (tz.InitCheck() != B_OK) {
++    return PR_FAILURE;
++  }
++
++  *aGmtOffset = static_cast<PRInt32>(tz.OffsetFromGMT());
++  *aDstOffset = 0;
++
++  return PR_SUCCESS;
++}
++
++} // extern "C"
+--- a/nsprpub/pr/src/misc/prnetdb.c
++++ b/nsprpub/pr/src/misc/prnetdb.c
+@@ -1141,7 +1141,7 @@
+  * any usable implementation.
+  */
+ 
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(__HAIKU__)
+ /* Android's Bionic libc system includes prototypes for these in netdb.h,
+  * but doesn't actually include implementations.  It uses the 5-arg form,
+  * so these functions end up not matching the prototype.  So just rename
+--- a/nsprpub/pr/src/misc/prsystem.c
++++ b/nsprpub/pr/src/misc/prsystem.c
+@@ -243,7 +243,7 @@
+ {
+     PRUint64 bytes = 0;
+ 
+-#if defined(LINUX) || defined(SOLARIS)
++#if defined(LINUX) || defined(SOLARIS) || defined(HAIKU)
+ 
+     long pageSize = sysconf(_SC_PAGESIZE);
+     long pageCount = sysconf(_SC_PHYS_PAGES);
+--- a/nsprpub/pr/src/misc/prtime.c
++++ b/nsprpub/pr/src/misc/prtime.c
+@@ -20,6 +20,10 @@
+ #include <errno.h> /* for EINVAL */
+ #include <time.h>
+ 
++#if defined(__HAIKU__)
++extern PRStatus _PR_Haiku_GetLocalTimeOffset(PRInt32* aGmtOffset, PRInt32* aDstOffset);
++#endif
++
+ /*
+  * The COUNT_LEAPS macro counts the number of leap years passed by
+  * till the start of the given year Y.  At the start of the year 4
+@@ -574,7 +578,19 @@
+ #endif
+ }
+ 
+-#if defined(XP_UNIX) || defined(XP_PC)
++#if defined(__HAIKU__)
++PR_IMPLEMENT(PRTimeParameters)
++PR_LocalTimeParameters(const PRExplodedTime* gmt) {
++  PRTimeParameters retVal;
++  PRInt32 gmtOffset = 0, dstOffset = 0;
++  if (_PR_Haiku_GetLocalTimeOffset(&gmtOffset, &dstOffset) == PR_SUCCESS) {
++    retVal.tp_gmt_offset = gmtOffset;
++    retVal.tp_dst_offset = dstOffset;
++    return retVal;
++  }
++  return PR_GMTParameters(gmt);
++}
++#elif defined(XP_UNIX) || defined(XP_PC)
+ 
+ PR_IMPLEMENT(PRTimeParameters)
+ PR_LocalTimeParameters(const PRExplodedTime* gmt)
+--- a/nsprpub/pr/src/pthreads/ptio.c
++++ b/nsprpub/pr/src/pthreads/ptio.c
+@@ -20,12 +20,13 @@
+ #include <sys/uio.h>
+ #include <sys/file.h>
+ #include <sys/ioctl.h>
+-#if defined(DARWIN)
++#if defined(DARWIN) || defined(__HAIKU__)
+ #include <sys/utsname.h> /* for uname */
+ #endif
+ #if defined(SOLARIS)
+ #include <sys/filio.h> /* to pick up FIONREAD */
+ #endif
++#include "primpl.h"
+ #ifdef _PR_POLL_AVAILABLE
+ #include <poll.h>
+ #endif
+@@ -145,8 +146,6 @@
+ #include <sys/sendfile.h>
+ #endif
+ 
+-#include "primpl.h"
+-
+ #if defined(LINUX) || defined(ANDROID)
+ #include <netinet/in.h>
+ #endif
+@@ -180,7 +179,7 @@
+     defined(HPUX10_30) || defined(HPUX11) || defined(LINUX) ||    \
+     defined(__GNU__) || defined(__GLIBC__) || defined(FREEBSD) || \
+     defined(NETBSD) || defined(OPENBSD) || defined(NTO) ||        \
+-    defined(DARWIN) || defined(RISCOS)
++    defined(DARWIN) || defined(RISCOS) || defined(__HAIKU__)
+ #define _PRSelectFdSetArg_t fd_set*
+ #else
+ #error "Cannot determine architecture"
+@@ -3240,7 +3239,7 @@
+ #if defined(SOLARIS) || defined(LINUX) || defined(__GNU__) || \
+     defined(__GLIBC__) || defined(AIX) || defined(FREEBSD) || \
+     defined(NETBSD) || defined(OPENBSD) || defined(NTO) ||    \
+-    defined(DARWIN) || defined(RISCOS)
++    defined(DARWIN) || defined(RISCOS) || defined(__HAIKU__)
+ #define _PR_FCNTL_FLAGS O_NONBLOCK
+ #else
+ #error "Can't determine architecture"
+--- a/security/nss/coreconf/config.gypi
++++ b/security/nss/coreconf/config.gypi
+@@ -410,6 +410,12 @@
+               'OPENBSD',
+             ],
+           }],
++          [ 'OS=="haiku"', {
++            'defines': [
++              'HAIKU',
++              '_DEFAULT_SOURCE', # for <endian.h> functions, as on Linux
++            ],
++          }],
+           ['OS=="mac" or OS=="ios" or OS=="dragonfly" or OS=="freebsd" or OS=="netbsd" or OS=="openbsd"', {
+             'defines': [
+               'HAVE_BSD_FLOCK',
+--- a/security/nss/lib/dbm/include/mcom_db.h
++++ b/security/nss/lib/dbm/include/mcom_db.h
+@@ -60,7 +60,7 @@
+ #include <sys/byteorder.h>
+ #endif
+ 
+-#if defined(__linux)
++#if defined(__linux) || defined(__HAIKU__)
+ #include <endian.h>
+ #ifndef BYTE_ORDER
+ #define BYTE_ORDER __BYTE_ORDER
+--- a/security/nss/lib/freebl/libcrux/karamel/endianness.h
++++ b/security/nss/lib/freebl/libcrux/karamel/endianness.h
+@@ -12,7 +12,7 @@
+ /******************************************************************************/
+ 
+ /* ... for Linux */
+-#if defined(__linux__) || defined(__CYGWIN__) || \
++#if defined(__linux__) || defined(__CYGWIN__) || defined(__HAIKU__) || \
+     defined(__USE_SYSTEM_ENDIAN_H__) || defined(__GLIBC__)
+ #include <endian.h>
+ 
+--- a/security/nss/lib/freebl/libcrux/karamel/krml/lowstar_endianness.h
++++ b/security/nss/lib/freebl/libcrux/karamel/krml/lowstar_endianness.h
+@@ -12,7 +12,7 @@
+ /******************************************************************************/
+ 
+ /* ... for Linux */
+-#if defined(__linux__) || defined(__CYGWIN__) ||              \
++#if defined(__linux__) || defined(__CYGWIN__) || defined(__HAIKU__) ||              \
+     defined(__USE_SYSTEM_ENDIAN_H__) || defined(__GLIBC__) || \
+     defined(ESP_PLATFORM)
+ #include <endian.h>
+--- a/security/nss/lib/freebl/stubs.c
++++ b/security/nss/lib/freebl/stubs.c
+@@ -836,6 +836,10 @@
+     return SECSuccess;
+ }
+ 
++#ifndef RTLD_NOLOAD
++    #define RTLD_NOLOAD 0
++#endif
++
+ /*
+  * fetch the library if it's loaded. For NSS it should already be loaded
+  */
+--- a/security/nss/lib/freebl/unix_rand.c
++++ b/security/nss/lib/freebl/unix_rand.c
+@@ -160,7 +160,7 @@
+ 
+ #endif
+ 
+-#if defined(FREEBSD) || defined(NETBSD) || defined(DARWIN) || defined(OPENBSD) || defined(NTO) || defined(__riscos__) || defined(__GNU__) || defined(__FreeBSD_kernel__) || defined(__NetBSD_kernel__)
++#if defined(FREEBSD) || defined(NETBSD) || defined(DARWIN) || defined(OPENBSD) || defined(NTO) || defined(__riscos__) || defined(__GNU__) || defined(__FreeBSD_kernel__) || defined(__NetBSD_kernel__) || defined(__HAIKU__)
+ #include <sys/times.h>
+ 
+ static size_t
+@@ -616,6 +616,16 @@
+ #else
+     extern char **environ;
+ #endif
++#ifdef HAIKU
++    static const char *const files[] = {
++        "/boot/var/swap",
++        "/boot/var/log/syslog",
++        "/boot/var/tmp",
++        "/boot/home/config/settings",
++        "/boot/home",
++        0
++    };
++#else
+     static const char *const files[] = {
+         "/etc/passwd",
+         "/etc/utmp",
+@@ -624,6 +634,7 @@
+         "/usr/tmp",
+         0
+     };
++#endif
+ 
+     GiveSystemInfo();
+ 
+--- a/security/nss/lib/freebl/verified/karamel/include/krml/lowstar_endianness.h
++++ b/security/nss/lib/freebl/verified/karamel/include/krml/lowstar_endianness.h
+@@ -12,7 +12,7 @@
+ /******************************************************************************/
+ 
+ /* ... for Linux */
+-#if defined(__linux__) || defined(__CYGWIN__) || defined (__USE_SYSTEM_ENDIAN_H__) || defined(__GLIBC__)
++#if defined(__linux__) || defined(__CYGWIN__) || defined(__HAIKU__) || defined (__USE_SYSTEM_ENDIAN_H__) || defined(__GLIBC__)
+ #  include <endian.h>
+ 
+ /* ... for OSX */
+--- a/security/nss/lib/ssl/sslmutex.c
++++ b/security/nss/lib/ssl/sslmutex.c
+@@ -61,7 +61,7 @@
+ }
+ 
+ #if defined(LINUX) || defined(AIX) || defined(BSDI) || \
+-    (defined(NETBSD) && __NetBSD_Version__ < 500000000) || defined(OPENBSD) || defined(__GLIBC__)
++    (defined(NETBSD) && __NetBSD_Version__ < 500000000) || defined(OPENBSD) || defined(__GLIBC__) || defined(__HAIKU__)
+ 
+ #include <unistd.h>
+ #include <fcntl.h>
+--- a/security/nss/lib/ssl/sslmutex.h
++++ b/security/nss/lib/ssl/sslmutex.h
+@@ -50,7 +50,7 @@
+ typedef int sslPID;
+ 
+ #elif defined(LINUX) || defined(AIX) || defined(BSDI) || \
+-    (defined(NETBSD) && __NetBSD_Version__ < 500000000) || defined(OPENBSD) || defined(__GLIBC__)
++    (defined(NETBSD) && __NetBSD_Version__ < 500000000) || defined(OPENBSD) || defined(__GLIBC__) || defined(__HAIKU__)
+ 
+ #include <sys/types.h>
+ #include "prtypes.h"
+--- a/third_party/aom/aom_ports/aarch64_cpudetect.c
++++ b/third_party/aom/aom_ports/aarch64_cpudetect.c
+@@ -19,7 +19,8 @@
+ #include <sys/sysctl.h>
+ #endif
+ 
+-#if !CONFIG_RUNTIME_CPU_DETECT
++// Haiku: no user-space way to read the CPU features; Armv8.0 baseline (Neon).
++#if !CONFIG_RUNTIME_CPU_DETECT || defined(__HAIKU__)
+ 
+ static int arm_get_cpu_caps(void) {
+   // This function should actually be a no-op. There is no way to adjust any of
+--- a/toolkit/xre/nsAppRunner.cpp
++++ b/toolkit/xre/nsAppRunner.cpp
+@@ -4561,7 +4561,10 @@
+   }
+ 
+   if (gfxPlatform::IsHeadless()) {
+-#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK) || defined(XP_MACOSX)
++#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK) || defined(XP_MACOSX) || \
++    defined(XP_HAIKU)
++    // Haiku: HeadlessWidget with the generic in-process compositor widget and
++    // the native nsLookAndFeel, as on macOS.
+     printf_stderr("*** You are running in headless mode.\n");
+ #else
+     Output(
+--- a/xpcom/base/nsSystemInfo.cpp
++++ b/xpcom/base/nsSystemInfo.cpp
+@@ -1368,6 +1368,8 @@
+       }
+     }
+ 
++#  if defined(__i386__) || defined(__x86_64__)
++    // get_cpuid() (vendor, family, model, brand string) exists for x86 only.
+     cpuid_info baseInfo;
+     if (get_cpuid(&baseInfo, 0, 0) == B_OK) {
+       char vendor[13];
+@@ -1425,6 +1427,7 @@
+         }
+       }
+     }
++#  endif
+   }
+ #else
+   info.cpuCount = PR_GetNumberOfProcessors();
+--- a/xpcom/reflect/xptcall/md/unix/moz.build
++++ b/xpcom/reflect/xptcall/md/unix/moz.build
+@@ -89,7 +89,7 @@
+         elif CONFIG["COMPILE_ENVIRONMENT"]:
+             error("Unknown C++ compiler, xptcall assembly will probably be incorrect.")
+ 
+-if CONFIG["OS_ARCH"] in ("Linux", "FreeBSD", "NetBSD", "OpenBSD"):
++if CONFIG["OS_ARCH"] in ("Linux", "FreeBSD", "NetBSD", "OpenBSD", "Haiku"):
+     if CONFIG["TARGET_CPU"] == "aarch64":
+         SOURCES += [
+             "xptcinvoke_aarch64.cpp",
