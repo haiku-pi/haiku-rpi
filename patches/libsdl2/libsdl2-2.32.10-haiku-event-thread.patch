@@ -1,0 +1,100 @@
+Haiku: run SDL's window event handlers on the thread that pumps events
+
+SDL_BHandler handled the messages its windows post (shown, hidden,
+resized, focus, mouse, keys) on the BApplication looper's thread and
+called SDL's handlers from there. Those update SDL's window and display
+state, which has no lock: a fullscreen window's "shown" event sets the
+display mode, and so does SDL_CreateWindow() on the application's thread,
+both filling the display's mode list at once. Each reallocs the same
+list and one frees what the other already freed: ioquake3 crashed with
+"double free" in SDL_AddDisplayMode() on 3 of 11 fullscreen starts.
+
+The looper now queues the messages and HAIKU_PumpEvents() handles them,
+as every other SDL video driver does with its window system's events.
+
+--- a/src/main/haiku/SDL_BApp.h	2026-10-20 13:47:39.374149054 +0200
++++ b/src/main/haiku/SDL_BApp.h	2026-10-20 13:48:45.571545157 +0200
+@@ -24,6 +24,7 @@
+ #include <Path.h>
+ #include <InterfaceKit.h>
+ #include <LocaleRoster.h>
++#include <MessageQueue.h>
+ #ifdef SDL_VIDEO_OPENGL
+ #include <OpenGLKit.h>
+ #endif
+@@ -97,7 +98,31 @@
+     /* Event-handling functions */
+     virtual void MessageReceived(BMessage *message)
+     {
+-        /* Sort out SDL-related messages */
++        /* SDL's window and display state is not thread-safe: the handlers
++           below update it (a shown fullscreen window, for one, sets the
++           display mode), so they run on the thread that pumps SDL's events,
++           not on this looper's thread */
++        if ((message->what >= BAPP_MOUSE_MOVED && message->what <= BAPP_SCREEN_CHANGED)
++            || message->what == B_LOCALE_CHANGED) {
++            _queue.AddMessage(Looper()->DetachCurrentMessage());
++            return;
++        }
++        BHandler::MessageReceived(message);
++    }
++
++    /* Called by HAIKU_PumpEvents() */
++    void DispatchQueuedMessages()
++    {
++        BMessage *message;
++        while ((message = _queue.NextMessage()) != NULL) {
++            _DispatchMessage(message);
++            delete message;
++        }
++    }
++
++  private:
++    void _DispatchMessage(BMessage *message)
++    {
+         switch (message->what) {
+         case BAPP_MOUSE_MOVED:
+             _HandleMouseMove(message);
+@@ -164,11 +189,11 @@
+             break;
+ 
+         default:
+-            BHandler::MessageReceived(message);
+             break;
+         }
+     }
+ 
++  public:
+     /* Window creation/destruction methods */
+     int32 GetID(SDL_Window *win)
+     {
+@@ -418,6 +443,7 @@
+ 
+     /* Members */
+     std::vector<SDL_Window *> _window_map; /* Keeps track of SDL_Windows by index-id */
++    BMessageQueue _queue; /* SDL messages waiting for HAIKU_PumpEvents() */
+ 
+ #ifdef SDL_VIDEO_OPENGL
+     BGLView *_current_context;
+--- a/src/video/haiku/SDL_bevents.cc	2026-10-20 13:47:39.375109705 +0200
++++ b/src/video/haiku/SDL_bevents.cc	2026-10-20 13:48:04.664175561 +0200
+@@ -23,13 +23,18 @@
+ #ifdef SDL_VIDEO_DRIVER_HAIKU
+ 
+ #include "SDL_bevents.h"
++#include "../../main/haiku/SDL_BApp.h"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+ 
+ void HAIKU_PumpEvents(_THIS) {
+-    /* Since the event thread is its own thread, this isn't really necessary */
++    /* The window events the looper thread queued: SDL's handlers for them
++       must run on this thread */
++    if (SDL_Handler != NULL) {
++        SDL_Handler->DispatchQueuedMessages();
++    }
+ }
+ 
+ #ifdef __cplusplus

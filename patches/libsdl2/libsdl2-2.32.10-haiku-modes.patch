@@ -1,0 +1,43 @@
+Haiku: display modes own their display_mode
+
+HAIKU_GetDisplayModes() pointed every SDL mode at an entry of the list
+BScreen::GetModeList() returns and freed the list right after: switching
+to a mode read freed memory (and a fullscreen ioquake3 start crashed
+with "double free" now and then). The mode data now holds a copy.
+
+--- a/src/video/haiku/SDL_bmodes.cc	2026-10-20 12:50:27.943527023 +0200
++++ b/src/video/haiku/SDL_bmodes.cc	2026-10-20 12:50:27.956064929 +0200
+@@ -45,6 +45,9 @@
+    the display_mode structure */
+ struct SDL_DisplayModeData {
+     display_mode *bmode;
++    display_mode storage;
++        /* the mode itself: the list BScreen::GetModeList() returns is freed
++           right after the modes are added, and SDL frees only driverdata */
+ };
+ #endif
+ 
+@@ -174,7 +177,8 @@
+ #if WRAP_BMODE
+     SDL_DisplayModeData *data = (SDL_DisplayModeData*)SDL_calloc(1,
+         sizeof(SDL_DisplayModeData));
+-    data->bmode = bmode;
++    data->storage = *bmode;
++    data->bmode = &data->storage;
+     
+     mode->driverdata = data;
+ 
+@@ -192,10 +196,10 @@
+     SDL_VideoDisplay display;
+     SDL_DisplayMode *mode = (SDL_DisplayMode*)SDL_calloc(1,
+         sizeof(SDL_DisplayMode));
+-    display_mode *bmode = (display_mode*)SDL_calloc(1, sizeof(display_mode));
+-    screen->GetMode(bmode);
++    display_mode bmode;
++    screen->GetMode(&bmode);
+ 
+-    _BDisplayModeToSdlDisplayMode(bmode, mode);
++    _BDisplayModeToSdlDisplayMode(&bmode, mode);
+     
+     SDL_zero(display);
+     display.desktop_mode = *mode;
