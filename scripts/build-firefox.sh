@@ -27,7 +27,7 @@
 #            freetype/fontconfig/libevent), fontconfig's configuration in fontconfig/ (Firefox sets
 #            FONTCONFIG_PATH to it), and the HaikuPorts launcher "Firefox Browser"
 #            (scripts/mkimage-pi4.sh --add-tree artifacts/firefox/non-packaged)
-#   package  artifacts/firefox/firefox-157.0.1-1-arm64.hpkg from the staged app (vendor "Haiku Project")
+#   package  artifacts/firefox/firefox-157.0.1-<revision>-arm64.hpkg from the staged app (vendor "Haiku Project")
 #
 # Toolchain: C/C++ = the Haiku cross gcc 13.3 (artifacts/rust/bin wrappers; see build-spidermonkey.sh
 # for why not clang); Rust = scripts/build-rust.sh's rustc 1.90.0; bindgen parses the headers with the
@@ -40,6 +40,8 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version=157.0.1
+# the package's revision (2: WebGL loads libGL.so.1)
+revision=2
 target=aarch64-unknown-haiku
 src="$root/sources/firefox/firefox-$version"
 out="$root/artifacts/firefox"
@@ -274,7 +276,7 @@ stage() {
 package() {
 	local pkg="$out/hpkg" app="$out/non-packaged/apps/Firefox"
 	local gen="$root/sources/haiku/generated.arm64"
-	local hpkg="$out/firefox-$version-1-arm64.hpkg"
+	local hpkg="$out/firefox-$version-$revision-arm64.hpkg"
 	[ -x "$app/Firefox" ] || { echo "build-firefox: run the stage step first" >&2; exit 1; }
 	rm -rf "$pkg"
 	mkdir -p "$pkg/apps" "$pkg/bin" "$pkg/data/deskbar/menu/Applications"
@@ -283,7 +285,7 @@ package() {
 	ln -s ../../../../apps/Firefox/Firefox "$pkg/data/deskbar/menu/Applications/Firefox"
 	cat > "$pkg/.PackageInfo" <<INFO
 name			firefox
-version			$version-1
+version			$version-$revision
 architecture	arm64
 summary			"A fast, private and open-source web browser"
 description		"Firefox $version with HaikuPorts' native Haiku port (cairo-haiku). Cross-built for the Raspberry Pi 4 by the haiku-pi project (scripts/build-firefox.sh); freetype, fontconfig and libevent come with it, in apps/Firefox/lib."

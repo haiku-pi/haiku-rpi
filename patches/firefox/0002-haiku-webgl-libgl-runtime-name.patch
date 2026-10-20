@@ -1,0 +1,39 @@
+WebGL on Haiku: load libGL by its runtime name
+
+GLContextProviderBGL loaded "libGL.so", the development link that only the
+_devel package installs: on an image without the development files every
+WebGL context failed with FEATURE_FAILURE_LIBGL_LOAD. Load libGL.so.1 first.
+
+--- a/gfx/gl/GLContextProviderBGL.cpp	2026-10-20 15:43:39.202902262 +0200
++++ b/gfx/gl/GLContextProviderBGL.cpp	2026-10-20 15:43:39.212217046 +0200
+@@ -30,13 +30,20 @@
+ static PRLibrary* sGLLibrary = nullptr;
+ static BLocker sBGLGlobalLock("Gecko BGL Lock");
+ static thread_local const GLContextBGL* sCurrentThreadBGLContext = nullptr;
++// libGL's runtime name first: "libGL.so" is the development link (in the
++// _devel package), which an image without the development files lacks
++static PRLibrary* LoadGLLibrary() {
++  PRLibrary* library = PR_LoadLibrary("libGL.so.1");
++  return library ? library : PR_LoadLibrary("libGL.so");
++}
++
+ static BGLView* sDisplayKeeper = nullptr;
+ 
+ BGLView* EnsureBGLDisplayKeeper() {
+   BAutolock lock(sBGLGlobalLock);
+   if (!sDisplayKeeper) {
+     if (!sGLLibrary) {
+-      sGLLibrary = PR_LoadLibrary("libGL.so");
++      sGLLibrary = LoadGLLibrary();
+     }
+     ulong options = BGL_RGB | BGL_ALPHA | BGL_DEPTH | BGL_DOUBLE;
+     sDisplayKeeper = new BGLView(BRect(0, 0, 1, 1), "GeckoBGLDisplayKeeper",
+@@ -164,7 +171,7 @@
+   EnsureBGLDisplayKeeper();
+ 
+   if (!sGLLibrary) {
+-    sGLLibrary = PR_LoadLibrary("libGL.so");
++    sGLLibrary = LoadGLLibrary();
+     if (!sGLLibrary) {
+       NS_WARNING("Failed to load libGL.so on Haiku!");
+       *aOutFailureId = "FEATURE_FAILURE_LIBGL_LOAD"_ns;
