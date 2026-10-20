@@ -11,7 +11,7 @@ bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise.
 | Boot | SD card → U-Boot → Haiku loader → desktop in about 80 s (first boot a little longer); or **from the network**, the boot volume served by the build host (below) |
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences, scaled by the firmware; hardware cursor; 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1, and **Vulkan 1.3** (V3DV, presenting into Haiku windows; SDL2's Vulkan windows). GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
-| Games (test images) | QuakeSpasm (demo1, in a window): 66–72 frames/s at 640×480, 56–70 at 1280×720, 30–43 at 1920×1080. Yamagi Quake II, GL1 renderer: 135–171 frames/s at 640×480, 81–89 at 1280×720. **vkQuake** (Vulkan): 29 fps at 1280×720. **OpenArena** (Quake III engine, ioquake3): 46 fps at 1280×720, 22–29 at 1920×1080 |
+| Games (test images) | QuakeSpasm (demo1, in a window): 66–72 frames/s at 640×480, 56–70 at 1280×720, 30–43 at 1920×1080. Yamagi Quake II, GL1 renderer: 135–171 frames/s at 640×480, 81–89 at 1280×720. **vkQuake** (Vulkan): 29 fps at 1280×720. **OpenArena** (Quake III engine, ioquake3): 46 fps at 1280×720, 22–29 at 1920×1080. **SuperTuxKart 1.5**: 28–38 fps at 1280×720 (its OpenGL 2.1 renderer) |
 | Audio | 3.5 mm headphone jack through the media kit ("Raspberry Pi headphones", 44.1 kHz stereo); measured on the bench, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ...; **HEVC decoded by the SoC's decoder block** (bit-exact; 1080p at ~115 fps on under half a core, 4K at ~38 fps), the rest in software |
 | CPU | 4 cores (SMP) at 1.5 GHz: the firmware lowers the clocks two minutes after power-on unless asked, so a cpufreq module asks for the maximum (the minimum in the power saving scheduler mode); the firmware still throttles when hot. `cat /dev/power/bcm2835_thermal/0`: temperature, throttling, clocks |
@@ -21,7 +21,7 @@ bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise.
 | Web | **WebPositive** (HaikuWebKit 1.10, JavaScript JIT on) and NetSurf 3.11, both in the Applications menu: HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders in both |
 | Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver, the hardware random number generator (feeds `/dev/random`) |
-| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); Firefox's JavaScript engine (SpiderMonkey, JIT on) runs — the browser itself is in progress |
+| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** runs (renders https://www.haiku-os.org/; `scripts/build-firefox.sh`, a test image for now, not yet a package in the image) |
 
 Known limits: no HDMI audio; the games are not packaged (see below).
 
