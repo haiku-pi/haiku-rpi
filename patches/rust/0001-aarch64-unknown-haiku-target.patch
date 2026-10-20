@@ -1,0 +1,75 @@
+Add the aarch64-unknown-haiku target (Tier 3, std): ARM64 Haiku.
+
+Target spec modelled on x86_64-unknown-haiku and on rainygirl/renkuos-rust
+(https://github.com/rainygirl/renkuos-rust, Apache-2.0, aarch64_unknown_haiku.rs at
+e2f815d4ba04532109bbf892b1954d74c4e21ed5); data layout as aarch64-unknown-linux-gnu in 1.90.0.
+The stage0 compiler (1.89.0) does not know the target: listed in STAGE0_MISSING_TARGETS.
+Applies with -p1 to rustc-1.90.0-src.
+
+diff -ruN a/compiler/rustc_target/src/spec/mod.rs b/compiler/rustc_target/src/spec/mod.rs
+--- a/compiler/rustc_target/src/spec/mod.rs
++++ b/compiler/rustc_target/src/spec/mod.rs
+@@ -1996,6 +1996,7 @@
+     ("sparc64-unknown-netbsd", sparc64_unknown_netbsd),
+     ("x86_64-unknown-netbsd", x86_64_unknown_netbsd),
+ 
++    ("aarch64-unknown-haiku", aarch64_unknown_haiku),
+     ("i686-unknown-haiku", i686_unknown_haiku),
+     ("x86_64-unknown-haiku", x86_64_unknown_haiku),
+ 
+diff -ruN a/compiler/rustc_target/src/spec/targets/aarch64_unknown_haiku.rs b/compiler/rustc_target/src/spec/targets/aarch64_unknown_haiku.rs
+--- a/compiler/rustc_target/src/spec/targets/aarch64_unknown_haiku.rs
++++ b/compiler/rustc_target/src/spec/targets/aarch64_unknown_haiku.rs
+@@ -0,0 +1,28 @@
++// 64-bit ARM Haiku. Modelled on x86_64_unknown_haiku and on the out-of-tree target of
++// https://github.com/rainygirl/renkuos-rust (Apache-2.0, aarch64_unknown_haiku.rs at e2f815d4).
++use crate::spec::{StackProbeType, Target, TargetMetadata, TargetOptions, base};
++
++pub(crate) fn target() -> Target {
++    Target {
++        llvm_target: "aarch64-unknown-haiku".into(),
++        metadata: TargetMetadata {
++            description: Some("ARM64 Haiku".into()),
++            tier: Some(3),
++            host_tools: Some(true),
++            std: Some(true),
++        },
++        pointer_width: 64,
++        data_layout:
++            "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
++                .into(),
++        arch: "aarch64".into(),
++        options: TargetOptions {
++            features: "+v8a".into(),
++            max_atomic_width: Some(128),
++            stack_probes: StackProbeType::Inline,
++            // Haiku's runtime_loader has no R_AARCH64_COPY: executables must be PIE, as on x86_64
++            position_independent_executables: true,
++            ..base::haiku::opts()
++        },
++    }
++}
+diff -ruN a/src/bootstrap/src/core/sanity.rs b/src/bootstrap/src/core/sanity.rs
+--- a/src/bootstrap/src/core/sanity.rs
++++ b/src/bootstrap/src/core/sanity.rs
+@@ -34,6 +34,7 @@
+ // Targets can be removed from this list once they are present in the stage0 compiler (usually by updating the beta compiler of the bootstrap).
+ const STAGE0_MISSING_TARGETS: &[&str] = &[
+     // just a dummy comment so the list doesn't get onelined
++    "aarch64-unknown-haiku",
+ ];
+ 
+ /// Minimum version threshold for libstdc++ required when using prebuilt LLVM
+diff -ruN a/tests/assembly-llvm/targets/targets-elf.rs b/tests/assembly-llvm/targets/targets-elf.rs
+--- a/tests/assembly-llvm/targets/targets-elf.rs
++++ b/tests/assembly-llvm/targets/targets-elf.rs
+@@ -22,6 +22,9 @@
+ //@ revisions: aarch64_unknown_freebsd
+ //@ [aarch64_unknown_freebsd] compile-flags: --target aarch64-unknown-freebsd
+ //@ [aarch64_unknown_freebsd] needs-llvm-components: aarch64
++//@ revisions: aarch64_unknown_haiku
++//@ [aarch64_unknown_haiku] compile-flags: --target aarch64-unknown-haiku
++//@ [aarch64_unknown_haiku] needs-llvm-components: aarch64
+ //@ revisions: aarch64_unknown_fuchsia
+ //@ [aarch64_unknown_fuchsia] compile-flags: --target aarch64-unknown-fuchsia
+ //@ [aarch64_unknown_fuchsia] needs-llvm-components: aarch64

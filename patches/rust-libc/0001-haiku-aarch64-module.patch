@@ -1,0 +1,49 @@
+haiku: add the aarch64 module (mcontext_t, ucontext_t)
+
+mcontext_t is `struct vregs` of headers/posix/arch/arm64/signal.h, ucontext_t as in
+headers/posix/signal.h (same shape as on x86_64). Layout checked against the Haiku headers with
+the arm64 cross gcc: sizeof(mcontext_t) 800, fp_q at 272, fpsr at 784; sizeof(ucontext_t) 848,
+uc_mcontext at 48. Applies with -p1 to the libc crate (0.2.174; the haiku module is unchanged
+up to libc main of 2026-10).
+
+diff -ruN a/src/unix/haiku/aarch64.rs b/src/unix/haiku/aarch64.rs
+--- a/src/unix/haiku/aarch64.rs
++++ b/src/unix/haiku/aarch64.rs
+@@ -0,0 +1,22 @@
++use crate::prelude::*;
++
++s! {
++    // `struct vregs` in headers/posix/arch/arm64/signal.h
++    pub struct mcontext_t {
++        pub x: [c_ulong; 30],
++        pub lr: c_ulong,
++        pub sp: c_ulong,
++        pub elr: c_ulong,
++        pub spsr: c_ulong,
++        pub fp_q: [crate::__uint128_t; 32],
++        pub fpsr: c_uint,
++        pub fpcr: c_uint,
++    }
++
++    pub struct ucontext_t {
++        pub uc_link: *mut ucontext_t,
++        pub uc_sigmask: crate::sigset_t,
++        pub uc_stack: crate::stack_t,
++        pub uc_mcontext: mcontext_t,
++    }
++}
+diff -ruN a/src/unix/haiku/mod.rs b/src/unix/haiku/mod.rs
+--- a/src/unix/haiku/mod.rs
++++ b/src/unix/haiku/mod.rs
+@@ -2109,9 +2109,8 @@
+         mod x86_64;
+         pub use self::x86_64::*;
+     } else if #[cfg(target_arch = "aarch64")] {
+-        // TODO
+-        // mod aarch64;
+-        // pub use self::aarch64::*;
++        mod aarch64;
++        pub use self::aarch64::*;
+     }
+ }
+ 
