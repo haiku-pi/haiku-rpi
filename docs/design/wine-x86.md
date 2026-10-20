@@ -1,6 +1,6 @@
 # H15: Windows programs on Haiku arm64 (Wine + x86 translation): plan
 
-**Status: scheduled, not started.** The owner asked for this on 2026-10-21, to begin once the queued and planned work
+**Status: scheduled, not started.** The owner asked for this on 2026-10-20 (23:50 CEST), to begin once the queued and planned work
 is done (the weekly log's Next list). This page holds the plan and the questions to settle at the start. The facts
 marked *(check)* are from memory and must be verified against the then-current releases before anything is built
 on them.

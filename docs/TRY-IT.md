@@ -2,7 +2,11 @@
 
 The **regular Haiku image** for the Pi 4: the full desktop with Haiku's applications, preferences and
 media kit, plus this port's drivers and the ported libraries. Everything below was measured on the
-bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-10-20 evening).
+bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-10-21).
+
+This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md) (first time, step by step),
+[USER-GUIDE.md](USER-GUIDE.md) (using everything), [BUILD.md](BUILD.md) (building, all options),
+[HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md), [KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
 ## What works
 
@@ -25,7 +29,7 @@ bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-10-
 
 Known limits: no HDMI audio; the games are packaged but too large for the public repository (images with
 `-sHAIKU_PI_GAMES=1`, below); Firefox is in the image but not in the public repository (branding question);
-about 1 in 18 network boots stops while the drivers load (SD boots are not affected).
+about 1 in 20 network boots stops while the drivers load (SD boots are not affected; [KNOWN-ISSUES.md](KNOWN-ISSUES.md)).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
 [haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts
@@ -42,7 +46,7 @@ in a memory-capped `systemd-run --user` scope).
 too) — and the packages
 `git curl xz-utils gcc g++ make bison flex texinfo autoconf automake libtool pkgconf nasm zlib1g-dev
 perl ruby unifdef libssl-dev libgnutls28-dev uuid-dev gcc-aarch64-linux-gnu meson ninja-build cmake python3-mako
-python3-yaml mtools fdisk device-tree-compiler unzip`.
+python3-yaml mtools fdisk device-tree-compiler unzip gperf`.
 
 ```sh
 git clone https://github.com/haiku-pi/haiku-rpi.git && cd haiku-rpi
@@ -53,7 +57,8 @@ scripts/build-packages.sh --sysroot   # our packages: Mesa, SDL2, ffmpeg, zstd, 
 scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 ```
 
-The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB). With the games (OpenArena and
+The result is `artifacts/images/haiku-pi4-regular.img` (about 1.1 GB). Firefox is in it only if you ran
+`scripts/build-rust.sh` and `scripts/build-firefox.sh` before the last step (about 1.5 hours more). With the games (OpenArena and
 SuperTuxKart in the Applications menu; about 1.8 GB): `scripts/build-games.sh`, `scripts/build-stk.sh` and
 `scripts/package-games.sh` once, then `scripts/build.sh -sHAIKU_PI_GL=1 -sHAIKU_PI_GAMES=1 @pi-mmc`. They are
 not in the published repository: both packages are over GitHub's 100 MB file limit.

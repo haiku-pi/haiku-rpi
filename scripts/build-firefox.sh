@@ -316,6 +316,11 @@ INFO
 	LD_LIBRARY_PATH="$gen/objects/linux/lib" "$gen/objects/linux/x86_64/release/tools/package/package" \
 		create -q -C "$pkg" -i "$pkg/.PackageInfo" "$hpkg"
 	rm -rf "$pkg"
+	# where the image build takes it from (the arm64 repository definition lists this revision)
+	if [ -d "$gen/download" ]; then
+		rm -f "$gen/download"/firefox-"$version"-*-arm64.hpkg
+		cp "$hpkg" "$gen/download/"
+	fi
 	ls -l "$hpkg"
 }
 
