@@ -20,21 +20,23 @@
 #      --enable-optimizations/--with-lto (PGO runs the target's python), built and installed into
 #      artifacts/cross-ports/python3.14-3.14.8/install; the recipe's INSTALL() steps after that.
 #   5. packages: scripts/package-port.py --system-prefix --lib-tree python3.14 → artifacts/packages/
-#      python3.14-3.14.8-1-arm64.hpkg and python3.14_devel-3.14.8-1-arm64.hpkg.
+#      python3.14-3.14.8-<revision>-arm64.hpkg and python3.14_devel-3.14.8-<revision>-arm64.hpkg.
 #   6. test trees for images without the package (scripts/mkimage-pi4.sh --add-tree DIR;
 #      tools/pi-tests/python.sh): artifacts/python-tests/packages, the python3.14 and libffi packages
 #      (the test script installs them), or artifacts/python-tests/non-packaged, python3.14,
 #      libpython, libffi and the standard library without the test suite, the GUI modules and the
 #      bytecode caches (fewer files to copy into the image).
 #
-# Modules not built: readline (no libedit in our repository), _curses/_curses_panel (no ncurses
-# headers in the sysroot), _dbm/_gdbm, _uuid (libuuid), _tkinter (the recipe disables it too).
-# Needs scripts/haiku-sysroot.sh's sysroot with our ports (openssl3, sqlite, bzip2, zstd:
-# scripts/build-packages.sh) and the jam-built cross compiler. Heavy steps run under
+# readline on libedit (as the recipe: --with-readline=editline) and _curses/_curses_panel on the
+# ncurses6 bootstrap package. Modules not built: _dbm/_gdbm, _uuid (libuuid), _tkinter (the recipe
+# disables it too).
+# Needs scripts/haiku-sysroot.sh's sysroot (with ncurses6) with our ports (openssl3, sqlite, bzip2,
+# zstd, libedit: scripts/build-packages.sh) and the jam-built cross compiler. Heavy steps run under
 # scripts/heavy-build.sh.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 buildHost=1
+revision=2
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--no-host) buildHost=0; shift ;;
@@ -49,7 +51,7 @@ heavy="$root/scripts/heavy-build.sh"
 ports="$root/sources/haikuports"
 [ -d "$sysroot/boot/system/develop" ] || { echo "build-python: run scripts/haiku-sysroot.sh first" >&2; exit 1; }
 [ -x "$tools-gcc" ] || { echo "build-python: no cross compiler at $tools-gcc" >&2; exit 1; }
-for lib in libssl.so.3 libsqlite3.so.0 libbz2.so.1.0 libzstd.so.1; do
+for lib in libssl.so.3 libsqlite3.so.0 libbz2.so.1.0 libzstd.so.1 libedit.so.0; do
 	[ -e "$sysroot/boot/system/non-packaged/lib/$lib" ] \
 		|| { echo "build-python: $lib missing from the sysroot: run scripts/build-packages.sh" >&2; exit 1; }
 done
@@ -143,7 +145,7 @@ tzpath=$tzpath:/boot/system/non-packaged/data/zoneinfo:/boot/system/data/zoneinf
 	--with-build-python="$hostPython" \
 	--prefix=/boot/system --bindir=/boot/system/bin --includedir=/boot/system/develop/headers \
 	--datarootdir=/boot/system/data --mandir=/boot/system/documentation/man \
-	--enable-shared --without-static-libpython --with-ensurepip=no --without-readline \
+	--enable-shared --without-static-libpython --with-ensurepip=no --with-readline=editline \
 	--with-system-expat --with-system-libmpdec=no --with-openssl-rpath=no --with-tzpath="$tzpath" \
 	CC="$tools-gcc --sysroot=$sysroot" CXX="$tools-g++ --sysroot=$sysroot" AR="$tools-ar" \
 	RANLIB="$tools-ranlib" READELF="$tools-readelf" STRIP="$tools-strip" \
@@ -186,22 +188,23 @@ leaks="$(grep -rlI -F "$root" "$sys"; grep -rl -F "$work" "$sys" || true)"
 # the extension modules this port is for (the build only warns when one is missing), with the
 # libraries they link
 for m in _ssl _hashlib _sqlite3 _ctypes zlib _bz2 _lzma _zstd _socket select _decimal _json \
-		_posixsubprocess pyexpat; do
+		_posixsubprocess pyexpat readline _curses _curses_panel; do
 	f="$(ls "$sys/lib/python$short/lib-dynload/$m".cpython-*.so 2>/dev/null | head -n 1 || true)"
 	[ -n "$f" ] || { echo "build-python: module $m was not built" >&2; exit 1; }
 	echo "build-python: module $m: $("$tools-readelf" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
 done
 
-# 5. the packages (libffi from the bootstrap package is in the sysroot's system lib/, where
-# package-port.py does not look for requirements: named here)
-"$root/scripts/package-port.py" "$recipe" --system-prefix --lib-tree "python$short" \
+# 5. the packages (libffi and ncurses from the bootstrap packages are in the sysroot's system lib/,
+# where package-port.py does not look for requirements: named here)
+"$root/scripts/package-port.py" "$recipe" --revision "$revision" --system-prefix --lib-tree "python$short" \
 	--global-writable "non-packaged/lib/python$short/site-packages" \
-	--devel-bin "python$short-config" --devel-bin python3-config --requires lib:libffi
+	--devel-bin "python$short-config" --devel-bin python3-config --requires lib:libffi \
+	--requires lib:libncursesw --requires lib:libpanelw
 
 # 6. the test trees
 rm -rf "$root/artifacts/python-tests"
 mkdir -p "$root/artifacts/python-tests/packages/data/python-packages"
-cp "$root/artifacts/packages/python$short-$version-1-arm64.hpkg" "$gen/download/libffi-3.4.6_bootstrap-1-arm64.hpkg" \
+cp "$root/artifacts/packages/python$short-$version-$revision-arm64.hpkg" "$gen/download/libffi-3.4.6_bootstrap-1-arm64.hpkg" \
 	"$root/artifacts/python-tests/packages/data/python-packages/"
 tests="$root/artifacts/python-tests/non-packaged"
 mkdir -p "$tests/bin" "$tests/lib"
@@ -218,4 +221,4 @@ rm -rf "$stdlib"/{idlelib,tkinter,turtledemo,ensurepip,pydoc_data,__phello__} \
 find "$stdlib" -name '*.so' -exec "$tools-strip" --strip-unneeded {} +
 echo "build-python: test tree $tests: $(find "$tests" -type f | wc -l) files," \
 	"$(du -sh "$tests" | cut -f1)"
-ls -l "$root"/artifacts/packages/python$short*-"$version"-1-arm64.hpkg
+ls -l "$root"/artifacts/packages/python$short*-"$version"-"$revision"-arm64.hpkg

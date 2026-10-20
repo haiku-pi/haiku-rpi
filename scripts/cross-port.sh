@@ -43,6 +43,10 @@ port="${name%-*}"
 srcGitRev="$(field srcGitRev)"
 homepage="$(field HOMEPAGE)"
 subst() {
+	# ${portVersion//a/b} and ${portVersion/a/b} (bash's replace all / first), then the plain names
+	PV="$version" python3 -c 'import os, re, sys; v = os.environ["PV"]; sys.stdout.write(re.sub(
+		r"\$\{portVersion(//?)\\?(.)/([^}]*)\}",
+		lambda m: v.replace(m[2], m[3], -1 if m[1] == "//" else 1), sys.stdin.read()))' |
 	sed -e "s/\\\${portVersion}/$version/g; s/\\\$portVersion/$version/g; s/\\\${portName}/$port/g" \
 		-e "s/\\\$portName/$port/g; s/\\\${srcGitRev}/$srcGitRev/g; s/\\\$srcGitRev/$srcGitRev/g" \
 		-e "s|\\\$HOMEPAGE|$homepage|g; s|\\\${HOMEPAGE}|$homepage|g"

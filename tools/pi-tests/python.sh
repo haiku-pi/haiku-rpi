@@ -229,6 +229,29 @@ def _():
     return f'child python: {child.stdout.strip()}; sh: {" ".join(shell.stdout.split())}'
 
 
+@check('readline')
+def _():
+    import readline
+    readline.clear_history()
+    readline.add_history('print(6 * 7)')
+    assert readline.get_current_history_length() == 1, readline.get_current_history_length()
+    assert readline.get_history_item(1) == 'print(6 * 7)', readline.get_history_item(1)
+    return f'backend {getattr(readline, "backend", "?")}, {readline._READLINE_LIBRARY_VERSION}'
+
+
+@check('curses')
+def _():
+    # terminfo from the ncurses6 package, without a terminal: the capabilities, not the screen
+    import curses, _curses_panel
+    curses.setupterm('xterm-256color', sys.stdout.fileno() if sys.stdout.isatty() else
+        os.open('/dev/null', os.O_WRONLY))
+    colors = curses.tigetnum('colors')
+    assert colors == 256, colors
+    clear = curses.tigetstr('clear')
+    assert clear and clear.startswith(b'\x1b['), clear
+    return f'ncurses {curses.ncurses_version}, xterm-256color: {colors} colors'
+
+
 @check('benchmark')
 def _():
     t = time.perf_counter()

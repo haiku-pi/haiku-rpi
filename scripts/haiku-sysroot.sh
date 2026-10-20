@@ -9,7 +9,8 @@
 # paths expect (<sysroot>/boot/system/develop/{headers/*,lib}, see buildtools gcc/config/haiku.h):
 #   haiku.hpkg + haiku_devel.hpkg                      (our tree: libroot/libbe/libnetwork…, headers
 #                                                       incl. private/, crt objects)
-#   gcc_syslibs + gcc_syslibs_devel, zlib + zlib_devel  (HaikuPorts arm64 bootstrap packages, from
+#   gcc_syslibs + gcc_syslibs_devel, zlib + zlib_devel, ncurses6 + ncurses6_devel
+#                                                      (HaikuPorts arm64 bootstrap packages, from
 #                                                       generated.arm64/download/)
 # Use it with `--sysroot=DIR` (tools/meson/haiku-arm64.cross does). Needs a jam build that produced
 # haiku_devel.hpkg (scripts/build.sh @minimum-mmc does). Ports built on top install into
@@ -30,7 +31,7 @@ packages=(
 	"$gen/objects/haiku/arm64/packaging/packages/haiku.hpkg"
 	"$gen/objects/haiku/arm64/packaging/packages/haiku_devel.hpkg"
 )
-for p in gcc_syslibs gcc_syslibs_devel zlib zlib_devel; do
+for p in gcc_syslibs gcc_syslibs_devel zlib zlib_devel ncurses6 ncurses6_devel; do
 	f=$(ls "$gen"/download/"$p"-[0-9]*-arm64.hpkg 2>/dev/null | head -n 1)
 	[ -n "$f" ] || { echo "haiku-sysroot: no $p arm64 package in $gen/download" >&2; exit 1; }
 	packages+=("$f")

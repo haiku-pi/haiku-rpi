@@ -49,8 +49,12 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	# repository (the webkit build feature); the nightly profile adds it for x86 only. Its package
 	# requires haikuwebkit, which brings the libraries WebKit needs.
 	AddOptionalHaikuImagePackages WebPositive ;
-	# Python 3 (scripts/build-python.sh), as the other port has
-	AddHaikuImageSystemPackages python3.14 ;
+	# Python 3 (scripts/build-python.sh), as the other port has; readline and curses need libedit
+	# and ncurses6
+	AddHaikuImageSystemPackages python3.14 libedit ncurses6 ;
+	# the terminfo database for the ncurses6 bootstrap package (scripts/make-bootstrap-shim.sh): curses
+	# programs find no terminal descriptions without it
+	AddHaikuImageSystemPackages ncurses6_bootstrap ;
 	# Firefox (scripts/build-firefox.sh)
 	AddHaikuImageSystemPackages firefox ;
 	# default locale settings: no first-boot prompt (it would hold the desktop back until someone

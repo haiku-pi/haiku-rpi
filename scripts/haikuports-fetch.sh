@@ -23,9 +23,10 @@ if not uris:
     sys.exit(f'{recipe}: no SOURCE_URI')
 rev = field('srcGitRev') or ''
 home = field('HOMEPAGE') or ''
-# ${portVersion//./_}: bash's replace-all expansion (curl: curl-8_22_0)
-subst = lambda s: re.sub(r'\$\{portVersion//\\?(.)/([^}]*)\}',
-        lambda m: version.replace(m.group(1), m.group(2)), s) \
+# ${portVersion//./_}: bash's replace-all expansion (curl: curl-8_22_0); ${portVersion/_/-}: the first
+# one only (libedit: libedit-20260512-3.1)
+subst = lambda s: re.sub(r'\$\{portVersion(//?)\\?(.)/([^}]*)\}',
+        lambda m: version.replace(m.group(2), m.group(3), -1 if m.group(1) == '//' else 1), s) \
     .replace('${portVersion}', version).replace('$portVersion', version) \
     .replace('${portName}', port).replace('$portName', port) \
     .replace('${srcGitRev}', rev).replace('$srcGitRev', rev) \

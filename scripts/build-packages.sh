@@ -11,7 +11,9 @@
 #   gzip, tar, bzip2, unzip                scripts/build-base-ports.sh
 #   netsurf + OpenSSL 3, curl, ...         scripts/build-netsurf.sh
 #   haikuwebkit + libxml2, sqlite, ...     scripts/build-webkit.sh (several hours)
-#   python3.14 (+_devel)                   scripts/build-python.sh (after OpenSSL and sqlite)
+#   libedit (+_devel)                      scripts/cross-port.sh + scripts/package-port.py
+#   python3.14 (+_devel)                   scripts/build-python.sh (after OpenSSL, sqlite, libedit)
+#   icu74_bootstrap, ncurses6_bootstrap    scripts/make-bootstrap-shim.sh (data paths of bootstrap packages)
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
 #   openarena, supertuxkart                scripts/package-games.sh (not run here: needs build-games.sh and
 #                                          build-stk.sh; only for -sHAIKU_PI_GAMES=1 images)
@@ -74,9 +76,18 @@ rm -rf "$DEST/share"'
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/build-netsurf.sh"
 "$root/scripts/build-webkit.sh"
+# libedit: CPython's readline module (ncurses6, the bootstrap package, is in the sysroot)
+"$root/scripts/cross-port.sh" "$ports/sys-libs/libedit/libedit-20260512_3.1.recipe" autotools \
+	--enable-examples=no --enable-widec --disable-static
+"$root/scripts/package-port.py" "$ports/sys-libs/libedit/libedit-20260512_3.1.recipe" \
+	--requires lib:libncursesw
 "$root/scripts/build-python.sh"
 "$root/scripts/fetch-any-packages.sh"
 "$root/scripts/make-icu-shim.sh"
+# ncurses6 is upstream's bootstrap package (the build's download directory); published with ours, as
+# python3.14 and libedit need it, with the shim that gives it its terminfo database
+cp "$download"/ncurses6-6.6_bootstrap-1-arm64.hpkg "$root/artifacts/packages/"
+"$root/scripts/make-bootstrap-shim.sh" ncurses6_bootstrap 6.6-1 ncurses6 "the terminfo database (data/terminfo)"
 
 mkdir -p "$download"
 cp "$root"/artifacts/packages/*.hpkg "$download/"
