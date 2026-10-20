@@ -8,7 +8,9 @@
 #
 # IMG: default artifacts/images/haiku-pi4-regular.img (any image of scripts/mkimage-pi4.sh: its FAT
 # partition gives the boot files, the whole image is the disk). Logs: artifacts/uart/<ts>-<label>.log,
-# HDMI frames artifacts/hdmi/<ts>-<label>-*.png, the servers' logs in artifacts/netboot/state/.
+# HDMI frames artifacts/hdmi/<ts>-<label>-*.png, the servers' logs in artifacts/netboot/state/ (the
+# last cycle's), and artifacts/uart/<ts>-<label>-disk.txt: the remote disk's requests so far, every
+# 5 s from power-on (a boot whose serial line went quiet but whose disk reads go on is alive).
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
 img="$HAIKU_RPI_ROOT/artifacts/images/haiku-pi4-regular.img"
@@ -29,9 +31,10 @@ uart_dir="$HAIKU_RPI_ROOT/artifacts/uart"; hdmi_dir="$HAIKU_RPI_ROOT/artifacts/h
 mkdir -p "$uart_dir" "$hdmi_dir"
 
 bench_lock
-hdmi_pid=""
+hdmi_pid="" disk_pid=""
 cleanup() {
 	[ -n "$hdmi_pid" ] && { pkill -P "$hdmi_pid" 2>/dev/null; kill "$hdmi_pid" 2>/dev/null; } || true
+	[ -n "$disk_pid" ] && { pkill -P "$disk_pid" 2>/dev/null; kill "$disk_pid" 2>/dev/null; } || true
 	pi_power off || true
 	"$HAIKU_RPI_ROOT/scripts/netboot-server.sh" down >/dev/null 2>&1 || true
 	peer_netboot_restore
@@ -49,6 +52,10 @@ pi_power on
 # (without the bench lock's fd 9: a sleep outliving the cycle would hold the bench)
 ( n=0; while sleep "$hdmi_every"; do n=$((n + 1)); hdmi_snap "$hdmi_dir/$ts-$label-$(printf %02d $n).png" || true; done ) 9>&- &
 hdmi_pid=$!
+disk_log="$HAIKU_RPI_ROOT/artifacts/netboot/state/disk.log"
+( t=0; while sleep 5; do t=$((t + 5)); echo "$t s: $(wc -l < "$disk_log" 2>/dev/null || echo 0) requests"; done \
+	> "$uart_dir/$ts-$label-disk.txt" ) 9>&- &
+disk_pid=$!
 rc=0; wait "$cap_pid" || rc=$?
 hdmi_snap "$hdmi_dir/$ts-$label-final.png" || true
 echo "netboot-cycle: capture rc=$rc log=$log"
