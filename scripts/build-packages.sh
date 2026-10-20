@@ -47,12 +47,12 @@ objects="$root/sources/haiku/generated.arm64/objects/haiku/arm64/release/kits"
 for l in game/libgame.so media/libmedia.so; do
 	cp "$objects/$l" "$root/artifacts/sysroot-arm64/boot/system/develop/lib/"
 done
-# with patches/libsdl2 (Vulkan windows through Mesa's Haiku WSI); revision 2 = with that patch
+# with patches/libsdl2 (Vulkan windows through Mesa's Haiku WSI; OpenGL ES contexts); revision 3 = with both
 "$root/scripts/cross-port.sh" --patches "$root/patches/libsdl2" \
 	"$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
 	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF -DSDL_VULKAN=ON
 "$root/scripts/package-port.py" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" \
-	--revision 2 --devel-bin sdl2-config
+	--revision 3 --devel-bin sdl2-config
 
 # ffmpeg (the media kit's ffmpeg plugin, MediaPlayer), with HEVC on the Pi 4's decoder block
 "$root/scripts/build-ffmpeg.sh"

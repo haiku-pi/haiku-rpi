@@ -15,6 +15,7 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 | `09-supertuxkart.png` | SuperTuxKart 1.5 racing on Hacienda (4 karts) in a 1280×720 window: STK's OpenGL 2.1 renderer on the V3D, 28–38 frames/s |
 | `10-firefox-window.png` | **Firefox 157** in a Haiku window on the Pi (HDMI capture): a local test page — JavaScript reports "Haiku aarch64" |
 | `11-firefox-haiku-os-org.png` | Firefox 157 on the Pi rendering https://www.haiku-os.org/ (its own `--screenshot` of the page, top part) |
+| `12-supertuxkart-gles-shaders.png` | SuperTuxKart with its **GLES 3.1 shader renderer** (lit, sky) — Haiku's GL view now makes OpenGL ES contexts (BGL_CONTEXT_ES); 16–18 fps at 1280×720 |
 
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
 `scripts/sd-cycle.sh --hdmi-every 15`.

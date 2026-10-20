@@ -7,7 +7,10 @@
 #       data/             the game data (the release's Android data set: ~180 MB; see below)
 #   (mkimage-pi4.sh --add-tree artifacts/stk/non-packaged; tools/pi-tests/supertuxkart.sh runs it)
 #
-#   scripts/build-stk.sh [--no-data]   (--no-data: the executable only, the staged data stays)
+#   scripts/build-stk.sh [--no-data] [--gles]   (--no-data: the executable only, the staged data stays;
+#       --gles: STK's GLES build, its shader renderer on an OpenGL ES 3 context, staged as
+#       SuperTuxKart-GLES beside SuperTuxKart: libglvnd's BGLView makes ES contexts with
+#       BGL_CONTEXT_ES, which SDL2 asks for (patches/libsdl2) when the program wants the ES profile)
 #
 #   SuperTuxKart 1.5  the release's source tarball (HaikuPorts' supertuxkart-1.5 recipe pins the same
 #                file), its CMake build with tools/cmake/haiku-arm64.cmake and the recipe's options
@@ -47,11 +50,12 @@
 # scripts/heavy-build.sh.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-data=1
+data=1 gles=0
 argv=("$@")
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--no-data) data=0; shift ;;
+	--gles) gles=1; shift ;;
 	*) echo "build-stk: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -67,6 +71,11 @@ sysroot="$root/artifacts/sysroot-arm64"
 ports="$root/sources/haikuports"
 dl="$root/artifacts/downloads/supertuxkart"
 work="$root/artifacts/cross-ports/supertuxkart-$version"
+exe=SuperTuxKart
+if [ "$gles" = 1 ]; then
+	work="$work-gles"
+	exe=SuperTuxKart-GLES
+fi
 deps="$work/deps"
 app="$root/artifacts/stk/non-packaged/apps/SuperTuxKart"
 
@@ -172,14 +181,16 @@ done
 # lists FreeType before HarfBuzz on its link line
 cmake -S "$work/src" -B "$work/build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$toolchain" \
 	-DCMAKE_BUILD_TYPE=STKRelease -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-	-DUSE_GLES2=OFF -DNO_SHADERC=ON -DBUILD_RECORDER=OFF -DUSE_WIIUSE=OFF -DCHECK_ASSETS=OFF \
+	-DUSE_GLES2=$([ "$gles" = 1 ] && echo ON || echo OFF) -DNO_SHADERC=ON -DBUILD_RECORDER=OFF -DUSE_WIIUSE=OFF -DCHECK_ASSETS=OFF \
 	-DBUILD_SHARED_LIBS=OFF -DUSE_MOJOAL=ON -DCMAKE_CXX_STANDARD_LIBRARIES="-Wl,--no-as-needed -lgcc_s" \
 	-DLIBSAMPLERATE_LIBRARY="$deps/lib/libsamplerate.a" -DLIBSAMPLERATE_INCLUDEDIR="$deps/include" \
 	-DFREETYPE_LIBRARIES="$ftLibs" -DFREETYPE_INCLUDE_DIRS="$deps/include/freetype2" \
 	-DHARFBUZZ_LIBRARY="$deps/lib/libharfbuzz.a;$ftLibs" -DHARFBUZZ_INCLUDEDIR="$deps/include" \
 	> "$work/configure.log" 2>&1 || { tail -n 30 "$work/configure.log" >&2; exit 1; }
-grep -q -- "-DUSE_GLES2" "$work/build/build.ninja" \
-	&& { echo "build-stk: configured as the GLES build" >&2; exit 1; }
+if [ "$gles" = 0 ] && grep -q -- "-DUSE_GLES2" "$work/build/build.ninja"; then
+	echo "build-stk: configured as the GLES build" >&2
+	exit 1
+fi
 ninja_build "$work/build" supertuxkart
 
 mkdir -p "$work/install"
@@ -204,8 +215,8 @@ case " $needed" in
 esac
 
 mkdir -p "$app"
-cp "$work/install/SuperTuxKart" "$app/"
-"$tools-strip" "$app/SuperTuxKart"
+cp "$work/install/SuperTuxKart" "$app/$exe"
+"$tools-strip" "$app/$exe"
 if [ "$data" = 1 ]; then
 	rm -rf "$app/data" "$work/apk"
 	# --benchmark replays benchmark_black_forest.replay

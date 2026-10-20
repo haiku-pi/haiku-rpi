@@ -1,0 +1,19 @@
+Haiku: an OpenGL ES context when SDL_GL_CONTEXT_PROFILE_ES is asked for
+
+The GL kit (libglvnd's BGLView) makes ES contexts with BGL_CONTEXT_ES.
+
+--- a/src/video/haiku/SDL_bopengl.cc	2026-10-20 08:11:45.963292003 +0200
++++ b/src/video/haiku/SDL_bopengl.cc	2026-10-20 08:11:45.964598423 +0200
+@@ -137,6 +137,12 @@
+         gl_flags |= BGL_SHARE_CONTEXT;
+     }
+ #endif
++#ifdef BGL_CONTEXT_ES
++    // an OpenGL ES context (the GL kit picks the newest ES version it has)
++    if (_this->gl_config.profile_mask == SDL_GL_CONTEXT_PROFILE_ES) {
++        gl_flags |= BGL_CONTEXT_ES;
++    }
++#endif
+     bwin->CreateGLView(gl_flags);
+     _GetBeLooper()->SetCurrentContext(bwin->GetGLView());
+     return (SDL_GLContext)(bwin->GetGLView());
