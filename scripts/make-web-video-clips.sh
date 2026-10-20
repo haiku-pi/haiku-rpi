@@ -15,6 +15,8 @@ mkdir -p "$out"
 src=(-f lavfi -i "testsrc2=size=1280x720:rate=30:duration=10")
 ff() { ffmpeg -hide_banner -loglevel error -y "$@"; }
 ff "${src[@]}" -c:v libx264 -profile:v high -pix_fmt yuv420p -b:v 3M "$out/h264-720p.mp4"
+# the same without B-frames (no frame reordering), as phones and video calls send it
+ff "${src[@]}" -c:v libx264 -profile:v baseline -pix_fmt yuv420p -b:v 3M "$out/h264-720p-baseline.mp4"
 ff -f lavfi -i "testsrc2=size=1920x1080:rate=30:duration=10" -c:v libx264 -profile:v high \
 	-pix_fmt yuv420p -b:v 6M "$out/h264-1080p.mp4"
 ff "${src[@]}" -c:v libvpx-vp9 -b:v 2M -deadline realtime -cpu-used 8 -row-mt 1 "$out/vp9-720p.webm"

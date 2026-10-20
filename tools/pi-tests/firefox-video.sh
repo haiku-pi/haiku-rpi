@@ -32,7 +32,7 @@ cat > /tmp/video.html << EOF
 <body style="margin:0;background:#000"><video id="v" width="1280" height="720" muted playsinline></video>
 <script>
 function p(s) { console.log("VIDEO " + s); }
-const clips = ["h264-720p.mp4", "vp9-720p.webm", "av1-720p.webm", "hevc-720p.mp4", "h264-1080p.mp4"];
+const clips = ["h264-720p.mp4", "h264-720p-baseline.mp4", "vp9-720p.webm", "av1-720p.webm", "hevc-720p.mp4", "h264-1080p.mp4"];
 let i = 0, token = 0;
 function report(c, t0) {
   const v = document.getElementById("v"), q = v.getVideoPlaybackQuality();
