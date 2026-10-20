@@ -15,7 +15,10 @@ limits stays on the CPU. A picture the block cannot take, or one it fails,
 moves the stream to the CPU decoder: the block's pictures lack the motion fields
 the CPU decoder keeps for temporal MV prediction, so (with TMVP) pictures are
 dropped up to the next IRAP; the block is taken again at an IRAP, three times
-per stream at most.
+per stream at most. The hwaccel converts a picture while the block decodes the
+next one: before the last pictures are output (an empty packet) it is asked to
+convert the one it holds, and frames it marks AV_FRAME_FLAG_CORRUPT (the block
+failed them after their submit) are dropped.
 
   configure      hevc_rpivid_decoder selects hevc_decoder
   Makefile       the rpivid objects
@@ -118,7 +121,7 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
          int c_count = (sps->chroma_format_idc != 0) ? 3 : 1;
          int c_idx;
  
-@@ -2947,6 +2966,51 @@
+@@ -2947,6 +2966,60 @@
      return 0;
  }
  
@@ -127,13 +130,22 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
 + * not the motion fields the CPU decoder keeps for temporal MV prediction: with
 + * drop, the current picture and every one up to the next IRAP are dropped
 + * (the caller keeps showing the last picture it got); the RASL pictures of a
-+ * CRA decoded on the CPU are dropped too. */
++ * CRA decoded on the CPU are dropped too. Pictures the block failed after
++ * their submit (AV_FRAME_FLAG_CORRUPT, set by rpivid_hevc.c only) go too. */
 +static void rpivid_leave(HEVCContext *s, const char *why, int drop)
 +{
 +    av_log(s->avctx, AV_LOG_WARNING, "rpivid: continuing on the CPU decoder (%s)%s\n",
 +           why, drop ? ", pictures dropped up to the next random access point" : "");
 +    ff_hwaccel_uninit(s->avctx);
 +    s->rpivid_failed = 1;
++    if (s->output_frame->buf[0] && (s->output_frame->flags & AV_FRAME_FLAG_CORRUPT))
++        av_frame_unref(s->output_frame);
++    for (int i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
++        HEVCFrame *frame = &s->DPB[i];
++        if (frame != s->ref && frame->frame->buf[0] &&
++            (frame->frame->flags & AV_FRAME_FLAG_CORRUPT))
++            ff_hevc_unref_frame(frame, ~0);
++    }
 +    if (drop) {
 +        if (s->ref) {
 +            /* without reordering, the picture went to the output at its start */
@@ -170,7 +182,7 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
  static int decode_nal_unit(HEVCContext *s, const H2645NAL *nal)
  {
      HEVCLocalContext *lc = s->HEVClc;
-@@ -3039,6 +3103,17 @@
+@@ -3039,6 +3112,17 @@
              break;
          }
  
@@ -188,7 +200,7 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
          if (s->sh.first_slice_in_pic_flag) {
              if (s->max_ra == INT_MAX) {
                  if (s->nal_unit_type == HEVC_NAL_CRA_NUT || IS_BLA(s)) {
-@@ -3084,6 +3159,18 @@
+@@ -3084,6 +3168,20 @@
              }
          }
  
@@ -196,9 +208,11 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
 +        /* a picture the block cannot take: on the CPU, which needs the
 +         * references' motion fields only for temporal MV prediction */
 +        if (s->sh.first_slice_in_pic_flag && ff_rpivid_hevc_active(s->avctx) &&
-+            ff_rpivid_hevc_picture_ok(s->avctx) < 0) {
-+            int drop = !IS_IRAP(s) && s->ps.sps->sps_temporal_mvp_enabled_flag;
++            (ret = ff_rpivid_hevc_picture_ok(s->avctx)) < 0) {
++            int drop = !IS_IRAP(s) && (s->ps.sps->sps_temporal_mvp_enabled_flag ||
++                                       ret == RPIVID_EARLIER_FAILED);
 +
++            ret = 0;
 +            rpivid_leave(s, "a picture the block cannot decode", drop);
 +            if (drop)
 +                break;
@@ -207,7 +221,23 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
          if (s->sh.first_slice_in_pic_flag && s->avctx->hwaccel) {
              ret = FF_HW_CALL(s->avctx, start_frame, NULL, 0);
              if (ret < 0)
-@@ -3372,6 +3459,11 @@
+@@ -3334,7 +3432,15 @@
+     HEVCContext *s = avctx->priv_data;
+ 
+     if (!avpkt->size) {
++#if CONFIG_HEVC_RPIVID_DECODER
++        /* the block's last picture is converted; one it failed is dropped */
++        ff_rpivid_hevc_drain(avctx);
++        while ((ret = ff_hevc_output_frame(s, rframe, 1)) > 0 &&
++               (rframe->flags & AV_FRAME_FLAG_CORRUPT) && ff_rpivid_hevc_active(avctx))
++            av_frame_unref(rframe);
++#else
+         ret = ff_hevc_output_frame(s, rframe, 1);
++#endif
+         if (ret < 0)
+             return ret;
+ 
+@@ -3372,6 +3478,11 @@
              ff_hevc_unref_frame(s->ref, ~0);
              return ret;
          }
@@ -219,7 +249,7 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
      } else {
          /* verify the SEI checksum */
          if (avctx->err_recognition & AV_EF_CRCCHECK && s->ref && s->is_decoded &&
-@@ -3623,6 +3715,20 @@
+@@ -3623,6 +3734,20 @@
      HEVCContext *s = avctx->priv_data;
      int ret;
  
@@ -240,7 +270,7 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
      if (avctx->active_thread_type & FF_THREAD_SLICE) {
          s->threads_number = avctx->thread_count;
          ret = ff_slice_thread_init_progress(avctx);
-@@ -3686,6 +3792,11 @@
+@@ -3686,6 +3811,11 @@
          AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, PAR },
      { "strict-displaywin", "stricly apply default display window size", OFFSET(apply_defdispwin),
          AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, PAR },
@@ -252,7 +282,7 @@ diff -ruN a/libavcodec/hevcdec.c b/libavcodec/hevcdec.c
      { NULL },
  };
  
-@@ -3741,3 +3852,28 @@
+@@ -3741,3 +3871,28 @@
                                 NULL
                             },
  };

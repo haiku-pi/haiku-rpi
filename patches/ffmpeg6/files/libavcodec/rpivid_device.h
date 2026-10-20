@@ -36,24 +36,29 @@ typedef struct RpividPicture {
 	uint32_t		chroma_column_stride;
 } RpividPicture;
 
+/* A picture for the block */
 typedef struct RpividJob {
-	const uint64_t*	commands;
+	const uint64_t*	commands;		/* copied by the submit */
 	uint32_t		command_count;
-	uint32_t		bitstream;
+	uint32_t		bitstream;		/* read until the picture is done */
 	uint32_t		output;
 	uint32_t		collocated;		/* 0: none */
 	uint32_t		references[RPIVID_REFERENCE_SLOTS];	/* 0: the output */
 	uint32_t		log2_ctb_size;
 	uint32_t		config2;
 	int32_t			current_poc;
+} RpividJob;
 
-	/* results */
+/* What became of a submitted picture */
+typedef struct RpividResult {
+	int				result;			/* 0: decoded, else a negative AVERROR */
 	uint32_t		status;
 	uint32_t		command_status;
 	uint32_t		phase1_runs;
-	uint64_t		phase1_time;	/* microseconds */
+	uint64_t		queue_time;		/* microseconds */
+	uint64_t		phase1_time;
 	uint64_t		phase2_time;
-} RpividJob;
+} RpividResult;
 
 
 /* 0, or a negative AVERROR with the reason in why */
@@ -71,9 +76,18 @@ int				ff_rpivid_device_create_picture(RpividDevice* device,
 					int motion_vectors, RpividPicture* picture);
 void			ff_rpivid_device_delete(RpividDevice* device, uint32_t handle);
 
-/* 0, AVERROR(EIO) (the block stopped: it is not used again), or another
-   negative AVERROR (the picture was refused or not decoded) */
-int				ff_rpivid_device_decode(RpividDevice* device, RpividJob* job);
+/* Queues a picture: 0 and its id, or a negative AVERROR (the picture was
+   refused). The block decodes the pictures in the order they are submitted;
+   the output is read, and the bitstream buffer written again, only after
+   ff_rpivid_device_wait() returned the picture. At most RPIVID_MAX_JOBS
+   (4) pictures are submitted and not waited for. */
+int				ff_rpivid_device_submit(RpividDevice* device,
+					const RpividJob* job, uint64_t* _id);
+
+/* timeout: microseconds, < 0 no limit. 0 and the result once the picture is
+   done (it is then forgotten), AVERROR(EAGAIN) while it is not. */
+int				ff_rpivid_device_wait(RpividDevice* device, uint64_t id,
+					int64_t timeout, RpividResult* result);
 
 
 #endif /* AVCODEC_RPIVID_DEVICE_H */

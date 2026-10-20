@@ -3,7 +3,8 @@
 # (scripts/cross-port.sh + scripts/package-port.py): FFmpeg's own decoders + libvorbis (the recipe's other
 # external libraries - lame, opus, speex, theora, openssl, ... - are not ported yet), with patches/ffmpeg6:
 # "hevc_rpivid", HEVC on the Raspberry Pi 4's decoder block (docs/design/hw-video-decode.md).
-# Revision 2 = with patches/ffmpeg6. Called by scripts/build-packages.sh; runs on its own too.
+# Revision 2 = with patches/ffmpeg6; 3 = the pipelined hwaccel (rpivid driver interface 2). Called by
+# scripts/build-packages.sh; runs on its own too.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 recipe="$root/sources/haikuports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
@@ -21,4 +22,4 @@ work="$root/artifacts/cross-ports/ffmpeg6-6.1.6"
 if grep -E "rpivid[a-z_]*\.c:[0-9]+:[0-9]+: warning" "$work/build.log"; then
 	echo "build-ffmpeg: warnings in the rpivid sources (above)" >&2
 fi
-"$root/scripts/package-port.py" "$recipe" --revision 2
+"$root/scripts/package-port.py" "$recipe" --revision 3

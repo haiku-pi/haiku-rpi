@@ -1,14 +1,26 @@
 /*
  * hevcdec — decodes an HEVC stream twice through libavcodec: with the rpivid hardware decoder
  * ("hevc_rpivid", the Raspberry Pi 4's HEVC block; docs/design/hw-video-decode.md) and with
- * FFmpeg's CPU decoder ("hevc"), and compares every frame's MD5. "HEV " lines; exit status 0
- * when both decoded the same frames, the block took the stream, and nothing differed.
+ * FFmpeg's CPU decoder ("hevc"), and compares every frame's MD5. Then measures both: the stream
+ * read into memory first, decoded without looking at the frames, wall time and the CPU time the
+ * process used (getrusage: every thread, user + kernel) per frame. "HEV " lines; exit status 0
+ * when both decoded the same frames, every one of them on the block, and nothing differed.
  *
- *   hevcdec [-n FRAMES] [-v] [-cpu-only] FILE...
+ *   hevcdec [-n FRAMES] [-v] [-cpu-only] [-no-bench] [-bench-only] [-hw-only] FILE...
  *
- *   -n FRAMES   decode at most FRAMES frames per pass
- *   -v          a line for every frame (default: the first 3 and every mismatch)
- *   -cpu-only   only the CPU pass (timing reference)
+ *   -n FRAMES    decode at most FRAMES frames per pass
+ *   -v           a line for every frame (default: the first 3 and every mismatch)
+ *   -cpu-only    only the CPU pass (timing reference)
+ *   -no-bench    no measurement passes
+ *   -bench-only  only the measurement passes
+ *   -hw-only     no CPU measurement pass (e.g. FFMPEG_RPIVID_UNCACHED=1 hevcdec -bench-only -hw-only:
+ *                the pictures mapped write-combining, no cache maintenance, slower to read)
+ *
+ * Measurement passes: "cpu" (hevc, 4 frame threads, as the media kit's plugin opens it on the
+ * Pi), "hw" (hevc_rpivid: the block, pipelined, SAND to planar on the slice threads), "hw-1t" (one
+ * conversion thread), "hw-sync" (FFMPEG_RPIVID_SYNC=1: every picture decoded and converted
+ * before the next, the first version). The CPU time of the driver's decode thread (a kernel
+ * thread, a few register writes per phase) is not the process's and is not counted.
  *
  * The libavcodec messages of the hardware pass that start with "rpivid:" are printed as
  * "HEV log ..." (why the block was or was not used, its timing). FFMPEG_RPIVID=0|1|2 is honoured
@@ -28,6 +40,7 @@ extern "C" {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 
 #include <algorithm>
 #include <string>
@@ -40,6 +53,10 @@ struct Pass {
 	std::vector<std::string>	md5;
 	std::vector<int64_t>		pts;
 	int64_t						time = 0;		// microseconds, decode only
+	int64_t						cpuTime = 0;	// microseconds, getrusage
+	size_t						frames = 0;
+	int							blockPictures = -1;
+		// "rpivid: N pictures on the block" (when the decoder closed)
 	bool						blockUsed = false;
 	bool						failed = false;
 	int							width = 0;
@@ -67,6 +84,12 @@ log_callback(void* object, int level, const char* format, va_list args)
 		line[--length] = '\0';
 	if (sCurrentPass != NULL && strstr(line, "rpivid: hardware HEVC decode") != NULL)
 		sCurrentPass->blockUsed = true;
+	const char* pictures = strstr(line, "rpivid: ");
+	int count;
+	if (sCurrentPass != NULL && pictures != NULL
+		&& sscanf(pictures, "rpivid: %d pictures on the block", &count) == 1) {
+		sCurrentPass->blockPictures = count;
+	}
 	if (sHardwarePass)
 		SAY("log %s", line);
 }
@@ -175,13 +198,171 @@ decode(const char* path, const char* decoderName, int maxFrames, Pass& pass)
 			}
 		}
 	}
-	sCurrentPass = NULL;
-
 	av_frame_free(&frame);
 	av_packet_free(&packet);
+	// the hwaccel says how many pictures the block decoded when it goes
 	avcodec_free_context(&context);
+	sCurrentPass = NULL;
 	avformat_close_input(&format);
 	return true;
+}
+
+
+static int64_t
+cpu_time()
+{
+	struct rusage usage;
+	getrusage(RUSAGE_SELF, &usage);
+	return (int64_t)(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000000
+		+ usage.ru_utime.tv_usec + usage.ru_stime.tv_usec;
+}
+
+
+/*!	The measurement: the stream's packets read first, then decoded, the frames
+	dropped as they come.
+*/
+static bool
+bench(const char* path, const char* decoderName, int maxFrames, Pass& pass)
+{
+	AVFormatContext* format = NULL;
+	if (avformat_open_input(&format, path, NULL, NULL) < 0
+		|| avformat_find_stream_info(format, NULL) < 0) {
+		avformat_close_input(&format);
+		return false;
+	}
+	const int stream = av_find_best_stream(format, AVMEDIA_TYPE_VIDEO, -1, -1,
+		NULL, 0);
+	const AVCodec* codec = avcodec_find_decoder_by_name(decoderName);
+	if (stream < 0 || codec == NULL) {
+		avformat_close_input(&format);
+		return false;
+	}
+	std::vector<AVPacket*> packets;
+	AVPacket* packet = av_packet_alloc();
+	while (av_read_frame(format, packet) >= 0) {
+		if (packet->stream_index == stream)
+			packets.push_back(av_packet_clone(packet));
+		av_packet_unref(packet);
+	}
+	av_packet_free(&packet);
+
+	AVCodecContext* context = avcodec_alloc_context3(codec);
+	avcodec_parameters_to_context(context, format->streams[stream]->codecpar);
+	context->thread_count = 4;
+	context->err_recognition = AV_EF_CAREFUL;
+	if (avcodec_open2(context, codec, NULL) < 0) {
+		avcodec_free_context(&context);
+		avformat_close_input(&format);
+		return false;
+	}
+
+	sCurrentPass = &pass;
+	AVFrame* frame = av_frame_alloc();
+	const int64_t start = av_gettime_relative();
+	const int64_t cpuStart = cpu_time();
+	size_t next = 0;
+	bool done = false;
+	while (!done) {
+		if (next <= packets.size()) {
+			const int status = avcodec_send_packet(context,
+				next < packets.size() ? packets[next] : NULL);
+			if (status != AVERROR(EAGAIN))
+				next++;
+		}
+		for (;;) {
+			const int status = avcodec_receive_frame(context, frame);
+			if (status == AVERROR_EOF) {
+				done = true;
+				break;
+			}
+			if (status < 0)
+				break;
+			av_frame_unref(frame);
+			pass.frames++;
+			if (maxFrames > 0 && (int)pass.frames >= maxFrames) {
+				done = true;
+				break;
+			}
+		}
+	}
+	pass.time = av_gettime_relative() - start;
+	pass.cpuTime = cpu_time() - cpuStart;
+
+	av_frame_free(&frame);
+	avcodec_free_context(&context);
+	sCurrentPass = NULL;
+	for (AVPacket*& p : packets)
+		av_packet_free(&p);
+	avformat_close_input(&format);
+	return true;
+}
+
+
+static void
+say_bench(const char* path, const char* label, const Pass& pass, const char* what)
+{
+	const double frames = pass.frames > 0 ? pass.frames : 1;
+	SAY("bench %s %s: %zu frames, %.2f ms per frame (%.1f fps), CPU %.2f ms per frame "
+		"(%.2f cores) [%s]", path, label, pass.frames, pass.time / 1000.0 / frames,
+		pass.time > 0 ? pass.frames * 1000000.0 / pass.time : 0.0,
+		pass.cpuTime / 1000.0 / frames,
+		pass.time > 0 ? (double)pass.cpuTime / pass.time : 0.0, what);
+}
+
+
+static void
+run_bench(const char* path, int maxFrames, bool hwOnly)
+{
+	struct Variant {
+		const char*	label;
+		const char*	decoder;
+		const char*	sync;
+		const char*	threads;
+	};
+	static const Variant kVariants[] = {
+		{ "cpu", "hevc", NULL, NULL },
+		{ "hw", "hevc_rpivid", NULL, NULL },
+		{ "hw-1t", "hevc_rpivid", NULL, "1" },
+		{ "hw-sync", "hevc_rpivid", "1", "1" },
+	};
+	Pass passes[4];
+	for (int i = hwOnly ? 1 : 0; i < 4; i++) {
+		const Variant& variant = kVariants[i];
+		if (variant.sync != NULL)
+			setenv("FFMPEG_RPIVID_SYNC", variant.sync, 1);
+		if (variant.threads != NULL)
+			setenv("FFMPEG_RPIVID_CONVERT_THREADS", variant.threads, 1);
+		const bool ok = bench(path, variant.decoder, maxFrames, passes[i]);
+		unsetenv("FFMPEG_RPIVID_SYNC");
+		unsetenv("FFMPEG_RPIVID_CONVERT_THREADS");
+		if (!ok) {
+			SAY("bench %s %s: cannot decode", path, variant.label);
+			return;
+		}
+		char what[160];
+		if (i == 0)
+			snprintf(what, sizeof(what), "hevc, 4 frame threads");
+		else {
+			snprintf(what, sizeof(what), "hevc_rpivid %s, %s, %d/%zu pictures on the block",
+				variant.sync != NULL ? "synchronous" : "pipelined",
+				variant.threads != NULL ? "1 conversion thread" : "default conversion threads",
+				passes[i].blockPictures, passes[i].frames);
+		}
+		say_bench(path, variant.label, passes[i], what);
+	}
+
+	const Pass& cpu = passes[0];
+	const Pass& hw = passes[1];
+	if (hwOnly || cpu.frames == 0 || hw.frames == 0 || cpu.time == 0 || hw.time == 0)
+		return;
+	const double cpuFps = cpu.frames * 1000000.0 / cpu.time;
+	const double hwFps = hw.frames * 1000000.0 / hw.time;
+	const double cpuPerFrame = cpu.cpuTime / 1000.0 / cpu.frames;
+	const double hwPerFrame = hw.cpuTime / 1000.0 / hw.frames;
+	SAY("speed %s: hw %.1f fps vs CPU %.1f fps (%.2fx); CPU time per frame hw %.2f ms vs "
+		"CPU %.2f ms (%.1fx less)%s", path, hwFps, cpuFps, hwFps / cpuFps, hwPerFrame,
+		cpuPerFrame, hwPerFrame > 0 ? cpuPerFrame / hwPerFrame : 0.0,
+		hw.blockPictures == (int)hw.frames ? "" : " - NOT ALL PICTURES ON THE BLOCK");
 }
 
 
@@ -189,7 +370,8 @@ int
 main(int argc, char** argv)
 {
 	int maxFrames = 0;
-	bool verbose = false, cpuOnly = false;
+	bool verbose = false, cpuOnly = false, doBench = true, benchOnly = false;
+	bool hwOnly = false;
 	int first = 1;
 	for (; first < argc && argv[first][0] == '-'; first++) {
 		if (strcmp(argv[first], "-n") == 0 && first + 1 < argc)
@@ -198,12 +380,18 @@ main(int argc, char** argv)
 			verbose = true;
 		else if (strcmp(argv[first], "-cpu-only") == 0)
 			cpuOnly = true;
+		else if (strcmp(argv[first], "-no-bench") == 0)
+			doBench = false;
+		else if (strcmp(argv[first], "-bench-only") == 0)
+			benchOnly = true;
+		else if (strcmp(argv[first], "-hw-only") == 0)
+			hwOnly = true;
 		else
 			break;
 	}
 	if (first >= argc) {
-		fprintf(stderr, "usage: %s [-n FRAMES] [-v] [-cpu-only] FILE...\n",
-			argv[0]);
+		fprintf(stderr, "usage: %s [-n FRAMES] [-v] [-cpu-only] [-no-bench] "
+			"[-bench-only] [-hw-only] FILE...\n", argv[0]);
 		return 2;
 	}
 	av_log_set_callback(log_callback);
@@ -211,6 +399,10 @@ main(int argc, char** argv)
 	int failures = 0;
 	for (int i = first; i < argc; i++) {
 		const char* path = argv[i];
+		if (benchOnly) {
+			run_bench(path, maxFrames, hwOnly);
+			continue;
+		}
 		Pass software, hardware;
 		if (!decode(path, "hevc", maxFrames, software)) {
 			failures++;
@@ -246,15 +438,21 @@ main(int argc, char** argv)
 					hw, sw);
 			}
 		}
+		// every frame from the block: a fallback to the CPU decoder (no memory
+		// for the pictures, say) must not pass for the block
 		const bool pass = mismatches == 0 && hardware.blockUsed
-			&& !hardware.md5.empty();
-		SAY("result %s %s: frames=%zu/%zu mismatches=%zu block=%d hw %.2f ms per "
-			"frame, CPU %.2f", pass ? "PASS" : "FAIL", path, hardware.md5.size(),
-			software.md5.size(), mismatches, hardware.blockUsed ? 1 : 0,
+			&& !hardware.md5.empty()
+			&& hardware.blockPictures == (int)hardware.md5.size();
+		SAY("result %s %s: frames=%zu/%zu mismatches=%zu block=%d/%zu pictures, hw %.2f ms "
+			"per frame, CPU %.2f (with MD5s)", pass ? "PASS" : "FAIL", path,
+			hardware.md5.size(), software.md5.size(), mismatches, hardware.blockPictures,
+			hardware.md5.size(),
 			hardware.md5.empty() ? 0.0 : hardware.time / 1000.0 / hardware.md5.size(),
 			software.md5.empty() ? 0.0 : software.time / 1000.0 / software.md5.size());
 		if (!pass)
 			failures++;
+		if (doBench)
+			run_bench(path, maxFrames, hwOnly);
 	}
 	return failures == 0 ? 0 : 1;
 }

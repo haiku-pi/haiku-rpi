@@ -167,7 +167,8 @@ ff_rpivid_device_delete(RpividDevice* device, uint32_t handle)
 
 
 int
-ff_rpivid_device_decode(RpividDevice* device, RpividJob* job)
+ff_rpivid_device_submit(RpividDevice* device, const RpividJob* job,
+	uint64_t* _id)
 {
 	rpivid_decode args;
 	int ret, i;
@@ -190,14 +191,36 @@ ff_rpivid_device_decode(RpividDevice* device, RpividJob* job)
 	   whichever CPU it runs */
 	__asm__ volatile("dsb sy" ::: "memory");
 #endif
-	ret = control(device, RPIVID_DECODE, &args, sizeof(args));
-	job->status = args.status;
-	job->command_status = args.command_status;
-	job->phase1_runs = args.phase1_runs;
-	job->phase1_time = args.phase1_time;
-	job->phase2_time = args.phase2_time;
-	/* the driver says B_IO_ERROR once the block stopped responding */
+	ret = control(device, RPIVID_SUBMIT, &args, sizeof(args));
+	*_id = args.job;
 	return ret;
+}
+
+
+int
+ff_rpivid_device_wait(RpividDevice* device, uint64_t id, int64_t timeout,
+	RpividResult* result)
+{
+	rpivid_wait args;
+	int ret;
+
+	memset(&args, 0, sizeof(args));
+	args.job = id;
+	args.timeout = timeout;
+	ret = control(device, RPIVID_WAIT, &args, sizeof(args));
+	if (ret == AVERROR(B_WOULD_BLOCK) || ret == AVERROR(B_TIMED_OUT))
+		return AVERROR(EAGAIN);
+	if (ret < 0)
+		return ret;
+	/* status_t values are negative errno values on Haiku */
+	result->result = args.result == B_OK ? 0 : AVERROR(args.result);
+	result->status = args.status;
+	result->command_status = args.command_status;
+	result->phase1_runs = args.phase1_runs;
+	result->queue_time = args.queue_time;
+	result->phase1_time = args.phase1_time;
+	result->phase2_time = args.phase2_time;
+	return 0;
 }
 
 
@@ -257,7 +280,16 @@ ff_rpivid_device_delete(RpividDevice* device, uint32_t handle)
 
 
 int
-ff_rpivid_device_decode(RpividDevice* device, RpividJob* job)
+ff_rpivid_device_submit(RpividDevice* device, const RpividJob* job,
+	uint64_t* _id)
+{
+	return AVERROR(ENOSYS);
+}
+
+
+int
+ff_rpivid_device_wait(RpividDevice* device, uint64_t id, int64_t timeout,
+	RpividResult* result)
 {
 	return AVERROR(ENOSYS);
 }

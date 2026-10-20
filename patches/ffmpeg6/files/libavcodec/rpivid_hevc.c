@@ -16,8 +16,18 @@
 	frame's hwaccel private data, where it stays for as long as hevcdec.c
 	keeps the frame (as a reference or for output). decode_slice() copies
 	each slice segment's NAL unit into the bitstream buffer and adds its
-	commands; end_frame() has the block decode the picture and converts it
-	into the frame hevcdec.c allocated.
+	commands; end_frame() submits the picture to the block.
+
+	The block works while the CPU goes on: a picture is converted into the
+	frame hevcdec.c allocated (SAND to planar) in the end_frame() of the
+	picture after it, while the block decodes that one - so one picture is
+	pending, and its frame must not reach the caller before it is converted.
+	end_frame() converts the picture at once when hevcdec.c outputs it in the
+	same call (no reordering), ff_rpivid_hevc_drain() before hevcdec.c
+	outputs the last pictures, uninit when the hwaccel goes. Both bitstream
+	buffers alternate: the block reads one while the CPU fills the other.
+	FFMPEG_RPIVID_SYNC=1 decodes each picture before end_frame() returns, as
+	a reference for measurements.
 */
 
 
@@ -43,12 +53,17 @@
 
 
 #define MIN_BITSTREAM_SIZE	(256 * 1024)
+/* SAND to planar in bands of at least this many rows, one per thread */
+#define MIN_CONVERT_ROWS	64
 
 
-/* A picture buffer of the driver */
+/* A picture buffer of the driver. Held by the frame it belongs to and, until
+   it is converted, by the pending picture. */
 typedef struct RpividBuffer {
 	RpividPicture			picture;
 	struct RpividBuffer*	next;
+	int						references;
+	uint64_t				job;	/* the submitted picture that writes it */
 } RpividBuffer;
 
 /* The picture buffers of one stream geometry. The hwaccel and every frame
@@ -69,16 +84,30 @@ typedef struct RpividPool {
 typedef struct RpividFrame {
 	RpividPool*		pool;
 	RpividBuffer*	buffer;
-	int				decoded;	/* the block wrote buffer: usable as a reference */
+	int				submitted;
+		/* the block decodes buffer before any later picture: usable as a
+		   reference */
 	int				has_mv;		/* and its motion vectors */
 } RpividFrame;
+
+/* The picture the block decodes, to be converted into its frame */
+typedef struct RpividPending {
+	RpividBuffer*	buffer;
+	AVFrame*		frame;		/* a reference to the frame's buffers */
+	uint64_t		job;
+} RpividPending;
 
 typedef struct RpividContext {
 	RpividDevice*		device;
 	RpividPool*			pool;
 	int					level;
-	RpividBitstream		bitstream;
+	int					sync;
+	int					convert_threads;
+	RpividBitstream		bitstreams[2];
+	uint64_t			bitstream_jobs[2];	/* the last picture reading each */
+	int					bitstream_index;
 	size_t				bitstream_used;
+	RpividPending		pending;
 	RpividCommands		commands;
 	RpividPictureParams	picture;
 	uint8_t				scaling[RPIVID_SCALING_FACTOR_BYTES];
@@ -94,10 +123,13 @@ typedef struct RpividContext {
 	int					failed;
 
 	uint64_t			pictures;
-	uint64_t			hardware_time;
+	uint64_t			phase1_time;	/* microseconds */
+	uint64_t			phase2_time;
+	uint64_t			wait_time;		/* the CPU waited for the block */
 	uint64_t			convert_time;
 	uint32_t			missing_references;
 	uint32_t			phase1_reruns;
+	uint32_t			late_failures;
 } RpividContext;
 
 
@@ -172,12 +204,15 @@ pool_get(RpividPool* pool)
 	ff_mutex_unlock(&pool->lock);
 	if (buffer != NULL) {
 		buffer->next = NULL;
+		buffer->references = 1;
+		buffer->job = 0;
 		return buffer;
 	}
 
 	buffer = av_mallocz(sizeof(*buffer));
 	if (buffer == NULL)
 		return NULL;
+	buffer->references = 1;
 	if (ff_rpivid_device_create_picture(pool->device, pool->width, pool->height,
 			pool->bit_depth, pool->motion_vectors, &buffer->picture) < 0) {
 		av_free(buffer);
@@ -191,11 +226,25 @@ pool_get(RpividPool* pool)
 
 
 static void
-pool_put(RpividPool* pool, RpividBuffer* buffer)
+buffer_ref(RpividPool* pool, RpividBuffer* buffer)
 {
 	ff_mutex_lock(&pool->lock);
-	buffer->next = pool->free;
-	pool->free = buffer;
+	buffer->references++;
+	ff_mutex_unlock(&pool->lock);
+}
+
+
+/* The last reference puts the buffer back into the pool. Pictures still in
+   the block may use it: only a later picture can get it from the pool, and
+   the block decodes that one after them. */
+static void
+buffer_unref(RpividPool* pool, RpividBuffer* buffer)
+{
+	ff_mutex_lock(&pool->lock);
+	if (--buffer->references == 0) {
+		buffer->next = pool->free;
+		pool->free = buffer;
+	}
 	ff_mutex_unlock(&pool->lock);
 }
 
@@ -206,7 +255,7 @@ rpivid_free_frame(FFRefStructOpaque opaque, void* data)
 	RpividFrame* frame = data;
 
 	if (frame->buffer != NULL)
-		pool_put(frame->pool, frame->buffer);
+		buffer_unref(frame->pool, frame->buffer);
 	pool_unref(frame->pool);
 }
 
@@ -368,6 +417,19 @@ ff_rpivid_hevc_attach(AVCodecContext* avctx, int level)
 		return AVERROR(ENOMEM);
 	}
 	ctx->level = level;
+	ctx->sync = getenv("FFMPEG_RPIVID_SYNC") != NULL
+		&& !strcmp(getenv("FFMPEG_RPIVID_SYNC"), "1");
+	// One conversion thread by default: on the Pi 4 it is as fast as four
+	// and costs a third of the CPU time (1080p 20 Mbit/s: 118.9 fps at
+	// 3.6 ms CPU per frame vs 110.1 fps at 11.8 ms), as the conversion is
+	// bound by memory and runs alongside the block's decode anyway
+	ctx->convert_threads = 1;
+	if (getenv("FFMPEG_RPIVID_CONVERT_THREADS") != NULL)
+		ctx->convert_threads = atoi(getenv("FFMPEG_RPIVID_CONVERT_THREADS"));
+	if (!(avctx->active_thread_type & FF_THREAD_SLICE) || ctx->convert_threads < 1
+		|| ctx->sync) {
+		ctx->convert_threads = 1;
+	}
 	ff_rpivid_commands_init(&ctx->commands);
 
 	avctx->internal->hwaccel_priv_data = ctx;
@@ -383,29 +445,188 @@ refuse:
 }
 
 
+static void finish_pending(AVCodecContext* avctx, HEVCContext* s, int threaded);
+
+
 static int
 rpivid_uninit(AVCodecContext* avctx)
 {
 	RpividContext* ctx = avctx->internal->hwaccel_priv_data;
+	int i;
 
 	if (ctx == NULL)
 		return 0;
+	/* hevcdec.c may output the pending picture later (it leaves the block
+	   for the CPU decoder), or not (it is closing: its threads are gone) */
+	finish_pending(avctx, avctx->priv_data, 0);
 	if (ctx->pictures > 0) {
 		av_log(avctx, AV_LOG_INFO, "rpivid: %" PRIu64 " pictures on the block, "
-			"%.2f ms each (+ %.2f ms SAND to planar), %" PRIu32 " phase-1 "
-			"reruns, %" PRIu32 " missing references, %d picture buffers\n",
-			ctx->pictures, ctx->hardware_time / 1000.0 / ctx->pictures,
-			ctx->convert_time / 1000.0 / ctx->pictures, ctx->phase1_reruns,
+			"phase 1 %.2f ms, phase 2 %.2f ms, the CPU waited %.2f ms, SAND to "
+			"planar %.2f ms (%d threads), %s; %" PRIu32 " phase-1 reruns, %" PRIu32
+			" missing references, %d picture buffers\n", ctx->pictures,
+			ctx->phase1_time / 1000.0 / ctx->pictures,
+			ctx->phase2_time / 1000.0 / ctx->pictures,
+			ctx->wait_time / 1000.0 / ctx->pictures,
+			ctx->convert_time / 1000.0 / ctx->pictures, ctx->convert_threads,
+			ctx->sync ? "synchronous" : "pipelined", ctx->phase1_reruns,
 			ctx->missing_references, ctx->pool != NULL ? ctx->pool->count : 0);
 	}
 	ff_rpivid_commands_free(&ctx->commands);
-	if (ctx->bitstream.handle != 0)
-		ff_rpivid_device_delete(ctx->device, ctx->bitstream.handle);
+	for (i = 0; i < 2; i++) {
+		if (ctx->bitstreams[i].handle != 0)
+			ff_rpivid_device_delete(ctx->device, ctx->bitstreams[i].handle);
+	}
 	pool_unref(ctx->pool);
 	ff_rpivid_device_unref(ctx->device);
 	ctx->pool = NULL;
 	ctx->device = NULL;
 	return 0;
+}
+
+
+//	#pragma mark - converting
+
+
+typedef struct RpividConvert {
+	const RpividPicture*	picture;
+	AVFrame*				frame;
+	uint32_t				width;
+	uint32_t				height;
+	uint32_t				bit_depth;
+	uint32_t				band_rows;
+} RpividConvert;
+
+
+static int
+convert_band(AVCodecContext* avctx, void* data, int band, int thread)
+{
+	const RpividConvert* job = data;
+	const RpividPicture* picture = job->picture;
+	AVFrame* out = job->frame;
+	const uint32_t y0 = band * job->band_rows;
+	const uint32_t y1 = FFMIN(y0 + job->band_rows, job->height);
+
+	if (y0 >= y1)
+		return 0;
+	if (job->bit_depth == 8) {
+		ff_rpivid_sand8_to_planar(out->data[0], out->linesize[0], out->data[1],
+			out->linesize[1], out->data[2], out->linesize[2], picture->luma,
+			picture->luma_column_stride, picture->chroma,
+			picture->chroma_column_stride, job->width, job->height, y0, y1);
+	} else {
+		ff_rpivid_sand10_to_planar(out->data[0], out->linesize[0], out->data[1],
+			out->linesize[1], out->data[2], out->linesize[2], picture->luma,
+			picture->luma_column_stride, picture->chroma,
+			picture->chroma_column_stride, job->width, job->height, y0, y1);
+	}
+	return 0;
+}
+
+
+/* SAND to planar, in row bands on the decoder's slice threads (which the
+   block leaves idle) */
+static void
+convert(AVCodecContext* avctx, RpividContext* ctx, const RpividBuffer* buffer,
+	AVFrame* frame, int threaded)
+{
+	RpividConvert job;
+	int bands = threaded ? ctx->convert_threads : 1;
+
+	job.picture = &buffer->picture;
+	job.frame = frame;
+	job.width = ctx->pool->width;
+	job.height = ctx->pool->height;
+	job.bit_depth = ctx->pool->bit_depth;
+	bands = FFMAX(1, FFMIN(bands, (int)(job.height / MIN_CONVERT_ROWS)));
+	job.band_rows = FFALIGN((job.height + bands - 1) / bands, 2);
+	if (bands > 1)
+		avctx->execute2(avctx, convert_band, &job, NULL, bands);
+	else
+		convert_band(avctx, &job, 0, 0);
+}
+
+
+/* The block failed a picture after its submit: it and every frame showing it
+   are marked, and hevcdec.c drops them (rpivid_leave()) */
+static void
+mark_failed(HEVCContext* s, const AVFrame* frame)
+{
+	int i;
+
+	if (s == NULL)
+		return;
+	for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
+		AVFrame* other = s->DPB[i].frame;
+		if (other != NULL && other->buf[0] != NULL
+			&& other->buf[0]->buffer == frame->buf[0]->buffer) {
+			other->flags |= AV_FRAME_FLAG_CORRUPT;
+			other->decode_error_flags |= FF_DECODE_ERROR_INVALID_BITSTREAM;
+		}
+	}
+	if (s->output_frame != NULL && s->output_frame->buf[0] != NULL
+		&& s->output_frame->buf[0]->buffer == frame->buf[0]->buffer) {
+		s->output_frame->flags |= AV_FRAME_FLAG_CORRUPT;
+		s->output_frame->decode_error_flags |= FF_DECODE_ERROR_INVALID_BITSTREAM;
+	}
+}
+
+
+/* Waits for the pending picture and converts it into its frame. A picture
+   the block failed sets ctx->failed. */
+static void
+finish_pending(AVCodecContext* avctx, HEVCContext* s, int threaded)
+{
+	RpividContext* ctx = avctx->internal->hwaccel_priv_data;
+	RpividPending* pending = &ctx->pending;
+	RpividResult result;
+	int64_t start;
+	int ret;
+
+	if (pending->buffer == NULL)
+		return;
+
+	start = av_gettime_relative();
+	ret = ff_rpivid_device_wait(ctx->device, pending->job, -1, &result);
+	ctx->wait_time += av_gettime_relative() - start;
+	if (ret == 0)
+		ret = result.result;
+	if (ret == 0) {
+		start = av_gettime_relative();
+		convert(avctx, ctx, pending->buffer, pending->frame, threaded);
+		ctx->convert_time += av_gettime_relative() - start;
+		ctx->pictures++;
+		ctx->phase1_time += result.phase1_time;
+		ctx->phase2_time += result.phase2_time;
+		if (result.phase1_runs > 1)
+			ctx->phase1_reruns += result.phase1_runs - 1;
+		if (ctx->pictures == 1) {
+			av_log(avctx, AV_LOG_INFO, "rpivid: first picture on the block: %"
+				PRIu64 " us (queued %" PRIu64 ", phase 1 %" PRIu64 ", phase 2 %"
+				PRIu64 ")\n", result.queue_time + result.phase1_time
+					+ result.phase2_time, result.queue_time, result.phase1_time,
+				result.phase2_time);
+		}
+	} else {
+		av_log(avctx, AV_LOG_ERROR, "rpivid: the block failed a picture: %s "
+			"(CFSTATUS %" PRIu32 ", STATUS %#" PRIx32 ", %" PRIu32 " phase-1 "
+			"runs)\n", av_err2str(ret), result.command_status, result.status,
+			result.phase1_runs);
+		mark_failed(s, pending->frame);
+		ctx->late_failures++;
+		ctx->failed = 1;
+	}
+
+	buffer_unref(ctx->pool, pending->buffer);
+	av_frame_free(&pending->frame);
+	memset(pending, 0, sizeof(*pending));
+}
+
+
+void
+ff_rpivid_hevc_drain(AVCodecContext* avctx)
+{
+	if (ff_rpivid_hevc_active(avctx))
+		finish_pending(avctx, avctx->priv_data, 1);
 }
 
 
@@ -502,9 +723,10 @@ fill_picture_params(RpividContext* ctx, const HEVCContext* s)
 int
 ff_rpivid_hevc_picture_ok(AVCodecContext* avctx)
 {
-	const HEVCContext* s = avctx->priv_data;
+	HEVCContext* s = avctx->priv_data;
 	RpividContext* ctx = avctx->internal->hwaccel_priv_data;
 	RpividFrame* frame = s->ref->hwaccel_picture_private;
+	RpividBitstream* bitstream;
 	size_t needed = 64;
 	char why[192];
 	int i, segments = 0, pictures = 0;
@@ -533,14 +755,23 @@ ff_rpivid_hevc_picture_ok(AVCodecContext* avctx)
 	}
 	ctx->one_slice_segment = segments <= (pictures > 0 ? pictures : 1);
 
-	if (ctx->bitstream.size < needed) {
-		if (ctx->bitstream.handle != 0)
-			ff_rpivid_device_delete(ctx->device, ctx->bitstream.handle);
-		memset(&ctx->bitstream, 0, sizeof(ctx->bitstream));
+	/* the other bitstream buffer: the block may still read the last one; this
+	   one's picture is done unless it is the pending one */
+	ctx->bitstream_index ^= 1;
+	bitstream = &ctx->bitstreams[ctx->bitstream_index];
+	if (ctx->pending.buffer != NULL
+		&& ctx->pending.job == ctx->bitstream_jobs[ctx->bitstream_index]) {
+		finish_pending(avctx, s, 1);
+		if (ctx->failed)
+			return RPIVID_EARLIER_FAILED;
+	}
+	if (bitstream->size < needed) {
+		if (bitstream->handle != 0)
+			ff_rpivid_device_delete(ctx->device, bitstream->handle);
+		memset(bitstream, 0, sizeof(*bitstream));
 		if (ff_rpivid_device_create_bitstream(ctx->device,
-				FFMAX(needed + needed / 2, MIN_BITSTREAM_SIZE),
-				&ctx->bitstream) < 0) {
-			memset(&ctx->bitstream, 0, sizeof(ctx->bitstream));
+				FFMAX(needed + needed / 2, MIN_BITSTREAM_SIZE), bitstream) < 0) {
+			memset(bitstream, 0, sizeof(*bitstream));
 			av_log(avctx, AV_LOG_WARNING, "rpivid: no bitstream buffer of %zu "
 				"bytes\n", needed);
 			return -1;
@@ -620,10 +851,10 @@ reference_slot(RpividContext* ctx, const HEVCFrame* reference)
 	slot = ctx->slot_count++;
 	ctx->slots[slot] = reference;
 	frame = reference != NULL ? reference->hwaccel_picture_private : NULL;
-	if (frame != NULL && frame->buffer != NULL && frame->decoded)
+	if (frame != NULL && frame->buffer != NULL && frame->submitted)
 		ctx->slot_handles[slot] = frame->buffer->picture.handle;
 	else {
-		/* a picture the stream lost (hevcdec.c made it up) or the block did
+		/* a picture the stream lost (hevcdec.c made it up) or the block does
 		   not decode: the output picture, as Linux does */
 		ctx->slot_handles[slot] = 0;
 		ctx->missing_references++;
@@ -640,6 +871,7 @@ rpivid_decode_slice(AVCodecContext* avctx, const uint8_t* buffer,
 	const SliceHeader* sh = &s->sh;
 	const HEVCPPS* pps = s->ps.pps;
 	RpividContext* ctx = avctx->internal->hwaccel_priv_data;
+	const RpividBitstream* bitstream = &ctx->bitstreams[ctx->bitstream_index];
 	RpividSliceParams slice;
 	uint32_t dataOffset, length, offset;
 	unsigned list, i;
@@ -656,11 +888,11 @@ rpivid_decode_slice(AVCodecContext* avctx, const uint8_t* buffer,
 	while (length > dataOffset && buffer[length - 1] == 0)
 		length--;
 	offset = FFALIGN(ctx->bitstream_used, 64);
-	if (dataOffset >= length || offset + length > ctx->bitstream.size) {
+	if (dataOffset >= length || offset + length > bitstream->size) {
 		ctx->error = "slice data out of range";
 		return 0;
 	}
-	memcpy(ctx->bitstream.data + offset, buffer, length);
+	memcpy(bitstream->data + offset, buffer, length);
 	ctx->bitstream_used = offset + length;
 
 	memset(&slice, 0, sizeof(slice));
@@ -741,13 +973,13 @@ rpivid_decode_slice(AVCodecContext* avctx, const uint8_t* buffer,
 static int
 rpivid_end_frame(AVCodecContext* avctx)
 {
-	const HEVCContext* s = avctx->priv_data;
+	HEVCContext* s = avctx->priv_data;
 	const HEVCSPS* sps = s->ps.sps;
 	RpividContext* ctx = avctx->internal->hwaccel_priv_data;
 	RpividFrame* frame = s->ref->hwaccel_picture_private;
 	AVFrame* out = s->ref->frame;
 	RpividJob job;
-	int64_t start;
+	uint64_t id;
 	int count = 0, i, ret;
 
 	if (ctx->error == NULL && ctx->slices == 0)
@@ -762,7 +994,7 @@ rpivid_end_frame(AVCodecContext* avctx)
 	memset(&job, 0, sizeof(job));
 	job.commands = ctx->commands.entries;
 	job.command_count = count;
-	job.bitstream = ctx->bitstream.handle;
+	job.bitstream = ctx->bitstreams[ctx->bitstream_index].handle;
 	job.output = frame->buffer->picture.handle;
 	for (i = 0; i < ctx->slot_count; i++)
 		job.references[i] = ctx->slot_handles[i];
@@ -770,7 +1002,7 @@ rpivid_end_frame(AVCodecContext* avctx)
 		const RpividFrame* collocated = s->collocated_ref != NULL
 			? s->collocated_ref->hwaccel_picture_private : NULL;
 		if (collocated != NULL && collocated->buffer != NULL
-			&& collocated->decoded && collocated->has_mv) {
+			&& collocated->submitted && collocated->has_mv) {
 			job.collocated = collocated->buffer->picture.handle;
 		} else {
 			/* the driver reads zero motion instead */
@@ -781,45 +1013,47 @@ rpivid_end_frame(AVCodecContext* avctx)
 	job.config2 = ff_rpivid_config2(&ctx->picture, ctx->write_mv);
 	job.current_poc = s->poc;
 
-	ret = ff_rpivid_device_decode(ctx->device, &job);
-	if (job.phase1_runs > 1)
-		ctx->phase1_reruns += job.phase1_runs - 1;
+	ret = ff_rpivid_device_submit(ctx->device, &job, &id);
 	if (ret < 0) {
-		av_log(avctx, AV_LOG_ERROR, "rpivid: the block failed picture POC %d: "
-			"%s (CFSTATUS %" PRIu32 " of %d, STATUS %#" PRIx32 ", %" PRIu32
-			" phase-1 runs)\n", s->poc, av_err2str(ret), job.command_status,
-			count, job.status, job.phase1_runs);
+		av_log(avctx, AV_LOG_ERROR, "rpivid: the block refused picture POC %d: "
+			"%s\n", s->poc, av_err2str(ret));
 		ctx->error = "hardware";
 		goto fail;
 	}
-
-	start = av_gettime_relative();
-	if (sps->bit_depth == 8) {
-		ff_rpivid_sand8_to_planar(out->data[0], out->linesize[0], out->data[1],
-			out->linesize[1], out->data[2], out->linesize[2],
-			frame->buffer->picture.luma, frame->buffer->picture.luma_column_stride,
-			frame->buffer->picture.chroma,
-			frame->buffer->picture.chroma_column_stride, sps->width, sps->height);
-	} else {
-		ff_rpivid_sand10_to_planar(out->data[0], out->linesize[0], out->data[1],
-			out->linesize[1], out->data[2], out->linesize[2],
-			frame->buffer->picture.luma, frame->buffer->picture.luma_column_stride,
-			frame->buffer->picture.chroma,
-			frame->buffer->picture.chroma_column_stride, sps->width, sps->height);
-	}
-	frame->decoded = 1;
+	frame->buffer->job = id;
+	frame->submitted = 1;
 	frame->has_mv = ctx->write_mv;
+	ctx->bitstream_jobs[ctx->bitstream_index] = id;
 
-	if (ctx->pictures++ == 0) {
-		av_log(avctx, AV_LOG_INFO, "rpivid: first picture on the block: POC %d, "
-			"%" PRIu64 " us (phase 1 %" PRIu64 ", phase 2 %" PRIu64 ")\n", s->poc,
-			job.phase1_time + job.phase2_time, job.phase1_time, job.phase2_time);
+	/* the picture before this one, while the block decodes this one */
+	finish_pending(avctx, s, 1);
+
+	ctx->pending.frame = av_frame_alloc();
+	if (ctx->pending.frame == NULL || av_frame_ref(ctx->pending.frame, out) < 0) {
+		/* it cannot be converted later: now */
+		RpividResult result;
+
+		av_frame_free(&ctx->pending.frame);
+		ret = ff_rpivid_device_wait(ctx->device, id, -1, &result);
+		if (ret == 0 && result.result == 0)
+			convert(avctx, ctx, frame->buffer, out, 1);
+		else
+			ctx->failed = 1;
+		return 0;
 	}
-	ctx->hardware_time += job.phase1_time + job.phase2_time;
-	ctx->convert_time += av_gettime_relative() - start;
+	buffer_ref(ctx->pool, frame->buffer);
+	ctx->pending.buffer = frame->buffer;
+	ctx->pending.job = id;
+
+	/* hevcdec.c outputs this picture when this call returns (no reordering) */
+	if (ctx->sync || (s->output_frame->buf[0] != NULL
+			&& s->output_frame->buf[0]->buffer == out->buf[0]->buffer)) {
+		finish_pending(avctx, s, !ctx->sync);
+	}
 	return 0;
 
 fail:
+	finish_pending(avctx, s, 1);
 	av_log(avctx, AV_LOG_WARNING, "rpivid: picture POC %d not decoded on the "
 		"block (%s)\n", s->poc, ctx->error);
 	out->decode_error_flags |= FF_DECODE_ERROR_INVALID_BITSTREAM;

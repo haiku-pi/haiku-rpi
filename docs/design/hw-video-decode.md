@@ -1,7 +1,10 @@
 # Hardware video decoding on the Raspberry Pi 4 (HEVC on the rpivid block)
 
-Status (2026-10-20): stages 1-3 written and built (driver, hwaccel in the ffmpeg6 package, test tool),
-host-tested (§6), not yet run on the Pi. Owner's goal: hardware video decode "integrated with the standard video
+Status (2026-10-20): stages 1-3 run on the Pi, bit-exact (first version: synchronous). Then the speed
+work (§8): the driver runs phase 1 of a picture during phase 2 of the one before, the hwaccel converts a
+picture while the block decodes the next, SAND → planar in NEON and on the slice threads; heavy test
+streams (1080p/2160p, Main/Main 10, 20-30 Mbit/s) and hevcdec measuring frames/s and CPU time. Host-tested
+(§6); the Pi numbers are pending. Owner's goal: hardware video decode "integrated with the standard video
 libraries": MediaPlayer → media kit → its ffmpeg plugin → libavcodec decodes on the hardware.
 
 Citation keys:
@@ -111,10 +114,11 @@ clock, interrupt, addresses, pictures decoded) — the stage-1 test is `cat /dev
 | *picture* buffer | block writes (output) and reads (reference), CPU reads | one contiguous area: luma columns, chroma columns, the collocated MV buffer; geometry computed by the kernel from width/height/bit depth; cached and mapped **read-only** into the client (the CPU never dirties it), invalidated by the kernel after each decode into it. `RPIVID_PICTURE_UNCACHED` maps it write-combining instead (no cache maintenance; a diagnostic) |
 | command buffer, PU and coefficient scratch, a zeroed MV buffer | kernel / block only | device-owned, contiguous, grown on demand |
 
-**Decode** (`RPIVID_DECODE`, synchronous, one at a time under the device lock): the client passes
-the command entries (a user pointer), the bitstream handle, the output picture, 16 reference picture
-handles (0 = the output picture, as [L] fills unused slots), the collocated picture, `CONFIG2`,
-`CURRPOC`. The kernel:
+**Decode: a two-stage pipeline** (interface version 2). `RPIVID_SUBMIT` queues a picture and returns
+at once; `RPIVID_WAIT` returns its result once it is done (`RPIVID_DECODE` = both, the synchronous
+form). The client passes the command entries (a user pointer), the bitstream handle, the output
+picture, 16 reference picture handles (0 = the output picture, as [L] fills unused slots), the
+collocated picture, `CONFIG2`, `CURRPOC`. The submit:
 
 1. checks every handle and that all pictures have the output's geometry;
 2. copies the command entries and **validates** them: only phase-1 registers (the 0..0x7c block
@@ -123,24 +127,36 @@ handles (0 = the output picture, as [L] fills unused slots), the collocated pict
    buffer and are rebased to its bus address; every `BFNUM` must stay inside the buffer; `SPS0`'s
    bit depth and CTB size must match the picture; `CONFIG2`'s bit depth, CTB size and MV flags must
    match the buffers (a picture without an MV buffer cannot be written or read as collocated);
-3. writes them to the command buffer, sizes the scratch buffers, runs phase 1 (re-running it up to
-   five times on PU/coefficient exhaustion), then phase 2 with the addresses it owns;
-4. invalidates the output picture's cache lines, returns `STATUS`, `CFSTATUS`, runs and times.
+3. queues a job that holds a reference to every buffer it names (a buffer the client deletes stays
+   until no job needs it), and wakes the decode thread. At most 4 jobs per file not waited for.
 
-The wait sleeps on a semaphore the interrupt handler releases, re-checking the controller every
-10 ms (a lost interrupt costs 10 ms, not the picture). A phase that does not finish in 1 s (phase 1)
-or 2 s (phase 2) marks the device **broken**: the clock goes off, every later decode fails, and the
-buffers the block was given are kept for good (a block that stopped may still write them).
+The **decode thread** (one per device, `B_URGENT_DISPLAY_PRIORITY`, woken by the interrupt handler and
+by submits) starts each phase as soon as it can: phase 2 of the oldest picture whose phase 1 is done,
+then phase 1 of the oldest queued picture into a free **scratch set** (PU + coefficient buffers; two
+sets, as [L] keeps several) — so phase 1 of picture N+1 runs while phase 2 reconstructs picture N, the
+block's two engines working at once ([L] claims phase 1 of the next picture while phase 2 runs).
+Phase 1 takes pictures in submission order and phase 2 in phase-1 order: a picture's references
+(submitted before it) are complete before its phase 2 reads them, and a picture buffer that becomes the
+output of a later picture is written only after every earlier picture is done with it. Phase 1 is
+re-run up to five times on PU/coefficient exhaustion (that set grows; only its job uses it). The wait
+invalidates the output picture's cache lines (in the client's time, without the lock: the block goes
+on), and returns `STATUS`, `CFSTATUS`, runs, queue/phase times. The device report counts **phase
+overlaps** (a phase started while the other phase of another picture ran).
+
+While a phase runs the thread re-checks the controller every 10 ms (a lost interrupt costs 10 ms, not
+the picture). A phase that does not finish in 1 s (phase 1) or 2 s (phase 2) marks the device
+**broken**: the clock goes off, every queued picture fails, every later decode fails, and the buffers
+of the pictures in the block are kept for good (a block that stopped may still write them). Closing a
+file waits for its pictures in the pipeline.
 
 ioctl API: `headers/private/drivers/rpivid.h` (`RPIVID_GET_INFO`, `RPIVID_CREATE_BUFFER`,
-`RPIVID_CREATE_PICTURE`, `RPIVID_DELETE_BUFFER`, `RPIVID_DECODE`; `RPIVID_API_VERSION` checked by
-the client). Why the command buffer is built in userland rather than in the kernel (as [L] does from
+`RPIVID_CREATE_PICTURE`, `RPIVID_DELETE_BUFFER`, `RPIVID_DECODE`, `RPIVID_SUBMIT`, `RPIVID_WAIT`;
+`RPIVID_API_VERSION` 2, checked by the client). Why the command buffer is built in userland rather than in the kernel (as [L] does from
 V4L2 controls): ~1000 lines of HEVC-specific programming stay out of the kernel, which keeps the
 security boundary — addresses, buffer bounds, a register whitelist — small; it is the same split as
 V3D (Mesa builds control lists, the kernel validates and relocates).
 
-Not in v1: overlapping phase 1 of picture N+1 with phase 2 of picture N ([L] pipelines them with two
-scratch sets) — the obvious next performance step; zero-copy scanout of the SAND buffers.
+Not done: zero-copy display of the SAND buffers (an overlay that takes SAND, or a GPU shader).
 
 ## 3. libavcodec: the `rpivid` hwaccel and `hevc_rpivid`
 
@@ -148,7 +164,7 @@ Files (ours, MIT, Haiku style; copied into `libavcodec/` by the ffmpeg6 build):
 `patches/ffmpeg6/files/libavcodec/` — `rpivid_hevc.[ch]` (FFmpeg state → parameters, the hwaccel
 callbacks, buffer pools), `rpivid_cmd.[ch]` (parameters → command entries and `CONFIG2`, no OS
 dependency: host testable), `rpivid_device.[ch]` (the ioctls; on any OS but Haiku, "no device"),
-`rpivid_sand.[ch]` (SAND → planar, NEON for 8-bit chroma), `rpivid_haiku.h` (a copy of the uAPI
+`rpivid_sand.[ch]` (SAND → planar, NEON), `rpivid_haiku.h` (a copy of the uAPI
 header). The hooks into FFmpeg's own files are `patches/ffmpeg6/0001-hevc-rpivid.patch` (LGPL, like
 the files it changes).
 
@@ -164,9 +180,32 @@ in first-use order over the picture's lists, a reference the block did not decod
 generated it for a missing picture) points at the output picture as [L] does.
 
 **Pictures.** Each `HEVCFrame` gets a picture buffer through the hwaccel's per-frame private data
-(`frame_priv_data_size`), from a pool keyed by the stream geometry: it lives exactly as long as
-FFmpeg keeps the frame as a reference. `end_frame` decodes, then converts SAND → `yuv420p` (8-bit) or
-`yuv420p10le` (10-bit) into the frame FFmpeg allocated: consumers see a software decoder.
+(`frame_priv_data_size`), from a pool keyed by the stream geometry: it lives as long as FFmpeg keeps
+the frame as a reference (and, until it is converted, as long as the pending picture below needs it:
+the buffers are reference counted). Pictures reach the caller as `yuv420p` (8-bit) or `yuv420p10le`
+(10-bit) in the frames FFmpeg allocated: consumers see a software decoder.
+
+**Pipelining.** `end_frame` of picture N submits N, then converts picture N-1 (the *pending* one: wait,
+SAND → planar) while the block decodes N, and N becomes pending. By the time `end_frame(N)` runs,
+`s->output_frame` already names the frame this `hevc_decode_frame` call returns (output happens at
+frame start), so a frame never leaves the decoder unconverted: N-1 is converted here, N too when it is
+the output (no reordering: low-delay streams get no CPU/block overlap, only the phase overlap of the
+pictures queued). The other finish points: an empty packet (drain, a hook in `hevc_decode_frame`
+before the last frames are output), the hwaccel's uninit (leaving the block, closing), and a
+bitstream buffer about to be refilled (two alternate: the block reads one while the CPU fills the
+other). A picture the block fails *after* its submit (bad data, a timeout) is found at its wait: its
+frames get `AV_FRAME_FLAG_CORRUPT` (set by nothing else in hevcdec.c) and `rpivid_leave` drops them,
+with the pictures up to the next IRAP. `FFMPEG_RPIVID_SYNC=1` waits and converts in each `end_frame`
+(the first version's behaviour, for measurements).
+
+**SAND → planar** (`rpivid_sand.c`): in bands of 16 rows, column by column within a band (each column
+read in order, the band's output still in the cache); NEON for 8-bit (128-byte moves, `vld2` chroma
+split) and 10-bit (`vst3` unpacks a word's three samples in order); row ranges, so the conversion is
+split over the decoder's slice threads (`avctx->execute2`, idle while the block decodes;
+`FFMPEG_RPIVID_CONVERT_THREADS=N` overrides the count). That cuts the wall time, not the CPU time.
+The media kit plugin converts every frame again with swscale (`USE_SWS_FOR_COLOR_SPACE_CONVERSION`)
+into `B_RGB32` (or `B_YCbCr422`): handing it NV12 would save only the chroma split; the copy stays
+until a consumer reads SAND itself.
 
 **Attach and fallback.** At `get_format()`, after the software format is chosen, `hevc_rpivid`
 attaches the hwaccel if the SPS (and the PPSs seen so far) are inside the block's limits, the device
@@ -182,7 +221,7 @@ most). Knobs: the decoder option `rpivid` (0 off, 1 on, 2 every tool) and `FFMPE
 `FFMPEG_RPIVID_UNCACHED=1` maps the pictures write-combining (a diagnostic).
 
 **Threads.** The media kit plugin sets `thread_count = cpu_count`. `hevc_rpivid` offers slice threads
-but not frame threads: frame threading would hand the (thread-unsafe) hwaccel state between thread
+(the SAND conversion uses them) but not frame threads: frame threading would hand the (thread-unsafe) hwaccel state between thread
 contexts on every picture ([FF] `pthread_frame.c`), for no gain since the block decodes one picture
 at a time. The cost: a stream that `hevc_rpivid` decodes on the CPU (outside the block's limits)
 runs without frame threads. Stage 3 removes it: the plugin asks after the first picture whether the
@@ -201,11 +240,14 @@ instead of converting to planar.
   rpivid@arm64` (`build/jam/packages/Haiku`).
 - ffmpeg6: `scripts/build-ffmpeg.sh` (called by `scripts/build-packages.sh`): `scripts/cross-port.sh
   --patches patches/ffmpeg6` applies the hooks patch and copies `patches/ffmpeg6/files/` into the
-  tree; package revision 2 (`ffmpeg6-6.1.6-2`, also in `build/jam/repositories/HaikuPorts/arm64`).
-- Tests: `tools/media-tests/gen-hevc-clips.sh` (host ffmpeg + libx265) and `tools/media-tests/build.sh`
-  (`hevcdec`, plus FFmpeg's libraries in `non-packaged/lib`, which come before the packages' — so an
-  image with the old ffmpeg6 package tests the new one) fill `artifacts/media-tests/hevc/non-packaged`
-  for `mkimage-pi4.sh --add-tree`.
+  tree; package revision 3 (`ffmpeg6-6.1.6-3`: the pipelined hwaccel, driver interface 2; also in
+  `build/jam/repositories/HaikuPorts/arm64`).
+- Tests: `tools/media-tests/gen-hevc-clips.sh` (host ffmpeg + libx265; with the heavy streams about
+  30 MB) and `tools/media-tests/build.sh` (`hevcdec`, `sandbench`, plus FFmpeg's libraries in
+  `non-packaged/lib`, which come before the packages', and the driver in `non-packaged/add-ons`, which
+  the module search takes before the packaged one — so an older image tests the new code) fill
+  `artifacts/media-tests/hevc/non-packaged` for `mkimage-pi4.sh --add-tree`. Host tests:
+  `tools/media-tests/host/host-test.sh`.
 
 ## 6. Stages and tests
 
@@ -214,8 +256,10 @@ instead of converting to planar.
 | 1 | driver probes, clocks the block, reads VERSION | `tools/pi-tests/rpivid.sh`: `RPV ident rpivid: version 0x202 ...` |
 | 2 | one intra picture bit-exact | `hevcdec` on `intra.265` (x265 defaults, 1 I picture): `HEV frame 0 match ...` and `HEV result PASS` |
 | 3 | inter pictures, MediaPlayer | `hevcdec` PASS on `ipb.265`, `weighted.265`, `main10.265`, `hd.mp4`; MediaPlayer plays `hd.mp4` (HDMI) with "rpivid: hardware HEVC decode" in its log |
+| speed | the block clearly worth it | `hevcdec` PASS on `fhd`, `fhd10`, `uhd`, `uhd10` (every picture on the block) and its `bench`/`speed` lines: frames/s and CPU time per frame, block vs CPU decoder; the device report's phase overlaps > 0 |
 
-Host tests (2026-10-20, x86 host, no Pi; FFmpeg built natively with the patch):
+Host tests (2026-10-20, x86 host, no Pi; FFmpeg built natively with the patch;
+`tools/media-tests/host/host-test.sh` rebuilds and reruns all of it):
 - no device (any OS but Haiku): `hevc_rpivid` is picked by `avcodec_find_decoder` and decodes every
   test clip bit for bit like `hevc`;
 - a mock of the driver API that logs every job (command entries, the bitstream CRC per slice,
@@ -228,14 +272,41 @@ Host tests (2026-10-20, x86 host, no Pi; FFmpeg built natively with the patch):
   frame order), under ASan; and their command streams and phase-2 programming are identical, entry
   for entry, with an independent implementation of the same programming that was proved bit-exact
   on this block;
-- faults injected in the mock (a failed picture, no memory for a picture): the stream continues on
-  the CPU, every frame it emits equals the CPU decoder's, and the block is taken again at the next
-  IRAP.
+- faults injected in the mock (a refused picture, a picture failed in the block after its submit,
+  the last one too, no memory for a picture): the stream continues on the CPU, every frame it emits
+  equals the CPU decoder's, and the block is taken again at the next IRAP;
+- the pipelined interface (version 2): the mock decodes a picture only when it is waited for (until
+  then its output holds poison), checks that the bitstream of a queued picture does not change, that
+  no buffer a queued picture names is deleted, and at most two pictures outstanding (with a limit of
+  one the pipelined path trips it: two pictures are in flight); 25 x265 variants, the test clips and
+  the heavy streams bit-exact, pipelined and synchronous, with identical command streams;
+- `sandbench -check`: the SAND conversion (C, and NEON under qemu-aarch64) equals a direct reading of
+  the layout for 11 sizes, both depths, whole, in bands and in row ranges.
 
 ## 7. Risks
 
-- Contiguous memory: a 1080p picture is ~3.4 MB contiguous, a stream needs DPB size + a few. Late
+- Contiguous memory: a 1080p picture is ~3.4 MB contiguous (4.4 MB in 10 bit), a 2160p one ~13 MB
+  (~17 MB), and a stream needs DPB size + a few, plus two scratch sets (~16 MB each at 2160p). Late
   allocations can fail on a fragmented system: the hwaccel then falls back to the CPU (logged).
 - The intermittent mismatch above (§1).
-- Performance: synchronous decode, no phase overlap; the SAND → planar copy costs a few ms per 1080p
-  picture on one core.
+- Performance: see §8; the SAND → planar copy stays (a few ms per 1080p picture of memory traffic).
+- FFmpeg 6.1.6's own HEVC decoder with slice threads is not deterministic on a 16x16-CTB WPP stream
+  (about 1 run in 30 on the host, `hevc` as `hevc_rpivid` on the CPU): upstream's; it matters only
+  for streams `hevc_rpivid` decodes on the CPU.
+
+## 8. Speed
+
+First Pi run (synchronous, 720p `hd.mp4`, light): 1.81 ms per picture on the block + 1.32 ms SAND →
+planar = 3.76 ms per frame end to end, vs 1.57 ms for FFmpeg's CPU decoder with 4 frame threads — the
+block did not pay off on a light clip. What changed:
+
+1. **Phase overlap** in the driver (§2): the block's time per picture becomes max(phase 1, phase 2)
+   instead of their sum.
+2. **CPU/block overlap** in the hwaccel (§3): the CPU converts N-1 and parses N+1 while the block
+   decodes N; the CPU waits only for what is not done yet ("the CPU waited" in the statistics line).
+3. **Conversion**: NEON and slice threads (§3).
+4. **Measurement** (`hevcdec`): per stream, `cpu` (hevc, 4 frame threads), `hw` (pipelined),
+   `hw-1t` (one conversion thread), `hw-sync` (the first version): wall ms and frames/s, and the
+   process's CPU time per frame (getrusage: every thread, user + kernel) — the block's real benefit is
+   the CPU it leaves free. The decode thread's few register writes per phase are the kernel's, not
+   counted. `sandbench` measures the conversion variants alone.

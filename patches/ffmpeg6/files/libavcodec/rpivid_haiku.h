@@ -23,6 +23,15 @@
 	pictures (output and references, with the collocated motion vectors).
 	Both are mapped into the client's team when they are created.
 
+	Decoding is a two-stage pipeline: RPIVID_SUBMIT queues a picture and
+	returns at once; the driver runs phase 1 of a picture while the block
+	reconstructs the one before it (phase 2), and RPIVID_WAIT returns a
+	picture's result once it is decoded - the client reads the output only
+	then. Pictures of one client are decoded in the order they are
+	submitted, so a picture may name earlier, still queued pictures as its
+	references, and a picture buffer may be the output of a new picture while
+	an earlier one still reads it as a reference.
+
 	A copy of Haiku's headers/private/drivers/rpivid.h (the driver's interface);
 	keep the two the same (rpivid_device.c checks the driver's
 	RPIVID_API_VERSION).
@@ -35,9 +44,11 @@
 
 
 #define RPIVID_DEVICE_PATH		"/dev/video/rpivid/0"
-#define RPIVID_API_VERSION		1
+#define RPIVID_API_VERSION		2
 
 #define RPIVID_MAX_REFERENCES	16
+#define RPIVID_MAX_JOBS			4
+	// pictures a client may have submitted and not yet waited for
 
 enum {
 	RPIVID_GET_INFO = B_DEVICE_OP_CODES_END + 0x5250,
@@ -45,6 +56,8 @@ enum {
 	RPIVID_CREATE_PICTURE,
 	RPIVID_DELETE_BUFFER,
 	RPIVID_DECODE,
+	RPIVID_SUBMIT,
+	RPIVID_WAIT,
 };
 
 
@@ -56,6 +69,8 @@ typedef struct rpivid_info {
 	uint32_t	flags;				// RPIVID_INFO_*
 	uint64_t	pictures_decoded;	// since the driver was loaded
 	uint64_t	pictures_failed;
+	uint64_t	overlaps;
+		// phases started while the other phase of another picture ran
 } rpivid_info;
 
 #define RPIVID_INFO_BROKEN		0x01
@@ -111,7 +126,7 @@ typedef struct rpivid_delete_buffer {
 } rpivid_delete_buffer;
 
 
-// RPIVID_DECODE: decodes one picture, synchronously.
+// RPIVID_SUBMIT: queues one picture; RPIVID_DECODE: submits and waits.
 //
 // The command entries may set the phase-1 registers (offsets 0x00 to 0x7c,
 // except VERSION, the scratch buffer and command FIFO registers) and the
@@ -119,7 +134,9 @@ typedef struct rpivid_delete_buffer {
 // arrays. The value of each RPI_BFBASE (0x40) entry is a byte offset into
 // the bitstream buffer, shifted right by 6, and every RPI_BFNUM must keep the
 // slice inside the buffer. Pictures (output, references, collocated) must
-// all have the output's size and bit depth.
+// all have the output's size and bit depth. The entries are copied: the
+// client may reuse them at once; the bitstream buffer is read until the
+// picture is decoded.
 typedef struct rpivid_decode {
 	// in
 	uint64_t	commands;		// user address of command_count entries
@@ -135,13 +152,36 @@ typedef struct rpivid_decode {
 	uint32_t	_reserved0;
 
 	// out
+	uint64_t	job;			// RPIVID_SUBMIT: for RPIVID_WAIT
+	// RPIVID_DECODE: as rpivid_wait
+	uint32_t	status;
+	uint32_t	command_status;
+	uint32_t	phase1_runs;
+	uint32_t	_reserved1;
+	uint64_t	queue_time;
+	uint64_t	phase1_time;
+	uint64_t	phase2_time;
+} rpivid_decode;
+
+
+// RPIVID_WAIT: the result of a submitted picture. B_OK once the picture is
+// done (decoded or failed: result) - its job is then forgotten; B_WOULD_BLOCK
+// or B_TIMED_OUT while it is not. Every submitted job is to be waited for:
+// RPIVID_SUBMIT fails with B_BUSY while RPIVID_MAX_JOBS are not.
+typedef struct rpivid_wait {
+	// in
+	uint64_t	job;
+	int64_t		timeout;		// microseconds; 0: do not wait; < 0: no limit
+
+	// out
+	int32_t		result;			// B_OK: the output picture is decoded
 	uint32_t	status;			// the STATUS register after phase 1
 	uint32_t	command_status;	// CFSTATUS after phase 1 (== command_count: done)
 	uint32_t	phase1_runs;	// > 1: a scratch buffer was enlarged
-	uint32_t	_reserved1;
-	uint64_t	phase1_time;	// microseconds
+	uint64_t	queue_time;		// microseconds, from submit to phase 1
+	uint64_t	phase1_time;	// all runs
 	uint64_t	phase2_time;
-} rpivid_decode;
+} rpivid_wait;
 
 
 #endif	// AVCODEC_RPIVID_HAIKU_H
