@@ -15,7 +15,7 @@ bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise.
 | Audio | 3.5 mm headphone jack through the media kit ("Raspberry Pi headphones", 44.1 kHz stereo); measured on the bench, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ...; **HEVC decoded by the SoC's decoder block** (bit-exact; 1080p at ~115 fps on under half a core, 4K at ~38 fps), the rest in software |
 | CPU | 4 cores (SMP) at 1.5 GHz: the firmware lowers the clocks two minutes after power-on unless asked, so a cpufreq module asks for the maximum (the minimum in the power saving scheduler mode); the firmware still throttles when hot. `cat /dev/power/bcm2835_thermal/0`: temperature, throttling, clocks |
-| Storage | SD card at UHS-I DDR50 (~32 MB/s reads); USB 3 storage through the VL805 (~80–90 MB/s) |
+| Storage | SD card at UHS-I DDR50 (~43 MB/s reads); USB 3 storage through the VL805 (~80–90 MB/s) |
 | USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); the bench's Logitech K120 keyboard and Pixart mouse enumerate and get input devices (`/dev/input/keyboard/usb/0`, `/dev/input/mouse/usb/0`); typing and pointing still need a hands-on check |
 | Network | Gigabit Ethernet (GENET, DHCP); WiFi (BCM43455: scan, WPA2, DHCP, verified by a boot script that joins through net_server, `scripts/wifi-join-image.sh`; joining from Network preferences takes the same path but has not been tried by hand); NFSv4 client |
 | Web | **WebPositive** (HaikuWebKit 1.10, JavaScript JIT on) and NetSurf 3.11, both in the Applications menu: HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders in both |
