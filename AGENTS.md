@@ -45,6 +45,11 @@ scripts/sd-cycle.sh --flash IMG --secs 180 --label x   # flash the Pi's card, bo
 - Size captures to the stage you need, and set the Bash tool timeout above the capture
   (`--secs` + flash time + 120 s).
 - Read results with `scripts/uart-grep.sh` / the log itself; grade by **positive** markers.
+- **A package revision bump has three parts:** the `.hpkg` in `artifacts/packages/` (only the newest
+  revision: `publish-repo.sh` refuses two), the same file copied into `sources/haiku/generated.arm64/download/`
+  (jam builds the image's repository from there), and the version in `build/jam/repositories/HaikuPorts/arm64`.
+  Miss the copy and the image build only warns `AddHaikuImagePackages: package X not available!` and ships
+  without the package — grep the build log for it after every bump.
 
 ## Method (lessons carried over from an earlier Pi 4 OS port, see docs/knowledge/)
 
