@@ -1,0 +1,21 @@
+FindFreetype: take FreeType from the caller when given
+
+When FREETYPE_INCLUDE_DIRS and FREETYPE_LIBRARIES are set (on the CMake command line), use them
+instead of asking pkg-config. scripts/build-stk.sh links a static FreeType (with libpng and zlib)
+into the game; the sysroot's pkg-config may name a shared libfreetype that the image does not have
+(the image has only the bootstrap freetype 2.6.3).
+
+--- a/cmake/FindFreetype.cmake
++++ b/cmake/FindFreetype.cmake
+@@ -9,7 +9,10 @@
+ # FREETYPE_LIBRARIES
+ #     Freetype library list
+ 
+-if(WIN32)
++if(FREETYPE_INCLUDE_DIRS AND FREETYPE_LIBRARIES)
++    # given by the caller (e.g. a static FreeType with its dependencies when cross-compiling)
++    set(FREETYPE_FOUND 1)
++elseif(WIN32)
+     find_path(FREETYPE_INCLUDE_DIRS NAMES freetype/freetype.h PATHS "${PROJECT_SOURCE_DIR}/${DEPENDENCIES}/include/freetype2")
+     find_library(FREETYPE_LIBRARY NAMES freetype libfreetype PATHS "${PROJECT_SOURCE_DIR}/${DEPENDENCIES}/lib")
+     set(FREETYPE_FOUND 1)
