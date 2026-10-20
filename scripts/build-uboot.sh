@@ -21,7 +21,7 @@ mk rpi_4_defconfig
 # (PHY_BROADCOM: the BCM54213PE's driver, which sets the PHY's RGMII delays for the device tree's
 # "rgmii-rxid": receive clock delayed by the PHY, transmit clock by the MAC — patches/u-boot/0002)
 "$src/scripts/config" --file "$src/.config" --enable PHY_BROADCOM --enable USE_BOOTCOMMAND --set-str BOOTCOMMAND \
-	'setenv autoload no; if dhcp; then if tftpboot ${kernel_addr_r} EFI/BOOT/BOOTAA64.EFI; then setenv bootargs ip=${ipaddr}; bootefi ${kernel_addr_r} ${fdtcontroladdr}; fi; fi; bootflow scan'
+	'setenv autoload no; if dhcp; then if tftpboot ${kernel_addr_r} EFI/BOOT/BOOTAA64.EFI; then setenv bootargs ip=${ipaddr}:${serverip}:${gatewayip}:${netmask}; bootefi ${kernel_addr_r} ${fdtcontroladdr}; fi; fi; bootflow scan'
 mk olddefconfig
 mk -j"$(nproc)" > "$root/artifacts/uboot-netboot-build.log" 2>&1
 mkdir -p "$root/artifacts/uboot"

@@ -57,14 +57,17 @@ is the boot volume, nothing is copied to the card.
   modules are unloaded once the boot volume is mounted, so a network module could still come from the
   remote disk. On a network boot the kernel now keeps all network modules loaded.
 - **EFI loader**: any load-option key that was not two characters long made the "ip=" search loop
-  forever (only "ip=" alone worked).
+  forever (only "ip=" alone worked). It also passes the netmask on now.
 
 ## Limits, follow-ups
 
-- The netmask: U-Boot passes only the address; the kernel picks the classful mask (10.42.0.12 →
-  255.0.0.0). Routing on the Pi LAN works; passing the DHCP netmask (`ip=<a>:<server>:<gw>:<mask>`)
-  is a follow-up.
+- The netmask: U-Boot passes `ip=<address>:<server>:<gateway>:<netmask>` and the loader hands the mask
+  on ("net mask", 255.255.255.0 on the bench); before, the kernel picked the classful 255.0.0.0.
 - No DNS resolver on a network boot: net_server does not run DHCP on the boot interface, so the
   resolver stays unconfigured (and Time cannot reach an NTP server by name).
 - Speed: about 90 s to the desktop, a remote disk request per KiB (UDP, one outstanding request).
   Larger requests or several in flight would be faster.
+- The remote_disk driver is in every image now (the same image boots both ways), so an SD boot probes
+  for a remote disk server too: at boot, with no network yet, the probe fails at once ("Network is
+  unreachable"). With a server on the LAN, an SD-booted Pi would also show its disk. Limiting the
+  driver to network boots needs a boot-method flag that outlives the kernel arguments.
