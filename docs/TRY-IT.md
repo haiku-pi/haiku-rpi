@@ -21,7 +21,7 @@ bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise.
 | Web | **WebPositive** (HaikuWebKit 1.10, JavaScript JIT on) and NetSurf 3.11, both in the Applications menu: HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders in both |
 | Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver, the hardware random number generator (feeds `/dev/random`) |
-| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** runs (renders https://www.haiku-os.org/; `scripts/build-firefox.sh`, a test image for now, not yet a package in the image) |
+| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; renders https://www.haiku-os.org/; `scripts/build-firefox.sh`) |
 
 Known limits: no HDMI audio; the games are not packaged (see below).
 
