@@ -29,7 +29,7 @@
 #                                 path includes this directory)
 #   lib/libvulkan.so.1            the Vulkan loader; it finds drivers in the add-ons directories'
 #   add-ons/vulkan/icd.d/         vulkan/icd.d: broadcom_icd.*.json names lib/libvulkan_broadcom.so (V3DV)
-#   bin/gltri bin/glview bin/retrace bin/cursor-move bin/vktest bin/vkcube
+#   bin/gltri bin/glview bin/glview-es bin/retrace bin/cursor-move bin/vktest bin/vkcube
 # Shared-library symlinks are resolved: each library is a file named by its soname.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -196,7 +196,7 @@ if want stage; then
 	    }
 	}
 	JSON
-	for b in gltri glview retrace cursor-move vktest vkcube; do
+	for b in gltri glview glview-es retrace cursor-move vktest vkcube; do
 		cp "$src/bin/$b" "$stage/bin/$b"
 		"$tools-strip" "$stage/bin/$b"
 	done
