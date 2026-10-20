@@ -152,7 +152,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 | Firmware + `config.txt` | pinned `start4.elf` (`scripts/fetch-pi-firmware.sh`); overlays `haiku-v3d`, `haiku-fkms`, `disable-bt` (`scripts/mkimage-pi4.sh`) | ✅ | — | — |
 | U-Boot (`rpi_4_defconfig`, EFI) | `sources/u-boot` + `patches/u-boot/` | ✅ | — | — |
 | Haiku EFI loader → kernel | upstream `haiku_loader.efi`, with the loader fixes listed under SoC | ✅ | SD boot to the desktop in ~80 s; boot bench 10/10 (10-19), 3/3 at KDEBUG level 1 (10-20, 23:50) | SD layout: MBR, p1 FAT32 (firmware, U-Boot, EFI), p2 BFS |
-| Network boot (no SD card) | dnsmasq + TFTP for firmware, U-Boot (netboot build) and loader; boot volume as a remote disk (`drivers/disk/virtual/remote_disk`, host `remote_disk_server`) | 🟡 | desktop at 54.8 s; 15/15 boots at KDEBUG level 1 (10-20, 23:50) | A wedge strikes between about 1 in 8 and 1 in 45 network boots (10-20), and 1 in 17 since the kernel-stack fix of 10-20 23:50: [KNOWN-ISSUES.md](KNOWN-ISSUES.md). A remote disk, not an NFS root: Haiku boots from a block device ([design/netboot.md](design/netboot.md)). 1 KiB per request (16 in flight in the kernel, 8 in the loader). Needs a dedicated LAN and the EEPROM's boot order to try the network |
+| Network boot (no SD card) | dnsmasq + TFTP for firmware, U-Boot (netboot build) and loader; boot volume as a remote disk (`drivers/disk/virtual/remote_disk`, host `remote_disk_server`) | 🟡 | desktop at 54.8 s; 15/15 boots at KDEBUG level 1 (10-20, 23:50) | A wedge strikes between about 1 in 8 and 1 in 45 network boots (10-20), and 1 in 18 since the kernel-stack fix of 10-20 23:50: [KNOWN-ISSUES.md](KNOWN-ISSUES.md). A remote disk, not an NFS root: Haiku boots from a block device ([design/netboot.md](design/netboot.md)). 1 KiB per request (16 in flight in the kernel, 8 in the loader). Needs a dedicated LAN and the EEPROM's boot order to try the network |
 
 ## Ported libraries and applications
 
@@ -209,7 +209,7 @@ From the "Next" list of [log/WEEK-2026-W43.md](log/WEEK-2026-W43.md), in its ord
    and hosting for packages over 100 MB (the games).
 2. **Firefox**: dropped video frames (they happen after decoding: presentation and software compositing;
    H.264 drops most); WebRTC later.
-3. **Open defects**: the network-boot wedge (not cured by the kernel-stack fix of 10-20 23:50: 1 in 17 since); devfs reloading
+3. **Open defects**: the network-boot wedge (not cured by the kernel-stack fix of 10-20 23:50: 1 in 18 since); devfs reloading
    `remote_disk` on a network boot.
 4. **Ports**: native haikuporter builds (H14).
 5. **GPU**: stage 6 (page flips on firmware planes; at most ~15 % at 1080p, low priority) and stage 7

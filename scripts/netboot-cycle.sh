@@ -13,7 +13,9 @@
 # 5 s from power-on (a boot whose serial line went quiet but whose disk reads go on is alive).
 # A boot whose serial line goes quiet for 20 s before app_server set its mode (the network-boot
 # wedge) gets the kernel debugger's break and each CPU's stack crawl, ICIs and interrupts typed
-# into it (uart-capture.py --silence-after); --no-wedge-dump: not.
+# into it (uart-capture.py --silence-after), counted from the kernel's banner on (a slow firmware TFTP
+# stage before it once got the keys typed into U-Boot, which then stopped at its prompt);
+# --no-wedge-dump: not.
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
 img="$HAIKU_RPI_ROOT/artifacts/images/haiku-pi4-regular.img"
@@ -32,7 +34,8 @@ while [ $# -gt 0 ]; do
 	esac
 done
 if [ "$wedgeDump" = 1 ]; then
-	caps+=(--silence-after 20 --silence-disarm 'hardware cursor shown' --silence-send '0:\x1d\x1d\x1dd')
+	caps+=(--silence-after 20 --silence-arm 'Welcome to kernel debugger output' \
+		--silence-disarm 'hardware cursor shown' --silence-send '0:\x1d\x1d\x1dd')
 	for cpu in 0 1 2 3; do
 		caps+=(--silence-send "$((4 + cpu * 4)):cpu $cpu\n" --silence-send "$((5 + cpu * 4)):bt\n")
 	done

@@ -3,7 +3,8 @@
 
     uart-capture.py --log FILE [--dev /dev/ttyUSB0] [--secs N] [--until REGEX]... [--fail REGEX]...
                     [--quiet-secs N] [--send SECS:TEXT]... [--echo]
-                    [--silence-after N --silence-send OFFSET:TEXT... [--silence-disarm REGEX]...]
+                    [--silence-after N --silence-send OFFSET:TEXT... [--silence-arm REGEX]
+                     [--silence-disarm REGEX]...]
 
 Stops after --secs seconds; or as soon as a line matches an --until (exit 0) or a --fail
 (exit 3) regex; or after --quiet-secs of silence once something was received (exit 4).
@@ -15,7 +16,9 @@ in FILE.raw.
 --silence-after N: when the line has been silent for N seconds (after something was received,
 once per capture), type the --silence-send texts, each OFFSET seconds after that moment: the
 kernel debugger's dumps of a boot that stopped, whenever it stops. A line matching a
---silence-disarm regex (the boot got past where it stops) disarms it.
+--silence-disarm regex (the boot got past where it stops) disarms it. With --silence-arm, the
+silence only counts after a line matching that regex (e.g. the kernel's banner): a slow stage
+before it (the firmware's TFTP) is not a stop, and keys typed then would land in U-Boot instead.
 """
 import argparse
 import re
@@ -39,6 +42,7 @@ def main():
     ap.add_argument("--silence-after", type=float, default=0)
     ap.add_argument("--silence-send", action="append", default=[])
     ap.add_argument("--silence-disarm", action="append", default=[])
+    ap.add_argument("--silence-arm")
     a = ap.parse_args()
 
     sends = []
@@ -53,6 +57,8 @@ def main():
     silence_sends.sort()
     disarm = [re.compile(p) for p in a.silence_disarm]
     armed = a.silence_after > 0 and bool(silence_sends)
+    arm_at = re.compile(a.silence_arm) if a.silence_arm else None
+    waiting_arm = armed and arm_at is not None
 
     until = [re.compile(p) for p in a.until]
     fail = [re.compile(p) for p in a.fail]
@@ -72,7 +78,7 @@ def main():
             if a.quiet_secs and last_rx is not None and now - last_rx >= a.quiet_secs:
                 rc = 4
                 break
-            if armed and last_rx is not None and now - last_rx >= a.silence_after:
+            if armed and not waiting_arm and last_rx is not None and now - last_rx >= a.silence_after:
                 armed = False
                 log.write("[%8.3f] uart-capture: %.0f s of silence, sending the --silence-send texts\n"
                           % (now - t0, now - last_rx))
@@ -97,6 +103,8 @@ def main():
                 log.flush()
                 if a.echo:
                     print(stamped, flush=True)
+                if waiting_arm and arm_at.search(text):
+                    waiting_arm = False
                 if armed and any(r.search(text) for r in disarm):
                     armed = False
                 if any(r.search(text) for r in fail):

@@ -133,8 +133,8 @@ scripts/pi-test.sh --regular               # on a bench like ours: flash, boot, 
 
 This is a three-day-old port, not a release. It runs on one bench Pi 4 (4 GB). Open:
 
-- **Network boots** stop about once in 18 to 45 boots, around 54 s in, with the whole machine silent
-  (SD boots are not affected). A kernel-stack fix on 10-20 looked like the cure, until the 17th
+- **Network boots** stop about once in 20 boots, around 54 s in, with the whole machine silent
+  (SD boots are not affected). A kernel-stack fix on 10-20 looked like the cure, until the 16th
   network boot after it stopped the same way.
 - **Not checked by a person:** typing and pointing with the USB keyboard and mouse (they enumerate),
   sound from the headphone jack (the clock is measured), Bluetooth pairing, and whether faint

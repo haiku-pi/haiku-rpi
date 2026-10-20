@@ -251,10 +251,8 @@ output. The hunt so far:
   scrambled.
 - **A candidate.** The kernel-stack fault above — a CPU caught in a cascade with interrupts off would
   stop silently, during heavy thread creation while interrupts arrive — had the right shape. After
-  that fix, 16 network boots ran clean; the 17th wedged (2026-10-21, 00:00). Another plausible hypothesis
-  refuted by counting. The next clue: in every captured wedge the serial output stops in the middle of a
-  line, so the CPU writing to the UART stopped between two characters, as a CPU does when a peripheral access
-  ahead of it on the bus never completes.
+  that fix, 15 network boots ran clean; the 16th wedged (2026-10-21, 00:00). Another plausible hypothesis
+  refuted by counting.
 
 SD boots have never shown it. It is the main open defect.
 
