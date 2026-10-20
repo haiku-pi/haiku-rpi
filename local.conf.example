@@ -20,7 +20,7 @@
 #PEER_SD_IMAGE=/path/to/their/sd-card.img
 # Heavy builds wait for each other on this lock (share it with other projects building on this host)
 #HEAVY_BUILD_LOCK=/tmp/heavy-build.lock
-# Game data for scripts/build-games.sh (not in git): DIR/id1/pak0.pak, DIR/baseq2/pak0.pak
+# Game data for scripts/build-games.sh and build-vkquake.sh (not in git): DIR/id1/pak0.pak, DIR/baseq2/pak0.pak
 #QUAKE_DATA=/path/to/quake
 #QUAKE2_DATA=/path/to/quake2
 # WiFi for test images (scripts/wifi-join-image.sh): the passphrase only lands in the git-ignored image

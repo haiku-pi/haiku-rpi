@@ -12,6 +12,9 @@
 #                                     inside the staging tree, in the environment)
 #   scripts/cross-port.sh RECIPE autotools [configure args...]   (autoreconf -fi first, as recipes do;
 #                                                                 AUTORECONF=0 in the environment: not)
+#   scripts/cross-port.sh --patches DIR RECIPE ...   (DIR/*.patch, ours, applied with -p1 after the
+#                                                     recipe's patches, e.g. patches/libsdl2; and
+#                                                     DIR/files/, copied into the source tree)
 #
 #   e.g. scripts/cross-port.sh sources/haikuports/media-libs/libsdl2/libsdl2-2.32.10.recipe cmake \
 #            -DSDL_STATIC=OFF -DSDL_RPATH=OFF
@@ -20,7 +23,13 @@
 # build/, install/), recreated each run.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-[ $# -ge 2 ] || { echo "usage: $0 RECIPE cmake|meson|autotools|script [args...]" >&2; exit 2; }
+ourPatches=""
+if [ "${1:-}" = --patches ]; then
+	ourPatches="$(realpath "$2")"
+	shift 2
+	[ -d "$ourPatches" ] || { echo "cross-port: no patch directory $ourPatches" >&2; exit 2; }
+fi
+[ $# -ge 2 ] || { echo "usage: $0 [--patches DIR] RECIPE cmake|meson|autotools|script [args...]" >&2; exit 2; }
 recipe="$(realpath "$1")" system="$2"; shift 2
 sysroot="$root/artifacts/sysroot-arm64"
 prefix=/boot/system/non-packaged
@@ -62,6 +71,17 @@ for p in $(field PATCHES | subst); do
 	echo "cross-port: applying $p"
 	patch -s -p1 -d "$work/src" < "$portDir/patches/$p"
 done
+if [ -n "$ourPatches" ]; then
+	for p in "$ourPatches"/*.patch; do
+		echo "cross-port: applying $(basename "$p")"
+		patch -s -p1 -d "$work/src" < "$p"
+	done
+	# DIR/files/: whole source files of ours, copied into the tree (e.g. patches/ffmpeg6/files)
+	if [ -d "$ourPatches/files" ]; then
+		echo "cross-port: adding $(cd "$ourPatches/files" && find . -type f | wc -l) files"
+		cp -a "$ourPatches/files/." "$work/src/"
+	fi
+fi
 
 # the patched, unbuilt sources (package-port.py --source-package)
 cp -a "$work/src" "$work/source"

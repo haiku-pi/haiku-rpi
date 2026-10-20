@@ -7,11 +7,16 @@
 #       DIR/id1/pak0.pak: Quake's shareware data, DIR/baseq2/pak0.pak: Quake II's demo data (not in
 #       git; defaults: QUAKE_DATA and QUAKE2_DATA from local.conf or the environment)
 #
-#   SDL2 2.32.10   HaikuPorts recipe + patchset (scripts/cross-port.sh)
+#   SDL2 2.32.10   HaikuPorts recipe + patchset + patches/libsdl2 (Vulkan windows: SDL_WINDOW_VULKAN,
+#                  SDL_Vulkan_CreateSurface on Mesa's Haiku WSI) (scripts/cross-port.sh); also staged as
+#                  lib/libSDL2-2.0.so.0, which wins over an image's older libsdl2 package (2.32.10-1, no
+#                  Vulkan): non-packaged/lib comes first in LIBRARY_PATH
+#   sdlvk          tools/gl-tests/sdlvk.c: SDL2 + Vulkan smoke test, into bin/ (tools/pi-tests/sdl-vulkan.sh)
 #   QuakeSpasm 0.96.3  HaikuPorts recipe's source, its Makefile (no MP3/Vorbis codecs: no
 #                  libmad/libvorbis yet), into apps/QuakeSpasm with the shareware id1/pak0.pak
 #   Yamagi Quake II 8.60  HaikuPorts recipe + patchset (CMake; no curl/OpenAL yet), into apps/quake2
 #                  as the recipe installs it, with the demo's baseq2/pak0.pak
+#   vkQuake 1.35.0 scripts/build-vkquake.sh, into apps/vkQuake with the shareware id1/pak0.pak
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=/dev/null
@@ -40,8 +45,9 @@ for l in game/libgame.so media/libmedia.so; do
 	cp "$objects/$l" "$sysroot/boot/system/develop/lib/"
 done
 
-"$root/scripts/cross-port.sh" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
-	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF
+"$root/scripts/cross-port.sh" --patches "$root/patches/libsdl2" \
+	"$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
+	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF -DSDL_VULKAN=ON
 
 recipe="$ports/games-fps/quakespasm/quakespasm-0.96.3.recipe"
 "$root/scripts/haikuports-fetch.sh" "$recipe" >/dev/null
@@ -56,8 +62,12 @@ make -C "$quake" -j"$(nproc)" HOST_OS=haiku CC="$tools-gcc --sysroot=$sysroot" S
 echo "build-games: quakespasm built, $(grep -c 'warning:' "$work/build.log" || true) compiler warnings"
 
 rm -rf "$stage"
-mkdir -p "$stage/apps/QuakeSpasm/id1"
-# SDL2 itself is a package (libsdl2, scripts/build-packages.sh) in the pi-mmc image
+mkdir -p "$stage/apps/QuakeSpasm/id1" "$stage/lib" "$stage/bin"
+# SDL2 itself is a package (libsdl2, scripts/build-packages.sh) in the pi-mmc image; this copy has
+# Vulkan for images whose package does not yet
+cp -L "$root/artifacts/cross-ports/libsdl2-2.32.10/install/boot/system/non-packaged/lib/libSDL2-2.0.so.0" \
+	"$stage/lib/"
+"$tools-strip" --strip-unneeded "$stage/lib/libSDL2-2.0.so.0"
 cp "$quake/quakespasm" "$quake/quakespasm.pak" "$stage/apps/QuakeSpasm/"
 cp "$quakeData/id1/pak0.pak" "$stage/apps/QuakeSpasm/id1/"
 # Quake II: the recipe's CMake build has no install target; its INSTALL() copies the binaries
@@ -76,5 +86,19 @@ cp -r "$root/artifacts/cross-ports/yamagi_quake2-8.60/install/boot/system/non-pa
 "$tools-strip" "$stage/apps/quake2/Quake2" "$stage/apps/quake2/Quake2_dedicated" \
 	"$stage"/apps/quake2/*.so "$stage/apps/quake2/baseq2/game.so"
 cp "$quake2Data/baseq2/pak0.pak" "$stage/apps/quake2/baseq2/"
+
+# sdlvk: SDL2's Vulkan path (SDL from the sysroot, the Khronos loader of scripts/build-gl-stack.sh)
+pc() {
+	PKG_CONFIG_LIBDIR="$np/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$sysroot" pkg-config "$@"
+}
+mkdir -p "$root/artifacts/cross-ports/sdlvk"
+# shellcheck disable=SC2046
+"$tools-gcc" --sysroot="$sysroot" -std=gnu11 -O2 -Wall -Wextra -Werror \
+	-I"$root/tools/gl-tests" $(pc --cflags sdl2 vulkan) "$root/tools/gl-tests/sdlvk.c" \
+	-o "$root/artifacts/cross-ports/sdlvk/sdlvk" $(pc --libs sdl2 vulkan) -lm
+cp "$root/artifacts/cross-ports/sdlvk/sdlvk" "$stage/bin/"
+"$tools-strip" "$stage/bin/sdlvk"
+
+"$root/scripts/build-vkquake.sh" --quake-data "$quakeData"
 
 find "$stage" -type f -printf 'build-games: %P %s\n' | sort

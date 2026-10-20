@@ -5,7 +5,8 @@
 #
 #   mesa, mesa_devel, glu, glu_devel       scripts/build-gl-stack.sh + scripts/package-gl-stack.sh
 #   libogg, libvorbis, fluidlite (+_devel) scripts/cross-port.sh + scripts/package-port.py
-#   libsdl2, ffmpeg6                       scripts/cross-port.sh + scripts/package-port.py
+#   libsdl2                                scripts/cross-port.sh + scripts/package-port.py
+#   ffmpeg6                                scripts/build-ffmpeg.sh
 #   zstd (+ zstd_source)                   scripts/cross-port.sh + scripts/package-port.py
 #   gzip, tar, bzip2, unzip                scripts/build-base-ports.sh
 #   netsurf + OpenSSL 3, curl, ...         scripts/build-netsurf.sh
@@ -45,23 +46,15 @@ objects="$root/sources/haiku/generated.arm64/objects/haiku/arm64/release/kits"
 for l in game/libgame.so media/libmedia.so; do
 	cp "$objects/$l" "$root/artifacts/sysroot-arm64/boot/system/develop/lib/"
 done
-"$root/scripts/cross-port.sh" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
-	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF
+# with patches/libsdl2 (Vulkan windows through Mesa's Haiku WSI); revision 2 = with that patch
+"$root/scripts/cross-port.sh" --patches "$root/patches/libsdl2" \
+	"$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
+	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF -DSDL_VULKAN=ON
 "$root/scripts/package-port.py" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" \
-	--devel-bin sdl2-config
+	--revision 2 --devel-bin sdl2-config
 
-# ffmpeg (the media kit's ffmpeg plugin, MediaPlayer): its own decoders + libvorbis; the recipe's other
-# external libraries (lame, opus, speex, theora, openssl, ...) are not ported yet
-"$root/scripts/cross-port.sh" "$ports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe" script '
-./configure --enable-cross-compile --target-os=haiku --arch=aarch64 \
-	--cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --strip="$STRIP" --pkg-config=pkg-config \
-	--prefix=/boot/system/non-packaged --disable-debug --disable-stripping --disable-static \
-	--enable-shared --enable-version3 --enable-pic --enable-libvorbis --disable-ffplay \
-	--disable-doc --extra-cflags="-I$SYSROOT/boot/system/non-packaged/include" \
-	--extra-ldflags="-L$SYSROOT/boot/system/non-packaged/lib"
-make -j"$(nproc)"
-make install DESTDIR="${DEST%/boot/system/non-packaged}"'
-"$root/scripts/package-port.py" "$ports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
+# ffmpeg (the media kit's ffmpeg plugin, MediaPlayer), with HEVC on the Pi 4's decoder block
+"$root/scripts/build-ffmpeg.sh"
 
 # zstd: the packages from Haiku's servers are zstd-compressed, and packagefs and the package kit
 # read them only with jam's zstd feature (zstd_devel + zstd_source: packagefs compiles the decoder)

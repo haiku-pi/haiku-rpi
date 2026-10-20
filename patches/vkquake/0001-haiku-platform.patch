@@ -1,0 +1,210 @@
+Haiku: build and run vkQuake 1.35.0 on Haiku
+
+- arch_def.h: Haiku is a POSIX platform (PLATFORM_UNIX + PLATFORM_HAIKU,
+  platform string "Haiku"); net_sys.h: its struct sockaddr has sa_len.
+- meson.build: sockets are in libnetwork; task affinity only when
+  pthread_setaffinity_np links (Haiku's <sched.h> has CPU_ZERO but libroot no
+  pthread_setaffinity_np); the executable is installed (an install drops the
+  build tree's rpath).
+- sys_sdl_unix.c: no d_type in Haiku's struct dirent (stat the entry instead);
+  no backtrace() in libroot (no stack trace; the debug server reports crashes);
+  the user directory is <B_USER_NONPACKAGED_DATA_DIRECTORY>/vkQuake and the
+  base directory the binary's (Tracker starts programs in the home directory),
+  as QuakeSpasm does on Haiku.
+
+diff -ruN a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -16,7 +16,9 @@
+ endif
+ 
+ if host_machine.system() != 'windows'
+-    if cc.has_header_symbol('sched.h', 'CPU_ZERO', prefix: '#define _GNU_SOURCE')
++    if cc.has_header_symbol('sched.h', 'CPU_ZERO', prefix: '#define _GNU_SOURCE') and \
++            cc.has_function('pthread_setaffinity_np', prefix: '#define _GNU_SOURCE\n#include <pthread.h>',
++                dependencies: dependency('threads'))
+         message('Info: Task affinity support enabled.')
+         add_project_arguments('-D_GNU_SOURCE', language: 'c')
+     else
+@@ -314,6 +316,11 @@
+     sdl_dep,
+ ]
+ 
++if host_machine.system() == 'haiku'
++    # BSD sockets are in libnetwork
++    deps += cc.find_library('network')
++endif
++
+ if host_machine.system() == 'windows'
+     foreach syslib : ['ws2_32', 'winmm', 'dbghelp']
+         deps += cc.find_library(syslib)
+@@ -442,4 +449,5 @@
+     include_directories : incdirs,
+     c_args : cflags,
+     c_pch : 'Quake/quakedef.h',
+-    win_subsystem : 'windows')
++    win_subsystem : 'windows',
++    install : true)
+diff -ruN a/Quake/arch_def.h b/Quake/arch_def.h
+--- a/Quake/arch_def.h
++++ b/Quake/arch_def.h
+@@ -75,12 +75,18 @@
+ #if defined(__unix) || defined(__unix__) || defined(unix) || defined(__linux__) || defined(__linux) || defined(__FreeBSD__) || defined(__DragonFly__) || \
+ 	defined(__FreeBSD_kernel__) /* Debian GNU/kFreeBSD */ || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__hpux) || defined(__hpux__) ||      \
+ 	defined(_hpux) || defined(__sun) || defined(sun) || defined(__sgi) || defined(sgi) || defined(__sgi__) || defined(__GNU__) /* GNU/Hurd */ ||         \
+-	defined(__QNX__) || defined(__QNXNTO__)
++	defined(__QNX__) || defined(__QNXNTO__) || defined(__HAIKU__)
+ #if !defined(PLATFORM_UNIX)
+ #define PLATFORM_UNIX 1
+ #endif
+ #endif
+ 
++#if defined(__HAIKU__) /* a POSIX system, not a unix */
++#if !defined(PLATFORM_HAIKU)
++#define PLATFORM_HAIKU 1
++#endif
++#endif
++
+ #endif /* PLATFORM_xxx */
+ 
+ #if defined(PLATFORM_OSX) /* OS X is unix-based */
+@@ -145,6 +151,8 @@
+ #define PLATFORM_STRING "RiscOS"
+ #elif defined(__GNU__)
+ #define PLATFORM_STRING "GNU/Hurd"
++#elif defined(PLATFORM_HAIKU)
++#define PLATFORM_STRING "Haiku"
+ #elif defined(PLATFORM_UNIX)
+ #define PLATFORM_STRING "Unix"
+ #else
+diff -ruN a/Quake/net_sys.h b/Quake/net_sys.h
+--- a/Quake/net_sys.h
++++ b/Quake/net_sys.h
+@@ -29,7 +29,8 @@
+ #include <stddef.h>
+ #include <limits.h>
+ 
+-#if defined(PLATFORM_BSD) || defined(PLATFORM_OSX) || defined(PLATFORM_AMIGA) /* bsdsocket.library */ || defined(__GNU__) /* GNU/Hurd */ || defined(__riscos__)
++#if defined(PLATFORM_BSD) || defined(PLATFORM_OSX) || defined(PLATFORM_AMIGA) /* bsdsocket.library */ || defined(__GNU__) /* GNU/Hurd */ || defined(__riscos__) || \
++	defined(PLATFORM_HAIKU)
+ /* struct sockaddr has unsigned char sa_len as the first member in BSD
+  * variants and the family member is also an unsigned char instead of an
+  * unsigned short. This should matter only when PLATFORM_UNIX is defined,
+diff -ruN a/Quake/sys_sdl_unix.c b/Quake/sys_sdl_unix.c
+--- a/Quake/sys_sdl_unix.c
++++ b/Quake/sys_sdl_unix.c
+@@ -28,12 +28,20 @@
+ #include <sys/types.h>
+ #include <errno.h>
+ #include <unistd.h>
++#ifndef PLATFORM_HAIKU /* backtrace() is in libexecinfo there, not in libroot */
+ #include <execinfo.h>
++#endif
+ #include <signal.h>
+-#ifdef PLATFORM_OSX
++#if defined(PLATFORM_OSX) || defined(PLATFORM_HAIKU)
+ #include <libgen.h> /* dirname() and basename() */
++#endif
++#ifdef PLATFORM_OSX
+ #include <sys/sysctl.h>
+ #endif
++#ifdef PLATFORM_HAIKU
++#include <FindDirectory.h>
++#include <fs_info.h>
++#endif
+ #include <sys/stat.h>
+ #include <sys/time.h>
+ #include <fcntl.h>
+@@ -206,8 +214,15 @@
+ {
+ 	q_strlcpy (find->base.name, find->data->d_name, sizeof (find->base.name));
+ 	find->base.attribs = 0;
++#ifdef DT_DIR
+ 	if (find->data->d_type & DT_DIR)
+ 		find->base.attribs |= FA_DIRECTORY;
++#else
++	/* no d_type (Haiku): ask the file system */
++	struct stat st;
++	if (fstatat (dirfd (find->handle), find->data->d_name, &st, 0) == 0 && S_ISDIR (st.st_mode))
++		find->base.attribs |= FA_DIRECTORY;
++#endif
+ }
+ 
+ static struct dirent *readdir_filtered (DIR *handle, const char *ext)
+@@ -285,6 +300,8 @@
+ static char userdir[MAX_OSPATH];
+ #ifdef PLATFORM_OSX
+ #define SYS_USERDIR "Library/Application Support/vkQuake"
++#elif defined(PLATFORM_HAIKU)
++#define SYS_USERDIR "vkQuake" /* in the user's non-packaged data directory */
+ #else
+ #define SYS_USERDIR ".vkquake"
+ #endif
+@@ -332,6 +349,19 @@
+ 	if (Sys_GetUserdirArgs (argc, argv, dst, dstsize))
+ 		return;
+ 
++#ifdef PLATFORM_HAIKU
++	{
++		char buffer[B_PATH_NAME_LENGTH];
++
++		if (find_directory (B_USER_NONPACKAGED_DATA_DIRECTORY, dev_for_path ("/boot"), true, buffer, sizeof (buffer)) == B_OK)
++			home_dir = buffer;
++		if (home_dir == NULL || strlen (home_dir) + strlen (SYS_USERDIR) + 50 >= dstsize)
++			Sys_Error ("Couldn't determine userspace directory");
++		q_snprintf (dst, dstsize, "%s/%s", home_dir, SYS_USERDIR);
++		return;
++	}
++#endif
++
+ 	pwent = getpwuid (getuid ());
+ 	if (pwent == NULL)
+ 		perror ("getpwuid");
+@@ -396,6 +426,28 @@
+ 	if (tmp != dst)
+ 		q_strlcpy (dst, tmp, dstsize);
+ }
++#elif defined(PLATFORM_HAIKU)
++/* the directory of the binary: Tracker starts programs in the home directory */
++static void Sys_GetBasedir (char *argv0, char *dst, size_t dstsize)
++{
++	char *tmp;
++
++	if (realpath (argv0, dst) == NULL)
++	{
++		perror ("realpath");
++		if (getcwd (dst, dstsize - 1) == NULL)
++		_fail:
++			Sys_Error ("Couldn't determine current directory");
++	}
++	else
++	{
++		/* strip off the binary name */
++		if (!(tmp = strdup (dst)))
++			goto _fail;
++		q_strlcpy (dst, dirname (tmp), dstsize);
++		free (tmp);
++	}
++}
+ #else
+ static void Sys_GetBasedir (char *argv0, char *dst, size_t dstsize)
+ {
+@@ -608,6 +660,10 @@
+ 
+ 	char *output_buffer = NULL;
+ 
++#ifdef PLATFORM_HAIKU
++	/* no backtrace() in libroot; the debug server reports crashes */
++	output_buffer = q_strcatf (output_buffer, "[no stack trace on Haiku]\n");
++#else
+ 	void *buffer[MAX_STACK_FRAMES];
+ 
+ 	int nb_frames = backtrace (buffer, MAX_STACK_FRAMES);
+@@ -631,6 +687,7 @@
+ 	}
+ 
+ 	free (symbols);
++#endif
+ 
+ 	return output_buffer;
+ 

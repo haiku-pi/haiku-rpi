@@ -1,0 +1,79 @@
+/*
+ * Copyright 2026, Haiku, Inc. All rights reserved.
+ * Distributed under the terms of the MIT License.
+ */
+#ifndef AVCODEC_RPIVID_DEVICE_H
+#define AVCODEC_RPIVID_DEVICE_H
+
+
+/*	The rpivid driver (/dev/video/rpivid/0, Haiku): its buffers and decode
+	call. Built for any other system, opening the device fails, so the
+	decoder stays on the CPU.
+*/
+
+
+#include <stddef.h>
+#include <stdint.h>
+
+
+#define RPIVID_REFERENCE_SLOTS	16
+
+typedef struct RpividDevice RpividDevice;
+
+/* A bitstream buffer: the CPU writes it */
+typedef struct RpividBitstream {
+	uint32_t	handle;
+	uint8_t*	data;
+	size_t		size;
+} RpividBitstream;
+
+/* A picture in the block's SAND layout: the CPU reads it */
+typedef struct RpividPicture {
+	uint32_t		handle;
+	const uint8_t*	luma;
+	const uint8_t*	chroma;
+	uint32_t		luma_column_stride;
+	uint32_t		chroma_column_stride;
+} RpividPicture;
+
+typedef struct RpividJob {
+	const uint64_t*	commands;
+	uint32_t		command_count;
+	uint32_t		bitstream;
+	uint32_t		output;
+	uint32_t		collocated;		/* 0: none */
+	uint32_t		references[RPIVID_REFERENCE_SLOTS];	/* 0: the output */
+	uint32_t		log2_ctb_size;
+	uint32_t		config2;
+	int32_t			current_poc;
+
+	/* results */
+	uint32_t		status;
+	uint32_t		command_status;
+	uint32_t		phase1_runs;
+	uint64_t		phase1_time;	/* microseconds */
+	uint64_t		phase2_time;
+} RpividJob;
+
+
+/* 0, or a negative AVERROR with the reason in why */
+int				ff_rpivid_device_open(RpividDevice** _device, char* why,
+					size_t whySize);
+RpividDevice*	ff_rpivid_device_ref(RpividDevice* device);
+void			ff_rpivid_device_unref(RpividDevice* device);
+uint32_t		ff_rpivid_device_clock_rate(const RpividDevice* device);
+
+int				ff_rpivid_device_create_bitstream(RpividDevice* device,
+					size_t size, RpividBitstream* bitstream);
+/* motion_vectors: the picture can keep its motion vectors (TMVP) */
+int				ff_rpivid_device_create_picture(RpividDevice* device,
+					uint32_t width, uint32_t height, uint32_t bit_depth,
+					int motion_vectors, RpividPicture* picture);
+void			ff_rpivid_device_delete(RpividDevice* device, uint32_t handle);
+
+/* 0, AVERROR(EIO) (the block stopped: it is not used again), or another
+   negative AVERROR (the picture was refused or not decoded) */
+int				ff_rpivid_device_decode(RpividDevice* device, RpividJob* job);
+
+
+#endif /* AVCODEC_RPIVID_DEVICE_H */

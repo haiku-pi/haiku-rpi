@@ -1,0 +1,40 @@
+common: + commands from the command line for the shareware version too
+
+COM_CheckRegistered() set the "cmdline" cvar, which stuffcmds executes, only
+for the registered version, so with the shareware data every "+command" on the
+command line (e.g. "+timedemo demo1", the classic shareware benchmark) was
+silently ignored. Set it first.
+
+diff -ruN b/Quake/common.c c/Quake/common.c
+--- b/Quake/common.c
++++ c/Quake/common.c
+@@ -1687,6 +1687,15 @@
+ 	int h;
+ 	int i;
+ 
++	/* the command line's + commands (stuffcmds) for the shareware version too,
++	   as in id's Quake: "timedemo demo1" is the classic shareware benchmark */
++	for (i = 0; com_cmdline[i]; i++)
++	{
++		if (com_cmdline[i] != ' ')
++			break;
++	}
++	Cvar_SetROM ("cmdline", &com_cmdline[i]);
++
+ 	COM_OpenFile ("gfx/pop.lmp", &h, NULL);
+ 
+ 	if (h == -1)
+@@ -1705,13 +1714,6 @@
+ 
+ 	COM_CloseFile (h);
+ 
+-	for (i = 0; com_cmdline[i]; i++)
+-	{
+-		if (com_cmdline[i] != ' ')
+-			break;
+-	}
+-
+-	Cvar_SetROM ("cmdline", &com_cmdline[i]);
+ 	Cvar_SetROM ("registered", "1");
+ 	Con_Printf ("Playing registered version.\n");
+ }

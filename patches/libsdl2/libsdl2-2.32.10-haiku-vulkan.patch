@@ -1,0 +1,465 @@
+haiku: Vulkan support in the Haiku video driver
+
+Vulkan has no registered Haiku surface extension; Mesa's Haiku window system
+integration takes a BView through VK_EXT_headless_surface, with a
+VkHaikuSurfaceCreateInfoMESA (Mesa's <vulkan/vk_haiku_surface.h>) chained to
+VkHeadlessSurfaceCreateInfoEXT. This adds:
+
+- SDL_VULKAN for Haiku in CMake (SDL_VIDEO_VULKAN in the Haiku video block);
+- SDL_bvulkan.cc: loads libvulkan.so.1 (or SDL_VULKAN_LIBRARY), needs
+  VK_KHR_surface + VK_EXT_headless_surface, creates the surface on the
+  window's Vulkan view, drawable size = that view's size;
+- SDL_BWin: a Vulkan view for SDL_WINDOW_VULKAN windows (made with the
+  window, so it is attached before a surface is created; draws nothing, view
+  color B_TRANSPARENT_COLOR so app_server does not erase the frames), no GL
+  context;
+- relative mouse mode set on the window's current view instead of the GL
+  view, which a Vulkan or framebuffer window does not have (NULL dereference).
+
+Applied after HaikuPorts' libsdl2-2.32.10.patchset (scripts/cross-port.sh --patches).
+
+diff -ruN a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -484,7 +484,7 @@
+ set_option(SDL_RENDER_D3D          "Enable the Direct3D render driver" ${WINDOWS})
+ set_option(SDL_RENDER_METAL        "Enable the Metal render driver" ${APPLE})
+ set_option(SDL_VIVANTE             "Use Vivante EGL video driver" ${UNIX_SYS})
+-dep_option(SDL_VULKAN              "Enable Vulkan support" ON "ANDROID OR APPLE OR LINUX OR WINDOWS" OFF)
++dep_option(SDL_VULKAN              "Enable Vulkan support" ON "ANDROID OR APPLE OR LINUX OR WINDOWS OR HAIKU" OFF)
+ set_option(SDL_METAL               "Enable Metal support" ${APPLE})
+ set_option(SDL_KMSDRM              "Use KMS DRM video driver" ${UNIX_SYS})
+ dep_option(SDL_KMSDRM_SHARED       "Dynamically load KMS DRM support" ON "SDL_KMSDRM" OFF)
+@@ -2434,6 +2434,12 @@
+       list(APPEND EXTRA_LIBS GL)
+       set(HAVE_OPENGL TRUE)
+     endif()
++
++    if(SDL_VULKAN)
++      # the Vulkan loader is loaded at run time; surfaces through VK_EXT_headless_surface
++      set(SDL_VIDEO_VULKAN 1)
++      set(HAVE_VULKAN TRUE)
++    endif()
+   endif()
+ 
+   if(SDL_FILESYSTEM)
+diff -ruN a/src/video/haiku/SDL_bvideo.cc b/src/video/haiku/SDL_bvideo.cc
+--- a/src/video/haiku/SDL_bvideo.cc
++++ b/src/video/haiku/SDL_bvideo.cc
+@@ -40,6 +40,7 @@
+ #include "SDL_bframebuffer.h"
+ #include "SDL_bevents.h"
+ #include "SDL_bmessagebox.h"
++#include "SDL_bvulkan.h"
+ 
+ static SDL_INLINE SDL_BWin *_ToBeWin(SDL_Window *window) {
+     return (SDL_BWin *)(window->driverdata);
+@@ -117,6 +118,14 @@
+     device->GL_DeleteContext = HAIKU_GL_DeleteContext;
+ #endif
+ 
++#ifdef SDL_VIDEO_VULKAN
++    device->Vulkan_LoadLibrary = HAIKU_Vulkan_LoadLibrary;
++    device->Vulkan_UnloadLibrary = HAIKU_Vulkan_UnloadLibrary;
++    device->Vulkan_GetInstanceExtensions = HAIKU_Vulkan_GetInstanceExtensions;
++    device->Vulkan_CreateSurface = HAIKU_Vulkan_CreateSurface;
++    device->Vulkan_GetDrawableSize = HAIKU_Vulkan_GetDrawableSize;
++#endif
++
+     device->StartTextInput = HAIKU_StartTextInput;
+     device->StopTextInput = HAIKU_StopTextInput;
+     device->SetTextInputRect = HAIKU_SetTextInputRect;
+@@ -241,13 +250,16 @@
+     }
+ 
+ 	SDL_BWin *bewin = _ToBeWin(window);
+-	BGLView *_SDL_GLView = bewin->GetGLView();
+ 
++	/* the window's current view: the OpenGL, Vulkan or framebuffer one */
+ 	bewin->Lock();
+-	if (enabled)
+-		_SDL_GLView->SetEventMask(B_POINTER_EVENTS, B_NO_POINTER_HISTORY);
+-	else
+-		_SDL_GLView->SetEventMask(0, 0);
++	BView *view = bewin->GetCurView();
++	if (view != NULL) {
++		if (enabled)
++			view->SetEventMask(B_POINTER_EVENTS, B_NO_POINTER_HISTORY);
++		else
++			view->SetEventMask(0, 0);
++	}
+ 	bewin->Unlock();
+ 
+     return 0;
+diff -ruN a/src/video/haiku/SDL_bvulkan.cc b/src/video/haiku/SDL_bvulkan.cc
+--- a/src/video/haiku/SDL_bvulkan.cc
++++ b/src/video/haiku/SDL_bvulkan.cc
+@@ -0,0 +1,228 @@
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++
++/*
++ * Vulkan on Haiku: Vulkan has no registered Haiku surface extension, so
++ * Mesa's Haiku window system integration takes a BView through
++ * VK_EXT_headless_surface: a VkHaikuSurfaceCreateInfoMESA chained to
++ * VkHeadlessSurfaceCreateInfoEXT::pNext makes the surface that view (Mesa's
++ * <vulkan/vk_haiku_surface.h>). Without that driver the surface is an
++ * ordinary headless one, which presents nowhere.
++ */
++
++#include "../../SDL_internal.h"
++
++#if defined(SDL_VIDEO_DRIVER_HAIKU) && defined(SDL_VIDEO_VULKAN)
++
++#include "SDL_BWin.h"
++#include "SDL_loadso.h"
++#include "SDL_bvulkan.h"
++
++#define DEFAULT_VULKAN "libvulkan.so.1"
++
++/* from Mesa's <vulkan/vk_haiku_surface.h>, which SDL's bundled Vulkan
++   headers do not have */
++#ifndef VK_STRUCTURE_TYPE_HAIKU_SURFACE_CREATE_INFO_MESA
++#define VK_STRUCTURE_TYPE_HAIKU_SURFACE_CREATE_INFO_MESA \
++    ((VkStructureType)1000256900)
++
++typedef struct VkHaikuSurfaceCreateInfoMESA {
++    VkStructureType sType;
++    const void *pNext;
++    VkFlags flags; /* reserved: 0 */
++    void *view;    /* the BView to present into */
++} VkHaikuSurfaceCreateInfoMESA;
++#endif
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++static SDL_INLINE SDL_BWin *_ToBeWin(SDL_Window *window) {
++    return (SDL_BWin *)(window->driverdata);
++}
++
++int HAIKU_Vulkan_LoadLibrary(_THIS, const char *path)
++{
++    VkExtensionProperties *extensions = NULL;
++    Uint32 extensionCount = 0;
++    SDL_bool hasSurfaceExtension = SDL_FALSE;
++    SDL_bool hasHeadlessSurfaceExtension = SDL_FALSE;
++    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = NULL;
++    Uint32 i;
++
++    if (_this->vulkan_config.loader_handle) {
++        return SDL_SetError("Vulkan already loaded");
++    }
++
++    /* Load the Vulkan loader library */
++    if (!path) {
++        path = SDL_getenv("SDL_VULKAN_LIBRARY");
++    }
++    if (!path) {
++        path = DEFAULT_VULKAN;
++    }
++    _this->vulkan_config.loader_handle = SDL_LoadObject(path);
++    if (!_this->vulkan_config.loader_handle) {
++        return -1;
++    }
++    SDL_strlcpy(_this->vulkan_config.loader_path, path,
++                SDL_arraysize(_this->vulkan_config.loader_path));
++    vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)SDL_LoadFunction(
++        _this->vulkan_config.loader_handle, "vkGetInstanceProcAddr");
++    if (!vkGetInstanceProcAddr) {
++        goto fail;
++    }
++    _this->vulkan_config.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
++    _this->vulkan_config.vkEnumerateInstanceExtensionProperties =
++        (PFN_vkEnumerateInstanceExtensionProperties)vkGetInstanceProcAddr(
++            VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
++    if (!_this->vulkan_config.vkEnumerateInstanceExtensionProperties) {
++        goto fail;
++    }
++    extensions = SDL_Vulkan_CreateInstanceExtensionsList(
++        _this->vulkan_config.vkEnumerateInstanceExtensionProperties, &extensionCount);
++    if (!extensions) {
++        goto fail;
++    }
++    for (i = 0; i < extensionCount; i++) {
++        if (SDL_strcmp(VK_KHR_SURFACE_EXTENSION_NAME, extensions[i].extensionName) == 0) {
++            hasSurfaceExtension = SDL_TRUE;
++        } else if (SDL_strcmp(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME, extensions[i].extensionName) == 0) {
++            hasHeadlessSurfaceExtension = SDL_TRUE;
++        }
++    }
++    SDL_free(extensions);
++    if (!hasSurfaceExtension) {
++        SDL_SetError("Installed Vulkan doesn't implement the "
++                     VK_KHR_SURFACE_EXTENSION_NAME " extension");
++        goto fail;
++    }
++    if (!hasHeadlessSurfaceExtension) {
++        SDL_SetError("Installed Vulkan doesn't implement the "
++                     VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME " extension");
++        goto fail;
++    }
++    return 0;
++
++fail:
++    SDL_UnloadObject(_this->vulkan_config.loader_handle);
++    _this->vulkan_config.loader_handle = NULL;
++    return -1;
++}
++
++void HAIKU_Vulkan_UnloadLibrary(_THIS)
++{
++    if (_this->vulkan_config.loader_handle) {
++        SDL_UnloadObject(_this->vulkan_config.loader_handle);
++        _this->vulkan_config.loader_handle = NULL;
++    }
++}
++
++SDL_bool HAIKU_Vulkan_GetInstanceExtensions(_THIS, SDL_Window *window,
++                                            unsigned *count,
++                                            const char **names)
++{
++    static const char *const extensionsForHaiku[] = {
++        VK_KHR_SURFACE_EXTENSION_NAME,
++        VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME,
++    };
++
++    if (!_this->vulkan_config.loader_handle) {
++        SDL_SetError("Vulkan is not loaded");
++        return SDL_FALSE;
++    }
++    return SDL_Vulkan_GetInstanceExtensions_Helper(
++        count, names, SDL_arraysize(extensionsForHaiku), extensionsForHaiku);
++}
++
++SDL_bool HAIKU_Vulkan_CreateSurface(_THIS, SDL_Window *window,
++                                    VkInstance instance,
++                                    VkSurfaceKHR *surface)
++{
++    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
++    PFN_vkCreateHeadlessSurfaceEXT vkCreateHeadlessSurfaceEXT;
++    VkHaikuSurfaceCreateInfoMESA haikuInfo;
++    VkHeadlessSurfaceCreateInfoEXT createInfo;
++    VkResult result;
++
++    if (!_this->vulkan_config.loader_handle) {
++        SDL_SetError("Vulkan is not loaded");
++        return SDL_FALSE;
++    }
++    vkGetInstanceProcAddr = _this->vulkan_config.vkGetInstanceProcAddr;
++    vkCreateHeadlessSurfaceEXT = (PFN_vkCreateHeadlessSurfaceEXT)
++        vkGetInstanceProcAddr(instance, "vkCreateHeadlessSurfaceEXT");
++    if (!vkCreateHeadlessSurfaceEXT) {
++        SDL_SetError(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME
++                     " extension is not enabled in the Vulkan instance.");
++        return SDL_FALSE;
++    }
++
++    /* the window's view for Vulkan (made with the window when it has
++       SDL_WINDOW_VULKAN); it must stay attached until the surface is
++       destroyed */
++    SDL_zero(haikuInfo);
++    haikuInfo.sType = VK_STRUCTURE_TYPE_HAIKU_SURFACE_CREATE_INFO_MESA;
++    haikuInfo.view = _ToBeWin(window)->CreateVulkanView();
++    SDL_zero(createInfo);
++    createInfo.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT;
++    createInfo.pNext = &haikuInfo;
++    result = vkCreateHeadlessSurfaceEXT(instance, &createInfo, NULL, surface);
++    if (result != VK_SUCCESS) {
++        SDL_SetError("vkCreateHeadlessSurfaceEXT failed: %s",
++                     SDL_Vulkan_GetResultString(result));
++        return SDL_FALSE;
++    }
++    return SDL_TRUE;
++}
++
++void HAIKU_Vulkan_GetDrawableSize(_THIS, SDL_Window *window, int *w, int *h)
++{
++    SDL_BWin *bwin = _ToBeWin(window);
++    BView *view;
++
++    /* the surface's extent is its view's size */
++    if (bwin->Lock()) {
++        view = bwin->GetVulkanView();
++        if (view != NULL) {
++            BRect bounds = view->Bounds();
++            bwin->Unlock();
++            if (w) {
++                *w = (int)bounds.Width() + 1;
++            }
++            if (h) {
++                *h = (int)bounds.Height() + 1;
++            }
++            return;
++        }
++        bwin->Unlock();
++    }
++    SDL_GetWindowSize(window, w, h);
++}
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* SDL_VIDEO_DRIVER_HAIKU && SDL_VIDEO_VULKAN */
++
++/* vi: set ts=4 sw=4 expandtab: */
+diff -ruN a/src/video/haiku/SDL_bvulkan.h b/src/video/haiku/SDL_bvulkan.h
+--- a/src/video/haiku/SDL_bvulkan.h
++++ b/src/video/haiku/SDL_bvulkan.h
+@@ -0,0 +1,54 @@
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++
++#ifndef SDL_BVULKAN_H
++#define SDL_BVULKAN_H
++
++#include "../../SDL_internal.h"
++#include "../SDL_vulkan_internal.h"
++
++#if defined(SDL_VIDEO_DRIVER_HAIKU) && defined(SDL_VIDEO_VULKAN)
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include "../SDL_sysvideo.h"
++
++extern int HAIKU_Vulkan_LoadLibrary(_THIS, const char *path);
++extern void HAIKU_Vulkan_UnloadLibrary(_THIS);
++extern SDL_bool HAIKU_Vulkan_GetInstanceExtensions(_THIS, SDL_Window *window,
++                                                   unsigned *count,
++                                                   const char **names);
++extern SDL_bool HAIKU_Vulkan_CreateSurface(_THIS, SDL_Window *window,
++                                           VkInstance instance,
++                                           VkSurfaceKHR *surface);
++extern void HAIKU_Vulkan_GetDrawableSize(_THIS, SDL_Window *window, int *w, int *h);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* SDL_VIDEO_DRIVER_HAIKU && SDL_VIDEO_VULKAN */
++
++#endif /* SDL_BVULKAN_H */
++
++/* vi: set ts=4 sw=4 expandtab: */
+diff -ruN a/src/video/haiku/SDL_bwindow.cc b/src/video/haiku/SDL_bwindow.cc
+--- a/src/video/haiku/SDL_bwindow.cc
++++ b/src/video/haiku/SDL_bwindow.cc
+@@ -75,6 +75,13 @@
+     int32 winID = _GetBeLooper()->GetID(window);
+     bwin->SetID(winID);
+ 
++#ifdef SDL_VIDEO_VULKAN
++    /* a Vulkan surface needs the view attached when it is created */
++    if (window->flags & SDL_WINDOW_VULKAN) {
++        bwin->CreateVulkanView();
++    }
++#endif
++
+     return 0;
+ }
+ 
+diff -ruN a/src/video/haiku/SDL_BWin.h b/src/video/haiku/SDL_BWin.h
+--- a/src/video/haiku/SDL_BWin.h
++++ b/src/video/haiku/SDL_BWin.h
+@@ -98,6 +98,7 @@
+ 
+         _cur_view = NULL;
+         _SDL_View = NULL;
++        _SDL_VulkanView = NULL;
+ 
+ #ifdef SDL_VIDEO_OPENGL
+         _SDL_GLView = NULL;
+@@ -122,6 +123,10 @@
+             delete _SDL_View;
+             _SDL_View = NULL;
+         }
++        if (_SDL_VulkanView != NULL && _SDL_VulkanView != _cur_view) {
++            delete _SDL_VulkanView;
++            _SDL_VulkanView = NULL;
++        }
+ 
+ #ifdef SDL_VIDEO_OPENGL
+         if (_SDL_GLView) {
+@@ -158,6 +163,8 @@
+     {
+         if (_SDL_GLView != NULL) {
+             SetCurrentView(_SDL_GLView);
++        } else if (_SDL_VulkanView != NULL) {
++            SetCurrentView(_SDL_VulkanView);
+         } else if (_SDL_View != NULL) {
+             SetCurrentView(_SDL_View);
+         } else {
+@@ -188,6 +195,25 @@
+         Unlock();
+     }
+ 
++    /* * * * * Vulkan functionality * * * * */
++    /* The view a Vulkan surface presents into (Mesa's Haiku WSI draws each
++       presented image into it): it draws nothing itself, and a transparent
++       view color keeps app_server from erasing the frames. */
++    BView *CreateVulkanView()
++    {
++        Lock();
++        if (_SDL_VulkanView == NULL) {
++            _SDL_VulkanView = new BView(Bounds(), "SDL Vulkan View",
++                                        B_FOLLOW_ALL_SIDES, 0);
++            _SDL_VulkanView->SetViewColor(B_TRANSPARENT_COLOR);
++            UpdateCurrentView();
++        }
++        Unlock();
++        return _SDL_VulkanView;
++    }
++
++    BView *GetVulkanView() { return _SDL_VulkanView; }
++
+     /* * * * * OpenGL functionality * * * * */
+ #ifdef SDL_VIDEO_OPENGL
+     BGLView *CreateGLView(Uint32 gl_flags)
+@@ -712,6 +738,7 @@
+ 
+     BView *_cur_view;
+     SDL_BView *_SDL_View;
++    BView *_SDL_VulkanView;
+ #ifdef SDL_VIDEO_OPENGL
+     BGLView *_SDL_GLView;
+     Uint32 _gl_type;
