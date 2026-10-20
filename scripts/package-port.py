@@ -17,7 +17,14 @@ Provides come from the sonames, requires from the libraries' NEEDED entries (oth
 sysroot, libstdc++/libgcc_s/libatomic; the system's own libraries need nothing but "haiku"), the
 license and summary from the recipe. --static-suffix renames lib<name>.a to lib<name><SUFFIX>.a
 (fluidlite: "-static", as jam's fluidlite build feature expects). Both packages are also extracted into the
-sysroot's boot/system, as the image will have them. The vendor is the HaikuPorts repository's
+sysroot's boot/system, as the image will have them.
+
+A port installed with the packaged prefix (--system-prefix: install/boot/system, e.g. CPython, whose
+build bakes its prefix into sysconfig) may also have develop/headers/ (to the _devel package as they
+are), lib/<DIR>/ trees that go into the runtime package as they are (--lib-tree DIR, e.g. python3.14:
+the standard library and its lib-dynload modules, ELF objects stripped and their NEEDED entries
+turned into requires) and global writable directories (--global-writable PATH, relative to
+/boot/system). The vendor is the HaikuPorts repository's
 ("Haiku Project"): package_repo refuses another one in it; the packager says who built them.
 """
 
@@ -71,9 +78,12 @@ def resolvable(name):
     return name.replace('-', '_')
 
 
-def package_info(name, version, revision, summary, licenses, copyrights, provides, requires):
+def package_info(name, version, revision, summary, licenses, copyrights, provides, requires,
+        writable=()):
     def block(items):
         return '\n'.join('\t' + i for i in items)
+    writable = ''.join(f'global-writable-files {{\n\t"{w}" directory keep-old\n}}\n'
+        for w in writable)
     licenses = ' '.join('"%s"' % l for l in licenses)
     copyrights = ' '.join('"%s"' % c.replace('"', "'") for c in copyrights)
     return f'''name			{name}
@@ -91,7 +101,7 @@ provides {{
 requires {{
 {block(requires)}
 }}
-'''
+{writable}'''
 
 
 def create(directory, info, out, extract=True):
@@ -123,6 +133,13 @@ def main():
             '(e.g. ca_root_certificates for openssl3 and curl)')
     parser.add_argument('--devel-bin', action='append', default=[],
         help='a program of bin/ that goes into the _devel package (e.g. sdl2-config)')
+    parser.add_argument('--system-prefix', action='store_true',
+        help='the port is installed with prefix /boot/system (install/boot/system), not non-packaged')
+    parser.add_argument('--lib-tree', action='append', default=[],
+        help='a directory of lib/ that goes into the runtime package as it is (python3.14)')
+    parser.add_argument('--global-writable', action='append', default=[],
+        help='a directory of the runtime package, relative to /boot/system, that is writable '
+            '(non-packaged/lib/python3.14/site-packages)')
     args = parser.parse_args()
 
     recipeName = os.path.basename(args.recipe)[:-len('.recipe')]
@@ -133,7 +150,8 @@ def main():
     copyrights = [c.strip() for c in recipe_field(text, 'COPYRIGHT').split('\n') if c.strip()] \
         or [f'The {port} authors']
 
-    install = os.path.join(root, 'artifacts/cross-ports', recipeName, 'install') + nonPackaged
+    install = os.path.join(root, 'artifacts/cross-ports', recipeName, 'install') \
+        + ('/boot/system' if args.system_prefix else nonPackaged)
     if not os.path.isdir(install):
         sys.exit(f'package-port: {install} missing: run scripts/cross-port.sh first')
     work = os.path.join(root, 'artifacts/packages/build', port)
@@ -169,7 +187,10 @@ def main():
             path = os.path.join(binDir, f)
             if f in args.devel_bin:
                 os.makedirs(os.path.join(devel, 'bin'), exist_ok=True)
-                shutil.copy(path, os.path.join(devel, 'bin', f))
+                if os.path.islink(path):
+                    os.symlink(os.readlink(path), os.path.join(devel, 'bin', f))
+                else:
+                    shutil.copy(path, os.path.join(devel, 'bin', f))
                 continue
             target = os.path.join(runtime, 'bin', f)
             if os.path.islink(path):
@@ -195,6 +216,24 @@ def main():
                             print(f'package-port: {path}: has resources, not stripped')
                         else:
                             subprocess.run([tools + 'strip', path], check=True)
+
+    # lib/ trees (python3.14: the standard library, lib-dynload)
+    for tree in args.lib_tree:
+        shutil.copytree(os.path.join(libDir, tree), os.path.join(runtime, 'lib', tree),
+            symlinks=True)
+        for dirpath, _, files in os.walk(os.path.join(runtime, 'lib', tree)):
+            for f in files:
+                path = os.path.join(dirpath, f)
+                # executables and shared objects (not python's config/python.o)
+                head = open(path, 'rb').read(18) if not os.path.islink(path) else b''
+                if head[:4] == b'\x7fELF' and head[16] in (2, 3):
+                    programNeeded.extend(elf_dynamic(path)[1])
+                    subprocess.run([tools + 'strip', '--strip-unneeded', path], check=True)
+
+    # global writable directories: in the package, extracted to the writable location on activation
+    for w in args.global_writable:
+        if os.path.isdir(os.path.join(install, w)):
+            shutil.copytree(os.path.join(install, w), os.path.join(runtime, w), symlinks=True)
 
     provides = [f'{port} = {version}-{args.revision}'] + [f'{p} = {version}' for p in args.provides]
     develProvides = [f'{port}_devel = {version}-{args.revision}']
@@ -222,6 +261,9 @@ def main():
     if os.path.isdir(os.path.join(install, 'include')):
         shutil.copytree(os.path.join(install, 'include'), os.path.join(devel, 'develop/headers'),
             symlinks=True)
+    if os.path.isdir(os.path.join(install, 'develop/headers')):
+        shutil.copytree(os.path.join(install, 'develop/headers'),
+            os.path.join(devel, 'develop/headers'), symlinks=True, dirs_exist_ok=True)
     for f in (sorted(os.listdir(libDir)) if os.path.isdir(libDir) else []):
         if f.endswith('.a'):
             target = f[:-2] + args.static_suffix + '.a'
@@ -274,7 +316,7 @@ def main():
     runtimeFiles = [f for d, _, fs in os.walk(runtime) for f in fs if '/data/licenses' not in d]
     if runtimeFiles:
         create(runtime, package_info(port, version, args.revision, summary, licenses,
-            copyrights, provides, sorted(requires)),
+            copyrights, provides, sorted(requires), args.global_writable),
             os.path.join(out, f'{port}-{version}-{args.revision}-arm64.hpkg'))
         develRequires = [f'{port} == {version}-{args.revision}']
     else:

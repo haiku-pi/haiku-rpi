@@ -1,0 +1,22 @@
+configure.ac: allow cross builds for Haiku
+
+configure refuses a cross build for a host it does not name in its _host_ident cases (the
+_PYTHON_HOST_PLATFORM suffix): Haiku is in the first list (ac_sys_system, from HaikuPorts'
+patchset) but not in this one. With it, _PYTHON_HOST_PLATFORM is haiku-aarch64, the platform tag of
+the extension modules and of _sysconfigdata__haiku_aarch64-*.
+
+HaikuPorts builds natively and never takes this path. Applied after HaikuPorts'
+python3.14-3.14.8.patchset by scripts/build-python.sh, which regenerates configure with autoconf.
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -810,6 +810,9 @@
+ 	*-*-vxworks*)
+ 		_host_ident=$host_cpu
+ 		;;
++	*-*-haiku*)
++		_host_ident=$host_cpu
++		;;
+ 	*-*-emscripten)
+ 		_host_ident=$(emcc -dumpversion | cut -f1 -d-)-$host_cpu
+ 		;;

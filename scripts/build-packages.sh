@@ -11,6 +11,7 @@
 #   gzip, tar, bzip2, unzip                scripts/build-base-ports.sh
 #   netsurf + OpenSSL 3, curl, ...         scripts/build-netsurf.sh
 #   haikuwebkit + libxml2, sqlite, ...     scripts/build-webkit.sh (several hours)
+#   python3.14 (+_devel)                   scripts/build-python.sh (after OpenSSL and sqlite)
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
 #
 #   scripts/build-packages.sh [--sysroot]   (--sysroot: recreate the sysroot first)
@@ -70,6 +71,7 @@ rm -rf "$DEST/share"'
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/build-netsurf.sh"
 "$root/scripts/build-webkit.sh"
+"$root/scripts/build-python.sh"
 "$root/scripts/fetch-any-packages.sh"
 "$root/scripts/make-icu-shim.sh"
 
