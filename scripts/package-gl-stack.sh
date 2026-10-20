@@ -8,7 +8,8 @@
 #
 # Output: artifacts/packages/{mesa,mesa_devel,glu,glu_devel}-<version>-<N>-arm64.hpkg
 #   mesa        libdrm + libglvnd (libGL with BGLView, libEGL, libGLES*, libOpenGL) + Mesa's EGL vendor
-#               library (v3d, softpipe) in add-ons/opengl/egl_vendor.d — one package, as jam's mesa
+#               library (v3d, softpipe) in add-ons/opengl/egl_vendor.d, the Vulkan loader and the V3DV
+#               driver (its manifest in add-ons/vulkan/icd.d) — one package, as jam's mesa
 #               feature extracts only mesa and mesa_devel
 #   mesa_devel  headers (develop/headers/os/opengl, libdrm), develop/lib symlinks, pkg-config files
 #   glu, glu_devel  GLU 9.0.3
@@ -92,6 +93,15 @@ mkdir -p "$d/lib" "$d/add-ons/opengl" "$d/documentation/packages/mesa"
 cp "$stage"/lib/* "$d/lib/"
 cp -r "$stage/add-ons/opengl/egl_vendor.d" "$d/add-ons/opengl/"
 cp "$stage/add-ons/opengl/gl-stack-versions.txt" "$d/documentation/packages/mesa/"
+# the Vulkan driver's manifest, which the loader looks for in add-ons/vulkan/icd.d: the staged one names
+# the driver by its non-packaged path; by its name here, which the loader finds on the library path
+mkdir -p "$d/add-ons/vulkan/icd.d"
+for f in "$stage"/add-ons/vulkan/icd.d/*.json; do
+	sed 's|"library_path": "[^"]*/\(libvulkan_[^"/]*\)"|"library_path": "\1"|' "$f" \
+		> "$d/add-ons/vulkan/icd.d/$(basename "$f")"
+done
+grep -q '"library_path": "libvulkan_' "$d"/add-ons/vulkan/icd.d/*.json \
+	|| { echo "package-gl-stack: no Vulkan driver manifest" >&2; exit 1; }
 packageInfo mesa "$mesaVersion" "Mesa 3D graphics library with the V3D (Raspberry Pi 4) and softpipe drivers" MIT \
 "	mesa = $mesaVersion-$revision compat >= 26
 	lib:libGL = 1.0.0 compat >= 1
