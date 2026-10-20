@@ -49,11 +49,26 @@ faster on the Cortex-A72 (benchmarks decide).
 
 ## Test programs (to be chosen and license-checked at the start)
 
-Only freely redistributable or freely downloadable software whose license allows this use, kept outside git (like
-the Quake data): e.g. open-source Windows builds of 7-Zip, Notepad++, PuTTY, and games with free Windows builds and
-data such as OpenTTD (+ OpenGFX), Freedoom on a Windows engine, SuperTuxKart's Windows release (to compare with our
-native build), and freeware classics whose authors allow redistribution. The list, with each license, goes here
-before any download.
+The owner's guidance (2026-10-21 00:13): test with older, very popular Windows games that are known to run under
+Wine, from their **publicly available demo versions** or archives such as the Internet Archive's
+[classicpcgames](https://archive.org/details/classicpcgames) collection. Nothing is hosted or redistributed
+by this project: the binaries stay outside git and outside our packages, downloaded on the bench only to test,
+and the result is shown as **screenshots or a short video**. Pick something that catches the eye.
+
+Candidates, to be checked against Wine's application database (WineHQ AppDB ratings) and our GPU at the
+start; nearly all are **32-bit x86**, so the WoW64 path (step 4) carries most of them:
+
+| Game (demo) | Why | Graphics path on the V3D |
+|---|---|---|
+| Half-Life (Uplink / the demo) | iconic, rated well under Wine for years | its OpenGL renderer: fits OpenGL 2.1 |
+| Unreal Tournament (1999 demo) | fast 3D, a good speed showcase | OpenGL renderer, or Direct3D 7 via WineD3D |
+| Heroes of Might and Magic III (demo) | 2D, very popular, light on the CPU | DirectDraw (2D) |
+| StarCraft / Warcraft II–III, Diablo II (demos) | Blizzard classics, well known under Wine | DirectDraw (2D); Warcraft III: Direct3D 8 |
+| SimCity 3000 / 4, Need for Speed (demos) | broad recognition | DirectDraw / Direct3D 7–9 via WineD3D |
+| Portal (and similar Direct3D 9 games) | stretch goal | Direct3D 9 shaders via WineD3D on GL 2.1 / GLES 3.1: probably beyond the V3D |
+
+Applications, for completeness: open-source Windows builds of 7-Zip, Notepad++ and PuTTY (freely
+redistributable). Each pick's source and license terms are recorded here before anything is downloaded.
 
 ## Risks
 

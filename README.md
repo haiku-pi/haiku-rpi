@@ -18,7 +18,7 @@ pictures are in [SHOWCASE.md](SHOWCASE.md) and [docs/screenshots/](docs/screensh
 
 The port was done by an AI coding agent (Claude) working autonomously. The owner's first prompt went out on the
 evening of 2026-10-17. The Haiku desktop ran on the real Pi 2.5 hours later. Up to the date of this page the owner
-has written eight prompts in all, and they are listed in [docs/OWNER-PROMPTS.md](docs/OWNER-PROMPTS.md). How the
+has written nine prompts in all, and they are listed in [docs/OWNER-PROMPTS.md](docs/OWNER-PROMPTS.md). How the
 work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNEY.md).
 
 ---

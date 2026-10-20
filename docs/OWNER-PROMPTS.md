@@ -1,6 +1,6 @@
 # The owner's prompts
 
-Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. Eight
+Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. Nine
 messages in three and a half days. The automatic ones are left out: the cron heartbeat that resumes autonomous work
 ("Haiku-Pi heartbeat …"), the weekly upstream-sync cron, task notifications, the context summaries the
 session writes for itself, and two messages from the parallel Phoenix-RTOS session about sharing the bench.
@@ -132,3 +132,14 @@ hardware matrix, the known issues, the list of the fork's changes, the bench des
 ## 8. 2026-10-20 21:50:43 UTC (23:50 CEST)
 
 > Continue the planned work
+
+## 9. 2026-10-20 22:13:26 UTC (00:13 CEST, 10-21): test games for Wine
+
+> When testing Wine you might wanna check https://archive.org/details/classicpcgames or similar sites. We don't
+> intentd to host copies of these Windows games. We just want to test and maybe post a screenshot or short movie
+> showing that it works. So you can aim for some older, highly popular windows games - for many of them there is
+> at least a publically avaliable demo version (e.g. Diablo II, NFS, SimCity, Half-life, HoMM3, Portal, Warcraft,
+> Starcraft, Unreal Tournament... and so on - don't need to have all of them - just some, which are known to work
+> under Wine). Figure out yourself - and make sure we have something attention catching and nice.
+
+Recorded in the Wine plan's test-program section ([design/wine-x86.md](design/wine-x86.md)).
