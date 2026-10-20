@@ -30,8 +30,14 @@ fi
 # would only churn the history (and the checksums pkgman has cached)
 staged="$root/artifacts/publish/staging"
 rm -rf "$staged"; mkdir -p "$staged"
+# GitHub refuses files over 100 MiB: those packages (the games, scripts/package-games.sh) stay out
+maxBytes=100000000
 for f in "$root"/artifacts/packages/*.hpkg; do
 	name="$(basename "$f")"
+	if [ "$(stat -c %s "$f")" -gt "$maxBytes" ]; then
+		echo "publish-repo: $name is over GitHub's file size limit, not published"
+		continue
+	fi
 	if [ -f "$checkout/arm64/packages/$name" ]; then
 		cp "$checkout/arm64/packages/$name" "$staged/"
 	else

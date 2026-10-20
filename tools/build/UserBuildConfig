@@ -78,6 +78,14 @@ if $(HAIKU_PI_DEV) = 1 {
 	AddPackageFilesToHaikuImage system packages : haiku_devel.hpkg : nameFromMetaInfo ;
 }
 
+if $(HAIKU_PI_GAMES) = 1 {
+	# the free games (scripts/package-games.sh): too large for the published repository, so images
+	# carry them; with the GL stack (-sHAIKU_PI_GL=1)
+	Echo "Raspberry Pi games: OpenArena, SuperTuxKart (HAIKU_PI_GAMES)" ;
+	HAIKU_IMAGE_SIZE = 1700 ;
+	AddHaikuImageSystemPackages openarena supertuxkart ;
+}
+
 if $(HAIKU_PI_GL) = 1 {
 	Echo "Raspberry Pi OpenGL packages and applications (HAIKU_PI_GL)" ;
 	AddHaikuImageSystemPackages mesa glu ;

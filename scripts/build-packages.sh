@@ -13,6 +13,8 @@
 #   haikuwebkit + libxml2, sqlite, ...     scripts/build-webkit.sh (several hours)
 #   python3.14 (+_devel)                   scripts/build-python.sh (after OpenSSL and sqlite)
 #   fonts, sounds, firmware, user guide    scripts/fetch-any-packages.sh (x86_64 repository)
+#   openarena, supertuxkart                scripts/package-games.sh (not run here: needs build-games.sh and
+#                                          build-stk.sh; only for -sHAIKU_PI_GAMES=1 images)
 #
 #   scripts/build-packages.sh [--sysroot]   (--sysroot: recreate the sysroot first)
 #
