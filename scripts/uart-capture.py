@@ -3,6 +3,7 @@
 
     uart-capture.py --log FILE [--dev /dev/ttyUSB0] [--secs N] [--until REGEX]... [--fail REGEX]...
                     [--quiet-secs N] [--send SECS:TEXT]... [--echo]
+                    [--silence-after N --silence-send OFFSET:TEXT... [--silence-disarm REGEX]...]
 
 Stops after --secs seconds; or as soon as a line matches an --until (exit 0) or a --fail
 (exit 3) regex; or after --quiet-secs of silence once something was received (exit 4).
@@ -11,6 +12,10 @@ UART SECS seconds after the capture began; e.g. the kernel debugger on Haiku:
 --send '200:\\x1d\\x1d\\x1dd' --send '203:threads\\n'. Lines get a "[  12.345] " host timestamp prefix
 (seconds since the capture began) so boot stages can be timed; the raw bytes are kept too,
 in FILE.raw.
+--silence-after N: when the line has been silent for N seconds (after something was received,
+once per capture), type the --silence-send texts, each OFFSET seconds after that moment: the
+kernel debugger's dumps of a boot that stopped, whenever it stops. A line matching a
+--silence-disarm regex (the boot got past where it stops) disarms it.
 """
 import argparse
 import re
@@ -31,6 +36,9 @@ def main():
     ap.add_argument("--quiet-secs", type=float, default=0)
     ap.add_argument("--send", action="append", default=[])
     ap.add_argument("--echo", action="store_true")
+    ap.add_argument("--silence-after", type=float, default=0)
+    ap.add_argument("--silence-send", action="append", default=[])
+    ap.add_argument("--silence-disarm", action="append", default=[])
     a = ap.parse_args()
 
     sends = []
@@ -38,6 +46,13 @@ def main():
         when, text = item.split(":", 1)
         sends.append((float(when), text.encode("latin-1").decode("unicode_escape").encode("latin-1")))
     sends.sort()
+    silence_sends = []
+    for item in a.silence_send:
+        when, text = item.split(":", 1)
+        silence_sends.append((float(when), text.encode("latin-1").decode("unicode_escape").encode("latin-1")))
+    silence_sends.sort()
+    disarm = [re.compile(p) for p in a.silence_disarm]
+    armed = a.silence_after > 0 and bool(silence_sends)
 
     until = [re.compile(p) for p in a.until]
     fail = [re.compile(p) for p in a.fail]
@@ -57,6 +72,11 @@ def main():
             if a.quiet_secs and last_rx is not None and now - last_rx >= a.quiet_secs:
                 rc = 4
                 break
+            if armed and last_rx is not None and now - last_rx >= a.silence_after:
+                armed = False
+                log.write("[%8.3f] uart-capture: %.0f s of silence, sending the --silence-send texts\n"
+                          % (now - t0, now - last_rx))
+                sends = sorted(sends + [(now - t0 + off, text) for off, text in silence_sends])
             while sends and now - t0 >= sends[0][0]:
                 for byte in sends.pop(0)[1]:
                     port.write(bytes([byte]))
@@ -77,6 +97,8 @@ def main():
                 log.flush()
                 if a.echo:
                     print(stamped, flush=True)
+                if armed and any(r.search(text) for r in disarm):
+                    armed = False
                 if any(r.search(text) for r in fail):
                     rc, done = 3, True
                     break

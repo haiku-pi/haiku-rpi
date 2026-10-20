@@ -1,0 +1,92 @@
+WebGL on Haiku: an OpenGL ES context when desktop GL is too old for it
+
+WebGL needs GLSL 1.50 from a desktop OpenGL context, or OpenGL ES 3. The
+Raspberry Pi 4's V3D gives desktop OpenGL 2.1 in a BGLView (3.1 at most)
+but OpenGL ES 3.1, which BGLView makes with BGL_CONTEXT_ES (haiku-pi's
+libglvnd): when the desktop context's GLSL is older than 1.50, make an ES
+context instead (GLContext tells ES from the version string). The view and
+context creation moves into CreateOffscreenBGL() for the second attempt.
+
+--- a/gfx/gl/GLContextProviderBGL.cpp	2026-10-20 16:35:15.942104483 +0200
++++ b/gfx/gl/GLContextProviderBGL.cpp	2026-10-20 16:35:15.952848458 +0200
+@@ -164,23 +164,10 @@
+   return Some(SymbolLoader(&BGLGetProcAddress));
+ }
+ 
+-already_AddRefed<GLContext> GLContextProviderBGL::CreateHeadless(
+-    const GLContextCreateDesc& aDesc, nsACString* const aOutFailureId) {
+-  BAutolock lock(sBGLGlobalLock);
+-
+-  EnsureBGLDisplayKeeper();
+-
+-  if (!sGLLibrary) {
+-    sGLLibrary = LoadGLLibrary();
+-    if (!sGLLibrary) {
+-      NS_WARNING("Failed to load libGL.so on Haiku!");
+-      *aOutFailureId = "FEATURE_FAILURE_LIBGL_LOAD"_ns;
+-      return nullptr;
+-    }
+-  }
+-
+-  ulong options = BGL_RGB | BGL_ALPHA | BGL_DEPTH | BGL_DOUBLE;
+-
++// An offscreen GL view of the screen's size (at least 512x512) and its context
++static RefPtr<GLContextBGL> CreateOffscreenBGL(const GLContextCreateDesc& aDesc,
++                                               ulong aOptions,
++                                               nsACString* const aOutFailureId) {
+   BScreen screen(B_MAIN_SCREEN_ID);
+   BRect frame = screen.IsValid() ? screen.Frame() : BRect(0, 0, 1023, 767);
+   int32 width = std::max(512, static_cast<int32>(frame.Width() + 1));
+@@ -188,7 +175,7 @@
+ 
+   BRect bounds(0, 0, width - 1, height - 1);
+   auto* glView = new BGLView(bounds, "GeckoWebGLOffscreen", B_FOLLOW_NONE,
+-                             B_WILL_DRAW, options);
++                             B_WILL_DRAW, aOptions);
+   if (!glView) {
+     *aOutFailureId = "FEATURE_FAILURE_BGLVIEW_CREATE"_ns;
+     return nullptr;
+@@ -204,6 +191,43 @@
+     *aOutFailureId = "FEATURE_FAILURE_BGL_INIT"_ns;
+     return nullptr;
+   }
++  return gl;
++}
++
++already_AddRefed<GLContext> GLContextProviderBGL::CreateHeadless(
++    const GLContextCreateDesc& aDesc, nsACString* const aOutFailureId) {
++  BAutolock lock(sBGLGlobalLock);
++
++  EnsureBGLDisplayKeeper();
++
++  if (!sGLLibrary) {
++    sGLLibrary = LoadGLLibrary();
++    if (!sGLLibrary) {
++      NS_WARNING("Failed to load libGL.so on Haiku!");
++      *aOutFailureId = "FEATURE_FAILURE_LIBGL_LOAD"_ns;
++      return nullptr;
++    }
++  }
++
++  ulong options = BGL_RGB | BGL_ALPHA | BGL_DEPTH | BGL_DOUBLE;
++  RefPtr<GLContextBGL> gl = CreateOffscreenBGL(aDesc, options, aOutFailureId);
++  if (!gl) {
++    return nullptr;
++  }
++
++#ifdef BGL_CONTEXT_ES
++  // WebGL needs GLSL 1.50 from a desktop context, or OpenGL ES 3: GPUs whose
++  // desktop OpenGL stops short of 3.2 (the Raspberry Pi 4's V3D: 2.1 here,
++  // 3.1 at most) have ES 3
++  if (!gl->IsGLES() && gl->ShadingLanguageVersion() < 150) {
++    nsAutoCString esFailureId;
++    RefPtr<GLContextBGL> es =
++        CreateOffscreenBGL(aDesc, options | BGL_CONTEXT_ES, &esFailureId);
++    if (es && es->IsGLES()) {
++      gl = es;
++    }
++  }
++#endif
+ 
+   static bool sGfxInfoQueried = false;
+   if (!sGfxInfoQueried) {

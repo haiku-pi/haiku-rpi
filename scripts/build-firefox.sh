@@ -40,8 +40,8 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version=157.0.1
-# the package's revision (2: WebGL loads libGL.so.1)
-revision=2
+# the package's revision (3: WebGL on an OpenGL ES context)
+revision=3
 target=aarch64-unknown-haiku
 src="$root/sources/firefox/firefox-$version"
 out="$root/artifacts/firefox"
