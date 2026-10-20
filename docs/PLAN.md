@@ -32,7 +32,7 @@ SD layout: MBR, p1 FAT32 (type 0x0c/0xef, firmware + U-Boot + EFI), p2 BFS (0xeb
 | H7 | Ethernet | BCM2711 GENET v5 driver (BSD-derived via Haiku's FreeBSD compat layer) | ✅ 603 up / 757 down Mbit/s |
 | H8 | NFS | NFSv4 client (Haiku `nfs4`) mounting the bench export; netboot-to-NFS-root optional | ✅ client; network boot 10-20: boot volume over the network as a remote disk, no SD card writing (an NFS root does not fit Haiku's boot, [design/netboot.md](design/netboot.md)) |
 | H9 | SD performance | ADMA2, high-speed modes, correct DMA addressing (bus vs CPU physical) | ✅ UHS-I DDR50, 31 MB/s |
-| H10 | GPIO + thermal + mailbox | `/dev` interfaces for GPIO, SoC temperature/clocks via VideoCore mailbox | ✅ (+ cpufreq: ARM 1.5 GHz held) |
+| H10 | GPIO + thermal + mailbox | `/dev` interfaces for GPIO, SoC temperature/clocks via VideoCore mailbox | ✅ (+ cpufreq: ARM 1.5 GHz held; hardware RNG feeds the random pool) |
 | H11 | WiFi | BCM43455 over SDIO (brcmfmac-style, firmware load) via the FreeBSD/OpenBSD-derived stack | ✅ 10-18 WPA2 + DHCP; 37 up / 46 down Mbit/s |
 | H12 | GPU | KMS-like modesetting via firmware + V3D 4.2 via Mesa (`v3d` gallium) — accelerated OpenGL | ✅ GL 2.1 / GLES 3.1 on the V3D; QuakeSpasm 30–43 fps at 1080p, Quake II 81–89 at 720p; plane flips / async queues open |
 | H13 | Stability + performance | soak tests, boot time, I/O and graphics benchmarks vs the Phoenix port | ✅ boot bench 10/10, 20-min load soak; ongoing |
