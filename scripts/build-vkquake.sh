@@ -80,4 +80,8 @@ mkdir -p "$stage/id1"
 cp "$binary" "$stage/vkquake"
 "$tools-strip" "$stage/vkquake"
 cp "$quakeData/id1/pak0.pak" "$stage/id1/"
+# V3D-friendly defaults (measured on the Pi 4, timedemo demo1 at 1280x720: 29.0 -> 52.2 fps): no
+# weighted-blended order-independent transparency passes, lightmaps updated on the CPU
+printf '%s\n' "// haiku-rpi: faster on the Pi 4's V3D (scripts/build-vkquake.sh)" "r_oit 0" \
+	"r_gpulightmapupdate 0" > "$stage/id1/autoexec.cfg"
 echo "build-vkquake: vkQuake $version staged in $stage ($(du -sh "$stage" | cut -f1))"
