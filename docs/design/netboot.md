@@ -66,8 +66,8 @@ is the boot volume, nothing is copied to the card.
 - DNS and the internet: the default route goes through the gateway from `ip=` (before, it had none:
   nothing off the Pi LAN was reachable), and netboot-server.sh writes a resolv.conf into the served
   copy (NETBOOT_DNS), since net_server leaves the boot interface without DHCP. `pkgman refresh` works.
-- Speed: about 70–80 s to the desktop since the kernel's remote disk keeps 16 requests (1 KiB each) in
-  flight; the loader's reads (kernel, boot modules) are still one at a time.
+- Speed: about 60 s to the desktop: the kernel's remote disk keeps 16 requests (1 KiB each) in flight,
+  the loader 8 (its part: 25 s → 5.5 s).
 - The remote_disk driver is in every image now (the same image boots both ways), so an SD boot probes
   for a remote disk server too: at boot, with no network yet, the probe fails at once ("Network is
   unreachable"). With a server on the LAN, an SD-booted Pi would also show its disk. Limiting the
