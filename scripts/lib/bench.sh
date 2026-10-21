@@ -57,6 +57,14 @@ hdmi_snap() {
 		-frames:v 1 "$1" </dev/null >/dev/null 2>&1
 }
 
+# hdmi_record <out.mp4> <secs>: a video from the capture card (H.264, the frames as hdmi_snap converts them).
+hdmi_record() {
+	[ -n "$HDMI_GRABBER" ] && [ -e "$HDMI_GRABBER" ] || return 1
+	timeout --foreground $(($2 + 15)) ffmpeg -y -loglevel error -f v4l2 -input_format yuyv422 \
+		-video_size 1920x1080 -i "$HDMI_GRABBER" -t "$2" -vf 'scale=in_color_matrix=bt709:in_range=tv,format=yuv420p' \
+		-c:v libx264 -preset veryfast -crf 23 "$1" </dev/null >/dev/null 2>&1
+}
+
 # peer_netboot_restore: bring the other project's netboot server back (the bench default).
 peer_netboot_restore() {
 	[ -n "$PEER_NETBOOT_UP" ] && [ -x "$PEER_NETBOOT_UP" ] || return 0

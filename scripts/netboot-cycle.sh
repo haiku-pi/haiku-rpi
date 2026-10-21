@@ -5,7 +5,7 @@
 #
 #   scripts/netboot-cycle.sh [--image IMG] [--secs N] [--label L] [--hdmi-every N]
 #                            [--until RE]... [--fail RE]... [--send SECS:TEXT]... [--no-wedge-dump]
-#                            [--keep-disk] [--bootscript FILE] [--add FILE:PATH]...
+#                            [--keep-disk] [--bootscript FILE] [--add FILE:PATH]... [--record START:SECS]
 #
 # IMG: default artifacts/images/haiku-pi4-regular.img (any image of scripts/mkimage-pi4.sh: its FAT
 # partition gives the boot files, the whole image is the disk). Logs: artifacts/uart/<ts>-<label>.log,
@@ -15,6 +15,8 @@
 # --keep-disk: boot the disk the last cycle left (what Haiku wrote stays: a Wine prefix, say) instead of a fresh
 # copy of IMG; --bootscript FILE: install FILE as its UserBootscript first (a new test on a kept disk); --add
 # FILE:PATH: copy FILE onto the disk as PATH (a path of the booted system, under /boot; its directory must exist).
+# --record START:SECS: a video of the HDMI output, SECS long from START s after power-on,
+# artifacts/hdmi/<ts>-<label>.mp4 (no frames meanwhile: the capture card serves one reader).
 # A boot whose serial line goes quiet for 20 s before app_server set its mode (the network-boot
 # wedge) gets the kernel debugger's break and each CPU's stack crawl, ICIs and interrupts typed
 # into it (uart-capture.py --silence-after), counted from the kernel's banner on (a slow firmware TFTP
@@ -23,7 +25,7 @@
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
 img="$HAIKU_RPI_ROOT/artifacts/images/haiku-pi4-regular.img"
-secs=200 label=netboot hdmi_every=20
+secs=200 label=netboot hdmi_every=20 record=""
 caps=()
 wedgeDump=1
 while [ $# -gt 0 ]; do
@@ -36,6 +38,7 @@ while [ $# -gt 0 ]; do
 	--no-wedge-dump) wedgeDump=0; shift ;;
 	--keep-disk) export NETBOOT_KEEP_DISK=1; shift ;;
 	--bootscript) NETBOOT_BOOTSCRIPT="$(realpath "$2")"; export NETBOOT_BOOTSCRIPT; shift 2 ;;
+	--record) record="$2"; shift 2 ;;
 	--add) NETBOOT_ADD="${NETBOOT_ADD:+$NETBOOT_ADD }$(realpath "${2%%:*}"):${2#*:}"; export NETBOOT_ADD; shift 2 ;;
 	*) echo "netboot-cycle: unknown option $1" >&2; exit 2 ;;
 	esac
@@ -53,10 +56,12 @@ uart_dir="$HAIKU_RPI_ROOT/artifacts/uart"; hdmi_dir="$HAIKU_RPI_ROOT/artifacts/h
 mkdir -p "$uart_dir" "$hdmi_dir"
 
 bench_lock
-hdmi_pid="" disk_pid=""
+hdmi_pid="" disk_pid="" record_pid=""
 cleanup() {
 	[ -n "$hdmi_pid" ] && { pkill -P "$hdmi_pid" 2>/dev/null; kill "$hdmi_pid" 2>/dev/null; } || true
 	[ -n "$disk_pid" ] && { pkill -P "$disk_pid" 2>/dev/null; kill "$disk_pid" 2>/dev/null; } || true
+	[ -n "$record_pid" ] && { pkill -P "$record_pid" 2>/dev/null; kill "$record_pid" 2>/dev/null; } || true
+	rm -f "${recording:-}"
 	pi_power off || true
 	"$HAIKU_RPI_ROOT/scripts/netboot-server.sh" down >/dev/null 2>&1 || true
 	peer_netboot_restore
@@ -72,8 +77,19 @@ cap_pid=$!
 sleep 2
 pi_power on
 # (without the bench lock's fd 9: a sleep outliving the cycle would hold the bench)
-( n=0; while sleep "$hdmi_every"; do n=$((n + 1)); hdmi_snap "$hdmi_dir/$ts-$label-$(printf %02d $n).png" || true; done ) 9>&- &
+recording="$hdmi_dir/.recording-$ts"
+( n=0; while sleep "$hdmi_every"; do
+	n=$((n + 1))
+	[ -e "$recording" ] || hdmi_snap "$hdmi_dir/$ts-$label-$(printf %02d $n).png" || true
+done ) 9>&- &
 hdmi_pid=$!
+if [ -n "$record" ]; then
+	# a frame being taken when the recording starts holds the card for up to 5 s
+	( sleep "$((${record%%:*} - 6))"; touch "$recording"; sleep 6
+	  hdmi_record "$hdmi_dir/$ts-$label.mp4" "${record#*:}" && echo "netboot-cycle: video $hdmi_dir/$ts-$label.mp4"
+	  rm -f "$recording" ) 9>&- &
+	record_pid=$!
+fi
 disk_log="$HAIKU_RPI_ROOT/artifacts/netboot/state/disk.log"
 ( t=0; while sleep 5; do t=$((t + 5)); echo "$t s: $(wc -l < "$disk_log" 2>/dev/null || echo 0) requests"; done \
 	> "$uart_dir/$ts-$label-disk.txt" ) 9>&- &

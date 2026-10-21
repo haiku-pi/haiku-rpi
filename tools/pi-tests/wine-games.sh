@@ -73,8 +73,9 @@ want() { [ -z "$list" ] || case " $(echo $list) " in *" $1 "*) return 0 ;; *) re
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
 # Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
-# S Single Scenario, Return Begin (its mouse is DirectInput's relative motion: absolute clicks do not land)
-input="focus:Heroes|wait:90000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wait:30000|key:0x0d"
+# S Single Scenario, Return Begin, Return (the welcome), then the hero walks by the arrow keys (its mouse is
+# DirectInput's relative motion: absolute clicks do not land)
+input="focus:Heroes|wait:90000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wait:30000|key:0x0d|wait:5000|key:0x28|wait:3000|key:0x28|wait:3000|key:0x27|wait:3000|key:0x27|wait:3000|key:0x26|wait:3000|key:0x25"
 want heroes3 && run heroes3 H3 h3demo.exe 360
 input=
 click="Electronic Registration|Register Later|Electronic Registration|Forfeit"
