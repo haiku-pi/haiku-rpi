@@ -2,7 +2,7 @@
 # wine-games.sh — a UserBootscript: 32-bit x86 Windows games under Wine (WoW64, Box64) on the Haiku desktop.
 # The games are free demos unpacked into the test image's non-packaged/data/wine-games (never published:
 # downloaded for the test only, see docs/design/wine-x86.md). Makes a prefix with the x86 emulator if the disk
-# has none (netboot-cycle.sh --keep-disk keeps it for the next run), leaves wined3d on OpenGL (a game may ask for GDI),
+# has none (netboot-cycle.sh --keep-disk keeps it for the next run), sets wined3d's GDI renderer (a game may ask for OpenGL),
 # then runs each game for a while, with a screenshot every 60 s (/boot/home/wine-games-<game>-<n>.png): all of them,
 # or those /boot/home/wine-games.list names.
 # Serial console lines: "WGM ".
@@ -31,9 +31,10 @@ fi
 # (Heroes III) refuses to run from it; Wine maps a folder to its deepest drive, so the games are on D:
 ln -sfn /boot $WINEPREFIX/dosdevices/d:
 say "disk: $(df /boot 2> /dev/null | grep -a -i -E 'free|total' | tr -s ' ' | tr '\n' ' ')"
-# wined3d's renderer: OpenGL by default (EGL on the V3D); a game can ask for the GDI one with
-# WINE_D3D_CONFIG=renderer=gdi in its run line
-wine reg delete 'HKCU\Software\Wine\Direct3D' /v renderer /f > /dev/null 2>&1
+# wined3d's renderer: GDI (DirectDraw games are right there; wined3d's OpenGL one presents a DirectDraw game's
+# front buffer through a path that does not reach the window yet); a game can ask for OpenGL with
+# WINE_D3D_CONFIG=renderer=gl in its run line. Plain OpenGL programs (gltest) use the V3D either way.
+wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d gdi /f > /dev/null 2>&1
 wineserver -w
 
 # GAME DIR "EXE [ARGS]" SECONDS [VAR=VALUE...]   (the variables for that game only, e.g. BOX64_DYNAREC=0); with
@@ -87,7 +88,7 @@ want gltest-arm64 && run gltest-arm64 ../wine-tests "gltest-arm64.exe 20" 60
 want gltest-x86 && run gltest-x86 ../wine-tests "gltest-x86.exe 20" 60
 want gltest-gdi && run gltest-gdi ../wine-tests "gltest-arm64.exe 30 gdi" 50
 want gltest-trace && run gltest-trace ../wine-tests "gltest-arm64.exe 5" 40 WINEDEBUG=err+all,fixme-all,+wgl,+opengl
-want simcity3000-gl && run simcity3000-gl SC3 sc3demo.exe 300
+want simcity3000-gl && run simcity3000-gl SC3 sc3demo.exe 300 WINE_D3D_CONFIG=renderer=gl
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
 # StarCraft (the 1998 shareware CD, installed on the host's reference Wine: tools/wine-ref; 640x480x8): the game
@@ -116,6 +117,7 @@ if want heroes3-nosound; then
 	wine reg delete 'HKCU\Software\Wine\Drivers' /v Audio /f > /dev/null 2>&1
 fi
 want heroes3 && run heroes3 H3 h3demo.exe 360
+want heroes3-gltrace && run heroes3-gltrace H3 h3demo.exe 60 WINEDEBUG=err+all,fixme-all,+wgl WINE_D3D_CONFIG=renderer=gl
 # the same with the sound path traced (Heroes III's menu stopped answering once Wine had a sound driver)
 want heroes3-trace && run heroes3-trace H3 h3demo.exe 180 WINEDEBUG=err+all,fixme-all,+haiku,+mmdevapi,+dsound
 input=
