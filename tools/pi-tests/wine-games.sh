@@ -103,6 +103,11 @@ if want starcraft || want starcraft-interp || want starcraft-safe; then
 	want starcraft-safe && run starcraft-safe SC Starcraft.exe 240 BOX64_DYNAREC_SAFEFLAGS=2 \
 		BOX64_DYNAREC_STRONGMEM=2 BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0
 fi
+# Half-Life: Uplink (Valve's free 1999 demo, installed on the host's reference Wine): its OpenGL renderer on the
+# V3D, in an 800x600 window; New Game (N), the difficulty (Return)
+input="focus:Half-Life|wait:60000|key:0x4e|wait:5000|key:0x0d"
+want halflife && run halflife HL "hldemo.exe -gl -window -width 800 -height 600" 300
+input=
 # Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
 # S Single Scenario, Return Begin, then the welcome's Return (a further Return opens the hero's screen); the hero
 # walks by the numpad (2 down, 6 right, 3 down-right...; the arrow keys scroll the map). Its mouse is DirectInput's

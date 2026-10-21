@@ -45,7 +45,7 @@ wine reg add 'HKCU\Software\Wine\Explorer\Desktops' /v Default /d 1920x1080 /f >
 wineserver -w
 
 cd "$dir"
-env "$@" wine "$exe" > "$shots/$name.txt" 2>&1 &
+env "$@" wine $exe > "$shots/$name.txt" 2>&1 &
 pid=$!
 # CLICK="TITLE|BUTTON[|TITLE|BUTTON]...": those dialogs' buttons pressed as they appear (tools/wine-tests/click.c,
 # built for x86 as artifacts/wine-ref/click-x86.exe)
