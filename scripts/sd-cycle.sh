@@ -41,8 +41,10 @@ mkdir -p "$uart_dir" "$hdmi_dir"
 cap="$HAIKU_RPI_ROOT/scripts/uart-capture.py"
 
 bench_lock
-hdmi_pid=""
+hdmi_pid="" cap_pid=""
 cleanup() {
+	# the capture too: a cycle stopped by a signal would otherwise leave it holding the UART and the bench lock
+	[ -n "$cap_pid" ] && kill "$cap_pid" 2>/dev/null || true
 	[ -n "$hdmi_pid" ] && { pkill -P "$hdmi_pid" 2>/dev/null; kill "$hdmi_pid" 2>/dev/null; } || true
 	pi_power off || true
 	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" down >/dev/null 2>&1 || true

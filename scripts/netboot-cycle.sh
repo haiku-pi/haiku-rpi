@@ -61,8 +61,10 @@ uart_dir="$HAIKU_RPI_ROOT/artifacts/uart"; hdmi_dir="$HAIKU_RPI_ROOT/artifacts/h
 mkdir -p "$uart_dir" "$hdmi_dir"
 
 bench_lock
-hdmi_pid="" disk_pid="" record_pid="" wedge_pid=""
+hdmi_pid="" disk_pid="" record_pid="" wedge_pid="" cap_pid=""
 cleanup() {
+	# the capture too: a cycle stopped by a signal would otherwise leave it holding the UART and the bench lock
+	[ -n "$cap_pid" ] && kill "$cap_pid" 2>/dev/null || true
 	[ -n "$hdmi_pid" ] && { pkill -P "$hdmi_pid" 2>/dev/null; kill "$hdmi_pid" 2>/dev/null; } || true
 	[ -n "$disk_pid" ] && { pkill -P "$disk_pid" 2>/dev/null; kill "$disk_pid" 2>/dev/null; } || true
 	[ -n "$record_pid" ] && { pkill -P "$record_pid" 2>/dev/null; kill "$record_pid" 2>/dev/null; } || true
