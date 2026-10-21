@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
-# build-wine.sh — Wine 11.0 cross-built on this Linux host for Haiku arm64 (H15, docs/design/wine-x86.md):
+# build-wine.sh — Wine cross-built on this Linux host for Haiku arm64 (H15, docs/design/wine-x86.md):
 # the Unix side with the Haiku arm64 cross compiler, the Windows (PE) side with llvm-mingw; packaged as
 # wine and wine_x86 for our arm64 repository.
 #
-#   scripts/build-wine.sh [STEP]          (start at STEP; the earlier ones must have run)
-#   scripts/build-wine.sh --only STEP     (just that step)
+#   [WINE_VERSION=V] scripts/build-wine.sh [STEP]          (start at STEP; the earlier ones must have run)
+#   [WINE_VERSION=V] scripts/build-wine.sh --only STEP     (just that step)
+#
+# WINE_VERSION: a numbered release with a pinned archive below (11.0, the default, or 11.20). Each version
+# has its own patches (patches/wine for 11.0, patches/wine-<V> for the others), patched tree
+# (sources/wine/wine-haiku, sources/wine/wine-haiku-<V>) and output (artifacts/wine, artifacts/wine-<V>):
+# 11.0's paths are those it has always had. Only the default version's packages are copied into
+# artifacts/packages and jam's download directory; another version's stay in its own output directory.
 #
 # Steps:
-#   source     Wine 11.0 (the GitHub mirror's tag archive: winehq.org does not resolve here) and llvm-mingw
-#              20260826 into sources/wine/, both checked against pinned SHA-256s; patches/wine/*.patch on a
-#              copy (sources/wine/wine-haiku: HaikuPorts' Haiku patches brought to 11.0, plus arm64 Haiku
-#              support), then autoreconf
-#   tools      Wine's build tools (winegcc, widl, wrc, winebuild, sfnt2fon) for the host: artifacts/wine/host-tools
+#   source     Wine (the GitHub mirror's tag archive: winehq.org does not resolve here) and llvm-mingw
+#              20260826 into sources/wine/, both checked against pinned SHA-256s; the version's patches on a
+#              copy (sources/wine/wine-haiku[-V]: HaikuPorts' Haiku patches brought to that version, plus arm64
+#              Haiku support, the Media Kit sound driver and OpenGL on the V3D), then autoreconf
+#   tools      Wine's build tools (winegcc, widl, wrc, winebuild, sfnt2fon) for the host: <out>/host-tools
 #   build      configure for aarch64-unknown-haiku with the packaged prefix, as the HaikuPorts recipe
 #              (app-emulation/wine: /boot/system, data in data/wine, manuals in documentation/man), PE side
-#              aarch64 and i386 (32-bit x86 programs through WoW64), and make: artifacts/wine/cross (a
+#              aarch64 and i386 (32-bit x86 programs through WoW64), and make: <out>/cross (a
 #              changed configure line starts it afresh). Window driver: winewayland.drv over X547's
 #              in-process server (scripts/build-wayland.sh), when that stack is built. FreeType (text:
 #              without it every font metric, and so every window's caption and size, is garbage) from the
@@ -25,33 +31,48 @@
 #              winehaiku.drv (patches/wine/0002), a BSoundPlayer per stream into the system mixer; its C++
 #              Media Kit shim (dlls/winehaiku.drv/haiku_player.cpp: Wine's makedep builds no C++) is compiled
 #              here into a static library that configure links into winehaiku.so (HAIKU_AUDIO_LIBS)
-#   install    make install into artifacts/wine/stage/boot/system (what the packages hold): debug info
+#   install    make install into <out>/stage/boot/system (what the packages hold): debug info
 #              stripped, no headers or import libraries, Box64's x86 emulator (scripts/build-box64.sh) as
-#              wowbox64.dll and xtajit.dll. Then the test tree artifacts/wine/install/boot/system/non-packaged:
+#              wowbox64.dll and xtajit.dll. Then the test tree <out>/install/boot/system/non-packaged:
 #              the same files (hard links; Wine finds bin/, lib/wine and data/wine relative to ntdll.so, so
 #              the packaged layout also runs from non-packaged/) plus the test programs of tools/wine-tests
 #              (hello.c, ddtest.c, tone.c, gltest.c for arm64 and x86; click.c, input.c) in data/wine-tests
 #              (~690 MB; a prefix takes ~1 GB more: images need -sHAIKU_IMAGE_SIZE=3500)
-#   package    from the staged tree, zstd-compressed, into artifacts/packages and jam's download directory:
-#                wine-11.0-<rev>-arm64.hpkg      the Unix side, the aarch64 PE side, data/wine, manuals
-#                wine_x86-11.0-<rev>-arm64.hpkg  the i386 PE side and Box64's wowbox64.dll/xtajit.dll
+#   package    from the staged tree, zstd-compressed, into <out> (and, for the default version, artifacts/packages
+#              and jam's download directory):
+#                wine-<V>-<rev>-arm64.hpkg       the Unix side, the aarch64 PE side, data/wine, manuals
+#                wine_x86-<V>-<rev>-arm64.hpkg   the i386 PE side and Box64's wowbox64.dll/xtajit.dll
 #                                                (32-bit x86 programs); requires wine of the same revision
-#              (58 MB each with zstd, under GitHub's 100 MiB limit; `pkgman install wine wine_x86` on the Pi)
+#              (11.0: 58 MB each with zstd, 11.20: 75 and 66 MB; under GitHub's 100 MiB limit; `pkgman install
+#              wine wine_x86` on the Pi)
 #
 # Test: scripts/mkimage-pi4.sh --in <a 3500 MB build's haiku-mmc.image> \
-#           --add-tree artifacts/wine/install/boot/system/non-packaged --bootscript tools/pi-tests/wine-hello.sh
+#           --add-tree <out>/install/boot/system/non-packaged --bootscript tools/pi-tests/wine-hello.sh
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-wineVersion=11.0
-wineSha=f09e8153aa46a581d2b56a5b1363b04832070b9409d9244a68cf482b243ff14a
+# the version built by default, and the only one whose packages go to the shared package directories
+defaultVersion=11.0
+wineVersion="${WINE_VERSION:-$defaultVersion}"
+case "$wineVersion" in
+11.0) wineSha=f09e8153aa46a581d2b56a5b1363b04832070b9409d9244a68cf482b243ff14a ;;
+11.20) wineSha=98b21b4ebdf7d9e2baa4a3508514285cf449f455603f82d3364b014c0e79b793 ;;
+*) echo "build-wine: no pinned archive for Wine $wineVersion" >&2; exit 1 ;;
+esac
 mingwRelease=20260826
 mingwName=llvm-mingw-$mingwRelease-ucrt-ubuntu-22.04-x86_64
 mingwSha=cee8d2ce3da5145ce4dc882e70d0b0719a783d53a99752c60948fc0659975a65
 
 srcDir="$root/sources/wine"
 pristine="$srcDir/wine-wine-$wineVersion"
-src="$srcDir/wine-haiku"
-out="$root/artifacts/wine"
+if [ "$wineVersion" = 11.0 ]; then
+	src="$srcDir/wine-haiku"
+	out="$root/artifacts/wine"
+	patches="$root/patches/wine"
+else
+	src="$srcDir/wine-haiku-$wineVersion"
+	out="$root/artifacts/wine-$wineVersion"
+	patches="$root/patches/wine-$wineVersion"
+fi
 sysroot="$root/artifacts/sysroot-arm64"
 tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
 mingw="$srcDir/$mingwName/bin"
@@ -77,7 +98,7 @@ step_source() {
 	[ -d "$srcDir/$mingwName" ] || tar -xf "$srcDir/$mingwName.tar.xz" -C "$srcDir"
 	rm -rf "$src"
 	cp -a "$pristine" "$src"
-	for p in "$root"/patches/wine/*.patch; do
+	for p in "$patches"/*.patch; do
 		patch -d "$src" -p1 --quiet < "$p"
 	done
 	(cd "$src" && autoreconf -fi > /dev/null 2>&1)
@@ -101,8 +122,12 @@ step_build() {
 	local display=(--without-wayland --disable-winewayland.drv)
 	if [ -x "$root/artifacts/wayland-host/bin/wayland-scanner" ] \
 		&& [ -f "$sysroot/boot/system/develop/lib/pkgconfig/wayland-client.pc" ]; then
-		display=(--with-wayland WAYLAND_SCANNER="$root/artifacts/wayland-host/bin/wayland-scanner"
-			ac_cv_lib_wayland_egl_wl_egl_window_create=no)
+		display=(--with-wayland WAYLAND_SCANNER="$root/artifacts/wayland-host/bin/wayland-scanner")
+		# configure's wayland-egl check: AC_CHECK_LIB in 11.0, AC_CHECK_FUNC since
+		case "$wineVersion" in
+		11.0) display+=(ac_cv_lib_wayland_egl_wl_egl_window_create=no) ;;
+		*) display+=(ac_cv_func_wl_egl_window_create=no) ;;
+		esac
 	fi
 	# winehaiku.drv's Media Kit shim; hidden symbols: winehaiku.so exports only Wine's entry points
 	local shim="$out/haiku-audio"
@@ -113,6 +138,10 @@ step_build() {
 	"$tools-ar" rcs "$shim/libwinehaiku_player.a" "$shim/haiku_player.o"
 	# the packaged prefix and directories of HaikuPorts' runConfigure. __FILE__ (assertions, debug
 	# channels) relative to the source and build trees: the packages must not name this checkout
+	# configure knows --without-unwind until 11.0 only (and 11.0's line stays as it was: a changed line
+	# rebuilds from scratch)
+	local unwind=()
+	[ "$wineVersion" = 11.0 ] && unwind=(--without-unwind)
 	local flags="-g -O2 -fmacro-prefix-map=$src/= -fmacro-prefix-map=$out/cross/="
 	local conf=(--host=aarch64-unknown-haiku --prefix=/boot/system --datarootdir=/boot/system/data
 		--datadir=/boot/system/data --mandir=/boot/system/documentation/man
@@ -122,7 +151,7 @@ step_build() {
 		--without-vulkan --without-pulse --without-alsa --without-oss --without-cups
 		--without-dbus --without-sane --without-gphoto --without-v4l2 --without-pcap --without-usb
 		--without-krb5 --without-netapi --without-gstreamer --without-ffmpeg --without-sdl --without-capi
-		--without-opencl --without-udev --without-unwind --without-inotify --disable-tests
+		--without-opencl --without-udev "${unwind[@]}" --without-inotify --disable-tests
 		CC="$tools-gcc --sysroot=$sysroot" CXX="$tools-g++ --sysroot=$sysroot" LDFLAGS="-lnetwork"
 		CFLAGS="$flags" CROSSCFLAGS="$flags"
 		FREETYPE_CFLAGS="-I$sysroot/boot/system/non-packaged/include/freetype2"
@@ -236,6 +265,8 @@ make_package() {
 	# GitHub's file limit (scripts/publish-repo.sh)
 	[ "$size" -le 104857600 ] || { echo "build-wine: $hpkg: $size bytes, over 100 MiB" >&2; exit 1; }
 	local d
+	# another version's packages stay in its output directory: the shared directories hold one wine
+	[ "$wineVersion" = "$defaultVersion" ] || { echo "build-wine: $hpkg ($size bytes)"; return 0; }
 	for d in "$gen/download" "$root/artifacts/packages"; do
 		[ -d "$d" ] || continue
 		rm -f "$d/$name-$wineVersion"-*-arm64.hpkg

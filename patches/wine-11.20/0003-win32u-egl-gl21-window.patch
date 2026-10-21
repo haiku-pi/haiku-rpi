@@ -1,0 +1,145 @@
+win32u: OpenGL in windows through the surfaceless EGL driver (no Wayland EGL on Haiku)
+
+Mesa on Haiku has no Wayland EGL platform, so Wine's OpenGL uses win32u's own
+EGL driver on the surfaceless platform. Its window drawable (an emulated
+framebuffer) had two gaps for the Raspberry Pi 4 with Mesa's V3D, an OpenGL 2.1
+driver: the framebuffer's color textures were attached with glFramebufferTexture
+(OpenGL 3.2), which an OpenGL 2.1 context does not have, so the framebuffer was
+incomplete; and with no driver drawable to present to, nothing showed a finished
+frame in the window. The textures are now attached with glFramebufferTexture2D
+(OpenGL 3.0 / ARB_framebuffer_object), and wglSwapBuffers (or a flush that
+opengl32 marks as presenting the front buffer) reads the front buffer back and
+draws it as a DIB into the application's DC (wglSwapBuffers', or the thread's
+current draw DC) — a DC fetched in the swap path did not reach the window.
+
+Wine 11.20 already makes the framebuffer with the OpenGL 3.0 calls instead of
+direct state access, in its own internal context (so no caller bindings to keep),
+loads every GL entry point, and sets GL's default draw buffer (the back one of a
+double-buffered window) when a context is made current: those parts of the Wine
+11.0 patch are gone. A swap exchanges the front and back textures, so the
+finished frame is attachment 0 after it.
+
+--- a/dlls/win32u/opengl.c
++++ b/dlls/win32u/opengl.c
+@@ -855,6 +855,8 @@
+     return count;
+ }
+ 
++/* The color textures are attached with glFramebufferTexture2D (OpenGL 3.0 / ARB_framebuffer_object), not
++ * glFramebufferTexture (OpenGL 3.2), which OpenGL 2.1 drivers such as Mesa's V3D (Raspberry Pi 4) do not have. */
+ static GLuint create_framebuffer( struct opengl_drawable *drawable, const struct wgl_pixel_format *desc, SIZE size )
+ {
+     GLuint count = framebuffer_image_count( drawable ), fbo, name;
+@@ -876,7 +878,7 @@
+         {
+             funcs->p_glGenTextures( 1, &name );
+             init_framebuffer_attachment( drawable, fbo, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE, name, desc, size );
+-            funcs->p_glFramebufferTexture( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, name, 0 );
++            funcs->p_glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, name, 0 );
+         }
+         TRACE( "drawable %p/%u created color buffer %#x/%u, %s\n", drawable, fbo, GL_COLOR_ATTACHMENT0 + i, name, wine_dbgstr_point( (POINT *)&size ) );
+     }
+@@ -1029,6 +1031,47 @@
+     if (drawable->srgb) funcs->p_glDisable( GL_FRAMEBUFFER_SRGB );
+ }
+ 
++/* Without a driver drawable to present to (win32u's EGL driver on the surfaceless platform), a frame reaches
++ * the window through GDI: the front buffer (attachment 0 of the read framebuffer: after a swap, the finished
++ * frame), read back and drawn as a DIB (bottom-up, as GL's rows are) into the DC the application presents with. */
++static void present_framebuffer_surface_gdi( struct opengl_drawable *drawable, HDC target )
++{
++    struct framebuffer_surface *surface = framebuffer_from_opengl_drawable( drawable );
++    BITMAPINFO info = {.bmiHeader = {.biSize = sizeof(BITMAPINFOHEADER), .biPlanes = 1, .biBitCount = 32,
++                                     .biCompression = BI_RGB}};
++    const struct opengl_funcs *funcs = &display_funcs;
++    SIZE size = drawable->virtual_size;
++    void *bits;
++    HWND hwnd;
++    HDC hdc;
++
++    if (!drawable->client || !(hwnd = drawable->client->hwnd)) return;
++    if (!surface->root_context || !drawable->read_fbo || size.cx <= 0 || size.cy <= 0) return;
++    if (!(bits = malloc( size.cx * size.cy * 4 ))) return;
++
++    make_thread_context_current( surface->root_context, NULL );
++    funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, drawable->read_fbo );
++    funcs->p_glReadBuffer( GL_COLOR_ATTACHMENT0 );
++    funcs->p_glReadPixels( 0, 0, size.cx, size.cy, GL_BGRA, GL_UNSIGNED_BYTE, bits );
++    make_client_context_current();
++
++    info.bmiHeader.biWidth = size.cx;
++    info.bmiHeader.biHeight = size.cy;
++    /* wglSwapBuffers' DC, else the thread's current draw DC (a DC fetched here draws nowhere visible), else
++     * the window's */
++    if (!target) target = NtCurrentTeb()->glReserved1[0];
++    if ((hdc = target) || (hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE )))
++    {
++        INT lines = NtGdiSetDIBitsToDeviceInternal( hdc, 0, 0, size.cx, size.cy, 0, 0, 0, size.cy, bits, &info,
++                                                    DIB_RGB_COLORS, size.cx * size.cy * 4, sizeof(info), FALSE, NULL );
++        TRACE( "%s: %s, pixel %#x, %d lines to hdc %p\n", debugstr_opengl_drawable( drawable ),
++               wine_dbgstr_point( (POINT *)&size ), *(UINT *)bits, lines, hdc );
++        if (!target) NtUserReleaseDC( hwnd, hdc );
++    }
++    else WARN( "%s: no DC for window %p\n", debugstr_opengl_drawable( drawable ), hwnd );
++    free( bits );
++}
++
+ static void framebuffer_surface_flush( struct opengl_drawable *drawable, UINT flags )
+ {
+     struct framebuffer_surface *surface = framebuffer_from_opengl_drawable( drawable );
+@@ -1097,6 +1140,8 @@
+             opengl_drawable_swap( surface->target );
+         }
+     }
++    /* a flush of a context drawing into the front buffer (opengl32 asks with GL_FLUSH_PRESENT) shows it */
++    else if (flags & GL_FLUSH_PRESENT) present_framebuffer_surface_gdi( drawable, 0 );
+ 
+     make_client_context_current();
+ }
+@@ -1126,23 +1171,23 @@
+             {
+                 funcs->p_glGetFramebufferAttachmentParameteriv( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &front );
+                 funcs->p_glGetFramebufferAttachmentParameteriv( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &back );
+-                funcs->p_glFramebufferTexture( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, back, 0 );
+-                funcs->p_glFramebufferTexture( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, front, 0 );
++                funcs->p_glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, back, 0 );
++                funcs->p_glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, front, 0 );
+             }
+         }
+ 
+         funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, drawable->read_fbo );
+         funcs->p_glGetFramebufferAttachmentParameteriv( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &front );
+         funcs->p_glGetFramebufferAttachmentParameteriv( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &back );
+-        funcs->p_glFramebufferTexture( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, back, 0 );
+-        funcs->p_glFramebufferTexture( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, front, 0 );
++        funcs->p_glFramebufferTexture2D( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, back, 0 );
++        funcs->p_glFramebufferTexture2D( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, front, 0 );
+ 
+         if (drawable->stereo)
+         {
+             funcs->p_glGetFramebufferAttachmentParameteriv( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &front );
+             funcs->p_glGetFramebufferAttachmentParameteriv( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &back );
+-            funcs->p_glFramebufferTexture( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, back, 0 );
+-            funcs->p_glFramebufferTexture( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, front, 0 );
++            funcs->p_glFramebufferTexture2D( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, back, 0 );
++            funcs->p_glFramebufferTexture2D( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, front, 0 );
+         }
+     }
+ 
+@@ -1152,6 +1197,7 @@
+         blit_framebuffer_surface( drawable );
+         opengl_drawable_swap( surface->target );
+     }
++    /* else presented by win32u_wglSwapBuffers, which has the application's DC */
+ 
+     make_client_context_current();
+ 
+@@ -3151,6 +3197,8 @@
+ 
+     opengl_drawable_flush( draw, interval, 0 );
+     ret = opengl_drawable_swap( draw );
++    if (ret && draw->funcs == &framebuffer_surface_funcs && !framebuffer_from_opengl_drawable( draw )->target)
++        present_framebuffer_surface_gdi( draw, hdc );
+     opengl_drawable_release( draw );
+ 
+     return ret;
