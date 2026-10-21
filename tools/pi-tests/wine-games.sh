@@ -62,6 +62,9 @@ run() {
 		n=$((n + 1))
 	done
 	grep -a -v '^$' /tmp/$game.txt | head -n 25 | while read -r line; do say "  $game: $(echo "$line" | cut -c1-200)"; done
+	# the game's threads as it ends (a hang shows where: state, user and kernel time)
+	ps -a 2> /dev/null | awk -v exe="${exe%% *}" '/^Team/ { team = 0 } index($0, exe) && /^\// { team = 1 }
+		team && NF' | head -n 40 | while read -r line; do say "  $game: ps: $line"; done
 	wineserver -k
 	sleep 3
 	cp /tmp/$game.txt /boot/home/wine-games-$game.txt
