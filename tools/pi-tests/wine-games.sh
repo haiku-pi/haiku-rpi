@@ -56,10 +56,13 @@ run() {
 			| tr -d '\r' | grep -a --line-buffered '^input:' | while read -r line; do say "$game: $line"; done ) &
 	fi
 	n=1
-	while [ $((n * 60)) -le $secs ]; do
-		sleep 60
+	t=0
+	while [ $t -lt $secs ]; do
+		step=$((secs - t)); [ $step -gt 60 ] && step=60
+		sleep $step
+		t=$((t + step))
 		screenshot -s /boot/home/wine-games-$game-$n.png > /dev/null 2>&1
-		say "$game: $((n * 60)) s, $(kill -0 $pid 2> /dev/null && echo running || echo exited)," \
+		say "$game: $t s, $(kill -0 $pid 2> /dev/null && echo running || echo exited)," \
 			"screenshot $(ls -l /boot/home/wine-games-$game-$n.png 2>&1 | awk '{print $5}') bytes"
 		n=$((n + 1))
 		kill -0 $pid 2> /dev/null || break
@@ -82,6 +85,7 @@ want tone-x86 && run tone-x86 ../wine-tests "tone-x86.exe 3 1000" 60
 # OpenGL (tools/wine-tests/gltest.c): a context, a clear read back, a spinning triangle and its frame rate
 want gltest-arm64 && run gltest-arm64 ../wine-tests "gltest-arm64.exe 20" 60
 want gltest-x86 && run gltest-x86 ../wine-tests "gltest-x86.exe 20" 60
+want gltest-trace && run gltest-trace ../wine-tests "gltest-arm64.exe 5" 40 WINEDEBUG=err+all,fixme-all,+wgl,+opengl
 want simcity3000-gl && run simcity3000-gl SC3 sc3demo.exe 300
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
