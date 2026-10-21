@@ -2,7 +2,7 @@
 # wine-games.sh — a UserBootscript: 32-bit x86 Windows games under Wine (WoW64, Box64) on the Haiku desktop.
 # The games are free demos unpacked into the test image's non-packaged/data/wine-games (never published:
 # downloaded for the test only, see docs/design/wine-x86.md). Makes a prefix with the x86 emulator if the disk
-# has none (netboot-cycle.sh --keep-disk keeps it for the next run), sets wined3d's GDI renderer (no GL yet),
+# has none (netboot-cycle.sh --keep-disk keeps it for the next run), leaves wined3d on OpenGL (a game may ask for GDI),
 # then runs each game for a while, with a screenshot every 60 s (/boot/home/wine-games-<game>-<n>.png): all of them,
 # or those /boot/home/wine-games.list names.
 # Serial console lines: "WGM ".
@@ -31,7 +31,9 @@ fi
 # (Heroes III) refuses to run from it; Wine maps a folder to its deepest drive, so the games are on D:
 ln -sfn /boot $WINEPREFIX/dosdevices/d:
 say "disk: $(df /boot 2> /dev/null | grep -a -i -E 'free|total' | tr -s ' ' | tr '\n' ' ')"
-wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d gdi /f > /dev/null 2>&1
+# wined3d's renderer: OpenGL by default (EGL on the V3D); a game can ask for the GDI one with
+# WINE_D3D_CONFIG=renderer=gdi in its run line
+wine reg delete 'HKCU\Software\Wine\Direct3D' /v renderer /f > /dev/null 2>&1
 wineserver -w
 
 # GAME DIR "EXE [ARGS]" SECONDS [VAR=VALUE...]   (the variables for that game only, e.g. BOX64_DYNAREC=0); with
@@ -76,8 +78,21 @@ want() { [ -z "$list" ] || case " $(echo $list) " in *" $1 "*) return 0 ;; *) re
 # sound (winehaiku.drv): a 1 kHz tone, 3 s, as arm64 and as x86 (tools/wine-tests/tone.c)
 want tone-arm64 && WINEDEBUG=err+all,fixme-all,+haiku run tone-arm64 ../wine-tests "tone-arm64.exe 3 1000" 60
 want tone-x86 && run tone-x86 ../wine-tests "tone-x86.exe 3 1000" 60
+# OpenGL (tools/wine-tests/gltest.c): a context, a clear read back, a spinning triangle and its frame rate
+want gltest-arm64 && run gltest-arm64 ../wine-tests "gltest-arm64.exe 20" 60
+want gltest-x86 && run gltest-x86 ../wine-tests "gltest-x86.exe 20" 60
+want simcity3000-gl && run simcity3000-gl SC3 sc3demo.exe 300
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
+# StarCraft (the 1998 shareware CD, installed on the host's reference Wine: tools/wine-ref; 640x480x8): the game
+# reads the CD's INSTALL.EXE (data/wine-games/SCCD) where the installer's registry keys say
+if want starcraft; then
+	key='HKLM\Software\Wow6432Node\Blizzard Entertainment\Starcraft Shareware'
+	wine reg add "$key" /v InstallPath /d 'D:\system\non-packaged\data\wine-games\SC' /f > /dev/null 2>&1
+	wine reg add "$key" /v Program /d 'D:\system\non-packaged\data\wine-games\SC\Starcraft.exe' /f > /dev/null 2>&1
+	wine reg add "$key" /v StarCD /d 'D:\system\non-packaged\data\wine-games\SCCD' /f > /dev/null 2>&1
+	run starcraft SC Starcraft.exe 300
+fi
 # Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
 # S Single Scenario, Return Begin, then the welcome's Return (a further Return opens the hero's screen); the hero
 # walks by the numpad (2 down, 6 right, 3 down-right...; the arrow keys scroll the map). Its mouse is DirectInput's
@@ -85,8 +100,6 @@ want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
 input="focus:Heroes|wait:90000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wait:30000|key:0x0d|wait:4000\
 |key:0x62|wait:2500|key:0x63|wait:2500|key:0x66|wait:2500|key:0x66|wait:2500|key:0x63|wait:2500|key:0x62\
 |wait:2500|key:0x64|wait:2500|key:0x64|wait:2500|key:0x68"
-# StarCraft (the 1998 shareware CD, installed on the host's reference Wine: tools/wine-ref; 640x480x8)
-want starcraft && run starcraft SC Starcraft.exe 300
 # without a sound driver (Wine's driver list empty), for an A/B with the run above
 if want heroes3-nosound; then
 	wine reg add 'HKCU\Software\Wine\Drivers' /v Audio /d "" /f > /dev/null 2>&1
