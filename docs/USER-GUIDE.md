@@ -661,7 +661,7 @@ More threads barely help stories15M: every token streams the 60 MB of weights fr
 
 ### 11.5 Windows programs (Wine)
 
-Wine 11.0 runs Windows programs on Haiku arm64. Programs built for 64-bit Arm Windows run directly;
+Wine 11.20 runs Windows programs on Haiku arm64. Programs built for 64-bit Arm Windows run directly;
 32-bit x86 Windows programs (most older games and applications) run through WoW64 and the Box64
 emulator. Install both packages from our repository:
 
@@ -669,13 +669,13 @@ emulator. Install both packages from our repository:
 pkgman install wine wine_x86
 ```
 
-- `wine` (58 MB download, ~500 MB installed): the Unix side, the 64-bit Arm Windows libraries, and
+- `wine` (75 MB download, ~550 MB installed): the Unix side, the 64-bit Arm Windows libraries, and
   Wine's fonts and data. pkgman also installs the window driver's Wayland libraries (wayland,
   wayland_server, libxkbcommon, xkeyboard_config) and Mesa.
-- `wine_x86` (58 MB download, ~185 MB installed): the 32-bit x86 Windows libraries and Box64's
+- `wine_x86` (66 MB download, ~190 MB installed): the 32-bit x86 Windows libraries and Box64 0.4.4's
   `wowbox64.dll` (also installed as `xtajit.dll`). Leave it out if you only run Arm programs.
 
-The packages were built on 2026-10-21 (`scripts/build-wine.sh`). Until they and the Wayland packages are
+The packages were built on 2026-10-22 (`scripts/build-wine.sh`). Until they and the Wayland packages are
 in the public repository, test images get the same files as a test tree (`build-wine.sh`'s header).
 
 Run a program from Terminal:
@@ -698,14 +698,18 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (2026-10-21):
-- **No accelerated OpenGL or Direct3D in Wine yet.** wined3d falls back to its software (GDI) path,
-  which is enough for DirectDraw 2D games (Heroes III plays). Its 8-bit-to-16-bit blits are wrong, so
-  SimCity 3000's city view is garbled. The packages are built with Wine's EGL OpenGL driver, but it has
-  not been tested on the Pi.
+**Known limits** (2026-10-22):
+- **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1). **Direct3D and DirectDraw
+  games use wined3d's software (GDI) renderer**, which is enough for 2D games (Heroes III plays) and for
+  Half-Life's software renderer in a window. Its 8-bit-to-16-bit blits are wrong, so SimCity 3000's city
+  view is garbled. wined3d's OpenGL renderer (`WINE_D3D_CONFIG=renderer=gl`) does not show DirectDraw
+  games yet.
 - Sound plays through Haiku's Media Kit (`winehaiku.drv`). Wine can play sound but not record it.
 - 32-bit x86 programs run in Box64's emulator, which is slower than native code.
 - Not built in: Vulkan, printing, scanners, USB devices, joysticks.
+- **A crashing program** prints a crash report in Terminal (lines starting `crash:`: the registers, the
+  faulting code and the call chain as `module+offset`). Wine's debugger cannot attach to a program on
+  Haiku: its "Program Error" dialog only offers OK. Developers: docs/design/wine-debugging.md.
 - 1 game start in about 5 failed to open a window (an intermittent start hang that is still being
   investigated). Close it and start the program again.
 

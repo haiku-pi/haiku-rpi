@@ -17,9 +17,9 @@ with sources. What it settles:
 
 | Question | Answer | Consequence |
 |---|---|---|
-| Wine version | **Wine 11.0** (2026-01-13) is the newest stable release; 11.x after it are development releases | Build on **11.0**; move to 12.0 when it ships (January 2027) |
-| Translator for x86-64 (ARM64EC) | **FEX** is the only one (`libarm64ecfex.dll`); Box64 has no ARM64EC DLL yet | **FEX-2601**, the release Hangover 11.0 paired with Wine 11.0 |
-| Translator for 32-bit x86 (WoW64) | Box64's `wowbox64.dll` (Hangover's default, a Pi 4 build target) or FEX's `libwow64fex.dll` | **Box64 v0.4.0** first, FEX's as the alternative; benchmarks decide |
+| Wine version | ~~Wine 11.0, the newest stable release~~ — **revised by the owner (2026-10-21): "stable" means a numbered release, and the newest one** | **Wine 11.20** since 2026-10-22 (ported, tested on the Pi; 11.0 removed); the next numbered release when it ships |
+| Translator for x86-64 (ARM64EC) | **FEX** is the only one (`libarm64ecfex.dll`); Box64 has no ARM64EC DLL yet | **FEX**, its newest release when step 3 starts (FEX-2610 as of 2026-10-22; the survey's FEX-2601 was Hangover 11.0's pairing) |
+| Translator for 32-bit x86 (WoW64) | Box64's `wowbox64.dll` (Hangover's default, a Pi 4 build target) or FEX's `libwow64fex.dll` | **Box64 v0.4.4** (newest release, since 2026-10-22; v0.4.0 first), FEX's as the alternative |
 | Does FEX run on the Pi 4's Cortex-A72 (ARMv8.0)? | Yes: ARMv8.0 + FP + CRC32 minimum; LSE/LRCPC optional, detected at run time | Expect slow x86 memory-ordering emulation without LSE/LRCPC; per-program TSO settings will matter |
 | PE-side toolchain | mstorsjo **llvm-mingw**, a pinned release | **20260826** (LLVM 23.1.0), which Hangover built Wine with |
 | Wine on Haiku today | HaikuPorts: Wine 11.8, **x86_64 only**, 64-bit programs only, the Wayland driver over X512's in-process Wayland server; ~330 lines of Haiku code | The Haiku patches move to 11.0 and to arm64; Wine's arm64 signal code has Linux/macOS branches only — Haiku needs its own |
@@ -28,15 +28,15 @@ with sources. What it settles:
 
 ## The work
 
-1. **Wine 11.0 on Haiku arm64, native arm64 Windows programs first** (no translator): the Unix side cross-built
+1. **Wine on Haiku arm64 (11.0 first, 11.20 now), native arm64 Windows programs first** (no translator): the Unix side cross-built
    with the Haiku arm64 compiler (`scripts/cross-port.sh` style), the PE side with llvm-mingw; the HaikuPorts
-   Haiku patches brought to 11.0 and arm64 (signals and exception contexts — Wine keeps per-thread data in x18:
+   Haiku patches brought to the release and arm64 (signals and exception contexts — Wine keeps per-thread data in x18:
    check that Haiku's compiler and libroot leave it alone — thread/TLS setup, the loader); a console program
    first, then a window through the Wayland driver (X512's server). *Exit:* an arm64 `hello.exe` and an arm64
    GUI program run on the Pi.
-2. **32-bit x86 through WoW64 + Box64 v0.4.0** (`wowbox64.dll`), then FEX's `libwow64fex.dll` for comparison.
+2. **32-bit x86 through WoW64 + Box64** (`wowbox64.dll`; v0.4.4 now), then FEX's `libwow64fex.dll` for comparison.
    *Exit:* the StarCraft demo plays.
-3. **x86-64 through ARM64EC + FEX-2601**. *Exit:* a 64-bit x86 program (7-Zip x64, UT 469f's 64-bit build).
+3. **x86-64 through ARM64EC + FEX** (its newest release). *Exit:* a 64-bit x86 program (7-Zip x64, UT 469f's 64-bit build).
 4. **Graphics:** WineD3D on Mesa's desktop GL (2.1 on the V3D): DirectDraw, Direct3D ≤ 9, OpenGL games. Audio
    through Wine's driver for Haiku's media kit, or through SDL/OpenAL.
 5. **Speed:** translator settings (TSO modes per program, the code cache, multi-threading), the CPU clock;
@@ -58,9 +58,19 @@ with sources. What it settles:
   selector under WoW64 (`patches/box64/0002`), a mapping for user-write-only pages (kernel), drive D: = /boot for
   programs that check free space (Z:, Haiku's rootfs `/`, has none).
 - Next: **audio** — Wine has no driver for Haiku (HaikuPorts' Wine uses OSS, whose drivers do not cover the Pi):
-  a `winehaiku` mmdevapi driver on the Media Kit, modelled on `wineoss` (`patches/wine/0002`, to test). Then
+  a `winehaiku` mmdevapi driver on the Media Kit, modelled on `wineoss` (`patches/wine-11.20/0002`; works). Then
   OpenGL (WineD3D on the V3D: SimCity 3000, Half-Life, UT), or the GDI renderer's 8-bit blits fixed; x86-64
   (FEX-2601 ARM64EC); packages.
+
+### Status (2026-10-22)
+
+- **Wine 11.20 + Box64 v0.4.4** are the build now (`scripts/build-wine.sh`, `scripts/build-box64.sh`; 11.0 and
+  v0.4.0 removed), with crash reports and the Haiku arm64 write-fault fix
+  ([wine-debugging.md](wine-debugging.md)). On the Pi: OpenGL on the V3D, sound, Heroes III, and
+  **Half-Life: Uplink playing its first map** (software renderer, windowed).
+- Next: wined3d's OpenGL renderer for DirectDraw/Direct3D games (its present path; the P8 recursion on GL
+  2.1), Half-Life's rare full-screen fault (instrumented), StarCraft's picture, x86-64 through FEX, the
+  packages published.
 
 ## Test programs (to be chosen and license-checked at the start)
 

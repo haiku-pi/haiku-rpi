@@ -1,6 +1,6 @@
 #!/bin/sh
 # wine-hello.sh — a UserBootscript for Wine on Haiku arm64 (the staged install: mkimage-pi4.sh --add-tree
-# artifacts/wine/install/boot/system/non-packaged's parent): creates a prefix (wineboot) and runs the native
+# artifacts/wine-<version>/install/boot/system/non-packaged's parent): creates a prefix (wineboot) and runs the native
 # arm64 Windows test program (tools/wine-tests/hello.c). Serial console lines: "WIN ".
 sleep 15
 out=/dev/dprintf

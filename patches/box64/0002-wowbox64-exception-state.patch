@@ -10,8 +10,12 @@ Every write fault was taken for a write to translated code: unprotected, then re
 write to an unmapped address. Only a page the dynarec protects is unprotected now; any other write fault
 is passed on to the program.
 
+A fault passed on to the program is also logged from the host's side (LOG_INFO, "[BOX64] fault: ..."): the
+host pc, its instruction, the x86 address it was translated from, the fault address and the host
+registers — what an x86 crash report cannot show.
+
 --- a/wine/wow64/wowbox64.c	2026-08-02 11:31:59.000000000 +0200
-+++ b/wine/wow64/wowbox64.c	2026-10-21 23:11:19.043601186 +0200
++++ b/wine/wow64/wowbox64.c	2026-10-22 00:05:03.154108779 +0200
 @@ -25,6 +25,7 @@
  #include "wine/compiler.h"
  #include "wine/debug.h"
@@ -20,7 +24,7 @@ is passed on to the program.
  #include "sysinfo.h"
  
  uintptr_t box64_pagesize = 4096;
-@@ -319,7 +320,9 @@
+@@ -319,15 +320,54 @@
          if (rec->NumberParameters == 2 && rec->ExceptionInformation[0] == 1)
              addr = ULongToPtr(rec->ExceptionInformation[1]);
  
@@ -31,7 +35,22 @@ is passed on to the program.
              unprotectDB((uintptr_t)addr, 1, 1); // unprotect 1 byte... But then, the whole page will be unprotected
              NtContinue(ctx, FALSE);
          }
-@@ -328,6 +331,29 @@
+     }
+ 
++    // a fault the program gets: what the host saw, for the log (the x86 view goes to the program's handlers)
++    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters == 2) {
++        int in_jit = box64_is_addr_in_jit(ULongToPtr(ctx->Pc));
++        dynablock_t* fault_db = in_jit ? FindDynablockFromNativeAddress(ULongToPtr(ctx->Pc)) : NULL;
++        printf_log(LOG_INFO, "fault: %s %p at host pc %p (insn %08x, %s, x86 %p)\n",
++            rec->ExceptionInformation[0] == 1 ? "write" : (rec->ExceptionInformation[0] == 8 ? "execute" : "read"),
++            (void*)rec->ExceptionInformation[1], (void*)ctx->Pc, *(uint32_t*)ctx->Pc,
++            in_jit ? "translated" : "box64", fault_db ? (void*)getX64Address(fault_db, ctx->Pc) : NULL);
++        for (int i = 0; i < 31; i += 4)
++            printf_log(LOG_INFO, "fault: x%-2d %016llx %016llx %016llx %016llx\n", i,
++                (unsigned long long)ctx->X[i], (unsigned long long)(i + 1 < 31 ? ctx->X[i + 1] : ctx->Sp),
++                (unsigned long long)(i + 2 < 31 ? ctx->X[i + 2] : 0), (unsigned long long)(i + 3 < 31 ? ctx->X[i + 3] : 0));
++    }
++
      if (!box64_is_addr_in_jit(ULongToPtr(ctx->Pc)))
          return STATUS_SUCCESS;
  
