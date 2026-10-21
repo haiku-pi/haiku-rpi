@@ -369,13 +369,11 @@ a temporary file and the git-ignored image.
 
 ## 10. Known issues
 
-- **The network-boot wedge.** About 1 in 18 network boots on 2026-10-20 (in other counts 1 in 8 to 1 in
-  45) stopped at ~54 s, while the network drivers loaded and the first-boot package processing read the
-  remote disk: the serial line went quiet, the remote disk's requests stopped, the kernel debugger did
-  not answer — the whole system stopped. SD boots never did. A loaded host is not required (it struck
-  on a quiet host too). A kernel-stack fault that fitted it was fixed late on
-  2026-10-20, and the next 15 network boots were clean, but the 16th wedged in the same phase: that fix did
-  not cure it. `netboot-cycle.sh` types the kernel debugger's break and per-CPU stack dumps into any boot that
+- **The network-boot wedge.** **If the Pi has been off for more than a couple of minutes, its first network
+  boot may stop at ~52 s; power-cycle and it boots.** Measured: about 1 in 10 network boots of a Pi that was powered off for minutes, about 1 in 250 when it was on moments before; cold SD first boots 12 of 12 clean (2026-10-21). It strikes
+  while the network drivers load and the first-boot package processing reads the remote disk: the serial line
+  goes quiet, the remote disk's requests stop, the kernel debugger does not answer — the whole system stops.
+  Back-to-back boots (a development loop) almost never see it. `netboot-cycle.sh` types the kernel debugger's break and per-CPU stack dumps into any boot that
   goes quiet for 20 s before app_server set its display mode (`--no-wedge-dump` turns it off), and records the
   disk timeline. If you hit one: power-cycle and boot again.
 - **Network boot timing on a busy host.** The remote disk is served by the host; under a heavy build

@@ -28,7 +28,7 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 | Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; https://www.haiku-os.org/ in 8–10 s once started before; **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — frames drop only in the first seconds after the browser starts; `scripts/build-firefox.sh`) |
 
 Known limits: no HDMI audio; video in Firefox drops frames for the first seconds after the browser starts;
-about 1 in 20 network boots stops while the drivers load (SD boots are not affected; [KNOWN-ISSUES.md](KNOWN-ISSUES.md)).
+the first network boot of a Pi that was off for minutes stops at ~52 s about 1 time in 10 — power-cycle (SD boots are not affected; [KNOWN-ISSUES.md](KNOWN-ISSUES.md)).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
 [haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts

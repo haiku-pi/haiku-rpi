@@ -7,7 +7,7 @@
 > recorded with the test that produced it.
 
 *About three days. 216 coordination-repository commits; 113 commits on the Haiku fork's `rpi4`
-branch on top of upstream (112 of ours plus one upstream merge; 156 files, about 33 000 lines added);
+branch on top of upstream (112 of ours by the evening of 10-20, 114 on 10-21, plus one upstream merge; 156 files, about 33 000 lines added);
 14 commits on the Mesa fork, 3 on libglvnd, 2 on Haiku's buildtools. The whole port was done by an AI
 coding agent (Claude, in one long-running Claude Code session with sub-agents), started by a single
 prompt from the project's owner. The owner wrote no code; [OWNER-PROMPTS.md](OWNER-PROMPTS.md) lists
@@ -253,8 +253,14 @@ output. The hunt so far:
   stop silently, during heavy thread creation while interrupts arrive — had the right shape. After
   that fix, 15 network boots ran clean; the 16th wedged (2026-10-21, 00:00). Another plausible hypothesis
   refuted by counting.
+- **Another observer effect that wasn't.** A lock-free "heartbeat" drawn into the frame buffer ran 30/30
+  clean, and so did a variant — which looked like the instrumentation hiding the wedge, until the
+  unmodified image ran 25/25 too. The variable that mattered was time: every captured wedge came on
+  a Pi that had been **powered off for minutes**; back-to-back series (~10 s off) almost never see it
+  (about 1 in 250, against about 1 in 10 cold). Cold SD first boots ran 12/12 clean.
 
-SD boots have never shown it. It is the main open defect.
+It stays open, characterised: a cold-start problem of network boots, rare enough that a cause needs a
+cheaper way to reproduce it.
 
 ## Techniques that mattered
 

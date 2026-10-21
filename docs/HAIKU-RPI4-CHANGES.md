@@ -10,7 +10,7 @@ haiku-pi/haiku. The branch starts from upstream **hrev60262** (committed 2026-10
 merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), so the merge base is now
 `hrev60262-21` (`af754c7c26`). Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **112 commits of its own** (2026-10-18 to 2026-10-20). To list
+On top of that base the fork carries **114 commits of its own** (2026-10-18 to 2026-10-21). To list
 them, in `sources/haiku`:
 
 ```
@@ -31,7 +31,7 @@ written here:
 | `drivers/network/wlan/broadcomfmac/dev/` | ~+6 400 | OpenBSD's bwfm driver, ported (the Haiku glue around it is ours) |
 
 The hand-written surface is therefore roughly **23 000 lines**, most of it new drivers in new
-directories. Of the 112 commits, 20 are changes to the list of binary packages the arm64 build uses
+directories. Of the 114 commits, 21 are changes to the list of binary packages the arm64 build uses
 (`build/jam/repositories/HaikuPorts/arm64`); they are collected in one table at the end.
 
 The changes fall into three kinds:
@@ -288,6 +288,7 @@ change. The Mesa side lives in the haiku-pi/mesa fork, outside this repository. 
 | `e01ad66e7c` | GPU memory, jobs and synchronisation (Linux v3d interface) | One 4 MiB page table for the 4 GiB GPU address space, plus a scratch page for stray accesses. Buffer objects are wired, zeroed and write-combining; `MMAP_BO` clones them into the caller, and freed pages are quarantined until every earlier job completes. `SUBMIT_CL` with per-job cache/TLB maintenance, run one at a time in order by a worker thread. The IRQ handler serves binner memory from a pre-staged pool and has storm guards. `WAIT_BO`, syncobjs, a watchdog and a full GPU reset. Per-client handles, so a dying client leaks nothing. Test program `v3dtest`: 41/41 checks. |
 | `f337b7e167` | Do not read a dropped job after releasing it | The reset message took the sequence number of a job it had just released. |
 | `2ff9130439` | List a wedged job's buffers in its dump | Diagnostic. |
+| `f6ae60bfbb` | Statistics: bin and render time, GPU busy | `v3d_stats` splits a control list's GPU time into its two stages and shows how busy the GPU is. Measured with QuakeSpasm at 1080p: bin ~0.45 ms, render ~10 ms per list, so overlapping them (asynchronous queues, stage 7) could gain at most ~4 %. |
 | `bf6e4efdd2` | Import client memory as a GPU buffer | `DRM_V3D_HAIKU_IMPORT_MEMORY` wires a team's pages into the GPU page table so Mesa can render or blit straight into a `BBitmap` without a copy. `DRM_V3D_HAIKU_SYNC_BO` does the cache maintenance, since the pages stay cacheable for the CPU. These two ioctls are Haiku-specific extensions. |
 | `4a8412437e` | Texture formatting unit jobs (`SUBMIT_TFU`) | `GET_PARAM` already advertised the TFU, so Mesa used it for texture uploads and mipmaps, and every submission failed. TFU jobs now share the queue with control-list jobs. |
 | `d5a14e2c9b` | Wire imported memory in a kernel clone of the client's area | Killing GLTeapot panicked in `vm_delete_areas` (`!area->IsWired()`): a team's address space goes away before its files close, while the BO still held the pages wired. The BO now wires a kernel clone of the area. |
@@ -416,5 +417,6 @@ repo builds and publishes. The notes say what a bump fixed, where it fixed somet
 | `da96c5cde3` | firefox 157.0.1-3 | Firefox's GL provider loaded `libGL.so` (the `_devel` link) and created a desktop GL 2.1 context, too old for WebGL. It now loads `libGL.so.1` and creates an OpenGL ES context when desktop GLSL is older than 1.50. WebGL 1 and 2 on the V3D ([../patches/firefox/](../patches/firefox/)). |
 | `5f8581cdae` | icu74 74.1-1 | ICU with its data in libicudata, as Linux distributions build it, replacing the bootstrap ICU and its shim. |
 | `6aa2792481` | mesa 26.2.0-5, glu 9.0.3-5 | Rebuilt with a toolchain that links libgcc_s: libEGL_mesa and libGLU had private unwinders for the C++ exceptions they throw and catch. The package now also ships the V3DV ICD manifest (`add-ons/vulkan/icd.d`); before, Vulkan worked only from a staging tree. |
+| `a4f0d50da1` | firefox 157.0.1-4 (zstd), openarena 0.8.8-2 + openarena_data_1..5, supertuxkart 1.5-2 + supertuxkart_data_1..3 | Firefox zstd-compressed (112 → 102 MB) and the games' data split into parts, each under GitHub's 100 MiB file limit: all three published (owner, 10-21). |
 
 `e98b67a5bd` and `be395e19f4` (section 8) also bump ffmpeg6, to 6.1.6-2 and 6.1.6-3.
