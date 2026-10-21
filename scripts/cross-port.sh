@@ -66,8 +66,11 @@ case "$archive" in
 esac
 if [ -n "$sourceDir" ]; then
 	mv "$work/unpack/$sourceDir" "$work/src"
-else
+elif [ "$(ls -A "$work/unpack" | wc -l)" = 1 ]; then
 	mv "$work/unpack"/* "$work/src"
+else
+	# an archive without a top directory (the recipe's SOURCE_DIR="", e.g. htop_rivoreo)
+	mv "$work/unpack" "$work/src"
 fi
 rmdir "$work/unpack" 2>/dev/null || true
 

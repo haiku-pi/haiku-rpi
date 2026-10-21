@@ -24,8 +24,11 @@ build bakes its prefix into sysconfig) may also have develop/headers/ (to the _d
 are), lib/<DIR>/ trees that go into the runtime package as they are (--lib-tree DIR, e.g. python3.14:
 the standard library and its lib-dynload modules, ELF objects stripped and their NEEDED entries
 turned into requires) and global writable directories (--global-writable PATH, relative to
-/boot/system). The vendor is the HaikuPorts repository's
-("Haiku Project"): package_repo refuses another one in it; the packager says who built them.
+/boot/system). A daemon's package may also create Unix users and groups on activation (--user SPEC,
+--group NAME, as the recipe's PACKAGE_USERS/PACKAGE_GROUPS) and run scripts then (--post-install FILE:
+packaged as boot/post-install/<name>, e.g. openssh's host key generation). The vendor is the
+HaikuPorts repository's ("Haiku Project"): package_repo refuses another one in it; the packager says
+who built them.
 """
 
 import argparse
@@ -79,7 +82,7 @@ def resolvable(name):
 
 
 def package_info(name, version, revision, summary, licenses, copyrights, provides, requires,
-        writable=()):
+        writable=(), extra=''):
     def block(items):
         return '\n'.join('\t' + i for i in items)
     writable = ''.join(f'global-writable-files {{\n\t"{w}" directory keep-old\n}}\n'
@@ -101,7 +104,7 @@ provides {{
 requires {{
 {block(requires)}
 }}
-{writable}'''
+{writable}{extra}'''
 
 
 def create(directory, info, out, extract=True):
@@ -140,6 +143,12 @@ def main():
     parser.add_argument('--global-writable', action='append', default=[],
         help='a directory of the runtime package, relative to /boot/system, that is writable '
             '(non-packaged/lib/python3.14/site-packages)')
+    parser.add_argument('--user', action='append', default=[],
+        help='a Unix user the package creates, in .PackageInfo syntax (the recipe\'s PACKAGE_USERS)')
+    parser.add_argument('--group', action='append', default=[],
+        help='a Unix group the package creates (the recipe\'s PACKAGE_GROUPS)')
+    parser.add_argument('--post-install', action='append', default=[],
+        help='a script run on package activation and first boot (the recipe\'s POST_INSTALL_SCRIPTS)')
     args = parser.parse_args()
 
     recipeName = os.path.basename(args.recipe)[:-len('.recipe')]
@@ -235,6 +244,22 @@ def main():
         if os.path.isdir(os.path.join(install, w)):
             shutil.copytree(os.path.join(install, w), os.path.join(runtime, w), symlinks=True)
 
+    # post-install scripts: in boot/post-install/, run on activation (and on first boot)
+    postInstall = []
+    for script in args.post_install:
+        os.makedirs(os.path.join(runtime, 'boot/post-install'), exist_ok=True)
+        target = os.path.join(runtime, 'boot/post-install', os.path.basename(script))
+        shutil.copy(script, target)
+        os.chmod(target, 0o755)
+        postInstall.append('boot/post-install/' + os.path.basename(script))
+    extra = ''
+    if args.group:
+        extra += 'groups {\n' + ''.join(f'\t{g}\n' for g in args.group) + '}\n'
+    if args.user:
+        extra += 'users {\n' + ''.join(f'\t{u}\n' for u in args.user) + '}\n'
+    if postInstall:
+        extra += 'post-install-scripts {\n' + ''.join(f'\t"{p}"\n' for p in postInstall) + '}\n'
+
     provides = [f'{port} = {version}-{args.revision}'] + [f'{p} = {version}' for p in args.provides]
     develProvides = [f'{port}_devel = {version}-{args.revision}']
     requires = {'haiku'} | set(args.requires)
@@ -316,7 +341,7 @@ def main():
     runtimeFiles = [f for d, _, fs in os.walk(runtime) for f in fs if '/data/licenses' not in d]
     if runtimeFiles:
         create(runtime, package_info(port, version, args.revision, summary, licenses,
-            copyrights, provides, sorted(requires), args.global_writable),
+            copyrights, provides, sorted(requires), args.global_writable, extra),
             os.path.join(out, f'{port}-{version}-{args.revision}-arm64.hpkg'))
         develRequires = [f'{port} == {version}-{args.revision}']
     else:

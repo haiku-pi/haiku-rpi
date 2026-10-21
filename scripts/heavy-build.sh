@@ -55,4 +55,7 @@ printf 'heavy-build: %s job(s) (MemAvailable %s GB, %s GB/job), MemoryMax %sG\n'
 
 args=()
 for a in "$@"; do args+=("${a//\{JOBS\}/${jobs}}"); done
-exec systemd-run --user --scope -q -p MemoryMax="${max_gb}G" -p MemorySwapMax=0 -- "${args[@]}"
+# --expand-environment=no: systemd-run would otherwise expand ${VAR} in the arguments itself (an inline
+# script's "${DEST%/x}" became empty)
+exec systemd-run --user --scope -q --expand-environment=no -p MemoryMax="${max_gb}G" -p MemorySwapMax=0 \
+	-- "${args[@]}"
