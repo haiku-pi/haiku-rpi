@@ -62,6 +62,7 @@ run() {
 		say "$game: $((n * 60)) s, $(kill -0 $pid 2> /dev/null && echo running || echo exited)," \
 			"screenshot $(ls -l /boot/home/wine-games-$game-$n.png 2>&1 | awk '{print $5}') bytes"
 		n=$((n + 1))
+		kill -0 $pid 2> /dev/null || break
 	done
 	grep -a -v '^$' /tmp/$game.txt | head -n 25 | while read -r line; do say "  $game: $(echo "$line" | cut -c1-200)"; done
 	# the game's threads as it ends (a hang shows where: state, user and kernel time)
@@ -86,12 +87,15 @@ want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
 # StarCraft (the 1998 shareware CD, installed on the host's reference Wine: tools/wine-ref; 640x480x8): the game
 # reads the CD's INSTALL.EXE (data/wine-games/SCCD) where the installer's registry keys say
-if want starcraft; then
+if want starcraft || want starcraft-interp || want starcraft-safe; then
 	key='HKLM\Software\Wow6432Node\Blizzard Entertainment\Starcraft Shareware'
 	wine reg add "$key" /v InstallPath /d 'D:\system\non-packaged\data\wine-games\SC' /f > /dev/null 2>&1
 	wine reg add "$key" /v Program /d 'D:\system\non-packaged\data\wine-games\SC\Starcraft.exe' /f > /dev/null 2>&1
 	wine reg add "$key" /v StarCD /d 'D:\system\non-packaged\data\wine-games\SCCD' /f > /dev/null 2>&1
-	run starcraft SC Starcraft.exe 300
+	want starcraft && run starcraft SC Starcraft.exe 240
+	want starcraft-interp && run starcraft-interp SC Starcraft.exe 240 BOX64_DYNAREC=0
+	want starcraft-safe && run starcraft-safe SC Starcraft.exe 240 BOX64_DYNAREC_SAFEFLAGS=2 \
+		BOX64_DYNAREC_STRONGMEM=2 BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0
 fi
 # Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
 # S Single Scenario, Return Begin, then the welcome's Return (a further Return opens the hero's screen); the hero
