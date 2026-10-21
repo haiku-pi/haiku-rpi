@@ -20,7 +20,7 @@
 #   install    make install into artifacts/wine/install (prefix /boot/system/non-packaged), bin/wine linked
 #              to the loader, debug info stripped (~970 MB with i386; a prefix takes ~1 GB more: images need
 #              -sHAIKU_IMAGE_SIZE=3500); the test
-#              program tools/wine-tests/hello.c as data/wine-tests/hello-arm64.exe
+#              programs of tools/wine-tests (hello.c, ddtest.c) in data/wine-tests, for arm64 and x86
 #
 # Test: scripts/mkimage-pi4.sh --in <a 3500 MB build's haiku-mmc.image> \
 #           --add-tree artifacts/wine/install/boot/system/non-packaged --bootscript tools/pi-tests/wine-hello.sh
@@ -123,6 +123,10 @@ step_install() {
 		"$root/tools/wine-tests/hello.c"
 	"$mingw/i686-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/hello-x86.exe" \
 		"$root/tools/wine-tests/hello.c"
+	for a in aarch64:arm64 i686:x86; do
+		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/ddtest-${a#*:}.exe" \
+			"$root/tools/wine-tests/ddtest.c" -lddraw -ldxguid
+	done
 	du -sh "$prefix"
 }
 
