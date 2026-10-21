@@ -1,0 +1,1911 @@
+winehaiku.drv: a sound driver on Haiku's Media Kit (render only; no capture, no MIDI).
+
+One BSoundPlayer per stream, connected to the system mixer, which converts the
+stream's own format (8/16/32-bit PCM, 32-bit float; any rate, 1-8 channels).
+The player pulls from the stream's ring buffer on a Media Kit thread, as
+winecoreaudio's render callback does. The Media Kit is C++ and makedep builds no
+C++: haiku_player.cpp is compiled outside Wine's make (scripts/build-wine.sh, into
+a static library) and given to configure in HAIKU_AUDIO_LIBS. mmdevapi tries
+"haiku" first.
+
+diff -ruN '--exclude=configure' '--exclude=configure~' '--exclude=config.h.in~' '--exclude=autom4te.cache' '--exclude=*.orig' '--exclude=include/config.h.in' wine-ref/configure.ac wine-haiku/configure.ac
+--- wine-ref/configure.ac	2026-10-21 16:44:25.146301234 +0200
++++ wine-haiku/configure.ac	2026-10-21 16:42:36.065568485 +0200
+@@ -41,6 +41,7 @@
+ AC_ARG_WITH(gnutls,    AS_HELP_STRING([--without-gnutls],[do not use GnuTLS (schannel support)]))
+ AC_ARG_WITH(gssapi,    AS_HELP_STRING([--without-gssapi],[do not use GSSAPI (Kerberos SSP support)]))
+ AC_ARG_WITH(gstreamer, AS_HELP_STRING([--without-gstreamer],[do not use GStreamer (codecs support)]))
++AC_ARG_WITH(haiku-audio,AS_HELP_STRING([--without-haiku-audio],[do not use the Haiku Media Kit sound support]))
+ AC_ARG_WITH(hwloc,     AS_HELP_STRING([--without-hwloc],[do not use hwloc (CPU/cache topology detection on FreeBSD)]))
+ AC_ARG_WITH(inotify,   AS_HELP_STRING([--without-inotify],[do not use inotify (filesystem change notifications)]))
+ AC_ARG_WITH(krb5,      AS_HELP_STRING([--without-krb5],[do not use krb5 (Kerberos)]))
+@@ -1757,6 +1758,30 @@
+                  [OSS sound system found but too old (OSSv4 needed), OSS won't be supported.],
+                  [enable_wineoss_drv])
+ 
++dnl **** Check for the Haiku Media Kit ****
++dnl The Media Kit is C++, which makedep does not build: HAIKU_AUDIO_LIBS names
++dnl winehaiku.drv's shim library (dlls/winehaiku.drv/haiku_player.cpp, built
++dnl beforehand) along with the libraries it needs.
++AC_ARG_VAR(HAIKU_AUDIO_LIBS, [Linker flags for winehaiku.drv: its Media Kit shim, -lmedia -lbe -lstdc++])
++case $host_os in
++  haiku*)
++    if test "x$with_haiku_audio" != xno
++    then
++        AC_LANG_PUSH([C++])
++        AC_CHECK_HEADER([SoundPlayer.h],,[HAIKU_AUDIO_LIBS=""])
++        AC_LANG_POP([C++])
++    else
++        HAIKU_AUDIO_LIBS=""
++    fi
++    WINE_NOTICE_WITH(haiku_audio,[test -z "$HAIKU_AUDIO_LIBS"],
++                     [Media Kit headers or HAIKU_AUDIO_LIBS not found, the Haiku sound driver won't be supported.],
++                     [enable_winehaiku_drv])
++    ;;
++  *)
++    enable_winehaiku_drv=${enable_winehaiku_drv:-no}
++    ;;
++esac
++
+ dnl **** Check for libudev ****
+ if test "x$with_udev" != "xno"
+ then
+@@ -1920,8 +1945,8 @@
+ 
+ 
+ dnl **** Check for any sound system ****
+-if test "x$enable_winealsa_drv$enable_winecoreaudio_drv$enable_winepulse_drv$enable_wineoss_drv$enable_wineandroid_drv" = xnonononono -a \
+-        "x$with_alsa$with_coreaudio$with_oss$with_pulse" != xnononono
++if test "x$enable_winealsa_drv$enable_winecoreaudio_drv$enable_winepulse_drv$enable_wineoss_drv$enable_wineandroid_drv$enable_winehaiku_drv" = xnononononono -a \
++        "x$with_alsa$with_coreaudio$with_oss$with_pulse$with_haiku_audio" != xnonononono
+ then
+     WINE_WARNING([No sound system was found. Windows applications will be silent.])
+ fi
+@@ -3362,6 +3387,7 @@
+ WINE_CONFIG_MAKEFILE(dlls/wined3d)
+ WINE_CONFIG_MAKEFILE(dlls/winedmo)
+ WINE_CONFIG_MAKEFILE(dlls/winegstreamer)
++WINE_CONFIG_MAKEFILE(dlls/winehaiku.drv)
+ WINE_CONFIG_MAKEFILE(dlls/winehid.sys)
+ WINE_CONFIG_MAKEFILE(dlls/winemac.drv)
+ WINE_CONFIG_MAKEFILE(dlls/winemapi)
+diff -ruN '--exclude=configure' '--exclude=configure~' '--exclude=config.h.in~' '--exclude=autom4te.cache' '--exclude=*.orig' '--exclude=include/config.h.in' wine-ref/dlls/mmdevapi/main.c wine-haiku/dlls/mmdevapi/main.c
+--- wine-ref/dlls/mmdevapi/main.c	2026-01-13 16:56:07.000000000 +0100
++++ wine-haiku/dlls/mmdevapi/main.c	2026-10-21 16:42:36.070713103 +0200
+@@ -125,7 +125,7 @@
+ 
+ static BOOL WINAPI init_driver(INIT_ONCE *once, void *param, void **context)
+ {
+-    static WCHAR default_list[] = L"pulse,alsa,oss,coreaudio";
++    static WCHAR default_list[] = L"haiku,pulse,alsa,oss,coreaudio";
+     DriverFuncs driver;
+     HKEY key;
+     WCHAR reg_list[256], *p, *next, *driver_list = default_list;
+diff -ruN '--exclude=configure' '--exclude=configure~' '--exclude=config.h.in~' '--exclude=autom4te.cache' '--exclude=*.orig' '--exclude=include/config.h.in' wine-ref/dlls/winehaiku.drv/haiku.c wine-haiku/dlls/winehaiku.drv/haiku.c
+--- wine-ref/dlls/winehaiku.drv/haiku.c	1970-01-01 01:00:00.000000000 +0100
++++ wine-haiku/dlls/winehaiku.drv/haiku.c	2026-10-21 16:42:09.822872711 +0200
+@@ -0,0 +1,1569 @@
++/*
++ * Haiku Media Kit driver (unixlib)
++ *
++ * Copyright 2011 Andrew Eikum for CodeWeavers
++ *           2022 Huw Davies
++ *           2026 Witold Bołt
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++/* Render only, through one BSoundPlayer per stream connected to the system mixer,
++ * which converts any raw format to the output's. The player pulls data from the
++ * stream's ring buffer on a Media Kit thread (as winecoreaudio's render callback
++ * does); the timer loop only signals the client's event. */
++
++#if 0
++#pragma makedep unix
++#endif
++
++#include <stdarg.h>
++#include <string.h>
++#include <pthread.h>
++
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "winternl.h"
++#include "initguid.h"
++#include "audioclient.h"
++#include "mmddk.h"
++
++#include "wine/debug.h"
++#include "wine/unixlib.h"
++
++#include "../mmdevapi/unixlib.h"
++#include "haiku_player.h"
++
++#define MAX_CHANNELS 8
++
++struct haiku_stream
++{
++    WAVEFORMATEX *fmt;
++    EDataFlow flow;
++    UINT flags;
++    AUDCLNT_SHAREMODE share;
++    HANDLE event;
++
++    struct haiku_player *player;
++
++    BOOL playing, player_started, please_quit, unity_volume;
++    UINT64 written_frames, last_pos_frames;
++    UINT32 period_frames, bufsize_frames, held_frames, tmp_buffer_frames;
++    UINT32 lcl_offs_frames; /* offs into local_buffer where valid data starts */
++    REFERENCE_TIME period, latency;
++    float vol[MAX_CHANNELS];
++
++    BYTE *local_buffer, *tmp_buffer;
++    INT32 getbuf_last; /* <0 when using tmp_buffer */
++
++    pthread_mutex_t lock;
++};
++
++WINE_DEFAULT_DEBUG_CHANNEL(haiku);
++
++static const REFERENCE_TIME def_period = 100000;
++static const REFERENCE_TIME min_period = 50000;
++
++static const char default_device[] = "default";
++
++static ULONG_PTR zero_bits = 0;
++
++static NTSTATUS haiku_not_implemented(void *args)
++{
++    return STATUS_SUCCESS;
++}
++
++/* copied from kernelbase */
++static int muldiv( int a, int b, int c )
++{
++    LONGLONG ret;
++
++    if (!c) return -1;
++
++    /* We want to deal with a positive divisor to simplify the logic. */
++    if (c < 0)
++    {
++        a = -a;
++        c = -c;
++    }
++
++    /* If the result is positive, we "add" to round. else, we subtract to round. */
++    if ((a < 0 && b < 0) || (a >= 0 && b >= 0))
++        ret = (((LONGLONG)a * b) + (c / 2)) / c;
++    else
++        ret = (((LONGLONG)a * b) - (c / 2)) / c;
++
++    if (ret > 2147483647 || ret < -2147483647) return -1;
++    return ret;
++}
++
++static void haiku_lock(struct haiku_stream *stream)
++{
++    pthread_mutex_lock(&stream->lock);
++}
++
++static void haiku_unlock(struct haiku_stream *stream)
++{
++    pthread_mutex_unlock(&stream->lock);
++}
++
++static NTSTATUS haiku_unlock_result(struct haiku_stream *stream,
++                                    HRESULT *result, HRESULT value)
++{
++    *result = value;
++    haiku_unlock(stream);
++    return STATUS_SUCCESS;
++}
++
++static struct haiku_stream *handle_get_stream(stream_handle h)
++{
++    return (struct haiku_stream *)(UINT_PTR)h;
++}
++
++static NTSTATUS haiku_test_connect(void *args)
++{
++    struct test_connect_params *params = args;
++
++    if(haiku_audio_available()){
++        TRACE("Priority_Preferred: the media server runs\n");
++        params->priority = Priority_Preferred;
++    }else{
++        TRACE("Priority_Unavailable: the media server does not run\n");
++        params->priority = Priority_Unavailable;
++    }
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_process_attach(void *args)
++{
++#ifdef _WIN64
++    if (NtCurrentTeb()->WowTebOffset)
++    {
++        SYSTEM_BASIC_INFORMATION info;
++
++        NtQuerySystemInformation(SystemEmulationBasicInformation, &info, sizeof(info), NULL);
++        zero_bits = (ULONG_PTR)info.HighestUserAddress | 0x7fffffff;
++    }
++#endif
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_main_loop(void *args)
++{
++    struct main_loop_params *params = args;
++    NtSetEvent(params->event, NULL);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_get_endpoint_ids(void *args)
++{
++    struct get_endpoint_ids_params *params = args;
++    char output_name[64]; /* B_MEDIA_NAME_LENGTH */
++    WCHAR name[ARRAY_SIZE(output_name)];
++    unsigned int name_len, device_len, needed, offset;
++
++    params->num = 0;
++    params->default_idx = 0;
++
++    /* TODO: capture (BMediaRecorder) */
++    if(params->flow != eRender){
++        params->result = S_OK;
++        return STATUS_SUCCESS;
++    }
++
++    if(!haiku_audio_available()){
++        ERR("The media server does not run\n");
++        params->result = AUDCLNT_E_SERVICE_NOT_RUNNING;
++        return STATUS_SUCCESS;
++    }
++
++    /* the player always plays through the system mixer: one endpoint, named after its output */
++    if(!haiku_audio_output_name(output_name, sizeof(output_name)))
++        strcpy(output_name, "Haiku Media Kit");
++    ntdll_umbstowcs(output_name, strlen(output_name) + 1, name, ARRAY_SIZE(name));
++    name[ARRAY_SIZE(name) - 1] = 0;
++
++    name_len = wcslen(name) + 1;
++    device_len = sizeof(default_device);
++    offset = needed = sizeof(*params->endpoints);
++    needed += name_len * sizeof(WCHAR) + ((device_len + 1) & ~1);
++
++    if(needed > params->size){
++        params->size = needed;
++        params->num = 1;
++        params->result = HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
++        return STATUS_SUCCESS;
++    }
++
++    params->endpoints[0].name = offset;
++    memcpy((char *)params->endpoints + offset, name, name_len * sizeof(WCHAR));
++    offset += name_len * sizeof(WCHAR);
++    params->endpoints[0].device = offset;
++    memcpy((char *)params->endpoints + offset, default_device, device_len);
++
++    params->num = 1;
++    params->result = S_OK;
++    return STATUS_SUCCESS;
++}
++
++static UINT get_channel_mask(unsigned int channels)
++{
++    switch(channels){
++    case 0:
++        return 0;
++    case 1:
++        return KSAUDIO_SPEAKER_MONO;
++    case 2:
++        return KSAUDIO_SPEAKER_STEREO;
++    case 3:
++        return KSAUDIO_SPEAKER_STEREO | SPEAKER_LOW_FREQUENCY;
++    case 4:
++        return KSAUDIO_SPEAKER_QUAD;    /* not _SURROUND */
++    case 5:
++        return KSAUDIO_SPEAKER_QUAD | SPEAKER_LOW_FREQUENCY;
++    case 6:
++        return KSAUDIO_SPEAKER_5POINT1; /* not 5POINT1_SURROUND */
++    case 7:
++        return KSAUDIO_SPEAKER_5POINT1 | SPEAKER_BACK_CENTER;
++    case 8:
++        return KSAUDIO_SPEAKER_7POINT1_SURROUND; /* Vista deprecates 7POINT1 */
++    }
++    FIXME("Unknown speaker configuration: %u\n", channels);
++    return 0;
++}
++
++/* the sample formats the system mixer takes */
++static int get_sample_format(const WAVEFORMATEX *fmt)
++{
++    const WAVEFORMATEXTENSIBLE *fmtex = (const WAVEFORMATEXTENSIBLE *)fmt;
++
++    if(fmt->wFormatTag == WAVE_FORMAT_PCM ||
++            (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
++             IsEqualGUID(&fmtex->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))){
++        switch(fmt->wBitsPerSample){
++        case 8:
++            return HAIKU_SAMPLE_U8;
++        case 16:
++            return HAIKU_SAMPLE_S16;
++        case 32:
++            return HAIKU_SAMPLE_S32;
++        }
++        return -1;
++    }
++
++    if(fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
++            (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
++             IsEqualGUID(&fmtex->SubFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT))){
++        if(fmt->wBitsPerSample != 32)
++            return -1;
++
++        return HAIKU_SAMPLE_FLOAT;
++    }
++
++    return -1;
++}
++
++static WAVEFORMATEXTENSIBLE *clone_format(const WAVEFORMATEX *fmt)
++{
++    WAVEFORMATEXTENSIBLE *ret;
++    size_t size;
++
++    if(fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
++        size = sizeof(WAVEFORMATEXTENSIBLE);
++    else
++        size = sizeof(WAVEFORMATEX);
++
++    ret = malloc(size);
++    if(!ret)
++        return NULL;
++
++    memcpy(ret, fmt, size);
++
++    ret->Format.cbSize = size - sizeof(WAVEFORMATEX);
++
++    return ret;
++}
++
++static HRESULT check_format(AUDCLNT_SHAREMODE share, const WAVEFORMATEX *fmt)
++{
++    const WAVEFORMATEXTENSIBLE *fmtex = (const WAVEFORMATEXTENSIBLE *)fmt;
++    HRESULT ret = S_OK;
++
++    if(get_sample_format(fmt) < 0)
++        return AUDCLNT_E_UNSUPPORTED_FORMAT;
++
++    if(fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
++            (fmtex->Format.nAvgBytesPerSec == 0 ||
++             fmtex->Format.nBlockAlign == 0 ||
++             fmtex->Samples.wValidBitsPerSample > fmtex->Format.wBitsPerSample))
++        return E_INVALIDARG;
++
++    if(fmt->nChannels == 0)
++        return AUDCLNT_E_UNSUPPORTED_FORMAT;
++
++    /* the mixer resamples, so any sensible rate plays as it is */
++    if(fmt->nChannels > MAX_CHANNELS ||
++            fmt->nSamplesPerSec < 8000 || fmt->nSamplesPerSec > 192000)
++        ret = S_FALSE;
++
++    if(fmt->nBlockAlign != fmt->nChannels * fmt->wBitsPerSample / 8 ||
++            fmt->nAvgBytesPerSec != fmt->nBlockAlign * fmt->nSamplesPerSec)
++        ret = S_FALSE;
++
++    if(share == AUDCLNT_SHAREMODE_EXCLUSIVE &&
++            fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE){
++        if(fmtex->dwChannelMask == 0 || fmtex->dwChannelMask & SPEAKER_RESERVED)
++            ret = S_FALSE;
++    }
++
++    TRACE("returning: %08x\n", (unsigned)ret);
++    return ret;
++}
++
++static void silence_buffer(const WAVEFORMATEX *fmt, BYTE *buffer, UINT32 frames)
++{
++    if(get_sample_format(fmt) == HAIKU_SAMPLE_U8)
++        memset(buffer, 128, frames * fmt->nBlockAlign);
++    else
++        memset(buffer, 0, frames * fmt->nBlockAlign);
++}
++
++static void apply_volume(struct haiku_stream *stream, BYTE *buffer, UINT32 frames)
++{
++    UINT32 channels = stream->fmt->nChannels, i, c;
++
++    if(stream->unity_volume)
++        return;
++
++    switch(get_sample_format(stream->fmt)){
++    case HAIKU_SAMPLE_U8:
++        for(i = 0; i < frames; i++)
++            for(c = 0; c < channels; c++, buffer++)
++                *buffer = 128 + (int)((*buffer - 128) * stream->vol[c]);
++        break;
++    case HAIKU_SAMPLE_S16:
++    {
++        INT16 *samples = (INT16 *)buffer;
++        for(i = 0; i < frames; i++)
++            for(c = 0; c < channels; c++, samples++)
++                *samples = *samples * stream->vol[c];
++        break;
++    }
++    case HAIKU_SAMPLE_S32:
++    {
++        INT32 *samples = (INT32 *)buffer;
++        for(i = 0; i < frames; i++)
++            for(c = 0; c < channels; c++, samples++)
++                *samples = *samples * (double)stream->vol[c];
++        break;
++    }
++    case HAIKU_SAMPLE_FLOAT:
++    {
++        float *samples = (float *)buffer;
++        for(i = 0; i < frames; i++)
++            for(c = 0; c < channels; c++, samples++)
++                *samples *= stream->vol[c];
++        break;
++    }
++    }
++}
++
++/* The player is pulling data from us, on a Media Kit thread: no Nt calls here. */
++static void haiku_fill(void *user, void *data, size_t size)
++{
++    struct haiku_stream *stream = user;
++    UINT32 block = stream->fmt->nBlockAlign, frames = size / block, to_copy = 0, chunk;
++    BYTE *buffer = data;
++
++    haiku_lock(stream);
++
++    if(stream->playing){
++        to_copy = min(frames, stream->held_frames);
++        chunk = min(to_copy, stream->bufsize_frames - stream->lcl_offs_frames);
++
++        memcpy(buffer, stream->local_buffer + stream->lcl_offs_frames * block, chunk * block);
++        memcpy(buffer + chunk * block, stream->local_buffer, (to_copy - chunk) * block);
++        apply_volume(stream, buffer, to_copy);
++
++        stream->lcl_offs_frames += to_copy;
++        stream->lcl_offs_frames %= stream->bufsize_frames;
++        stream->held_frames -= to_copy;
++    }
++
++    if(frames > to_copy)
++        silence_buffer(stream->fmt, buffer + to_copy * block, frames - to_copy);
++    memset(buffer + frames * block, 0, size - frames * block);
++
++    haiku_unlock(stream);
++}
++
++static NTSTATUS haiku_create_stream(void *args)
++{
++    struct create_stream_params *params = args;
++    WAVEFORMATEXTENSIBLE *fmtex;
++    struct haiku_stream *stream;
++    char name[64];
++    unsigned int i;
++    SIZE_T size;
++
++    /* TODO: capture */
++    if(params->flow != eRender){
++        FIXME("Capture is not implemented\n");
++        params->result = E_NOTIMPL;
++        return STATUS_SUCCESS;
++    }
++
++    params->result = check_format(params->share, params->fmt);
++    if(params->result == S_FALSE)
++        params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
++    if(FAILED(params->result))
++        return STATUS_SUCCESS;
++
++    stream = calloc(1, sizeof(*stream));
++    if(!stream){
++        params->result = E_OUTOFMEMORY;
++        return STATUS_SUCCESS;
++    }
++
++    stream->flow = params->flow;
++    pthread_mutex_init(&stream->lock, NULL);
++
++    fmtex = clone_format(params->fmt);
++    if(!fmtex){
++        params->result = E_OUTOFMEMORY;
++        goto exit;
++    }
++    stream->fmt = &fmtex->Format;
++
++    stream->period = params->period;
++    stream->period_frames = muldiv(params->fmt->nSamplesPerSec, params->period, 10000000);
++
++    stream->bufsize_frames = muldiv(params->duration, params->fmt->nSamplesPerSec, 10000000);
++    if(params->share == AUDCLNT_SHAREMODE_EXCLUSIVE)
++        stream->bufsize_frames -= stream->bufsize_frames % stream->period_frames;
++    size = stream->bufsize_frames * params->fmt->nBlockAlign;
++    if(NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->local_buffer, zero_bits,
++                               &size, MEM_COMMIT, PAGE_READWRITE)){
++        params->result = E_OUTOFMEMORY;
++        goto exit;
++    }
++
++    stream->share = params->share;
++    stream->flags = params->flags;
++    stream->unity_volume = TRUE;
++    for(i = 0; i < MAX_CHANNELS; i++)
++        stream->vol[i] = 1.0f;
++
++    /* the name the system mixer shows for this input */
++    if(!params->name || ntdll_wcstoumbs(params->name, wcslen(params->name) + 1, name, sizeof(name), FALSE) <= 0)
++        strcpy(name, "Wine");
++    name[sizeof(name) - 1] = 0;
++
++    /* one period per buffer: the player asks for the next one as the mixer consumes it */
++    stream->player = haiku_player_create(name, params->fmt->nSamplesPerSec, params->fmt->nChannels,
++                                         get_sample_format(params->fmt),
++                                         stream->period_frames * params->fmt->nBlockAlign,
++                                         haiku_fill, stream);
++    if(!stream->player){
++        WARN("Unable to connect a sound player to the system mixer\n");
++        params->result = AUDCLNT_E_DEVICE_INVALIDATED;
++        goto exit;
++    }
++    stream->latency = haiku_player_latency(stream->player) * 10;
++    TRACE("player latency %s\n", wine_dbgstr_longlong(stream->latency));
++
++exit:
++    if(FAILED(params->result)){
++        if(stream->local_buffer){
++            size = 0;
++            NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->local_buffer, &size, MEM_RELEASE);
++        }
++        pthread_mutex_destroy(&stream->lock);
++        free(stream->fmt);
++        free(stream);
++    }else{
++        *params->channel_count = params->fmt->nChannels;
++        *params->stream = (stream_handle)(UINT_PTR)stream;
++    }
++
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_release_stream(void *args)
++{
++    struct release_stream_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    SIZE_T size;
++
++    if(params->timer_thread){
++        stream->please_quit = TRUE;
++        NtWaitForSingleObject(params->timer_thread, FALSE, NULL);
++        NtClose(params->timer_thread);
++    }
++
++    /* waits until the player stopped pulling data */
++    haiku_player_destroy(stream->player);
++
++    if(stream->local_buffer){
++        size = 0;
++        NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->local_buffer, &size, MEM_RELEASE);
++    }
++    if(stream->tmp_buffer){
++        size = 0;
++        NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, &size, MEM_RELEASE);
++    }
++    free(stream->fmt);
++    pthread_mutex_destroy(&stream->lock);
++    free(stream);
++
++    params->result = S_OK;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_start(void *args)
++{
++    struct start_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    BOOL start_player;
++
++    haiku_lock(stream);
++
++    if((stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) && !stream->event)
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_EVENTHANDLE_NOT_SET);
++
++    if(stream->playing)
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_NOT_STOPPED);
++
++    stream->playing = TRUE;
++    start_player = !stream->player_started;
++    stream->player_started = TRUE;
++
++    haiku_unlock(stream);
++
++    /* Once started, the player runs until the stream is released, and plays
++     * silence while the stream is stopped. Starting it calls the media server,
++     * and the player's thread takes our lock: not under the lock. */
++    if(start_player && haiku_player_start(stream->player)){
++        WARN("Unable to start the sound player\n");
++        haiku_lock(stream);
++        stream->playing = FALSE;
++        stream->player_started = FALSE;
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_DEVICE_INVALIDATED);
++    }
++
++    params->result = S_OK;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_stop(void *args)
++{
++    struct stop_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++
++    haiku_lock(stream);
++
++    if(!stream->playing)
++        return haiku_unlock_result(stream, &params->result, S_FALSE);
++
++    stream->playing = FALSE;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_reset(void *args)
++{
++    struct reset_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++
++    haiku_lock(stream);
++
++    if(stream->playing)
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_NOT_STOPPED);
++
++    if(stream->getbuf_last)
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_BUFFER_OPERATION_PENDING);
++
++    stream->written_frames = 0;
++    stream->last_pos_frames = 0;
++    stream->held_frames = 0;
++    stream->lcl_offs_frames = 0;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_timer_loop(void *args)
++{
++    struct timer_loop_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    LARGE_INTEGER delay, now, next;
++    int adjust;
++
++    haiku_lock(stream);
++
++    delay.QuadPart = -stream->period;
++    NtQueryPerformanceCounter(&now, NULL);
++    next.QuadPart = now.QuadPart + stream->period;
++
++    while(!stream->please_quit){
++        if(stream->event)
++            NtSetEvent(stream->event, NULL);
++        haiku_unlock(stream);
++
++        NtDelayExecution(FALSE, &delay);
++
++        haiku_lock(stream);
++        NtQueryPerformanceCounter(&now, NULL);
++        adjust = next.QuadPart - now.QuadPart;
++        if(adjust > stream->period / 2)
++            adjust = stream->period / 2;
++        else if(adjust < -stream->period / 2)
++            adjust = -stream->period / 2;
++        delay.QuadPart = -(stream->period + adjust);
++        next.QuadPart += stream->period;
++    }
++
++    haiku_unlock(stream);
++
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_get_render_buffer(void *args)
++{
++    struct get_render_buffer_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    UINT32 write_pos, frames = params->frames;
++    BYTE **data = params->data;
++    SIZE_T size;
++
++    haiku_lock(stream);
++
++    if(stream->getbuf_last)
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_OUT_OF_ORDER);
++
++    if(!frames)
++        return haiku_unlock_result(stream, &params->result, S_OK);
++
++    if(stream->held_frames + frames > stream->bufsize_frames)
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_BUFFER_TOO_LARGE);
++
++    write_pos =
++        (stream->lcl_offs_frames + stream->held_frames) % stream->bufsize_frames;
++    if(write_pos + frames > stream->bufsize_frames){
++        if(stream->tmp_buffer_frames < frames){
++            if(stream->tmp_buffer){
++                size = 0;
++                NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, &size, MEM_RELEASE);
++                stream->tmp_buffer = NULL;
++            }
++            size = frames * stream->fmt->nBlockAlign;
++            if(NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, zero_bits,
++                                       &size, MEM_COMMIT, PAGE_READWRITE)){
++                stream->tmp_buffer_frames = 0;
++                return haiku_unlock_result(stream, &params->result, E_OUTOFMEMORY);
++            }
++            stream->tmp_buffer_frames = frames;
++        }
++        *data = stream->tmp_buffer;
++        stream->getbuf_last = -frames;
++    }else{
++        *data = stream->local_buffer + write_pos * stream->fmt->nBlockAlign;
++        stream->getbuf_last = frames;
++    }
++
++    silence_buffer(stream->fmt, *data, frames);
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static void haiku_wrap_buffer(struct haiku_stream *stream, BYTE *buffer, UINT32 written_frames)
++{
++    UINT32 write_offs_frames =
++        (stream->lcl_offs_frames + stream->held_frames) % stream->bufsize_frames;
++    UINT32 write_offs_bytes = write_offs_frames * stream->fmt->nBlockAlign;
++    UINT32 chunk_frames = stream->bufsize_frames - write_offs_frames;
++    UINT32 chunk_bytes = chunk_frames * stream->fmt->nBlockAlign;
++    UINT32 written_bytes = written_frames * stream->fmt->nBlockAlign;
++
++    if(written_bytes <= chunk_bytes){
++        memcpy(stream->local_buffer + write_offs_bytes, buffer, written_bytes);
++    }else{
++        memcpy(stream->local_buffer + write_offs_bytes, buffer, chunk_bytes);
++        memcpy(stream->local_buffer, buffer + chunk_bytes,
++                written_bytes - chunk_bytes);
++    }
++}
++
++static NTSTATUS haiku_release_render_buffer(void *args)
++{
++    struct release_render_buffer_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    UINT32 written_frames = params->written_frames;
++    UINT flags = params->flags;
++    BYTE *buffer;
++
++    haiku_lock(stream);
++
++    if(!written_frames){
++        stream->getbuf_last = 0;
++        return haiku_unlock_result(stream, &params->result, S_OK);
++    }
++
++    if(!stream->getbuf_last)
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_OUT_OF_ORDER);
++
++    if(written_frames > (stream->getbuf_last >= 0 ? stream->getbuf_last : -stream->getbuf_last))
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_INVALID_SIZE);
++
++    if(stream->getbuf_last >= 0)
++        buffer = stream->local_buffer + stream->fmt->nBlockAlign *
++          ((stream->lcl_offs_frames + stream->held_frames) % stream->bufsize_frames);
++    else
++        buffer = stream->tmp_buffer;
++
++    if(flags & AUDCLNT_BUFFERFLAGS_SILENT)
++        silence_buffer(stream->fmt, buffer, written_frames);
++
++    if(stream->getbuf_last < 0)
++        haiku_wrap_buffer(stream, buffer, written_frames);
++
++    stream->held_frames += written_frames;
++    stream->written_frames += written_frames;
++    stream->getbuf_last = 0;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_get_capture_buffer(void *args)
++{
++    struct get_capture_buffer_params *params = args;
++
++    params->result = E_NOTIMPL;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_release_capture_buffer(void *args)
++{
++    struct release_capture_buffer_params *params = args;
++
++    params->result = E_NOTIMPL;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_is_format_supported(void *args)
++{
++    struct is_format_supported_params *params = args;
++
++    if(params->flow != eRender){
++        params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
++        return STATUS_SUCCESS;
++    }
++
++    params->result = check_format(params->share, params->fmt_in);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_get_mix_format(void *args)
++{
++    struct get_mix_format_params *params = args;
++    WAVEFORMATEXTENSIBLE *fmt = params->fmt;
++
++    if(params->flow != eRender){
++        params->result = E_UNEXPECTED;
++        return STATUS_SUCCESS;
++    }
++
++    /* the system mixer's own sample format; 44100 Hz is the Pi's headphone output */
++    fmt->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
++    fmt->Format.wBitsPerSample = 32;
++    fmt->SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
++    fmt->Format.nChannels = 2;
++    fmt->Format.nSamplesPerSec = 44100;
++    fmt->dwChannelMask = get_channel_mask(fmt->Format.nChannels);
++
++    fmt->Format.nBlockAlign = (fmt->Format.wBitsPerSample *
++            fmt->Format.nChannels) / 8;
++    fmt->Format.nAvgBytesPerSec = fmt->Format.nSamplesPerSec *
++        fmt->Format.nBlockAlign;
++
++    fmt->Samples.wValidBitsPerSample = fmt->Format.wBitsPerSample;
++    fmt->Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
++
++    params->result = S_OK;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_get_device_period(void *args)
++{
++    struct get_device_period_params *params = args;
++
++    if (params->def_period)
++        *params->def_period = def_period;
++    if (params->min_period)
++        *params->min_period = min_period;
++
++    params->result = S_OK;
++
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_get_buffer_size(void *args)
++{
++    struct get_buffer_size_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++
++    haiku_lock(stream);
++
++    *params->frames = stream->bufsize_frames;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_get_latency(void *args)
++{
++    struct get_latency_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++
++    haiku_lock(stream);
++
++    /* pretend we process audio in Period chunks, so max latency includes
++     * the period time */
++    *params->latency = stream->period + stream->latency;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_get_current_padding(void *args)
++{
++    struct get_current_padding_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++
++    haiku_lock(stream);
++
++    *params->padding = stream->held_frames;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_get_next_packet_size(void *args)
++{
++    struct get_next_packet_size_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    UINT32 *frames = params->frames;
++
++    haiku_lock(stream);
++
++    *frames = stream->held_frames < stream->period_frames ? 0 : stream->period_frames;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_get_frequency(void *args)
++{
++    struct get_frequency_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    UINT64 *freq = params->freq;
++
++    haiku_lock(stream);
++
++    if(stream->share == AUDCLNT_SHAREMODE_SHARED)
++        *freq = (UINT64)stream->fmt->nSamplesPerSec * stream->fmt->nBlockAlign;
++    else
++        *freq = stream->fmt->nSamplesPerSec;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_get_position(void *args)
++{
++    struct get_position_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    UINT64 *pos = params->pos, *qpctime = params->qpctime;
++
++    if (params->device) {
++        FIXME("Device position reporting not implemented\n");
++        params->result = E_NOTIMPL;
++        return STATUS_SUCCESS;
++    }
++
++    haiku_lock(stream);
++
++    /* the frames the player has taken */
++    *pos = stream->written_frames - stream->held_frames;
++    if(*pos < stream->last_pos_frames)
++        *pos = stream->last_pos_frames;
++
++    stream->last_pos_frames = *pos;
++
++    TRACE("returning: %s\n", wine_dbgstr_longlong(*pos));
++    if(stream->share == AUDCLNT_SHAREMODE_SHARED)
++        *pos *= stream->fmt->nBlockAlign;
++
++    if(qpctime){
++        LARGE_INTEGER stamp, freq;
++        NtQueryPerformanceCounter(&stamp, &freq);
++        *qpctime = (stamp.QuadPart * (INT64)10000000) / freq.QuadPart;
++    }
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_set_volumes(void *args)
++{
++    struct set_volumes_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++    UINT16 i;
++
++    haiku_lock(stream);
++    stream->unity_volume = TRUE;
++    for (i = 0; i < stream->fmt->nChannels; ++i) {
++        stream->vol[i] = params->master_volume * params->volumes[i] * params->session_volumes[i];
++        if (stream->vol[i] != 1.0f)
++            stream->unity_volume = FALSE;
++    }
++    haiku_unlock(stream);
++
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_set_event_handle(void *args)
++{
++    struct set_event_handle_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++
++    haiku_lock(stream);
++
++    if(!(stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK))
++        return haiku_unlock_result(stream, &params->result, AUDCLNT_E_EVENTHANDLE_NOT_EXPECTED);
++
++    if (stream->event){
++        FIXME("called twice\n");
++        return haiku_unlock_result(stream, &params->result, HRESULT_FROM_WIN32(ERROR_INVALID_NAME));
++    }
++
++    stream->event = params->event;
++
++    return haiku_unlock_result(stream, &params->result, S_OK);
++}
++
++static NTSTATUS haiku_is_started(void *args)
++{
++    struct is_started_params *params = args;
++    struct haiku_stream *stream = handle_get_stream(params->stream);
++
++    haiku_lock(stream);
++
++    return haiku_unlock_result(stream, &params->result, stream->playing ? S_OK : S_FALSE);
++}
++
++static NTSTATUS haiku_get_prop_value(void *args)
++{
++    struct get_prop_value_params *params = args;
++
++    params->result = E_NOTIMPL;
++
++    return STATUS_SUCCESS;
++}
++
++/* MIDI and aux: no devices. TODO: MIDI through the Midi Kit. */
++
++static UINT no_device_message(UINT msg)
++{
++    switch (msg)
++    {
++    case DRVM_INIT:
++    case DRVM_EXIT:
++    case DRVM_ENABLE:
++    case DRVM_DISABLE:
++    case MODM_GETNUMDEVS:
++    case MIDM_GETNUMDEVS:
++    case AUXDM_GETNUMDEVS:
++        return 0;
++    }
++    return MMSYSERR_BADDEVICEID;
++}
++
++static NTSTATUS haiku_midi_init(void *args)
++{
++    struct midi_init_params *params = args;
++
++    *params->err = DRV_SUCCESS;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_midi_out_message(void *args)
++{
++    struct midi_out_message_params *params = args;
++
++    params->notify->send_notify = FALSE;
++    *params->err = no_device_message(params->msg);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_midi_in_message(void *args)
++{
++    struct midi_in_message_params *params = args;
++
++    params->notify->send_notify = FALSE;
++    *params->err = no_device_message(params->msg);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_midi_notify_wait(void *args)
++{
++    struct midi_notify_wait_params *params = args;
++
++    /* nothing will ever notify: let mmdevapi's notify thread end */
++    params->notify->send_notify = FALSE;
++    *params->quit = TRUE;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_aux_message(void *args)
++{
++    struct aux_message_params *params = args;
++
++    *params->err = no_device_message(params->msg);
++    return STATUS_SUCCESS;
++}
++
++const unixlib_entry_t __wine_unix_call_funcs[] =
++{
++    haiku_process_attach,
++    haiku_not_implemented,
++    haiku_main_loop,
++    haiku_get_endpoint_ids,
++    haiku_create_stream,
++    haiku_release_stream,
++    haiku_start,
++    haiku_stop,
++    haiku_reset,
++    haiku_timer_loop,
++    haiku_get_render_buffer,
++    haiku_release_render_buffer,
++    haiku_get_capture_buffer,
++    haiku_release_capture_buffer,
++    haiku_is_format_supported,
++    haiku_not_implemented,
++    haiku_get_mix_format,
++    haiku_get_device_period,
++    haiku_get_buffer_size,
++    haiku_get_latency,
++    haiku_get_current_padding,
++    haiku_get_next_packet_size,
++    haiku_get_frequency,
++    haiku_get_position,
++    haiku_set_volumes,
++    haiku_set_event_handle,
++    haiku_not_implemented,
++    haiku_test_connect,
++    haiku_is_started,
++    haiku_get_prop_value,
++    haiku_not_implemented,
++    haiku_midi_init,
++    haiku_not_implemented,
++    haiku_midi_out_message,
++    haiku_midi_in_message,
++    haiku_midi_notify_wait,
++    haiku_aux_message,
++};
++
++C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == funcs_count);
++
++#ifdef _WIN64
++
++typedef UINT PTR32;
++
++static NTSTATUS haiku_wow64_test_connect(void *args)
++{
++    struct
++    {
++        PTR32 name;
++        enum driver_priority priority;
++    } *params32 = args;
++    struct test_connect_params params =
++    {
++        .name = ULongToPtr(params32->name),
++    };
++    haiku_test_connect(&params);
++    params32->priority = params.priority;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_main_loop(void *args)
++{
++    struct
++    {
++        PTR32 event;
++    } *params32 = args;
++    struct main_loop_params params =
++    {
++        .event = ULongToHandle(params32->event)
++    };
++    return haiku_main_loop(&params);
++}
++
++static NTSTATUS haiku_wow64_get_endpoint_ids(void *args)
++{
++    struct
++    {
++        EDataFlow flow;
++        PTR32 endpoints;
++        unsigned int size;
++        HRESULT result;
++        unsigned int num;
++        unsigned int default_idx;
++    } *params32 = args;
++    struct get_endpoint_ids_params params =
++    {
++        .flow = params32->flow,
++        .endpoints = ULongToPtr(params32->endpoints),
++        .size = params32->size
++    };
++    haiku_get_endpoint_ids(&params);
++    params32->size = params.size;
++    params32->result = params.result;
++    params32->num = params.num;
++    params32->default_idx = params.default_idx;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_create_stream(void *args)
++{
++    struct
++    {
++        PTR32 name;
++        PTR32 device;
++        EDataFlow flow;
++        AUDCLNT_SHAREMODE share;
++        UINT flags;
++        REFERENCE_TIME duration;
++        REFERENCE_TIME period;
++        PTR32 fmt;
++        HRESULT result;
++        PTR32 channel_count;
++        PTR32 stream;
++    } *params32 = args;
++    struct create_stream_params params =
++    {
++        .name = ULongToPtr(params32->name),
++        .device = ULongToPtr(params32->device),
++        .flow = params32->flow,
++        .share = params32->share,
++        .flags = params32->flags,
++        .duration = params32->duration,
++        .period = params32->period,
++        .fmt = ULongToPtr(params32->fmt),
++        .channel_count = ULongToPtr(params32->channel_count),
++        .stream = ULongToPtr(params32->stream)
++    };
++    haiku_create_stream(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_release_stream(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        PTR32 timer_thread;
++        HRESULT result;
++    } *params32 = args;
++    struct release_stream_params params =
++    {
++        .stream = params32->stream,
++        .timer_thread = ULongToHandle(params32->timer_thread)
++    };
++    haiku_release_stream(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_render_buffer(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        UINT32 frames;
++        HRESULT result;
++        PTR32 data;
++    } *params32 = args;
++    BYTE *data = NULL;
++    struct get_render_buffer_params params =
++    {
++        .stream = params32->stream,
++        .frames = params32->frames,
++        .data = &data
++    };
++    haiku_get_render_buffer(&params);
++    params32->result = params.result;
++    *(unsigned int *)ULongToPtr(params32->data) = PtrToUlong(data);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_capture_buffer(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        HRESULT result;
++        PTR32 data;
++        PTR32 frames;
++        PTR32 flags;
++        PTR32 devpos;
++        PTR32 qpcpos;
++    } *params32 = args;
++
++    params32->result = E_NOTIMPL;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_is_format_supported(void *args)
++{
++    struct
++    {
++        PTR32 device;
++        EDataFlow flow;
++        AUDCLNT_SHAREMODE share;
++        PTR32 fmt_in;
++        HRESULT result;
++    } *params32 = args;
++    struct is_format_supported_params params =
++    {
++        .device = ULongToPtr(params32->device),
++        .flow = params32->flow,
++        .share = params32->share,
++        .fmt_in = ULongToPtr(params32->fmt_in),
++    };
++    haiku_is_format_supported(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_mix_format(void *args)
++{
++    struct
++    {
++        PTR32 device;
++        EDataFlow flow;
++        PTR32 fmt;
++        HRESULT result;
++    } *params32 = args;
++    struct get_mix_format_params params =
++    {
++        .device = ULongToPtr(params32->device),
++        .flow = params32->flow,
++        .fmt = ULongToPtr(params32->fmt)
++    };
++    haiku_get_mix_format(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_device_period(void *args)
++{
++    struct
++    {
++        PTR32 device;
++        EDataFlow flow;
++        HRESULT result;
++        PTR32 def_period;
++        PTR32 min_period;
++    } *params32 = args;
++    struct get_device_period_params params =
++    {
++        .device = ULongToPtr(params32->device),
++        .flow = params32->flow,
++        .def_period = ULongToPtr(params32->def_period),
++        .min_period = ULongToPtr(params32->min_period),
++    };
++    haiku_get_device_period(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_buffer_size(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        HRESULT result;
++        PTR32 frames;
++    } *params32 = args;
++    struct get_buffer_size_params params =
++    {
++        .stream = params32->stream,
++        .frames = ULongToPtr(params32->frames)
++    };
++    haiku_get_buffer_size(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_latency(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        HRESULT result;
++        PTR32 latency;
++    } *params32 = args;
++    struct get_latency_params params =
++    {
++        .stream = params32->stream,
++        .latency = ULongToPtr(params32->latency)
++    };
++    haiku_get_latency(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_current_padding(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        HRESULT result;
++        PTR32 padding;
++    } *params32 = args;
++    struct get_current_padding_params params =
++    {
++        .stream = params32->stream,
++        .padding = ULongToPtr(params32->padding)
++    };
++    haiku_get_current_padding(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_next_packet_size(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        HRESULT result;
++        PTR32 frames;
++    } *params32 = args;
++    struct get_next_packet_size_params params =
++    {
++        .stream = params32->stream,
++        .frames = ULongToPtr(params32->frames)
++    };
++    haiku_get_next_packet_size(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_frequency(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        HRESULT result;
++        PTR32 freq;
++    } *params32 = args;
++    struct get_frequency_params params =
++    {
++        .stream = params32->stream,
++        .freq = ULongToPtr(params32->freq)
++    };
++    haiku_get_frequency(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_position(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        BOOL device;
++        HRESULT result;
++        PTR32 pos;
++        PTR32 qpctime;
++    } *params32 = args;
++    struct get_position_params params =
++    {
++        .stream = params32->stream,
++        .device = params32->device,
++        .pos = ULongToPtr(params32->pos),
++        .qpctime = ULongToPtr(params32->qpctime)
++    };
++    haiku_get_position(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_set_volumes(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        float master_volume;
++        PTR32 volumes;
++        PTR32 session_volumes;
++    } *params32 = args;
++    struct set_volumes_params params =
++    {
++        .stream = params32->stream,
++        .master_volume = params32->master_volume,
++        .volumes = ULongToPtr(params32->volumes),
++        .session_volumes = ULongToPtr(params32->session_volumes),
++    };
++    return haiku_set_volumes(&params);
++}
++
++static NTSTATUS haiku_wow64_set_event_handle(void *args)
++{
++    struct
++    {
++        stream_handle stream;
++        PTR32 event;
++        HRESULT result;
++    } *params32 = args;
++    struct set_event_handle_params params =
++    {
++        .stream = params32->stream,
++        .event = ULongToHandle(params32->event)
++    };
++
++    haiku_set_event_handle(&params);
++    params32->result = params.result;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_get_prop_value(void *args)
++{
++    struct
++    {
++        PTR32 device;
++        EDataFlow flow;
++        PTR32 guid;
++        PTR32 prop;
++        HRESULT result;
++        PTR32 value;
++        PTR32 buffer; /* caller allocated buffer to hold value's strings */
++        PTR32 buffer_size;
++    } *params32 = args;
++
++    params32->result = E_NOTIMPL;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_midi_init(void *args)
++{
++    struct
++    {
++        PTR32 err;
++    } *params32 = args;
++
++    *(UINT *)ULongToPtr(params32->err) = DRV_SUCCESS;
++    return STATUS_SUCCESS;
++}
++
++struct midi_message_params32
++{
++    UINT dev_id;
++    UINT msg;
++    UINT user;
++    UINT param_1;
++    UINT param_2;
++    PTR32 err;
++    PTR32 notify;
++};
++
++/* send_notify is the first member of the 32-bit struct notify_context too */
++static NTSTATUS haiku_wow64_midi_message(void *args)
++{
++    struct midi_message_params32 *params32 = args;
++
++    *(BOOL *)ULongToPtr(params32->notify) = FALSE;
++    *(UINT *)ULongToPtr(params32->err) = no_device_message(params32->msg);
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_midi_notify_wait(void *args)
++{
++    struct
++    {
++        PTR32 quit;
++        PTR32 notify;
++    } *params32 = args;
++
++    *(BOOL *)ULongToPtr(params32->notify) = FALSE;
++    *(BOOL *)ULongToPtr(params32->quit) = TRUE;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS haiku_wow64_aux_message(void *args)
++{
++    struct
++    {
++        UINT dev_id;
++        UINT msg;
++        UINT user;
++        UINT param_1;
++        UINT param_2;
++        PTR32 err;
++    } *params32 = args;
++
++    *(UINT *)ULongToPtr(params32->err) = no_device_message(params32->msg);
++    return STATUS_SUCCESS;
++}
++
++const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
++{
++    haiku_process_attach,
++    haiku_not_implemented,
++    haiku_wow64_main_loop,
++    haiku_wow64_get_endpoint_ids,
++    haiku_wow64_create_stream,
++    haiku_wow64_release_stream,
++    haiku_start,
++    haiku_stop,
++    haiku_reset,
++    haiku_timer_loop,
++    haiku_wow64_get_render_buffer,
++    haiku_release_render_buffer,
++    haiku_wow64_get_capture_buffer,
++    haiku_release_capture_buffer,
++    haiku_wow64_is_format_supported,
++    haiku_not_implemented,
++    haiku_wow64_get_mix_format,
++    haiku_wow64_get_device_period,
++    haiku_wow64_get_buffer_size,
++    haiku_wow64_get_latency,
++    haiku_wow64_get_current_padding,
++    haiku_wow64_get_next_packet_size,
++    haiku_wow64_get_frequency,
++    haiku_wow64_get_position,
++    haiku_wow64_set_volumes,
++    haiku_wow64_set_event_handle,
++    haiku_not_implemented,
++    haiku_wow64_test_connect,
++    haiku_is_started,
++    haiku_wow64_get_prop_value,
++    haiku_not_implemented,
++    haiku_wow64_midi_init,
++    haiku_not_implemented,
++    haiku_wow64_midi_message,
++    haiku_wow64_midi_message,
++    haiku_wow64_midi_notify_wait,
++    haiku_wow64_aux_message,
++};
++
++C_ASSERT(ARRAYSIZE(__wine_unix_call_wow64_funcs) == funcs_count);
++
++#endif /* _WIN64 */
+diff -ruN '--exclude=configure' '--exclude=configure~' '--exclude=config.h.in~' '--exclude=autom4te.cache' '--exclude=*.orig' '--exclude=include/config.h.in' wine-ref/dlls/winehaiku.drv/haiku_player.cpp wine-haiku/dlls/winehaiku.drv/haiku_player.cpp
+--- wine-ref/dlls/winehaiku.drv/haiku_player.cpp	1970-01-01 01:00:00.000000000 +0100
++++ wine-haiku/dlls/winehaiku.drv/haiku_player.cpp	2026-10-21 16:38:39.891817296 +0200
+@@ -0,0 +1,164 @@
++/*
++ * Haiku Media Kit sound player, a C interface to BSoundPlayer
++ *
++ * Copyright 2026 Witold Bołt
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++/* Built with the Haiku C++ compiler outside makedep, see haiku_player.h. No
++ * exception may leave these functions: their callers are C. */
++
++#include <MediaRoster.h>
++#include <SoundPlayer.h>
++
++#include <new>
++#include <string.h>
++
++#include "haiku_player.h"
++
++struct haiku_player
++{
++    BSoundPlayer *player;
++    haiku_player_fill fill;
++    void *user;
++};
++
++static void play_buffer(void *cookie, void *buffer, size_t size,
++                        const media_raw_audio_format &)
++{
++    struct haiku_player *player = (struct haiku_player *)cookie;
++
++    player->fill(player->user, buffer, size);
++}
++
++extern "C" int haiku_audio_available(void)
++{
++    try
++    {
++        return BMediaRoster::IsRunning();
++    }
++    catch (...)
++    {
++        return 0;
++    }
++}
++
++extern "C" int haiku_audio_output_name(char *name, size_t size)
++{
++    try
++    {
++        BMediaRoster *roster = BMediaRoster::Roster();
++        media_node output;
++        live_node_info info;
++        int ret = 0;
++
++        if (!roster || roster->GetAudioOutput(&output) != B_OK) return 0;
++        if (roster->GetLiveNodeInfo(output, &info) == B_OK)
++        {
++            strlcpy(name, info.name, size);
++            ret = 1;
++        }
++        roster->ReleaseNode(output);
++        return ret;
++    }
++    catch (...)
++    {
++        return 0;
++    }
++}
++
++extern "C" struct haiku_player *haiku_player_create(const char *name, unsigned int rate,
++                                                    unsigned int channels,
++                                                    enum haiku_sample_format format,
++                                                    size_t buffer_size, haiku_player_fill fill,
++                                                    void *user)
++{
++    struct haiku_player *player = NULL;
++
++    try
++    {
++        media_raw_audio_format raw = media_raw_audio_format::wildcard;
++
++        switch (format)
++        {
++        case HAIKU_SAMPLE_U8:    raw.format = media_raw_audio_format::B_AUDIO_UCHAR; break;
++        case HAIKU_SAMPLE_S16:   raw.format = media_raw_audio_format::B_AUDIO_SHORT; break;
++        case HAIKU_SAMPLE_S32:   raw.format = media_raw_audio_format::B_AUDIO_INT; break;
++        case HAIKU_SAMPLE_FLOAT: raw.format = media_raw_audio_format::B_AUDIO_FLOAT; break;
++        default: return NULL;
++        }
++        raw.frame_rate = rate;
++        raw.channel_count = channels;
++        raw.byte_order = B_MEDIA_HOST_ENDIAN;
++        raw.buffer_size = buffer_size;
++
++        player = new (std::nothrow) haiku_player;
++        if (!player) return NULL;
++        player->fill = fill;
++        player->user = user;
++        /* the system mixer takes any raw format and converts it to its own */
++        player->player = new (std::nothrow) BSoundPlayer(&raw, name, play_buffer, NULL, player);
++        if (!player->player || player->player->InitCheck() != B_OK)
++        {
++            delete player->player;
++            delete player;
++            return NULL;
++        }
++        return player;
++    }
++    catch (...)
++    {
++        delete player;
++        return NULL;
++    }
++}
++
++extern "C" int haiku_player_start(struct haiku_player *player)
++{
++    try
++    {
++        return player->player->Start() == B_OK ? 0 : -1;
++    }
++    catch (...)
++    {
++        return -1;
++    }
++}
++
++extern "C" void haiku_player_destroy(struct haiku_player *player)
++{
++    try
++    {
++        /* stops the player node (blocking) before it disconnects it from the mixer */
++        delete player->player;
++    }
++    catch (...)
++    {
++    }
++    delete player;
++}
++
++extern "C" long long haiku_player_latency(struct haiku_player *player)
++{
++    try
++    {
++        return player->player->Latency();
++    }
++    catch (...)
++    {
++        return 0;
++    }
++}
+diff -ruN '--exclude=configure' '--exclude=configure~' '--exclude=config.h.in~' '--exclude=autom4te.cache' '--exclude=*.orig' '--exclude=include/config.h.in' wine-ref/dlls/winehaiku.drv/haiku_player.h wine-haiku/dlls/winehaiku.drv/haiku_player.h
+--- wine-ref/dlls/winehaiku.drv/haiku_player.h	1970-01-01 01:00:00.000000000 +0100
++++ wine-haiku/dlls/winehaiku.drv/haiku_player.h	2026-10-21 16:38:07.725407621 +0200
+@@ -0,0 +1,72 @@
++/*
++ * Haiku Media Kit sound player, a C interface to BSoundPlayer
++ *
++ * Copyright 2026 Witold Bołt
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++/* The Media Kit is C++ and makedep compiles no C++, so haiku_player.cpp is built
++ * on its own (with the Haiku C++ compiler, into a static library that configure
++ * is given in HAIKU_AUDIO_LIBS) and haiku.c talks to it through this header.
++ * Neither Windows nor Be types appear here: the two cannot share a source file. */
++
++#ifndef __WINE_HAIKU_PLAYER_H
++#define __WINE_HAIKU_PLAYER_H
++
++#include <stddef.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++enum haiku_sample_format
++{
++    HAIKU_SAMPLE_U8,
++    HAIKU_SAMPLE_S16,
++    HAIKU_SAMPLE_S32,
++    HAIKU_SAMPLE_FLOAT
++};
++
++struct haiku_player;
++
++/* Called on a Media Kit thread (no Wine TEB) to fill a buffer of the player's format. */
++typedef void (*haiku_player_fill)(void *user, void *buffer, size_t size);
++
++/* Nonzero when the media server runs. */
++int haiku_audio_available(void);
++
++/* The name of the system's audio output node; 0 when there is none. */
++int haiku_audio_output_name(char *name, size_t size);
++
++/* A player connected to the system mixer, stopped; NULL on failure. buffer_size is in bytes. */
++struct haiku_player *haiku_player_create(const char *name, unsigned int rate, unsigned int channels,
++                                         enum haiku_sample_format format, size_t buffer_size,
++                                         haiku_player_fill fill, void *user);
++
++/* 0 on success. */
++int haiku_player_start(struct haiku_player *player);
++
++/* Stops the player and waits until it calls its fill function no more. */
++void haiku_player_destroy(struct haiku_player *player);
++
++/* The latency from the player to the audio output, in microseconds. */
++long long haiku_player_latency(struct haiku_player *player);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* __WINE_HAIKU_PLAYER_H */
+diff -ruN '--exclude=configure' '--exclude=configure~' '--exclude=config.h.in~' '--exclude=autom4te.cache' '--exclude=*.orig' '--exclude=include/config.h.in' wine-ref/dlls/winehaiku.drv/Makefile.in wine-haiku/dlls/winehaiku.drv/Makefile.in
+--- wine-ref/dlls/winehaiku.drv/Makefile.in	1970-01-01 01:00:00.000000000 +0100
++++ wine-haiku/dlls/winehaiku.drv/Makefile.in	2026-10-21 16:42:17.943797773 +0200
+@@ -0,0 +1,7 @@
++MODULE    = winehaiku.drv
++UNIXLIB   = winehaiku.so
++IMPORTS   = uuid ole32 user32 advapi32
++UNIX_LIBS    = $(HAIKU_AUDIO_LIBS) $(PTHREAD_LIBS)
++
++SOURCES = \
++	haiku.c

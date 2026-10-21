@@ -15,12 +15,15 @@
 #              WoW64), with the Wayland window driver when scripts/build-wayland.sh has run, and make:
 #              artifacts/wine/cross. FreeType (text: without it every font metric, and so every window's
 #              caption and size, is garbage) from the headers of the 2.14 in the sysroot (scripts/build-firefox.sh);
-#              Wine loads libfreetype.so.6 at run time, the image's own (app_server's 2.6.3). No audio or
-#              graphics drivers yet
+#              Wine loads libfreetype.so.6 at run time, the image's own (app_server's 2.6.3). Sound:
+#              winehaiku.drv (patches/wine/0002), a BSoundPlayer per stream into the system mixer; its C++
+#              Media Kit shim (dlls/winehaiku.drv/haiku_player.cpp: Wine's makedep builds no C++) is compiled
+#              here into a static library that configure links into winehaiku.so (HAIKU_AUDIO_LIBS)
 #   install    make install into artifacts/wine/install (prefix /boot/system/non-packaged), bin/wine linked
 #              to the loader, debug info stripped (~970 MB with i386; a prefix takes ~1 GB more: images need
 #              -sHAIKU_IMAGE_SIZE=3500); the test
-#              programs of tools/wine-tests (hello.c, ddtest.c for arm64 and x86; click.c) in data/wine-tests
+#              programs of tools/wine-tests (hello.c, ddtest.c, tone.c for arm64 and x86; click.c) in
+#              data/wine-tests
 #
 # Test: scripts/mkimage-pi4.sh --in <a 3500 MB build's haiku-mmc.image> \
 #           --add-tree artifacts/wine/install/boot/system/non-packaged --bootscript tools/pi-tests/wine-hello.sh
@@ -81,6 +84,13 @@ step_build() {
 		&& [ -f "$sysroot/boot/system/develop/lib/pkgconfig/wayland-client.pc" ]; then
 		display=(--with-wayland WAYLAND_SCANNER="$root/artifacts/wayland-host/bin/wayland-scanner")
 	fi
+	# winehaiku.drv's Media Kit shim; hidden symbols: winehaiku.so exports only Wine's entry points
+	local shim="$out/cross/haiku-audio"
+	mkdir -p "$shim"
+	rm -f "$shim/libwinehaiku_player.a"
+	"$tools-g++" --sysroot="$sysroot" -O2 -fPIC -fvisibility=hidden -Wall -Wextra \
+		-c "$src/dlls/winehaiku.drv/haiku_player.cpp" -o "$shim/haiku_player.o"
+	"$tools-ar" rcs "$shim/libwinehaiku_player.a" "$shim/haiku_player.o"
 	(cd "$out/cross" && PATH="$mingw:$PATH" PKG_CONFIG=pkg-config \
 		PKG_CONFIG_LIBDIR="$sysroot/boot/system/develop/lib/pkgconfig:$sysroot/boot/system/data/pkgconfig" \
 		PKG_CONFIG_SYSROOT_DIR="$sysroot" "$src/configure" --host=aarch64-unknown-haiku \
@@ -93,6 +103,7 @@ step_build() {
 		CC="$tools-gcc --sysroot=$sysroot" CXX="$tools-g++ --sysroot=$sysroot" LDFLAGS="-lnetwork" \
 		FREETYPE_CFLAGS="-I$sysroot/boot/system/non-packaged/include/freetype2" \
 		FREETYPE_LIBS="-L$sysroot/boot/system/non-packaged/lib -lfreetype" \
+		HAIKU_AUDIO_LIBS="$shim/libwinehaiku_player.a -lmedia -lbe -lstdc++" \
 		> configure.log 2>&1) || { tail -n 20 "$out/cross/configure.log" >&2; exit 1; }
 	# configure's own last step (config.status, makedep) can fail after a zero exit of its checks
 	grep -q 'could not create Makefile' "$out/cross/configure.log" \
@@ -127,6 +138,8 @@ step_install() {
 	for a in aarch64:arm64 i686:x86; do
 		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/ddtest-${a#*:}.exe" \
 			"$root/tools/wine-tests/ddtest.c" -lddraw -ldxguid
+		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/tone-${a#*:}.exe" \
+			"$root/tools/wine-tests/tone.c" -lwinmm
 	done
 	du -sh "$prefix"
 }
