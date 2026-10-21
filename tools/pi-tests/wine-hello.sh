@@ -29,6 +29,11 @@ say "wine --version: exit $?: $(head -n 5 /tmp/version.txt | tr '\n' ' ' | cut -
 start=$(date +%s)
 bounded 300 /tmp/wineboot.txt wineboot -i
 say "wineboot: exit $? in $(( $(date +%s) - start )) s"
+# wineboot returns while the 32-bit rundll32 (x86 code under Box64) still fills syswow64: wait for every
+# Wine process to end
+start=$(date +%s)
+bounded 1200 /tmp/wait.txt wineserver -w
+say "wineserver -w: exit $? after $(( $(date +%s) - start )) s more; syswow64: $(ls $WINEPREFIX/drive_c/windows/syswow64 2> /dev/null | wc -l) files"
 tail -n 30 /tmp/wineboot.txt | while read -r line; do say "  boot: $line"; done
 start=$(date +%s)
 bounded 120 /tmp/hello.txt wine /boot/system/non-packaged/data/wine-tests/hello-arm64.exe
@@ -39,11 +44,13 @@ if [ -f /boot/system/non-packaged/lib/wine/aarch64-windows/wowbox64.dll ]; then
 	cp /boot/system/non-packaged/lib/wine/aarch64-windows/wowbox64.dll $WINEPREFIX/drive_c/windows/system32/
 	bounded 60 /tmp/reg.txt wine reg add 'HKLM\Software\Microsoft\Wow64\x86' /ve /d wowbox64.dll /f
 	say "wow64 emulator: exit $?: $(tail -n 1 /tmp/reg.txt)"
+	say "syswow64: $(ls $WINEPREFIX/drive_c/windows/syswow64 2> /dev/null | wc -l) files"
 	start=$(date +%s)
 	WINEDEBUG=err+all,fixme-all,+module,+loaddll,+wow bounded 180 /tmp/hello-x86.txt \
 		wine /boot/system/non-packaged/data/wine-tests/hello-x86.exe
 	say "hello-x86: exit $? in $(( $(date +%s) - start )) s"
-	grep -a -v "^trace:module:get_load_order\|trace:module:get_module_path_end" /tmp/hello-x86.txt | tail -n 60 \
-		| while read -r line; do say "  x86: $(echo "$line" | cut -c1-200)"; done
+	grep -a -v 'map_image_into_view\|get_load_order\|find_builtin_dll\|LdrGetDllHandle\|open_known_dll\|load_dll looking' \
+		/tmp/hello-x86.txt | tail -n 45 | while read -r line; do say "  x86: $(echo "$line" | cut -c1-220)"; done
+	say "syswow64: $(ls $WINEPREFIX/drive_c/windows/syswow64 2> /dev/null | wc -l) files; $(ls -la $WINEPREFIX/drive_c/windows/syswow64/kernel32.dll $WINEPREFIX/drive_c/windows/syswow64/ntdll.dll 2>&1 | tr '\n' ' ')"
 fi
 say end

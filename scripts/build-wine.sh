@@ -12,13 +12,14 @@
 #              support), then autoreconf
 #   tools      Wine's build tools (winegcc, widl, wrc, winebuild) for the host: artifacts/wine/host-tools
 #   build      configure for aarch64-unknown-haiku (PE side: aarch64, and i386 for 32-bit x86 programs through
-#              WoW64) and make:
+#              WoW64), with the Wayland window driver when scripts/build-wayland.sh has run, and make:
 #              artifacts/wine/cross. No display, audio or graphics drivers yet (step 1: console programs)
 #   install    make install into artifacts/wine/install (prefix /boot/system/non-packaged), bin/wine linked
-#              to the loader, debug info stripped (~570 MB → images need -sHAIKU_IMAGE_SIZE=1900); the test
+#              to the loader, debug info stripped (~970 MB with i386; a prefix takes ~1 GB more: images need
+#              -sHAIKU_IMAGE_SIZE=3500); the test
 #              program tools/wine-tests/hello.c as data/wine-tests/hello-arm64.exe
 #
-# Test: scripts/mkimage-pi4.sh --in <a 1900 MB build's haiku-mmc.image> \
+# Test: scripts/mkimage-pi4.sh --in <a 3500 MB build's haiku-mmc.image> \
 #           --add-tree artifacts/wine/install/boot/system/non-packaged --bootscript tools/pi-tests/wine-hello.sh
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -68,10 +69,19 @@ step_tools() {
 
 step_build() {
 	mkdir -p "$out/cross"
-	(cd "$out/cross" && PATH="$mingw:$PATH" PKG_CONFIG_LIBDIR="$sysroot/boot/system/develop/lib/pkgconfig" \
+	# the window driver: Wine's Wayland driver over X547's in-process server (scripts/build-wayland.sh), when
+	# that stack is built; configure needs the host's wayland-scanner and pkg-config named explicitly (with
+	# neither it reports nothing and still enables the driver, which then fails to link)
+	local display=(--without-wayland --disable-winewayland.drv)
+	if [ -x "$root/artifacts/wayland-host/bin/wayland-scanner" ] \
+		&& [ -f "$sysroot/boot/system/develop/lib/pkgconfig/wayland-client.pc" ]; then
+		display=(--with-wayland WAYLAND_SCANNER="$root/artifacts/wayland-host/bin/wayland-scanner")
+	fi
+	(cd "$out/cross" && PATH="$mingw:$PATH" PKG_CONFIG=pkg-config \
+		PKG_CONFIG_LIBDIR="$sysroot/boot/system/develop/lib/pkgconfig:$sysroot/boot/system/data/pkgconfig" \
 		PKG_CONFIG_SYSROOT_DIR="$sysroot" "$src/configure" --host=aarch64-unknown-haiku \
 		--prefix=/boot/system/non-packaged --enable-archs=aarch64,i386 --with-wine-tools="$out/host-tools" \
-		--without-x --without-wayland --disable-winewayland.drv --without-freetype --without-gnutls \
+		--without-x "${display[@]}" --without-freetype --without-gnutls \
 		--without-vulkan --without-opengl --without-pulse --without-alsa --without-oss --without-cups \
 		--without-dbus --without-sane --without-gphoto --without-v4l2 --without-pcap --without-usb \
 		--without-krb5 --without-netapi --without-gstreamer --without-ffmpeg --without-sdl --without-capi \
@@ -95,8 +105,13 @@ step_install() {
 	for f in "$prefix"/lib/wine/aarch64-unix/*; do "$tools-strip" --strip-debug "$f" 2> /dev/null || true; done
 	find "$prefix/lib/wine/aarch64-windows" -type f ! -name '*.a' -print0 \
 		| xargs -0 -n 50 "$mingw/llvm-strip" --strip-debug 2> /dev/null || true
-	# Box64's x86 emulator for WoW64 (scripts/build-box64.sh), if built
-	[ -f "$root/artifacts/box64/wowbox64.dll" ] && cp "$root/artifacts/box64/wowbox64.dll" "$prefix/lib/wine/aarch64-windows/"
+	# Box64's x86 emulator for WoW64 (scripts/build-box64.sh), if built — also under the name WoW64 loads
+	# by default on arm64, xtajit.dll: the first wineboot fills the prefix's 32-bit system directory by
+	# running 32-bit rundll32, before any registry setting could name another emulator
+	if [ -f "$root/artifacts/box64/wowbox64.dll" ]; then
+		cp "$root/artifacts/box64/wowbox64.dll" "$prefix/lib/wine/aarch64-windows/"
+		cp "$root/artifacts/box64/wowbox64.dll" "$prefix/lib/wine/aarch64-windows/xtajit.dll"
+	fi
 	mkdir -p "$prefix/data/wine-tests"
 	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/hello-arm64.exe" \
 		"$root/tools/wine-tests/hello.c"
