@@ -174,8 +174,10 @@ step_install() {
 		cp "$root/artifacts/box64/wowbox64.dll" "$system/lib/wine/aarch64-windows/xtajit.dll"
 	fi
 	# packaged files must not name this checkout (a path compiled in) or the non-packaged prefix
-	local found
-	found="$(grep -rlF -e "$root" -e /boot/system/non-packaged "$system" || true)"
+	# (-a: grep here skips binary files without it; status 1 = no match, 2 = an error)
+	local found rc=0
+	found="$(grep -rlaF -e "$root" -e /boot/system/non-packaged "$system")" || rc=$?
+	[ "$rc" -le 1 ] || { echo "build-wine: the path check failed" >&2; exit 1; }
 	[ -z "$found" ] || { echo "build-wine: build or non-packaged paths in: $found" >&2; exit 1; }
 
 	# the test tree: the same files in non-packaged/ (hard links), plus the test programs
@@ -212,8 +214,8 @@ elf_requires() {
 	done
 }
 
-# make_package NAME DIR SUMMARY DESCRIPTION LICENSES PROVIDES REQUIRES (resolvables separated by spaces,
-# written without spaces: cmd:wine=11.0, wine==11.0-1)
+# make_package NAME DIR SUMMARY DESCRIPTION LICENSES PROVIDES REQUIRES [COPYRIGHTS] (resolvables separated by
+# spaces, written without spaces: cmd:wine=11.0, wine==11.0-1)
 make_package() {
 	local name="$1" dir="$2" hpkg="$out/$1-$wineVersion-$wineRevision-arm64.hpkg"
 	{
@@ -221,7 +223,7 @@ make_package() {
 		printf 'summary\t\t\t"%s"\ndescription\t\t"%s"\n' "$3" "$4"
 		printf 'packager\t\t"haiku-pi build farm <build@haiku-pi.invalid>"\nvendor\t\t\t"Haiku Project"\n'
 		printf 'licenses\t\t{ %s }\n' "$5"
-		printf 'copyrights\t\t{ "1993-2026 the Wine project authors" }\n'
+		printf 'copyrights\t\t{ "1993-2026 the Wine project authors"%s }\n' "${8:+ $8}"
 		printf 'provides {\n%s\n}\nrequires {\n%s\n}\n' "$(printf '\t%s\n' $6)" "$(printf '\t%s\n' $7)"
 	} | sed 's/==/ == /; t; s/=/ = /' > "$dir/.PackageInfo"
 	rm -f "$hpkg"
@@ -265,7 +267,8 @@ step_package() {
 		'"GNU LGPL v2.1"' "$provides" "$requires"
 	make_package wine_x86 "$pkg/wine_x86" "Wine's 32-bit x86 support (WoW64 with the Box64 emulator)" \
 		"The i386 Windows side of Wine $wineVersion and Box64's wowbox64.dll (also as xtajit.dll), the x86 emulator WoW64 runs 32-bit x86 Windows programs with on arm64. Cross-built for the Raspberry Pi 4 by the haiku-pi project (scripts/build-wine.sh, scripts/build-box64.sh)." \
-		'"GNU LGPL v2.1" "MIT"' "wine_x86=$wineVersion-$wineRevision" "haiku wine==$wineVersion-$wineRevision"
+		'"GNU LGPL v2.1" "MIT"' "wine_x86=$wineVersion-$wineRevision" "haiku wine==$wineVersion-$wineRevision" \
+		'"2018-2026 Sebastien Chevalier and the Box64 contributors"'
 	rm -rf "$pkg"
 }
 
