@@ -52,6 +52,11 @@ pid=$!
 if [ -n "${CLICK:-}" ]; then
 	( IFS='|'; wine "$root/artifacts/wine-ref/click-x86.exe" -t "$secs" $CLICK ) >> "$shots/$name.txt" 2>&1 &
 fi
+# INPUT="STEP|STEP...": keyboard and mouse input played in (tools/wine-tests/input.c, built as
+# artifacts/wine-ref/input-x64.exe), as tools/pi-tests/wine-games.sh does on the Pi
+if [ -n "${INPUT:-}" ]; then
+	( IFS='|'; wine "$root/artifacts/wine-ref/input-x64.exe" $INPUT ) > "$shots/$name.input.txt" 2>&1 &
+fi
 for ((t = shot, n = 1; t <= secs; t += shot, n++)); do
 	sleep "$shot"
 	ffmpeg -loglevel error -y -f x11grab -video_size 1920x1080 -i ":$d" -frames:v 1 "$shots/$name-$n.png"

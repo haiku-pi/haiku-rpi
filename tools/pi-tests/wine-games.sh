@@ -107,6 +107,12 @@ fi
 # V3D, in an 800x600 window; New Game (N), the difficulty (Return)
 input="focus:Half-Life|wait:60000|key:0x4e|wait:5000|key:0x0d"
 want halflife && run halflife HL "hldemo.exe -gl -window -width 800 -height 600" 300
+# the same with where each module loaded and the exceptions (WINEDEBUG), the game's console in HL/qconsole.log
+# (-condebug); and with Box64's safe dynarec settings
+want halflife-trace && run halflife-trace HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 200 \
+	WINEDEBUG=+loaddll,+seh,err+all,fixme-all
+want halflife-safe && run halflife-safe HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 300 \
+	BOX64_DYNAREC_SAFEFLAGS=2 BOX64_DYNAREC_STRONGMEM=2 BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0
 input=
 # Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
 # S Single Scenario, Return Begin, then the welcome's Return (a further Return opens the hero's screen); the hero

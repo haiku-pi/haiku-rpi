@@ -27,3 +27,6 @@ mkdir -p "$out/build"
 	|| { tail -n 30 "$out/build/build.log" >&2; exit 1; }
 (cd "$out/build" && PATH="$mingw:$PATH" make install > install.log 2>&1) || { tail -n 20 "$out/build/install.log" >&2; exit 1; }
 du -sh "$out/install"
+# the test helpers tools/wine-ref/run.sh plays into programs (CLICK=, INPUT=)
+"$mingw/i686-w64-mingw32-clang" -O2 -o "$out/click-x86.exe" "$root/tools/wine-tests/click.c"
+"$mingw/x86_64-w64-mingw32-clang" -O2 -o "$out/input-x64.exe" "$root/tools/wine-tests/input.c"
