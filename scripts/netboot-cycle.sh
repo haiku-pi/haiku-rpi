@@ -5,7 +5,7 @@
 #
 #   scripts/netboot-cycle.sh [--image IMG] [--secs N] [--label L] [--hdmi-every N]
 #                            [--until RE]... [--fail RE]... [--send SECS:TEXT]... [--no-wedge-dump]
-#                            [--keep-disk] [--bootscript FILE]
+#                            [--keep-disk] [--bootscript FILE] [--add FILE:PATH]...
 #
 # IMG: default artifacts/images/haiku-pi4-regular.img (any image of scripts/mkimage-pi4.sh: its FAT
 # partition gives the boot files, the whole image is the disk). Logs: artifacts/uart/<ts>-<label>.log,
@@ -13,7 +13,8 @@
 # last cycle's), and artifacts/uart/<ts>-<label>-disk.txt: the remote disk's requests so far, every
 # 5 s from power-on (a boot whose serial line went quiet but whose disk reads go on is alive).
 # --keep-disk: boot the disk the last cycle left (what Haiku wrote stays: a Wine prefix, say) instead of a fresh
-# copy of IMG; --bootscript FILE: install FILE as its UserBootscript first (a new test on a kept disk).
+# copy of IMG; --bootscript FILE: install FILE as its UserBootscript first (a new test on a kept disk); --add
+# FILE:PATH: copy FILE onto the disk as PATH (a path of the booted system, under /boot; its directory must exist).
 # A boot whose serial line goes quiet for 20 s before app_server set its mode (the network-boot
 # wedge) gets the kernel debugger's break and each CPU's stack crawl, ICIs and interrupts typed
 # into it (uart-capture.py --silence-after), counted from the kernel's banner on (a slow firmware TFTP
@@ -35,6 +36,7 @@ while [ $# -gt 0 ]; do
 	--no-wedge-dump) wedgeDump=0; shift ;;
 	--keep-disk) export NETBOOT_KEEP_DISK=1; shift ;;
 	--bootscript) NETBOOT_BOOTSCRIPT="$(realpath "$2")"; export NETBOOT_BOOTSCRIPT; shift 2 ;;
+	--add) NETBOOT_ADD="${NETBOOT_ADD:+$NETBOOT_ADD }$(realpath "${2%%:*}"):${2#*:}"; export NETBOOT_ADD; shift 2 ;;
 	*) echo "netboot-cycle: unknown option $1" >&2; exit 2 ;;
 	esac
 done
