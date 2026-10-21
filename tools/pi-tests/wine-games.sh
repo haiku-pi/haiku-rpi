@@ -103,14 +103,18 @@ if want starcraft || want starcraft-interp || want starcraft-safe; then
 	want starcraft-safe && run starcraft-safe SC Starcraft.exe 240 BOX64_DYNAREC_SAFEFLAGS=2 \
 		BOX64_DYNAREC_STRONGMEM=2 BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0
 fi
-# Half-Life: Uplink (Valve's free 1999 demo, installed on the host's reference Wine): its OpenGL renderer on the
-# V3D, in an 800x600 window; New Game (N), the difficulty (Return)
+# Half-Life: Uplink (Valve's free 1999 demo, installed on the host's reference Wine): its default software renderer
+# (sw.dll; the launcher ignores -gl), in an 800x600 window; New Game (N), the difficulty (Return)
 input="focus:Half-Life|wait:60000|key:0x4e|wait:5000|key:0x0d"
 want halflife && run halflife HL "hldemo.exe -gl -window -width 800 -height 600" 300
 # the same with where each module loaded and the exceptions (WINEDEBUG), the game's console in HL/qconsole.log
 # (-condebug); and with Box64's safe dynarec settings
 want halflife-trace && run halflife-trace HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 200 \
 	WINEDEBUG=+loaddll,+seh,err+all,fixme-all
+input="focus:Half-Life|wait:240000|key:0x4e|wait:15000|key:0x0d"
+want halflife-interp && run halflife-interp HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 600 \
+	BOX64_DYNAREC=0
+input="focus:Half-Life|wait:60000|key:0x4e|wait:5000|key:0x0d"
 want halflife-safe && run halflife-safe HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 300 \
 	BOX64_DYNAREC_SAFEFLAGS=2 BOX64_DYNAREC_STRONGMEM=2 BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0
 input=
