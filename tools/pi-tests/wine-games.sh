@@ -85,6 +85,14 @@ want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
 input="focus:Heroes|wait:90000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wait:30000|key:0x0d|wait:4000\
 |key:0x62|wait:2500|key:0x63|wait:2500|key:0x66|wait:2500|key:0x66|wait:2500|key:0x63|wait:2500|key:0x62\
 |wait:2500|key:0x64|wait:2500|key:0x64|wait:2500|key:0x68"
+# StarCraft (the 1998 shareware CD, installed on the host's reference Wine: tools/wine-ref; 640x480x8)
+want starcraft && run starcraft SC Starcraft.exe 300
+# without a sound driver (Wine's driver list empty), for an A/B with the run above
+if want heroes3-nosound; then
+	wine reg add 'HKCU\Software\Wine\Drivers' /v Audio /d "" /f > /dev/null 2>&1
+	run heroes3-nosound H3 h3demo.exe 300
+	wine reg delete 'HKCU\Software\Wine\Drivers' /v Audio /f > /dev/null 2>&1
+fi
 want heroes3 && run heroes3 H3 h3demo.exe 360
 # the same with the sound path traced (Heroes III's menu stopped answering once Wine had a sound driver)
 want heroes3-trace && run heroes3-trace H3 h3demo.exe 180 WINEDEBUG=err+all,fixme-all,+haiku,+mmdevapi,+dsound
