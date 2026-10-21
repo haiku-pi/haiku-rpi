@@ -1,0 +1,42 @@
+wayland-server: build with wayland-protocols' text-input-v3 version 2
+
+text-input-unstable-v3 version 2 (wayland-protocols 1.49, the version
+HaikuPorts has) adds three requests, set_available_actions,
+show_input_panel and hide_input_panel, which the generated C++ interface
+declares pure virtual: HaikuTextInput was abstract and did not compile.
+They are implemented as no-ops. The global still offers version 1, so
+clients do not send them.
+
+--- a/HaikuTextInput.h	2025-10-04 05:05:06.000000000 +0200
++++ b/HaikuTextInput.h	2026-10-21 11:12:49.822952442 +0200
+@@ -32,6 +32,9 @@
+ 	void HandleSetContentType(uint32_t hint, uint32_t purpose) final;
+ 	void HandleSetCursorRectangle(int32_t x, int32_t y, int32_t width, int32_t height) final;
+ 	void HandleCommit() final;
++	void HandleSetAvailableActions(struct wl_array *availableActions) final;
++	void HandleShowInputPanel() final;
++	void HandleHideInputPanel() final;
+ };
+ 
+ 
+--- a/HaikuTextInput.cpp	2025-10-04 05:05:06.000000000 +0200
++++ b/HaikuTextInput.cpp	2026-10-21 11:13:03.164222387 +0200
+@@ -251,3 +251,18 @@
+ 
+ 	fGlobal->SendState(this);
+ }
++
++// text-input-v3 version 2 requests: the global offers version 1, so clients do not send them, and
++// Haiku has no on-screen input panel to show or hide
++
++void HaikuTextInput::HandleSetAvailableActions(struct wl_array *availableActions)
++{
++}
++
++void HaikuTextInput::HandleShowInputPanel()
++{
++}
++
++void HaikuTextInput::HandleHideInputPanel()
++{
++}

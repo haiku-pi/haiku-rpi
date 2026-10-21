@@ -1,0 +1,42 @@
+wayland-server: build for the host machine's architecture, with the sysroot's private headers
+
+The architecture of the private system headers was the build machine's
+(x86_64 when cross-compiling for arm64), and the private header
+directories were absolute paths of the running system, which a cross
+build does not have. Both now come from the system built for: the host
+machine's CPU family and the cross file's sys_root (/ natively, so a
+native build is unchanged).
+
+--- a/meson.build	2025-10-04 05:05:06.000000000 +0200
++++ b/meson.build	2026-10-21 11:09:44.369846142 +0200
+@@ -8,11 +8,14 @@
+ 
+ cpp = meson.get_compiler('cpp')
+ 
+-arch = build_machine.cpu_family()
++arch = host_machine.cpu_family()
+ if arch == 'aarch64'
+ 	arch = 'arm64'
+ endif
+ 
++# Haiku's private headers: those of the system built for, under the sysroot when cross-compiling
++private_headers = meson.get_external_property('sys_root', '/') / 'boot/system/develop/headers/private'
++
+ wlserverdep    = dependency('wayland-server')
+ wlprotocolsdep = dependency('wayland-protocols')
+ 
+@@ -119,10 +122,10 @@
+ 	],
+ 	name_prefix: '',
+ 	include_directories: [
+-		'/boot/system/develop/headers/private/shared',
+-		'/boot/system/develop/headers/private/interface',
+-		'/boot/system/develop/headers/private/system',
+-		'/boot/system/develop/headers/private/system/arch/' + arch,
++		private_headers / 'shared',
++		private_headers / 'interface',
++		private_headers / 'system',
++		private_headers / 'system/arch' / arch,
+ 	],
+ 	dependencies: [
+ 		cpp.find_library('be'),

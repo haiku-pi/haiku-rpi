@@ -11,7 +11,8 @@
 #              copy (sources/wine/wine-haiku: HaikuPorts' Haiku patches brought to 11.0, plus arm64 Haiku
 #              support), then autoreconf
 #   tools      Wine's build tools (winegcc, widl, wrc, winebuild) for the host: artifacts/wine/host-tools
-#   build      configure for aarch64-unknown-haiku (PE side: aarch64 only for now) and make:
+#   build      configure for aarch64-unknown-haiku (PE side: aarch64, and i386 for 32-bit x86 programs through
+#              WoW64) and make:
 #              artifacts/wine/cross. No display, audio or graphics drivers yet (step 1: console programs)
 #   install    make install into artifacts/wine/install (prefix /boot/system/non-packaged), bin/wine linked
 #              to the loader, debug info stripped (~570 MB → images need -sHAIKU_IMAGE_SIZE=1900); the test
@@ -69,14 +70,17 @@ step_build() {
 	mkdir -p "$out/cross"
 	(cd "$out/cross" && PATH="$mingw:$PATH" PKG_CONFIG_LIBDIR="$sysroot/boot/system/develop/lib/pkgconfig" \
 		PKG_CONFIG_SYSROOT_DIR="$sysroot" "$src/configure" --host=aarch64-unknown-haiku \
-		--prefix=/boot/system/non-packaged --enable-archs=aarch64 --with-wine-tools="$out/host-tools" \
+		--prefix=/boot/system/non-packaged --enable-archs=aarch64,i386 --with-wine-tools="$out/host-tools" \
 		--without-x --without-wayland --disable-winewayland.drv --without-freetype --without-gnutls \
 		--without-vulkan --without-opengl --without-pulse --without-alsa --without-oss --without-cups \
 		--without-dbus --without-sane --without-gphoto --without-v4l2 --without-pcap --without-usb \
 		--without-krb5 --without-netapi --without-gstreamer --without-ffmpeg --without-sdl --without-capi \
 		--without-opencl --without-udev --without-unwind --without-inotify --disable-tests \
 		CC="$tools-gcc --sysroot=$sysroot" CXX="$tools-g++ --sysroot=$sysroot" LDFLAGS="-lnetwork" \
-		> configure.log 2>&1)
+		> configure.log 2>&1) || { tail -n 20 "$out/cross/configure.log" >&2; exit 1; }
+	# configure's own last step (config.status, makedep) can fail after a zero exit of its checks
+	grep -q 'could not create Makefile' "$out/cross/configure.log" \
+		&& { tail -n 20 "$out/cross/configure.log" >&2; exit 1; }
 	(cd "$out/cross" && PATH="$mingw:$PATH" "$root/scripts/heavy-build.sh" -- make -j{JOBS} > build.log 2>&1) \
 		|| { tail -n 30 "$out/cross/build.log" >&2; exit 1; }
 }
@@ -84,14 +88,19 @@ step_build() {
 step_install() {
 	local dest="$out/install" prefix="$out/install/boot/system/non-packaged"
 	rm -rf "$dest"
-	(cd "$out/cross" && PATH="$mingw:$PATH" make install DESTDIR="$dest" > install.log 2>&1)
+	(cd "$out/cross" && PATH="$mingw:$PATH" make install DESTDIR="$dest" > install.log 2>&1) \
+		|| { tail -n 20 "$out/cross/install.log" >&2; exit 1; }
 	rm -rf "$prefix/include"
 	ln -sf ../lib/wine/aarch64-unix/wine "$prefix/bin/wine"
 	for f in "$prefix"/lib/wine/aarch64-unix/*; do "$tools-strip" --strip-debug "$f" 2> /dev/null || true; done
 	find "$prefix/lib/wine/aarch64-windows" -type f ! -name '*.a' -print0 \
 		| xargs -0 -n 50 "$mingw/llvm-strip" --strip-debug 2> /dev/null || true
+	# Box64's x86 emulator for WoW64 (scripts/build-box64.sh), if built
+	[ -f "$root/artifacts/box64/wowbox64.dll" ] && cp "$root/artifacts/box64/wowbox64.dll" "$prefix/lib/wine/aarch64-windows/"
 	mkdir -p "$prefix/data/wine-tests"
 	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/hello-arm64.exe" \
+		"$root/tools/wine-tests/hello.c"
+	"$mingw/i686-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/hello-x86.exe" \
 		"$root/tools/wine-tests/hello.c"
 	du -sh "$prefix"
 }

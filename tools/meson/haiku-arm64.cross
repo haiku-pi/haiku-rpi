@@ -1,7 +1,8 @@
 # Meson cross file: Haiku arm64 (aarch64-unknown-haiku) on the Linux host, with the jam-built cross
 # compiler and the sysroot from scripts/haiku-sysroot.sh. Ports built with it install with
 #   --prefix=/boot/system/non-packaged  and  DESTDIR=<sysroot>  (scripts/build-gl-stack.sh does),
-# so later ports find earlier ones through pkg-config. Paths are relative to this file's checkout
+# so later ports find earlier ones through pkg-config; data/pkgconfig has the architecture-independent
+# ones (wayland-protocols, xkeyboard-config), as on Haiku. Paths are relative to this file's checkout
 # (@DIRNAME@: the directory of this file, meson >= 0.56).
 
 [constants]
@@ -29,7 +30,8 @@ cpp_link_args = ['--sysroot=' + sysroot]
 sys_root = sysroot
 pkg_config_libdir = [sysroot / 'boot/system/non-packaged/develop/lib/pkgconfig',
                      sysroot / 'boot/system/non-packaged/lib/pkgconfig',
-                     sysroot / 'boot/system/develop/lib/pkgconfig']
+                     sysroot / 'boot/system/develop/lib/pkgconfig',
+                     sysroot / 'boot/system/data/pkgconfig']
 needs_exe_wrapper = true
 
 [host_machine]

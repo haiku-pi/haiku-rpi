@@ -2,6 +2,7 @@
 """package-port.py — package a port built by scripts/cross-port.sh as HaikuPorts-style hpkgs.
 
     scripts/package-port.py RECIPE [--revision N] [--static-suffix SUFFIX] [--provides P]... [--requires R]...
+        [--devel-requires R]... [--no-devel] [--architecture any]
 
 From artifacts/cross-ports/<port>-<version>/install/boot/system/non-packaged (what cross-port.sh
 installed) it makes, in artifacts/packages/:
@@ -29,6 +30,11 @@ turned into requires) and global writable directories (--global-writable PATH, r
 packaged as boot/post-install/<name>, e.g. openssh's host key generation). The vendor is the
 HaikuPorts repository's ("Haiku Project"): package_repo refuses another one in it; the packager says
 who built them.
+
+As the recipe has it: --devel-requires adds a requirement of the _devel package (wayland_devel:
+devel:libffi), --no-devel makes no _devel package (wayland_server: an add-on, nothing to link), and
+--architecture any makes an architecture-independent package (ARCHITECTURES="any": data only,
+wayland_protocols).
 """
 
 import argparse
@@ -82,7 +88,7 @@ def resolvable(name):
 
 
 def package_info(name, version, revision, summary, licenses, copyrights, provides, requires,
-        writable=(), extra=''):
+        writable=(), extra='', architecture='arm64'):
     def block(items):
         return '\n'.join('\t' + i for i in items)
     writable = ''.join(f'global-writable-files {{\n\t"{w}" directory keep-old\n}}\n'
@@ -91,7 +97,7 @@ def package_info(name, version, revision, summary, licenses, copyrights, provide
     copyrights = ' '.join('"%s"' % c.replace('"', "'") for c in copyrights)
     return f'''name			{name}
 version			{version}-{revision}
-architecture	arm64
+architecture	{architecture}
 summary			"{summary}"
 description		"{summary}. Cross-built for the Raspberry Pi 4 by the haiku-pi project from the HaikuPorts recipe."
 packager		"haiku-pi build farm <build@haiku-pi.invalid>"
@@ -134,6 +140,12 @@ def main():
     parser.add_argument('--requires', action='append', default=[],
         help='a further requirement of the runtime package, one that NEEDED entries cannot show '
             '(e.g. ca_root_certificates for openssl3 and curl)')
+    parser.add_argument('--devel-requires', action='append', default=[],
+        help='a further requirement of the _devel package (the recipe\'s REQUIRES_devel)')
+    parser.add_argument('--no-devel', action='store_true',
+        help='no _devel package (the recipe has none)')
+    parser.add_argument('--architecture', default='arm64', choices=['arm64', 'any'],
+        help='any: an architecture-independent package (the recipe\'s ARCHITECTURES="any")')
     parser.add_argument('--devel-bin', action='append', default=[],
         help='a program of bin/ that goes into the _devel package (e.g. sdl2-config)')
     parser.add_argument('--system-prefix', action='store_true',
@@ -305,9 +317,12 @@ def main():
         soname, _ = elf_dynamic(os.path.realpath(path))
         if soname in sonames:
             os.symlink('../../lib/' + soname, os.path.join(devel, 'develop/lib', f))
-    pkgconfigDir = os.path.join(libDir, 'pkgconfig')
-    if os.path.isdir(pkgconfigDir):
-        os.makedirs(os.path.join(devel, 'develop/lib/pkgconfig'))
+    # lib/pkgconfig, or develop/lib/pkgconfig (meson's default on Haiku)
+    for pkgconfigDir in (os.path.join(libDir, 'pkgconfig'),
+            os.path.join(install, 'develop/lib/pkgconfig')):
+        if not os.path.isdir(pkgconfigDir):
+            continue
+        os.makedirs(os.path.join(devel, 'develop/lib/pkgconfig'), exist_ok=True)
         for f in sorted(os.listdir(pkgconfigDir)):
             pc = open(os.path.join(pkgconfigDir, f)).read()
             pc = re.sub(r'^prefix=.*$', 'prefix=/boot/system', pc, flags=re.M)
@@ -341,16 +356,17 @@ def main():
     runtimeFiles = [f for d, _, fs in os.walk(runtime) for f in fs if '/data/licenses' not in d]
     if runtimeFiles:
         create(runtime, package_info(port, version, args.revision, summary, licenses,
-            copyrights, provides, sorted(requires), args.global_writable, extra),
-            os.path.join(out, f'{port}-{version}-{args.revision}-arm64.hpkg'))
+            copyrights, provides, sorted(requires), args.global_writable, extra, args.architecture),
+            os.path.join(out, f'{port}-{version}-{args.revision}-{args.architecture}.hpkg'))
         develRequires = [f'{port} == {version}-{args.revision}']
     else:
         develRequires = ['haiku']
+    develRequires += args.devel_requires
     develFiles = [os.path.join(d, f) for d, _, fs in os.walk(devel) for f in fs
             if '/data/licenses' not in d] \
         + [os.path.join(d, x) for d, xs, _ in os.walk(devel) for x in xs
             if os.path.islink(os.path.join(d, x))]
-    if not develFiles:
+    if not develFiles or args.no_devel:
         return
     create(devel, package_info(port + '_devel', version, args.revision, summary
         + ' (development files)', licenses, copyrights, develProvides, develRequires),
