@@ -70,6 +70,9 @@ run() {
 # /boot/home/wine-games.list (netboot-cycle.sh --add, for a kept disk's next run): only the games it names
 list=$(cat /boot/home/wine-games.list 2> /dev/null)
 want() { [ -z "$list" ] || case " $(echo $list) " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+# sound (winehaiku.drv): a 1 kHz tone, 3 s, as arm64 and as x86 (tools/wine-tests/tone.c)
+want tone-arm64 && WINEDEBUG=err+all,fixme-all,+haiku run tone-arm64 ../wine-tests "tone-arm64.exe 3 1000" 60
+want tone-x86 && run tone-x86 ../wine-tests "tone-x86.exe 3 1000" 60
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
 # Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
@@ -80,6 +83,8 @@ input="focus:Heroes|wait:90000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wa
 |key:0x62|wait:2500|key:0x63|wait:2500|key:0x66|wait:2500|key:0x66|wait:2500|key:0x63|wait:2500|key:0x62\
 |wait:2500|key:0x64|wait:2500|key:0x64|wait:2500|key:0x68"
 want heroes3 && run heroes3 H3 h3demo.exe 360
+# the same with the sound path traced (Heroes III's menu stopped answering once Wine had a sound driver)
+want heroes3-trace && run heroes3-trace H3 h3demo.exe 180 WINEDEBUG=err+all,fixme-all,+haiku,+mmdevapi,+dsound
 input=
 click="Electronic Registration|Register Later|Electronic Registration|Forfeit"
 want fallout && run fallout falldemo Falldemo.exe 300
