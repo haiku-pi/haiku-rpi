@@ -9,9 +9,10 @@ the window. The framebuffer is now made with the OpenGL 3.0 /
 ARB_framebuffer_object calls (keeping the caller's bindings), and a swap (or a
 flush of a single-buffered window) reads the frame back and draws it into the
 window's DC as a DIB.
+
 --- a/dlls/win32u/opengl.c	2026-10-21 19:09:16.420511841 +0200
-+++ b/dlls/win32u/opengl.c	2026-10-21 19:22:41.286282102 +0200
-@@ -241,33 +241,75 @@
++++ b/dlls/win32u/opengl.c	2026-10-21 19:45:33.975032626 +0200
+@@ -241,33 +241,76 @@
      return 0;
  }
  
@@ -89,13 +90,14 @@ window's DC as a DIB.
  
 -    funcs->p_glNamedFramebufferDrawBuffer( fbo, GL_COLOR_ATTACHMENT0 );
 -    funcs->p_glNamedFramebufferReadBuffer( fbo, drawable->doublebuffer ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0 );
-+    funcs->p_glDrawBuffer( GL_COLOR_ATTACHMENT0 );
++    /* GL's default buffers: the back one of a double-buffered window, the front one otherwise */
++    funcs->p_glDrawBuffer( drawable->doublebuffer ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0 );
 +    funcs->p_glReadBuffer( drawable->doublebuffer ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0 );
 +    restore_framebuffer( &saved );
      TRACE( "drawable %p created framebuffer %u\n", drawable, fbo );
  
      return fbo;
-@@ -277,57 +319,103 @@
+@@ -277,57 +320,106 @@
                                  int width, int height )
  {
      const struct opengl_funcs *funcs = &display_funcs;
@@ -197,17 +199,20 @@ window's DC as a DIB.
 +    info.bmiHeader.biHeight = height;
 +    if ((hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_CLIPSIBLINGS )))
 +    {
-+        NtGdiSetDIBitsToDeviceInternal( hdc, 0, 0, width, height, 0, 0, 0, height, bits, &info, DIB_RGB_COLORS,
-+                                        width * height * 4, sizeof(info), FALSE, NULL );
++        INT lines = NtGdiSetDIBitsToDeviceInternal( hdc, 0, 0, width, height, 0, 0, 0, height, bits, &info,
++                                                    DIB_RGB_COLORS, width * height * 4, sizeof(info), FALSE, NULL );
++        TRACE( "%s: %ux%u from %#x, pixel %#x, %d lines to hdc %p\n", debugstr_opengl_drawable( drawable ), width,
++               height, buffer, *(UINT *)bits, lines, hdc );
 +        NtUserReleaseDC( hwnd, hdc );
 +    }
++    else WARN( "%s: no DC for window %p\n", debugstr_opengl_drawable( drawable ), hwnd );
 +    free( bits );
 +}
 +
  static void framebuffer_surface_destroy( struct opengl_drawable *drawable )
  {
      TRACE( "%s\n", debugstr_opengl_drawable( drawable ) );
-@@ -388,11 +476,14 @@
+@@ -388,11 +480,14 @@
  {
      TRACE( "%s, flags %#x\n", debugstr_opengl_drawable( drawable ), flags );
      if (flags & GL_FLUSH_UPDATED && drawable->read_fbo) framebuffer_surface_resize( drawable );
@@ -222,7 +227,7 @@ window's DC as a DIB.
      return TRUE;
  }
  
-@@ -2509,6 +2600,13 @@
+@@ -2509,6 +2604,13 @@
      USE_GL_FUNC(glNamedFramebufferReadBuffer)
      USE_GL_FUNC(glNamedFramebufferRenderbuffer)
      USE_GL_FUNC(glNamedRenderbufferStorageMultisample)
