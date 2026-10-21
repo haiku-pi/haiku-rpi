@@ -6,6 +6,7 @@
 #   scripts/netboot-cycle.sh [--image IMG] [--secs N] [--label L] [--hdmi-every N]
 #                            [--until RE]... [--fail RE]... [--send SECS:TEXT]... [--no-wedge-dump]
 #                            [--keep-disk] [--bootscript FILE] [--add FILE:PATH]... [--record START:SECS]
+#                            [--retry-wedge]
 #
 # IMG: default artifacts/images/haiku-pi4-regular.img (any image of scripts/mkimage-pi4.sh: its FAT
 # partition gives the boot files, the whole image is the disk). Logs: artifacts/uart/<ts>-<label>.log,
@@ -21,13 +22,16 @@
 # wedge) gets the kernel debugger's break and each CPU's stack crawl, ICIs and interrupts typed
 # into it (uart-capture.py --silence-after), counted from the kernel's banner on (a slow firmware TFTP
 # stage before it once got the keys typed into U-Boot, which then stopped at its prompt);
-# --no-wedge-dump: not.
+# --no-wedge-dump: not. --retry-wedge: a boot that has not set its display mode 120 s after power-on (the
+# wedge: ~52 s in a good boot) is ended and the cycle run once more, at once (the wedge strikes cold boots).
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
 img="$HAIKU_RPI_ROOT/artifacts/images/haiku-pi4-regular.img"
 secs=200 label=netboot hdmi_every=20 record=""
 caps=()
-wedgeDump=1
+wedgeDump=1 retryWedge=0
+args=()
+for a in "$@"; do [ "$a" = --retry-wedge ] || args+=("$a"); done
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--image) img="$(realpath "$2")"; shift 2 ;;
@@ -36,6 +40,7 @@ while [ $# -gt 0 ]; do
 	--hdmi-every) hdmi_every="$2"; shift 2 ;;
 	--until|--fail|--send) caps+=("$1" "$2"); shift 2 ;;
 	--no-wedge-dump) wedgeDump=0; shift ;;
+	--retry-wedge) retryWedge=1; shift ;;
 	--keep-disk) export NETBOOT_KEEP_DISK=1; shift ;;
 	--bootscript) NETBOOT_BOOTSCRIPT="$(realpath "$2")"; export NETBOOT_BOOTSCRIPT; shift 2 ;;
 	--record) record="$2"; shift 2 ;;
@@ -56,11 +61,12 @@ uart_dir="$HAIKU_RPI_ROOT/artifacts/uart"; hdmi_dir="$HAIKU_RPI_ROOT/artifacts/h
 mkdir -p "$uart_dir" "$hdmi_dir"
 
 bench_lock
-hdmi_pid="" disk_pid="" record_pid=""
+hdmi_pid="" disk_pid="" record_pid="" wedge_pid=""
 cleanup() {
 	[ -n "$hdmi_pid" ] && { pkill -P "$hdmi_pid" 2>/dev/null; kill "$hdmi_pid" 2>/dev/null; } || true
 	[ -n "$disk_pid" ] && { pkill -P "$disk_pid" 2>/dev/null; kill "$disk_pid" 2>/dev/null; } || true
 	[ -n "$record_pid" ] && { pkill -P "$record_pid" 2>/dev/null; kill "$record_pid" 2>/dev/null; } || true
+	[ -n "$wedge_pid" ] && { pkill -P "$wedge_pid" 2>/dev/null; kill "$wedge_pid" 2>/dev/null; } || true
 	rm -f "${recording:-}"
 	pi_power off || true
 	"$HAIKU_RPI_ROOT/scripts/netboot-server.sh" down >/dev/null 2>&1 || true
@@ -94,7 +100,19 @@ disk_log="$HAIKU_RPI_ROOT/artifacts/netboot/state/disk.log"
 ( t=0; while sleep 5; do t=$((t + 5)); echo "$t s: $(wc -l < "$disk_log" 2>/dev/null || echo 0) requests"; done \
 	> "$uart_dir/$ts-$label-disk.txt" ) 9>&- &
 disk_pid=$!
+wedge_flag="$uart_dir/.wedge-$ts"
+if [ "$retryWedge" = 1 ]; then
+	( sleep 120; grep -a -q 'hardware cursor shown' "$log" || { touch "$wedge_flag"; kill "$cap_pid"; } ) 9>&- &
+	wedge_pid=$!
+fi
 rc=0; wait "$cap_pid" || rc=$?
+if [ -e "$wedge_flag" ]; then
+	rm -f "$wedge_flag"
+	echo "netboot-cycle: no display mode 120 s after power-on (the network-boot wedge): once more"
+	trap - EXIT
+	cleanup
+	exec "$0" "${args[@]}"
+fi
 hdmi_snap "$hdmi_dir/$ts-$label-final.png" || true
 echo "netboot-cycle: capture rc=$rc log=$log"
 grep -a -c 'READ request' "$HAIKU_RPI_ROOT/artifacts/netboot/state/disk.log" 2>/dev/null \
