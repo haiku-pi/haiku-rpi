@@ -101,7 +101,7 @@ emulator. **Heroes of Might and Magic III** (its 1999 demo) plays its intro, its
 
 ![Heroes III on the adventure map, on Haiku on the Pi](docs/screenshots/16-wine-heroes3-adventure-map.png)
 
-A 40-second clip: [docs/video/wine-heroes3-pi4.mp4](docs/video/wine-heroes3-pi4.mp4). The demo is downloaded
+A 74-second clip — intro, then the scenario and its adventure map: [docs/video/wine-heroes3-pi4.mp4](docs/video/wine-heroes3-pi4.mp4). The demo is downloaded
 for the test only; nothing of it is in this repository. Still to come: sound, OpenGL games, 64-bit x86
 (docs/design/wine-x86.md).
 
