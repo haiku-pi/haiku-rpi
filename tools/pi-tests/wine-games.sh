@@ -72,8 +72,9 @@ list=$(cat /boot/home/wine-games.list 2> /dev/null)
 want() { [ -z "$list" ] || case " $(echo $list) " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
-# Heroes III's demo (800x600): New Game, Single Scenario, Begin
-input="wait:45000|click:644,75|wait:6000|click:644,75|wait:8000|key:0x0d|wait:20000|key:0x0d"
+# Heroes III's demo: past the intro (Escape), then the menus' keys — N New Game, S Single Scenario, Return Begin
+# (its mouse is DirectInput's relative motion: absolute clicks do not land where they aim)
+input="wait:50000|key:0x1b|wait:15000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wait:30000|key:0x0d"
 want heroes3 && run heroes3 H3 h3demo.exe 300
 input=
 click="Electronic Registration|Register Later|Electronic Registration|Forfeit"

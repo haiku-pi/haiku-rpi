@@ -44,6 +44,20 @@ with sources. What it settles:
 6. **Packages, docs, a showcase:** `wine` and the translators as packages in our repository, a user-guide
    section, screenshots and a short video of the games.
 
+### Status (2026-10-21)
+
+- Step 1 done: arm64 console programs, and windows through the Wayland driver (WineMine on the Haiku desktop).
+- Step 2: the WoW64 + Box64 path runs 32-bit x86 games on DirectDraw through wined3d's GDI renderer, which is
+  exact at 8, 16 and 32 bpp (`tools/wine-tests/ddtest.c`). Heroes III's demo plays its intro video and shows its
+  main menu; Fallout's demo gets past its dialogs to a black screen; SimCity 3000's demo shows its title, then
+  fails as it does with the same Wine on x86-64 (a game/Wine defect, not the port's).
+- Fixed on the way: libwayland-client's dispatch on Haiku (`patches/wayland`), FreeType for Wine, Box64's FS
+  selector under WoW64 (`patches/box64/0002`), a mapping for user-write-only pages (kernel), drive D: = /boot for
+  programs that check free space (Z:, Haiku's rootfs `/`, has none).
+- Next: **audio** — Wine has no driver for Haiku (HaikuPorts' Wine uses OSS, whose drivers do not cover the Pi):
+  a `winehaiku` mmdevapi driver on the Media Kit, modelled on `wineoss`; probably what Fallout's movie player
+  waits for. Then OpenGL (WineD3D on the V3D: Half-Life, UT), x86-64 (FEX-2601 ARM64EC), packages.
+
 ## Test programs (to be chosen and license-checked at the start)
 
 The owner's guidance (2026-10-21 00:13): test with older, very popular Windows games that are known to run under
