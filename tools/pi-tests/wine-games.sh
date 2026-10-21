@@ -18,7 +18,8 @@ games=/boot/system/non-packaged/data/wine-games
 if [ ! -f $WINEPREFIX/drive_c/windows/syswow64/kernel32.dll ]; then
 	rm -rf $WINEPREFIX
 	start=$(date +%s)
-	wineboot -i > /tmp/wineboot.txt 2>&1
+	# no Wine Mono / Gecko installer dialogs (Wine 11.20 asks; nobody is there to answer)
+	WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -i > /tmp/wineboot.txt 2>&1
 	# wineboot returns before the 32-bit setup (x86 rundll32 under the emulator) is done
 	wineserver -w &
 	wpid=$!

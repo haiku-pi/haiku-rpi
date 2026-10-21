@@ -16,7 +16,8 @@ tail -n 5 /tmp/pkgman.txt | while read -r line; do say "  pkgman: $line"; done
 say "wine: $(which wine 2>&1) $(wine --version 2>&1)"
 
 start=$(date +%s)
-wineboot -i > /tmp/wineboot.txt 2>&1
+# no Wine Mono / Gecko installer dialogs (Wine 11.20 asks; nobody is there to answer)
+WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -i > /tmp/wineboot.txt 2>&1
 wineserver -w
 say "prefix: $(( $(date +%s) - start )) s, system32 $(ls $WINEPREFIX/drive_c/windows/system32 2> /dev/null | wc -l)," \
 	"syswow64 $(ls $WINEPREFIX/drive_c/windows/syswow64 2> /dev/null | wc -l) files"
