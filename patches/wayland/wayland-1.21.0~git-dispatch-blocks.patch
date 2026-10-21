@@ -1,0 +1,45 @@
+wayland: block in wl_display_dispatch_queue() on Haiku
+
+On Haiku the client talks to the in-process server (wayland-server-inproc.so),
+whose looper thread enqueues events with display_enqueue(); nothing is read
+from a socket. wl_display_dispatch_queue() then only dispatched what was
+already queued and returned at once, so a caller that loops on it spun a CPU:
+wl_display_roundtrip_queue() until the server answered, and forever an event
+thread that does nothing else (Wine's winewayland.drv). It now waits on the
+display's condition variable, which display_enqueue() and fatal errors
+broadcast, until the queue (or the display's own) has an event, as the socket
+read blocks elsewhere.
+
+--- a/src/wayland-client.c	2026-10-21 14:33:47.652501044 +0200
++++ b/src/wayland-client.c	2026-10-21 14:33:47.662532405 +0200
+@@ -1681,6 +1681,8 @@
+ 		queue = proxy->queue;
+ 
+ 	wl_list_insert(queue->event_list.prev, &closure->link);
++	/* wake the threads blocked in wl_display_dispatch_queue() */
++	pthread_cond_broadcast(&display->reader_cond);
+ 
+ 	if (!display->fd_can_read) {
+ 		display->fd_can_read = true;
+@@ -2118,6 +2120,21 @@
+ 
+ 	if (wl_display_read_events(display) == -1)
+ 		return -1;
++#else
++	/* The in-process server enqueues events from its own thread
++	 * (display_enqueue()): block until this queue, or the display's
++	 * own queue, has one, as reading the socket does elsewhere.
++	 * Without this the function returns at once and callers that
++	 * loop on it (wl_display_roundtrip_queue(), an event thread
++	 * that only dispatches) spin. */
++	pthread_mutex_lock(&display->mutex);
++	while (wl_list_empty(&queue->event_list) &&
++	       wl_list_empty(&display->display_queue.event_list) &&
++	       !display->last_error)
++		pthread_cond_wait(&display->reader_cond, &display->mutex);
++	/* the events are taken now: consume the pipe's wake-up byte */
++	read_events(display);
++	pthread_mutex_unlock(&display->mutex);
+ #endif
+ 
+ 	return wl_display_dispatch_queue_pending(display, queue);

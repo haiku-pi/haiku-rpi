@@ -10,10 +10,13 @@
 #              20260826 into sources/wine/, both checked against pinned SHA-256s; patches/wine/*.patch on a
 #              copy (sources/wine/wine-haiku: HaikuPorts' Haiku patches brought to 11.0, plus arm64 Haiku
 #              support), then autoreconf
-#   tools      Wine's build tools (winegcc, widl, wrc, winebuild) for the host: artifacts/wine/host-tools
+#   tools      Wine's build tools (winegcc, widl, wrc, winebuild, sfnt2fon) for the host: artifacts/wine/host-tools
 #   build      configure for aarch64-unknown-haiku (PE side: aarch64, and i386 for 32-bit x86 programs through
 #              WoW64), with the Wayland window driver when scripts/build-wayland.sh has run, and make:
-#              artifacts/wine/cross. No display, audio or graphics drivers yet (step 1: console programs)
+#              artifacts/wine/cross. FreeType (text: without it every font metric, and so every window's
+#              caption and size, is garbage) from the headers of the 2.14 in the sysroot (scripts/build-firefox.sh);
+#              Wine loads libfreetype.so.6 at run time, the image's own (app_server's 2.6.3). No audio or
+#              graphics drivers yet
 #   install    make install into artifacts/wine/install (prefix /boot/system/non-packaged), bin/wine linked
 #              to the loader, debug info stripped (~970 MB with i386; a prefix takes ~1 GB more: images need
 #              -sHAIKU_IMAGE_SIZE=3500); the test
@@ -62,8 +65,9 @@ step_source() {
 
 step_tools() {
 	mkdir -p "$out/host-tools"
+	# with FreeType (the host's libfreetype-dev): sfnt2fon makes Wine's bitmap fonts from its TrueType ones
 	(cd "$out/host-tools" && "$pristine/configure" --enable-win64 --without-x --without-wayland \
-		--without-freetype --without-gnutls --disable-tests --without-mingw > configure.log 2>&1 \
+		--without-gnutls --disable-tests --without-mingw > configure.log 2>&1 \
 		&& make -j"$jobs" __tooldeps__ > tools.log 2>&1)
 }
 
@@ -81,12 +85,14 @@ step_build() {
 		PKG_CONFIG_LIBDIR="$sysroot/boot/system/develop/lib/pkgconfig:$sysroot/boot/system/data/pkgconfig" \
 		PKG_CONFIG_SYSROOT_DIR="$sysroot" "$src/configure" --host=aarch64-unknown-haiku \
 		--prefix=/boot/system/non-packaged --enable-archs=aarch64,i386 --with-wine-tools="$out/host-tools" \
-		--without-x "${display[@]}" --without-freetype --without-gnutls \
+		--without-x "${display[@]}" --without-gnutls \
 		--without-vulkan --without-opengl --without-pulse --without-alsa --without-oss --without-cups \
 		--without-dbus --without-sane --without-gphoto --without-v4l2 --without-pcap --without-usb \
 		--without-krb5 --without-netapi --without-gstreamer --without-ffmpeg --without-sdl --without-capi \
 		--without-opencl --without-udev --without-unwind --without-inotify --disable-tests \
 		CC="$tools-gcc --sysroot=$sysroot" CXX="$tools-g++ --sysroot=$sysroot" LDFLAGS="-lnetwork" \
+		FREETYPE_CFLAGS="-I$sysroot/boot/system/non-packaged/include/freetype2" \
+		FREETYPE_LIBS="-L$sysroot/boot/system/non-packaged/lib -lfreetype" \
 		> configure.log 2>&1) || { tail -n 20 "$out/cross/configure.log" >&2; exit 1; }
 	# configure's own last step (config.status, makedep) can fail after a zero exit of its checks
 	grep -q 'could not create Makefile' "$out/cross/configure.log" \

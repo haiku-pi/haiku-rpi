@@ -8,8 +8,10 @@
 #   scanner             wayland-scanner for this host (from the wayland source, libraries off): the
 #                       cross builds below and Wine's configure (WAYLAND_SCANNER=) generate their
 #                       protocol code with it. artifacts/wayland-host/bin/wayland-scanner, not packaged
-#   wayland             dev-libs/wayland 1.21.0~git (X547's fork), revision 4: libwayland-client,
-#                       -server, -cursor, -egl, the arm64 wayland-scanner (+ wayland_devel)
+#   wayland             dev-libs/wayland 1.21.0~git (X547's fork), revision 5: libwayland-client,
+#                       -server, -cursor, -egl, the arm64 wayland-scanner (+ wayland_devel), with
+#                       patches/wayland (wl_display_dispatch_queue() blocks for the in-process server's
+#                       events instead of returning at once)
 #   wayland_protocols   dev-libs/wayland-protocols 1.49: protocol XML only (architecture any)
 #   xkeyboard_config    x11-libs/xkeyboard-config 2.41: the XKB layout data (data/X11/xkb)
 #   libxkbcommon        x11-libs/libxkbcommon 1.13.2: libxkbcommon + libxkbregistry, xkbcli (+ _devel)
@@ -78,9 +80,9 @@ step_scanner() {
 # the recipe's options, without tests (they run on the target); the aarch64 wayland-scanner of the
 # runtime package is built too (cmd:wayland_scanner)
 step_wayland() {
-	"$cross" "$waylandRecipe" meson "${paths[@]}" -Ddocumentation=false -Dtests=false \
-		-Dicon_directory=/boot/system/data/icons
-	"$package" "$waylandRecipe" --system-prefix --revision 4 --requires lib:libexpat \
+	"$cross" --patches "$root/patches/wayland" "$waylandRecipe" meson "${paths[@]}" -Ddocumentation=false \
+		-Dtests=false -Dicon_directory=/boot/system/data/icons
+	"$package" "$waylandRecipe" --system-prefix --revision 5 --requires lib:libexpat \
 		--requires lib:libffi --devel-requires devel:libffi
 	no_build_paths wayland
 }
