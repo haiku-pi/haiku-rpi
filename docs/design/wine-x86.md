@@ -1,9 +1,7 @@
 # H15: Windows programs on Haiku arm64 (Wine + x86 translation): plan
 
-**Status: scheduled, not started.** The owner asked for this on 2026-10-20 (23:50 CEST), to begin once the queued and planned work
-is done (the weekly log's Next list). This page holds the plan and the questions to settle at the start. The facts
-marked *(check)* are from memory and must be verified against the then-current releases before anything is built
-on them.
+**Status: started 2026-10-21** (the owner asked for it on 2026-10-20, 23:50 CEST, to begin once the backlog was
+done). The survey is done and the decisions below are made; step 1 is next.
 
 ## Goal
 
@@ -12,40 +10,39 @@ GPU-accelerated games. The Pi 4 is no gaming machine; the point is to show that 
 and as fast as the hardware allows. Use the newest **stable releases and tags** of every component (Wine, the
 translator, the toolchains), never a rolling master branch. Test only with **legal, free-to-use Windows binaries**.
 
-## Approach to evaluate first: Wine's own ARM64 path
+## Decisions (2026-10-21, from the survey)
 
-Wine for arm64 can run x86 code without a separate emulator process: on Windows-on-ARM's model, x86-64 code runs
-through **ARM64EC** and 32-bit x86 through **WoW64**, with the instruction translator loaded into Wine as a DLL
-*(check: the Wine version where ARM64EC and the WoW64 translator interface became usable; Hangover, which packages
-Wine with these translators for Linux arm64, shows the combinations that work)*. Two translators provide such DLLs:
+The survey, [wine-x86-survey.md](wine-x86-survey.md), answers every open question of this plan's first draft
+with sources. What it settles:
 
-- **FEX** (FEX-Emu): an x86/x86-64 → arm64 binary translator with an ARM64EC build and a WoW64 one *(check: the
-  release that ships them)*.
-- **Box64/Box32**: dynamic recompilers with a WoW64 DLL for 32-bit x86 *(check: ARM64EC status)*.
-
-Why this suits Haiku better than the usual Linux setup (Box64 or FEX running a whole x86-64 *Linux* Wine): those
-translators run Linux x86 programs and translate Linux system calls, which Haiku does not have. Inside Wine, the
-translator only turns x86 code into arm64 code; the system underneath is Wine's arm64 build, which can be ported
-to Haiku once. The likely choice: FEX for x86-64 (ARM64EC) and FEX or Box for 32-bit x86 (WoW64), whichever is
-faster on the Cortex-A72 (benchmarks decide).
+| Question | Answer | Consequence |
+|---|---|---|
+| Wine version | **Wine 11.0** (2026-01-13) is the newest stable release; 11.x after it are development releases | Build on **11.0**; move to 12.0 when it ships (January 2027) |
+| Translator for x86-64 (ARM64EC) | **FEX** is the only one (`libarm64ecfex.dll`); Box64 has no ARM64EC DLL yet | **FEX-2601**, the release Hangover 11.0 paired with Wine 11.0 |
+| Translator for 32-bit x86 (WoW64) | Box64's `wowbox64.dll` (Hangover's default, a Pi 4 build target) or FEX's `libwow64fex.dll` | **Box64 v0.4.0** first, FEX's as the alternative; benchmarks decide |
+| Does FEX run on the Pi 4's Cortex-A72 (ARMv8.0)? | Yes: ARMv8.0 + FP + CRC32 minimum; LSE/LRCPC optional, detected at run time | Expect slow x86 memory-ordering emulation without LSE/LRCPC; per-program TSO settings will matter |
+| PE-side toolchain | mstorsjo **llvm-mingw**, a pinned release | **20260826** (LLVM 23.1.0), which Hangover built Wine with |
+| Wine on Haiku today | HaikuPorts: Wine 11.8, **x86_64 only**, 64-bit programs only, the Wayland driver over X512's in-process Wayland server; ~330 lines of Haiku code | The Haiku patches move to 11.0 and to arm64; Wine's arm64 signal code has Linux/macOS branches only — Haiku needs its own |
+| Direct3D | **DXVK cannot run on V3D 4.2** (Vulkan 1.3, no depth clip/clamp, no BC textures, no transform feedback); WineD3D on OpenGL; no GLES backend in Wine | **Direct3D ≤ 9 through WineD3D on desktop GL**; DirectDraw and OpenGL games are the natural targets |
+| Test games | Free demos, AppDB-rated: StarCraft demo (Platinum), Diablo II demo 1.04 (Gold), Half-Life: Uplink (retail Platinum); Unreal Tournament GOTY (free since 2024; 469f adds a 64-bit build) | Almost all 32-bit: **the WoW64 path is the critical path**, not an extra |
 
 ## The work
 
-1. **Survey** (first step, a day at most): the state of Wine on Haiku *(check: the existing x86-64 port effort —
-   HaikuPorts' Wine recipe and its Haiku patches, the window/graphics driver it uses)*; the latest stable Wine and
-   its ARM64EC/WoW64 state; the FEX and Box releases; what Hangover patches. Record the decision here.
-2. **Toolchain**: Wine's PE side for arm64/ARM64EC needs an LLVM-MinGW cross toolchain (clang); the Unix side is
-   built with the Haiku arm64 cross compiler, like the other ports (`scripts/cross-port.sh`).
-3. **Wine on Haiku arm64**, native arm64 Windows programs first: port the Haiku-specific parts of the x86-64 effort
-   to arm64 (signals and exception contexts, thread and TLS setup, the loader, the window driver). Test with arm64
-   Windows builds of free programs.
-4. **x86-64 through ARM64EC + the translator DLL**, then **32-bit x86 through WoW64**.
-5. **Graphics**: Wine's OpenGL on Mesa (V3D, GL 2.1 / GLES 3.1); Direct3D through WineD3D on that; DXVK on
-   Vulkan (V3DV 1.3) only where V3DV has the features *(check)*. Audio through the media kit.
-6. **Speed**: translator settings (the code cache, multi-core), large pages, the CPU clock; measured with the same
-   discipline as the rest of the port (`docs/log/`).
-7. **Packages and docs**: `wine` (+ the translator) as packages in our repository, a user guide section, and
-   screenshots for the showcase.
+1. **Wine 11.0 on Haiku arm64, native arm64 Windows programs first** (no translator): the Unix side cross-built
+   with the Haiku arm64 compiler (`scripts/cross-port.sh` style), the PE side with llvm-mingw; the HaikuPorts
+   Haiku patches brought to 11.0 and arm64 (signals and exception contexts — Wine keeps per-thread data in x18:
+   check that Haiku's compiler and libroot leave it alone — thread/TLS setup, the loader); a console program
+   first, then a window through the Wayland driver (X512's server). *Exit:* an arm64 `hello.exe` and an arm64
+   GUI program run on the Pi.
+2. **32-bit x86 through WoW64 + Box64 v0.4.0** (`wowbox64.dll`), then FEX's `libwow64fex.dll` for comparison.
+   *Exit:* the StarCraft demo plays.
+3. **x86-64 through ARM64EC + FEX-2601**. *Exit:* a 64-bit x86 program (7-Zip x64, UT 469f's 64-bit build).
+4. **Graphics:** WineD3D on Mesa's desktop GL (2.1 on the V3D): DirectDraw, Direct3D ≤ 9, OpenGL games. Audio
+   through Wine's driver for Haiku's media kit, or through SDL/OpenAL.
+5. **Speed:** translator settings (TSO modes per program, the code cache, multi-threading), the CPU clock;
+   measured as the rest of the port.
+6. **Packages, docs, a showcase:** `wine` and the translators as packages in our repository, a user-guide
+   section, screenshots and a short video of the games.
 
 ## Test programs (to be chosen and license-checked at the start)
 
