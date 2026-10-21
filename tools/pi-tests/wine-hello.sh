@@ -40,8 +40,10 @@ if [ -f /boot/system/non-packaged/lib/wine/aarch64-windows/wowbox64.dll ]; then
 	bounded 60 /tmp/reg.txt wine reg add 'HKLM\Software\Microsoft\Wow64\x86' /ve /d wowbox64.dll /f
 	say "wow64 emulator: exit $?: $(tail -n 1 /tmp/reg.txt)"
 	start=$(date +%s)
-	bounded 180 /tmp/hello-x86.txt wine /boot/system/non-packaged/data/wine-tests/hello-x86.exe
+	WINEDEBUG=err+all,fixme-all,+module,+loaddll,+wow bounded 180 /tmp/hello-x86.txt \
+		wine /boot/system/non-packaged/data/wine-tests/hello-x86.exe
 	say "hello-x86: exit $? in $(( $(date +%s) - start )) s"
-	head -n 40 /tmp/hello-x86.txt | while read -r line; do say "  x86: $(echo "$line" | cut -c1-200)"; done
+	grep -a -v "^trace:module:get_load_order\|trace:module:get_module_path_end" /tmp/hello-x86.txt | tail -n 60 \
+		| while read -r line; do say "  x86: $(echo "$line" | cut -c1-200)"; done
 fi
 say end
