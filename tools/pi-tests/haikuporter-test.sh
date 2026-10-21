@@ -1,6 +1,7 @@
 #!/bin/sh
 # haikuporter-test.sh — a UserBootscript for the development image with a HaikuPorts tree (mkimage-pi4.sh
-# --add-tree of a staged tree: /boot/system/non-packaged/haikuports, sources pre-fetched into the
+# --add-tree of a staged tree: /boot/system/non-packaged/haikuports — artifacts/haikuports-min, just the
+# test ports (the whole tree costs haikuporter ~9 min of recipe parsing per port on the Pi) — sources pre-fetched into the
 # ports' download/ directories on the host; the tools of scripts/build-bootstrap-tools.sh and the python
 # modules of scripts/build-python-modules.sh also added): builds ports natively with haikuporter, one by
 # one, activates each package and runs the program it provides. Serial console lines: "HPT ".
@@ -13,6 +14,11 @@ export PYTHONHOME=/boot/system
 # its missing compression modules (scripts/build-python-modules.sh)
 export PYTHONPATH=/boot/system/non-packaged/lib/python3.10/lib-dynload
 tree=/boot/system/non-packaged/haikuports
+# no network here, so no NTP: a clock at 1970 makes every source file "newer than now", and make then
+# remakes what the tarball ships prebuilt (gperf's manual: texi2pdf). Set it from the image instead:
+# mkimage-pi4.sh writes this script into it, so the file's time is when the image was made.
+date -s "@$(stat -c %Y /boot/home/config/settings/boot/UserBootscript)" > /dev/null 2>&1
+say "clock: $(date)"
 cat > /boot/home/config/settings/haikuports.conf <<CONF
 TREE_PATH="$tree"
 PACKAGER="haiku-pi build farm <build@haiku-pi.invalid>"
@@ -36,15 +42,21 @@ do
 	haikuporter -G -y -j4 --no-source-packages $port > /boot/home/haikuporter-$port.log 2>&1
 	rc=$?
 	say "$port: haikuporter-exit $rc in $(( $(date +%s) - start )) s"
-	grep -n -i -E 'error|fail|unable|abort|traceback|cannot|not found' /boot/home/haikuporter-$port.log \
-		| head -n 30 | while read -r line; do say "err: $line"; done
-	tail -n 40 /boot/home/haikuporter-$port.log | while read -r line; do say "log: $line"; done
+	# what led to a failure (the full tree's license and architecture complaints, and the clean-up's
+	# "removing ..." lines, are noise)
+	grep -v -E '^removing |No match found for license|Valid license filenames|cannot be built for architecture|\.recipe\)$' \
+		/boot/home/haikuporter-$port.log | grep -n -B 40 'Build has failed' | head -n 60 \
+		| while read -r line; do say "fail: $line"; done
+	grep -v '^removing ' /boot/home/haikuporter-$port.log | tail -n 15 \
+		| while read -r line; do say "log: $line"; done
 	for p in $tree/packages/$port-*.hpkg; do
 		[ -e "$p" ] || continue
 		say "package: $(basename $p) $(stat -c %s $p) bytes"
-		cp "$p" /boot/system/packages/
+		say "install: $(pkgman install -y "$p" < /dev/null 2>&1 | tail -n 1)"
 	done
-	sleep 3
-	say "$port run: $(sh -c "${test#*|}" 2>&1)"
+	# activation by package_daemon: wait for the command to appear
+	waited=0
+	while [ $waited -lt 30 ] && ! command -v $port > /dev/null 2>&1; do sleep 2; waited=$((waited + 2)); done
+	say "$port run (after ${waited} s): $(sh -c "${test#*|}" 2>&1)"
 done
 say end
