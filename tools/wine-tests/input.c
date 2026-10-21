@@ -4,11 +4,13 @@
  *   wait:MS          sleep MS milliseconds
  *   window:TITLE     use the top-level window whose title starts with TITLE (waits up to 120 s for it); the
  *                    default is the foreground window
+ *   focus:TITLE      the same, and make it the foreground window (keyboard input goes there)
  *   click:X,Y        left click at X,Y of the window's client area
  *   move:X,Y         move the mouse there
  *   key:VK           press and release a virtual key (decimal or 0x hex: 0x0d Return, 0x1b Escape, 0x20 Space)
  *   text:STRING      type STRING
- * The input goes in by SendInput, as from the hardware: DirectInput sees it too. Each step is printed. */
+ * The input goes in by SendInput, as from the hardware: DirectInput sees it too. Each step is printed, with the
+ * foreground window's title. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,7 +73,7 @@ int main(int argc, char **argv)
 		v++;
 		if (strncmp(a, "wait:", 5) == 0) {
 			Sleep(atoi(v));
-		} else if (strncmp(a, "window:", 7) == 0) {
+		} else if (strncmp(a, "window:", 7) == 0 || strncmp(a, "focus:", 6) == 0) {
 			want_title = v;
 			target = NULL;
 			for (int t = 0; t < 480 && !target; t++) {
@@ -83,6 +85,8 @@ int main(int argc, char **argv)
 				printf("input: no window \"%s\"\n", v);
 				return 1;
 			}
+			if (a[0] == 'f')
+				SetForegroundWindow(target);
 		} else if (strncmp(a, "click:", 6) == 0 && sscanf(v, "%d,%d", &x, &y) == 2) {
 			POINT p = to_screen(x, y);
 			send_mouse(0, p.x, p.y);
@@ -113,7 +117,11 @@ int main(int argc, char **argv)
 			printf("input: bad step \"%s\"\n", a);
 			return 2;
 		}
-		printf("input: %s\n", a);
+		{
+			char fg[128] = "";
+			GetWindowTextA(GetForegroundWindow(), fg, sizeof(fg));
+			printf("input: %s (foreground \"%s\")\n", a, fg);
+		}
 		fflush(stdout);
 	}
 	return 0;

@@ -45,13 +45,13 @@ run() {
 	shift 4
 	if [ -n "${click:-}" ]; then
 		( IFS='|'; wine /boot/system/non-packaged/data/wine-tests/click.exe -t $secs $click 2>&1 \
-			| tr -d '\r' | grep -a '^click:' | while read -r line; do say "$game: $line"; done ) &
+			| tr -d '\r' | grep -a --line-buffered '^click:' | while read -r line; do say "$game: $line"; done ) &
 	fi
 	env "$@" wine $exe > /tmp/$game.txt 2>&1 &
 	pid=$!
 	if [ -n "${input:-}" ]; then
 		( IFS='|'; wine /boot/system/non-packaged/data/wine-tests/input.exe $input 2>&1 \
-			| tr -d '\r' | grep -a '^input:' | while read -r line; do say "$game: $line"; done ) &
+			| tr -d '\r' | grep -a --line-buffered '^input:' | while read -r line; do say "$game: $line"; done ) &
 	fi
 	n=1
 	while [ $((n * 60)) -le $secs ]; do
@@ -72,10 +72,10 @@ list=$(cat /boot/home/wine-games.list 2> /dev/null)
 want() { [ -z "$list" ] || case " $(echo $list) " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
-# Heroes III's demo: past the intro (Escape), then the menus' keys — N New Game, S Single Scenario, Return Begin
-# (its mouse is DirectInput's relative motion: absolute clicks do not land where they aim)
-input="wait:50000|key:0x1b|wait:15000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wait:30000|key:0x0d"
-want heroes3 && run heroes3 H3 h3demo.exe 300
+# Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
+# S Single Scenario, Return Begin (its mouse is DirectInput's relative motion: absolute clicks do not land)
+input="focus:Heroes|wait:90000|key:0x4e|wait:6000|key:0x53|wait:8000|key:0x0d|wait:30000|key:0x0d"
+want heroes3 && run heroes3 H3 h3demo.exe 360
 input=
 click="Electronic Registration|Register Later|Electronic Registration|Forfeit"
 want fallout && run fallout falldemo Falldemo.exe 300
