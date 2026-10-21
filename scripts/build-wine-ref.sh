@@ -25,5 +25,5 @@ mkdir -p "$out/build"
 	|| { tail -n 20 "$out/build/configure.log" >&2; exit 1; }
 (cd "$out/build" && PATH="$mingw:$PATH" "$root/scripts/heavy-build.sh" -- make -j{JOBS} > build.log 2>&1) \
 	|| { tail -n 30 "$out/build/build.log" >&2; exit 1; }
-(cd "$out/build" && make install > install.log 2>&1) || { tail -n 20 "$out/build/install.log" >&2; exit 1; }
+(cd "$out/build" && PATH="$mingw:$PATH" make install > install.log 2>&1) || { tail -n 20 "$out/build/install.log" >&2; exit 1; }
 du -sh "$out/install"

@@ -7,7 +7,8 @@
 #
 # DIR is where EXE is (the program runs there); screenshots artifacts/wine-ref/shots/NAME-<n>.png and the log
 # artifacts/wine-ref/shots/NAME.txt. The prefix is artifacts/wine-ref/prefix (made on the first run), with wined3d's
-# GDI renderer as on the Pi; the X server is 1920x1080, as the Pi's HDMI.
+# GDI renderer as on the Pi (RENDERER=gl: OpenGL, by Mesa's software rasterizer on Xvfb); the X server is
+# 1920x1080, as the Pi's HDMI.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 [ $# -ge 3 ] || { sed -n '4,9p' "$0" >&2; exit 2; }
@@ -32,14 +33,17 @@ trap 'wineserver -k 2> /dev/null || true; kill $xvfb 2> /dev/null || true' EXIT
 sleep 2
 
 if [ ! -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; then
-	wineboot -i > "$shots/wineboot.txt" 2>&1
+	# no Wine Mono / Gecko installer dialogs: nobody could answer them on the virtual display
+	WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -i > "$shots/wineboot.txt" 2>&1
 	wineserver -w
 fi
-wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d gdi /f > /dev/null 2>&1
+wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d "${RENDERER:-gdi}" /f > /dev/null 2>&1
 wineserver -w
 
 cd "$dir"
-env "$@" wine "$exe" > "$shots/$name.txt" 2>&1 &
+# in a Wine virtual desktop the size of the screen: it emulates a program's display mode changes, as the Pi's Wayland
+# driver does (Xvfb has one mode only, so SetDisplayMode would fail)
+env "$@" wine explorer /desktop=ref,1920x1080 "$exe" > "$shots/$name.txt" 2>&1 &
 pid=$!
 for ((t = shot, n = 1; t <= secs; t += shot, n++)); do
 	sleep "$shot"

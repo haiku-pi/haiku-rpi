@@ -1,7 +1,8 @@
-/* click.c — press a button of a Windows program's dialog, for unattended tests under Wine:
- *   click.exe TITLE BUTTON [SECONDS]
- * waits up to SECONDS (default 120) for a top-level window titled TITLE (a prefix of it), then sends BM_CLICK to
- * its child button whose text is BUTTON ('&' accelerators ignored). Exit code 0 when pressed, 1 otherwise. */
+/* click.c — press buttons of a Windows program's dialogs, for unattended tests under Wine:
+ *   click.exe [-t SECONDS] TITLE BUTTON [TITLE BUTTON]...
+ * for each pair in turn: waits up to SECONDS (default 120) for a top-level window titled TITLE (a prefix of it),
+ * then sends BM_CLICK to its child button whose text is BUTTON ('&' accelerators ignored). Exit code 0 when all
+ * were pressed, 1 otherwise. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,15 +45,8 @@ static BOOL CALLBACK find_window(HWND hwnd, LPARAM lp)
 	return TRUE;
 }
 
-int main(int argc, char **argv)
+static int press(int secs)
 {
-	int secs = argc > 3 ? atoi(argv[3]) : 120;
-	if (argc < 3) {
-		printf("usage: click.exe TITLE BUTTON [SECONDS]\n");
-		return 2;
-	}
-	title = argv[1];
-	button = argv[2];
 	for (int i = 0; i < secs * 4; i++) {
 		found_window = found_button = NULL;
 		EnumWindows(find_window, 0);
@@ -61,10 +55,31 @@ int main(int argc, char **argv)
 		if (found_button) {
 			SendMessageA(found_button, BM_CLICK, 0, 0);
 			printf("click: pressed \"%s\" in \"%s\" after %d ms\n", button, title, i * 250);
+			fflush(stdout);
 			return 0;
 		}
 		Sleep(250);
 	}
 	printf("click: no \"%s\" in a window \"%s\" within %d s\n", button, title, secs);
 	return 1;
+}
+
+int main(int argc, char **argv)
+{
+	int secs = 120, a = 1;
+	if (argc > 2 && strcmp(argv[1], "-t") == 0) {
+		secs = atoi(argv[2]);
+		a = 3;
+	}
+	if (argc - a < 2 || (argc - a) % 2) {
+		printf("usage: click.exe [-t SECONDS] TITLE BUTTON [TITLE BUTTON]...\n");
+		return 2;
+	}
+	for (; a < argc; a += 2) {
+		title = argv[a];
+		button = argv[a + 1];
+		if (press(secs))
+			return 1;
+	}
+	return 0;
 }

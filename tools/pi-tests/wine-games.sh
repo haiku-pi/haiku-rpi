@@ -32,15 +32,16 @@ wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d gdi /f > /dev/null 2>&
 wineserver -w
 
 # GAME DIR EXE SECONDS [VAR=VALUE...]   (the variables for that game only, e.g. BOX64_DYNAREC=0); with
-# click="TITLE|BUTTON" set, that dialog's button is pressed when it appears (tools/wine-tests/click.c)
+# click="TITLE|BUTTON[|TITLE|BUTTON]..." set, those dialogs' buttons are pressed in turn as they appear
+# (tools/wine-tests/click.c)
 run() {
 	cd "$games/$2" || { say "$1: no $games/$2"; return; }
 	say "$1: start"
 	game=$1 exe=$3 secs=$4
 	shift 4
 	if [ -n "${click:-}" ]; then
-		( wine /boot/system/non-packaged/data/wine-tests/click.exe "${click%%|*}" "${click#*|}" $secs 2>&1 \
-			| grep -a '^click:' | while read -r line; do say "$game: $line"; done ) &
+		( IFS='|'; wine /boot/system/non-packaged/data/wine-tests/click.exe -t $secs $click 2>&1 \
+			| tr -d '\r' | grep -a '^click:' | while read -r line; do say "$game: $line"; done ) &
 	fi
 	env "$@" wine "$exe" > /tmp/$game.txt 2>&1 &
 	pid=$!
@@ -62,8 +63,9 @@ run() {
 list=$(cat /boot/home/wine-games.list 2> /dev/null)
 want() { [ -z "$list" ] || case " $(echo $list) " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
-click="Electronic Registration|Register Later"
-want fallout && run fallout falldemo Falldemo.exe 240
+want heroes3 && run heroes3 H3 h3demo.exe 300
+click="Electronic Registration|Register Later|Electronic Registration|Forfeit"
+want fallout && run fallout falldemo Falldemo.exe 300
 click=
 want simcity3000-interp && run simcity3000-interp SC3 sc3demo.exe 240 BOX64_DYNAREC=0
 # the dynarec checked against the interpreter, opcode by opcode (Box64's COSIM; very slow): where they differ
