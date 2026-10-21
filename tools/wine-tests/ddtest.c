@@ -1,8 +1,9 @@
 /* ddtest.c — a known DirectDraw picture, to check Wine's 2D path (wined3d's GDI renderer) against a screenshot.
  * Sets a full-screen mode (default 640x480x16, or argv: width height bpp), locks the primary surface and fills it
  * with eight vertical colour bars (white, yellow, cyan, green, magenta, red, blue, black) over the top half and a
- * horizontal grey ramp under it, in the surface's own pixel format; prints the format and keeps the picture for
- * argv[4] seconds (default 30). Built for arm64 and for x86 (WoW64 under the emulator) by scripts/build-wine.sh. */
+ * horizontal grey ramp under it, in the surface's own pixel format (at 8 bpp: palette entries 0-7 the bars, 8-255 a
+ * grey ramp); prints the format and keeps the picture for argv[4] seconds (default 30). Built for arm64 and for x86
+ * (WoW64 under the emulator) by scripts/build-wine.sh. */
 #include <windows.h>
 #include <ddraw.h>
 #include <stdio.h>
@@ -68,6 +69,22 @@ int main(int argc, char **argv)
 		printf("ddtest: CreateSurface %#lx\n", hr);
 		return 1;
 	}
+	if (bpp == 8) {
+		PALETTEENTRY pal[256];
+		IDirectDrawPalette *palette;
+		for (int i = 0; i < 256; i++) {
+			unsigned grey = i < 8 ? 0 : (i - 8) * 255 / 247;
+			pal[i].peRed = i < 8 ? bars[i][0] : grey;
+			pal[i].peGreen = i < 8 ? bars[i][1] : grey;
+			pal[i].peBlue = i < 8 ? bars[i][2] : grey;
+			pal[i].peFlags = 0;
+		}
+		if (FAILED(hr = IDirectDraw7_CreatePalette(dd, DDPCAPS_8BIT | DDPCAPS_ALLOW256, pal, &palette, NULL))
+			|| FAILED(hr = IDirectDrawSurface7_SetPalette(primary, palette))) {
+			printf("ddtest: palette %#lx\n", hr);
+			return 1;
+		}
+	}
 	memset(&sd, 0, sizeof(sd));
 	sd.dwSize = sizeof(sd);
 	if (FAILED(hr = IDirectDrawSurface7_Lock(primary, NULL, &sd, DDLOCK_WAIT | DDLOCK_WRITEONLY, NULL))) {
@@ -90,6 +107,7 @@ int main(int argc, char **argv)
 				c = pack(&sd.ddpfPixelFormat, grey, grey, grey);
 			}
 			switch (sd.ddpfPixelFormat.dwRGBBitCount) {
+			case 8: row[x] = y < sd.dwHeight / 2 ? x * 8 / sd.dwWidth : 8 + x * 247 / (sd.dwWidth - 1); break;
 			case 16: ((WORD *)row)[x] = (WORD)c; break;
 			case 32: ((DWORD *)row)[x] = c; break;
 			case 24: row[x * 3] = c; row[x * 3 + 1] = c >> 8; row[x * 3 + 2] = c >> 16; break;

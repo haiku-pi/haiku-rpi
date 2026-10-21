@@ -27,13 +27,17 @@ if [ ! -f $WINEPREFIX/drive_c/windows/syswow64/kernel32.dll ]; then
 	kill -0 $wpid 2> /dev/null && { say "prefix: setup still running after 900 s"; wineserver -k; }
 	say "prefix: $(( $(date +%s) - start )) s, syswow64 $(ls $WINEPREFIX/drive_c/windows/syswow64 2> /dev/null | wc -l) files"
 fi
-say "disk: $(df -h /boot 2> /dev/null | tail -n 1)"
+# D: is /boot: Z: (/) is Haiku's rootfs, which has no free space, and a game checking the free space of its drive
+# (Heroes III) refuses to run from it; Wine maps a folder to its deepest drive, so the games are on D:
+ln -sfn /boot $WINEPREFIX/dosdevices/d:
+say "disk: $(df /boot 2> /dev/null | grep -a -i -E 'free|total' | tr -s ' ' | tr '\n' ' ')"
 wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d gdi /f > /dev/null 2>&1
 wineserver -w
 
-# GAME DIR EXE SECONDS [VAR=VALUE...]   (the variables for that game only, e.g. BOX64_DYNAREC=0); with
+# GAME DIR "EXE [ARGS]" SECONDS [VAR=VALUE...]   (the variables for that game only, e.g. BOX64_DYNAREC=0); with
 # click="TITLE|BUTTON[|TITLE|BUTTON]..." set, those dialogs' buttons are pressed in turn as they appear
-# (tools/wine-tests/click.c)
+# (tools/wine-tests/click.c); with input="STEP|STEP..." set, those input steps are played into the game
+# (tools/wine-tests/input.c: wait:MS, click:X,Y in the game window, key:VK, text:...)
 run() {
 	cd "$games/$2" || { say "$1: no $games/$2"; return; }
 	say "$1: start"
@@ -43,8 +47,12 @@ run() {
 		( IFS='|'; wine /boot/system/non-packaged/data/wine-tests/click.exe -t $secs $click 2>&1 \
 			| tr -d '\r' | grep -a '^click:' | while read -r line; do say "$game: $line"; done ) &
 	fi
-	env "$@" wine "$exe" > /tmp/$game.txt 2>&1 &
+	env "$@" wine $exe > /tmp/$game.txt 2>&1 &
 	pid=$!
+	if [ -n "${input:-}" ]; then
+		( IFS='|'; wine /boot/system/non-packaged/data/wine-tests/input.exe $input 2>&1 \
+			| tr -d '\r' | grep -a '^input:' | while read -r line; do say "$game: $line"; done ) &
+	fi
 	n=1
 	while [ $((n * 60)) -le $secs ]; do
 		sleep 60
@@ -62,8 +70,12 @@ run() {
 # /boot/home/wine-games.list (netboot-cycle.sh --add, for a kept disk's next run): only the games it names
 list=$(cat /boot/home/wine-games.list 2> /dev/null)
 want() { [ -z "$list" ] || case " $(echo $list) " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
 want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
+# Heroes III's demo (800x600): New Game, Single Scenario, Begin
+input="wait:45000|click:644,75|wait:6000|click:644,75|wait:8000|key:0x0d|wait:20000|key:0x0d"
 want heroes3 && run heroes3 H3 h3demo.exe 300
+input=
 click="Electronic Registration|Register Later|Electronic Registration|Forfeit"
 want fallout && run fallout falldemo Falldemo.exe 300
 click=
