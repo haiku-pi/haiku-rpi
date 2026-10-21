@@ -6,12 +6,14 @@ framebuffer) had two gaps for the Raspberry Pi 4: it was built with OpenGL
 4.5's direct state access, which an OpenGL 2.1 driver (Mesa's V3D) does not
 have — no framebuffer was ever made — and nothing showed a finished frame in
 the window. The framebuffer is now made with the OpenGL 3.0 /
-ARB_framebuffer_object calls (keeping the caller's bindings), and a swap (or a
-flush of a single-buffered window) reads the frame back and draws it into the
-window's DC as a DIB.
+ARB_framebuffer_object calls (keeping the caller's bindings and GL's default
+draw buffer: the back one of a double-buffered window), and wglSwapBuffers (or
+a flush of a single-buffered window) reads the frame back and draws it as a DIB
+into the application's DC — a DC fetched in the swap path did not reach the
+window.
 
 --- a/dlls/win32u/opengl.c	2026-10-21 19:09:16.420511841 +0200
-+++ b/dlls/win32u/opengl.c	2026-10-21 19:45:33.975032626 +0200
++++ b/dlls/win32u/opengl.c	2026-10-21 20:09:11.541392197 +0200
 @@ -241,33 +241,76 @@
      return 0;
  }
@@ -97,7 +99,7 @@ window's DC as a DIB.
      TRACE( "drawable %p created framebuffer %u\n", drawable, fbo );
  
      return fbo;
-@@ -277,57 +320,106 @@
+@@ -277,57 +320,107 @@
                                  int width, int height )
  {
      const struct opengl_funcs *funcs = &display_funcs;
@@ -170,7 +172,7 @@ window's DC as a DIB.
  
 +/* Without a window system surface (the surfaceless EGL platform), a frame reaches the window through GDI: the
 + * finished buffer, read back, drawn into the window's DC as a DIB (bottom-up, as GL's rows are). */
-+static void framebuffer_surface_present( struct opengl_drawable *drawable, GLenum buffer )
++static void framebuffer_surface_present( struct opengl_drawable *drawable, GLenum buffer, HDC target )
 +{
 +    const struct opengl_funcs *funcs = &display_funcs;
 +    BITMAPINFO info = {.bmiHeader = {.biSize = sizeof(BITMAPINFOHEADER), .biPlanes = 1, .biBitCount = 32,
@@ -197,13 +199,14 @@ window's DC as a DIB.
 +
 +    info.bmiHeader.biWidth = width;
 +    info.bmiHeader.biHeight = height;
-+    if ((hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_CLIPSIBLINGS )))
++    /* the DC the application presents with (wglSwapBuffers'), or the window's */
++    if ((hdc = target) || (hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE )))
 +    {
 +        INT lines = NtGdiSetDIBitsToDeviceInternal( hdc, 0, 0, width, height, 0, 0, 0, height, bits, &info,
 +                                                    DIB_RGB_COLORS, width * height * 4, sizeof(info), FALSE, NULL );
 +        TRACE( "%s: %ux%u from %#x, pixel %#x, %d lines to hdc %p\n", debugstr_opengl_drawable( drawable ), width,
 +               height, buffer, *(UINT *)bits, lines, hdc );
-+        NtUserReleaseDC( hwnd, hdc );
++        if (!target) NtUserReleaseDC( hwnd, hdc );
 +    }
 +    else WARN( "%s: no DC for window %p\n", debugstr_opengl_drawable( drawable ), hwnd );
 +    free( bits );
@@ -212,22 +215,31 @@ window's DC as a DIB.
  static void framebuffer_surface_destroy( struct opengl_drawable *drawable )
  {
      TRACE( "%s\n", debugstr_opengl_drawable( drawable ) );
-@@ -388,11 +480,14 @@
+@@ -388,11 +481,14 @@
  {
      TRACE( "%s, flags %#x\n", debugstr_opengl_drawable( drawable ), flags );
      if (flags & GL_FLUSH_UPDATED && drawable->read_fbo) framebuffer_surface_resize( drawable );
 +    /* a single-buffered window shows what was drawn into its front buffer */
-+    if ((flags & GL_FLUSH_PRESENT) && !drawable->doublebuffer) framebuffer_surface_present( drawable, GL_COLOR_ATTACHMENT0 );
++    if ((flags & GL_FLUSH_PRESENT) && !drawable->doublebuffer) framebuffer_surface_present( drawable, GL_COLOR_ATTACHMENT0, 0 );
  }
  
  static BOOL framebuffer_surface_swap( struct opengl_drawable *drawable )
  {
      TRACE( "%s\n", debugstr_opengl_drawable( drawable ) );
-+    framebuffer_surface_present( drawable, drawable->doublebuffer ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0 );
++    /* presented by win32u_wglSwapBuffers, which has the application's DC */
      return TRUE;
  }
  
-@@ -2509,6 +2604,13 @@
+@@ -2310,6 +2406,8 @@
+ 
+     opengl_drawable_flush( draw, interval, 0 );
+     ret = opengl_drawable_swap( draw );
++    if (ret && draw->funcs == &framebuffer_surface_funcs)
++        framebuffer_surface_present( draw, draw->doublebuffer ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0, hdc );
+     opengl_drawable_release( draw );
+ 
+     return ret;
+@@ -2509,6 +2607,13 @@
      USE_GL_FUNC(glNamedFramebufferReadBuffer)
      USE_GL_FUNC(glNamedFramebufferRenderbuffer)
      USE_GL_FUNC(glNamedRenderbufferStorageMultisample)

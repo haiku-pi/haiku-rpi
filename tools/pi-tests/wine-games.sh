@@ -85,6 +85,7 @@ want tone-x86 && run tone-x86 ../wine-tests "tone-x86.exe 3 1000" 60
 # OpenGL (tools/wine-tests/gltest.c): a context, a clear read back, a spinning triangle and its frame rate
 want gltest-arm64 && run gltest-arm64 ../wine-tests "gltest-arm64.exe 20" 60
 want gltest-x86 && run gltest-x86 ../wine-tests "gltest-x86.exe 20" 60
+want gltest-gdi && run gltest-gdi ../wine-tests "gltest-arm64.exe 30 gdi" 50
 want gltest-trace && run gltest-trace ../wine-tests "gltest-arm64.exe 5" 40 WINEDEBUG=err+all,fixme-all,+wgl,+opengl
 want simcity3000-gl && run simcity3000-gl SC3 sc3demo.exe 300
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60

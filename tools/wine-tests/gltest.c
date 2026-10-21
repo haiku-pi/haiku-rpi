@@ -1,11 +1,13 @@
 /* gltest.c — OpenGL through Wine (opengl32 → win32u's EGL driver → Mesa on the V3D): a window with a GL context,
  * a colour cleared and read back, then a spinning triangle for SECONDS (default 20) with the frame rate printed.
- *   gltest.exe [SECONDS]
+ *   gltest.exe [SECONDS [gdi]]      (gdi: also a red square drawn by GDI into the window each frame, to tell a
+ *                                    window that shows nothing from a GL frame that does not reach it)
  * Prints "GLTEST" lines: the GL_VENDOR/RENDERER/VERSION strings, the read-back check, frames per second, OK/FAIL. */
 #include <windows.h>
 #include <GL/gl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -14,7 +16,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int main(int argc, char **argv)
 {
-	int secs = argc > 1 ? atoi(argv[1]) : 20;
+	int secs = argc > 1 ? atoi(argv[1]) : 20, gdi = argc > 2 && !strcmp(argv[2], "gdi");
 	PIXELFORMATDESCRIPTOR pfd = { sizeof(pfd), 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
 		PFD_TYPE_RGBA, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 8, 0, PFD_MAIN_PLANE, 0, 0, 0, 0 };
 	WNDCLASSA wc = { 0 };
@@ -68,6 +70,12 @@ int main(int argc, char **argv)
 		glColor3f(0.0f, 0.0f, 1.0f); glVertex2f(0.7f, -0.6f);
 		glEnd();
 		SwapBuffers(dc);
+		if (gdi) {
+			RECT r = { 20, 20, 120, 120 };
+			HBRUSH red = CreateSolidBrush(RGB(255, 0, 0));
+			FillRect(dc, &r, red);
+			DeleteObject(red);
+		}
 		frames++;
 	}
 	printf("GLTEST %d frames in %d s: %.1f fps\nGLTEST %s\n", frames, secs, frames / (double)secs, ok ? "OK" : "FAIL");
