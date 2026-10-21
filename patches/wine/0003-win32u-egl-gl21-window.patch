@@ -9,9 +9,8 @@ the window. The framebuffer is now made with the OpenGL 3.0 /
 ARB_framebuffer_object calls (keeping the caller's bindings), and a swap (or a
 flush of a single-buffered window) reads the frame back and draws it into the
 window's DC as a DIB.
-
 --- a/dlls/win32u/opengl.c	2026-10-21 19:09:16.420511841 +0200
-+++ b/dlls/win32u/opengl.c	2026-10-21 19:09:16.421891438 +0200
++++ b/dlls/win32u/opengl.c	2026-10-21 19:22:41.286282102 +0200
 @@ -241,33 +241,75 @@
      return 0;
  }
@@ -223,3 +222,17 @@ window's DC as a DIB.
      return TRUE;
  }
  
+@@ -2509,6 +2600,13 @@
+     USE_GL_FUNC(glNamedFramebufferReadBuffer)
+     USE_GL_FUNC(glNamedFramebufferRenderbuffer)
+     USE_GL_FUNC(glNamedRenderbufferStorageMultisample)
++    USE_GL_FUNC(glBindRenderbuffer)
++    USE_GL_FUNC(glCheckFramebufferStatus)
++    USE_GL_FUNC(glFramebufferRenderbuffer)
++    USE_GL_FUNC(glGenFramebuffers)
++    USE_GL_FUNC(glGenRenderbuffers)
++    USE_GL_FUNC(glGetFramebufferAttachmentParameteriv)
++    USE_GL_FUNC(glRenderbufferStorageMultisample)
+ #undef USE_GL_FUNC
+ 
+     display_funcs.p_wglGetProcAddress = win32u_wglGetProcAddress;
