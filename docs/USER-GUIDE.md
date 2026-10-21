@@ -675,8 +675,8 @@ pkgman install wine wine_x86
 - `wine_x86` (66 MB download, ~190 MB installed): the 32-bit x86 Windows libraries and Box64 0.4.4's
   `wowbox64.dll` (also installed as `xtajit.dll`). Leave it out if you only run Arm programs.
 
-The packages were built on 2026-10-22 (`scripts/build-wine.sh`). Until they and the Wayland packages are
-in the public repository, test images get the same files as a test tree (`build-wine.sh`'s header).
+The packages were built on 2026-10-22 (`scripts/build-wine.sh`) and are in our repository with the Wayland
+packages they need. The first start asks to install Wine Mono (.NET); Cancel is fine for most programs.
 
 Run a program from Terminal:
 
@@ -710,6 +710,8 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
 - **A crashing program** prints a crash report in Terminal (lines starting `crash:`: the registers, the
   faulting code and the call chain as `module+offset`). Wine's debugger cannot attach to a program on
   Haiku: its "Program Error" dialog only offers OK. Developers: docs/design/wine-debugging.md.
+- **Before updating or removing Wine, quit every Windows program** (and `wineserver -k`): a Wine process
+  left running from the old package keeps the new one from starting programs (kill it, or restart Haiku).
 - 1 game start in about 5 failed to open a window (an intermittent start hang that is still being
   investigated). Close it and start the program again.
 

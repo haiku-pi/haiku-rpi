@@ -22,6 +22,9 @@ wine="$root/artifacts/wine-ref/install/bin"
 shots="$root/artifacts/wine-ref/shots"
 mkdir -p "$shots"
 export WINEPREFIX="$root/artifacts/wine-ref/prefix" WINEDEBUG="${WINEDEBUG:-err+all,fixme-all}" PATH="$wine:$PATH"
+# no Wine Mono / Gecko installer dialogs (making or updating the prefix): nobody could answer them on the
+# virtual display, and the run would wait for ever
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree,mshtml=}"
 
 # a free display number, its own X server
 d=97
@@ -33,8 +36,7 @@ trap 'wineserver -k 2> /dev/null || true; kill $xvfb 2> /dev/null || true' EXIT
 sleep 2
 
 if [ ! -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; then
-	# no Wine Mono / Gecko installer dialogs: nobody could answer them on the virtual display
-	WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -i > "$shots/wineboot.txt" 2>&1
+	wineboot -i > "$shots/wineboot.txt" 2>&1
 	wineserver -w
 fi
 wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d "${RENDERER:-gdi}" /f > /dev/null 2>&1
