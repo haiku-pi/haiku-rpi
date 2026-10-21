@@ -23,6 +23,8 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 | `17-wine-heroes3-welcome.png` | Heroes III: the demo scenario's welcome |
 | `18-wine-opengl-v3d.png` | OpenGL in a Wine window on the V3D (`tools/wine-tests/gltest.c`): win32u's EGL driver on Mesa, ~290 fps, arm64 and x86 alike |
 | `19-wine-halflife-uplink-opengl.png` | **Half-Life: Uplink** (Valve's free 1999 demo, 32-bit x86) under Wine + Box64: its main menu (the demo's default software renderer, `sw.dll`; New Game then faults at the map load under Box64, not on x86 Wine) |
+| `20-wine-halflife-uplink-ingame.png` | **Half-Life: Uplink in a game** on Haiku on the Pi (Wine 11.20 + Box64, software renderer, a 320×240 window), after the fixes of [design/wine-debugging.md](../design/wine-debugging.md) |
+| `21-wine-halflife-uplink-ingame-3x.png` | the same window, 3× |
 
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
 `scripts/sd-cycle.sh --hdmi-every 15`; the Wine ones (2026-10-21, network boot) with `tools/pi-tests/wine-games.sh`

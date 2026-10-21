@@ -34,9 +34,10 @@ ln -sfn /boot $WINEPREFIX/dosdevices/d:
 say "disk: $(df /boot 2> /dev/null | grep -a -i -E 'free|total' | tr -s ' ' | tr '\n' ' ')"
 # wined3d's renderer: GDI (DirectDraw games are right there; wined3d's OpenGL one presents a DirectDraw game's
 # front buffer through a path that does not reach the window yet); a game can ask for OpenGL with
-# WINE_D3D_CONFIG=renderer=gl in its run line. Plain OpenGL programs (gltest) use the V3D either way.
-wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d gdi /f > /dev/null 2>&1
-wineserver -w
+# WINE_D3D_CONFIG=renderer=gl in its run line. Plain OpenGL programs (gltest) use the V3D either way. In the
+# environment, not the registry: a registry value set just before was lost when a wineserver was killed (Wine
+# 11.20: a DirectDraw test then ran on the OpenGL renderer)
+export WINE_D3D_CONFIG=renderer=gdi
 
 # GAME DIR "EXE [ARGS]" SECONDS [VAR=VALUE...]   (the variables for that game only, e.g. BOX64_DYNAREC=0); with
 # click="TITLE|BUTTON[|TITLE|BUTTON]..." set, those dialogs' buttons are pressed in turn as they appear
@@ -71,8 +72,9 @@ run() {
 	done
 	grep -a -v '^$' /tmp/$game.txt | head -n 25 | while read -r line; do say "  $game: $(echo "$line" | cut -c1-200)"; done
 	# the game's threads as it ends (a hang shows where: state, user and kernel time)
-	ps -a 2> /dev/null | awk -v exe="${exe%% *}" '/^Team/ { team = 0 } index($0, exe) && /^\// { team = 1 }
-		team && NF' | head -n 40 | while read -r line; do say "  $game: ps: $line"; done
+	# (a team line starts with its path; awk's own team, whose command line holds the name too, left out)
+	ps -a 2> /dev/null | awk -v exe="${exe%% *}" '/^\// { team = index($0, exe) && $1 !~ /awk$/ } team && NF' \
+		| head -n 40 | while read -r line; do say "  $game: ps: $line"; done
 	wineserver -k
 	sleep 3
 	cp /tmp/$game.txt /boot/home/wine-games-$game.txt
@@ -105,19 +107,16 @@ if want starcraft || want starcraft-interp || want starcraft-safe; then
 		BOX64_DYNAREC_STRONGMEM=2 BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0
 fi
 # Half-Life: Uplink (Valve's free 1999 demo, installed on the host's reference Wine): its default software renderer
-# (sw.dll; the launcher ignores -gl), in an 800x600 window; New Game (N), the difficulty (Return)
+# (sw.dll; the launcher takes no -gl, its renderer is chosen in its own video menu) in a window (-windowed:
+# 320x240; full screen shows nothing yet), the game's console in HL/valve/qconsole.log (-condebug); New Game (N),
+# the difficulty (Return), then the first map
 input="focus:Half-Life|wait:60000|key:0x4e|wait:5000|key:0x0d"
-want halflife && run halflife HL "hldemo.exe -gl -window -width 800 -height 600" 300
-# the same with where each module loaded and the exceptions (WINEDEBUG), the game's console in HL/qconsole.log
-# (-condebug); and with Box64's safe dynarec settings
-want halflife-trace && run halflife-trace HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 200 \
+want halflife && run halflife HL "hldemo.exe -windowed -condebug" 300
+# the same with where each module loaded and the exceptions traced, and with Box64's interpreter
+want halflife-trace && run halflife-trace HL "hldemo.exe -windowed -condebug" 200 \
 	WINEDEBUG=+loaddll,+seh,err+all,fixme-all
 input="focus:Half-Life|wait:240000|key:0x4e|wait:15000|key:0x0d"
-want halflife-interp && run halflife-interp HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 600 \
-	BOX64_DYNAREC=0
-input="focus:Half-Life|wait:60000|key:0x4e|wait:5000|key:0x0d"
-want halflife-safe && run halflife-safe HL "hldemo.exe -gl -window -width 800 -height 600 -condebug" 300 \
-	BOX64_DYNAREC_SAFEFLAGS=2 BOX64_DYNAREC_STRONGMEM=2 BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0
+want halflife-interp && run halflife-interp HL "hldemo.exe -windowed -condebug" 600 BOX64_DYNAREC=0
 input=
 # Heroes III's demo: after the intro (~70 s on the Pi; Escape at the main menu quits), the menus' keys — N New Game,
 # S Single Scenario, Return Begin, then the welcome's Return (a further Return opens the hero's screen); the hero

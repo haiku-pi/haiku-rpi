@@ -64,7 +64,8 @@ start)
 	log="$dir/cycle.out"
 	setsid nohup "$HAIKU_RPI_ROOT/scripts/netboot-cycle.sh" --image "$img" "${keep[@]}" --retry-wedge \
 		--bootscript "$HAIKU_RPI_ROOT/tools/pi-tests/session.sh" --add "$key.pub:/boot/home/session.pub" \
-		--add "$ssh_pkg:/boot/home/openssh.hpkg" "${adds[@]}" \
+		--add "$ssh_pkg:/boot/home/openssh.hpkg" \
+		--add "$HAIKU_RPI_ROOT/tools/pi-tests/wenv.sh:/boot/home/wenv.sh" "${adds[@]}" \
 		--secs $((minutes * 60)) --label "$label" --hdmi-every 300 > "$log" 2>&1 < /dev/null &
 	printf 'pid=%s\nlabel=%s\n' "$!" "$label" > "$state"
 	echo "pi-session: starting (cycle pid $!, $minutes min, log $log)"
