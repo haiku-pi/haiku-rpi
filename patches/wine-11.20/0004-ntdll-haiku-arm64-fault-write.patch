@@ -1,0 +1,76 @@
+ntdll: Haiku arm64 page faults tell a write from a read
+
+Haiku's signal frame has no ESR, so every page fault was taken for a read: Wine's write watches and
+copy-on-write pages never resolved a write fault, an x86 emulator could not tell a program writing to code
+it had translated (Box64's protection of self-modifying code: Half-Life's software renderer died at its
+first map), and crash reports said "read" for stores. The ESR is now made up from the fault: an
+instruction abort when the fault is at the pc, otherwise a data abort whose write bit says whether the
+instruction at the pc (just fetched, so readable) is an A64 store, atomic, compare-and-swap or DC ZVA.
+
+--- a/dlls/ntdll/unix/signal_arm64.c	2026-10-21 23:13:16.623805114 +0200
++++ b/dlls/ntdll/unix/signal_arm64.c	2026-10-21 23:08:15.479013115 +0200
+@@ -152,7 +152,7 @@
+ 
+ static DWORD64 get_fault_esr( ucontext_t *sigcontext )
+ {
+-    /* not in Haiku's signal frame: a fault reads as a read access */
++    /* not in Haiku's signal frame (see haiku_fault_esr for page faults) */
+     return 0;
+ }
+ 
+@@ -1153,6 +1153,43 @@
+ }
+ 
+ 
++#ifdef __HAIKU__
++/* whether an A64 instruction writes memory: stores, the write half of atomics and compare-and-swap, DC ZVA */
++static BOOL a64_is_store( UINT insn )
++{
++    if ((insn & 0xffffffe0) == 0xd50b7420) return TRUE;                /* dc zva */
++    if ((insn & 0x0a000000) != 0x08000000) return FALSE;               /* not a load or store */
++    if ((insn & 0x3f000000) == 0x08000000)                              /* exclusive, ordered, cas */
++        return !(insn & (1 << 22)) || ((insn & (1 << 23)) && (insn & (1 << 21)));
++    if ((insn & 0x3b000000) == 0x18000000) return FALSE;               /* load literal */
++    if ((insn & 0x38000000) == 0x28000000) return !(insn & (1 << 22)); /* pair */
++    if ((insn & 0xbe000000) == 0x0c000000) return !(insn & (1 << 22)); /* SIMD structures */
++    if ((insn & 0x38000000) == 0x38000000)                              /* register */
++    {
++        if (!(insn & (1 << 24)) && (insn & (1 << 21)))
++        {
++            if (((insn >> 10) & 3) == 0) return TRUE;                   /* atomic memory operation */
++            if ((insn >> 10) & 1) return FALSE;                         /* ldraa, ldrab */
++        }
++        if (insn & (1 << 26)) return !(insn & (1 << 22));              /* SIMD & FP */
++        return !(insn & (3 << 22));
++    }
++    return FALSE;
++}
++
++/* Haiku's signal frame has no ESR: one made up from the fault. At the pc, an instruction abort; elsewhere a
++ * data abort, a write when the instruction at the pc (just fetched, so readable) is a store. Without the
++ * write flag, Wine's write watches and copy-on-write pages, and an x86 emulator's protection of the code it
++ * translated (Box64: a program that changes its own code), take every write fault for a read. */
++static DWORD64 haiku_fault_esr( const ucontext_t *sigcontext, const siginfo_t *siginfo )
++{
++    ULONG_PTR pc = PC_sig( sigcontext ), addr = (ULONG_PTR)siginfo->si_addr;
++
++    if (addr - pc < 4) return (DWORD64)ESR_ELx_EC_IABT_LOW << 26;
++    return ((DWORD64)ESR_ELx_EC_DABT_LOW << 26) | (a64_is_store( *(const UINT *)pc ) ? 1 << 6 : 0);
++}
++#endif
++
+ /**********************************************************************
+  *		segv_handler
+  *
+@@ -1164,7 +1201,11 @@
+     struct thread_data *data = get_thread_data();
+     CONTEXT context;
+     EXCEPTION_RECORD rec = { .ExceptionAddress = (void *)PC_sig(sigcontext) };
++#ifdef __HAIKU__
++    DWORD64 esr = haiku_fault_esr( sigcontext, siginfo );
++#else
+     DWORD64 esr = get_fault_esr( sigcontext );
++#endif
+ 
+     switch (ESR_ELx_EC(esr))
+     {

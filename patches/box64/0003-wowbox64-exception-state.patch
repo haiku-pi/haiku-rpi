@@ -1,0 +1,63 @@
+wowbox64: the x86 state in exceptions; write faults outside translated code
+
+A fault in translated code reached the program with the host's view of it: the exception address was the
+host pc (truncated to 32 bits, outside every module) and the registers were those of the last switch to
+native code (a syscall), so no crash report or exception handler could tell where the program was. The
+x86 address now comes from the dynablock (getX64Address) and the general registers from the host
+registers the dynarec keeps them in.
+
+Every write fault was taken for a write to translated code: unprotected, then retried — forever, for a
+write to an unmapped address. Only a page the dynarec protects is unprotected now; any other write fault
+is passed on to the program.
+
+--- a/wine/wow64/wowbox64.c	2026-01-03 16:50:53.000000000 +0100
++++ b/wine/wow64/wowbox64.c	2026-10-21 23:11:19.038366510 +0200
+@@ -25,6 +25,7 @@
+ #include "wine/compiler.h"
+ #include "wine/debug.h"
+ #include "hostext.h"
++#include "dynarec/arm64/arm64_mapping.h"
+ 
+ uintptr_t box64_pagesize = 4096;
+ 
+@@ -316,7 +317,9 @@
+         if (rec->NumberParameters == 2 && rec->ExceptionInformation[0] == 1)
+             addr = ULongToPtr(rec->ExceptionInformation[1]);
+ 
+-        if (addr) {
++        // a write to code the dynarec translated (and write-protected): unprotect it and go on; any other
++        // write fault is the program's own, for its exception handlers
++        if (addr && (getProtection((uintptr_t)addr) & (PROT_DYNAREC | PROT_DYNAREC_R))) {
+             unprotectDB((uintptr_t)addr, 1, 1); // unprotect 1 byte... But then, the whole page will be unprotected
+             NtContinue(ctx, FALSE);
+         }
+@@ -325,6 +328,29 @@
+     if (!box64_is_addr_in_jit(ULongToPtr(ctx->Pc)))
+         return STATUS_SUCCESS;
+ 
++    // the x86 state at the fault, for the exception the program gets: the address of the x86 instruction
++    // the faulting host code was translated from, and the registers the dynarec keeps in host registers
++    // (the CPU area's context is otherwise the one of the last switch to native code)
++    dynablock_t* jit_db = FindDynablockFromNativeAddress(ULongToPtr(ctx->Pc));
++    if (jit_db) {
++        WOW64_CPURESERVED* cpu = NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED];
++        WOW64_CONTEXT* ctx32 = (WOW64_CONTEXT*)(cpu + 1);
++        uintptr_t x64pc = getX64Address(jit_db, ctx->Pc);
++
++        ctx32->Eax = ctx->X[xRAX];
++        ctx32->Ecx = ctx->X[xRCX];
++        ctx32->Edx = ctx->X[xRDX];
++        ctx32->Ebx = ctx->X[xRBX];
++        ctx32->Esp = ctx->X[xRSP];
++        ctx32->Ebp = ctx->X[xRBP];
++        ctx32->Esi = ctx->X[xRSI];
++        ctx32->Edi = ctx->X[xRDI];
++        if (x64pc) {
++            ctx32->Eip = x64pc;
++            rec->ExceptionAddress = ULongToPtr(x64pc);
++        }
++    }
++
+     /* Replace the host context with one captured before JIT entry so host code can unwind */
+     memcpy(ctx, NtCurrentTeb()->TlsSlots[WOW64_TLS_ENTRY_CONTEXT], sizeof(*ctx));
+     return STATUS_SUCCESS;

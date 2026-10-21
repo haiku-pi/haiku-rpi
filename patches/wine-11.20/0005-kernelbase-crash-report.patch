@@ -1,0 +1,124 @@
+kernelbase: a crashing process describes itself (crash report)
+
+Wine's debugger cannot attach to a process on Haiku (no ptrace): winedbg's "Program Error" dialog was all
+a crash left. Before starting the debugger, the unhandled exception filter now prints, on stderr, lines
+starting "crash:": the registers, the code bytes around the fault, the frame pointer chain and every stack
+word that points into a module (as module+offset), and the module list — enough to name the faulting
+function with the module's symbols on the build host (llvm-symbolizer). WINE_CRASH_REPORT=0 turns it off.
+
+--- a/dlls/kernelbase/debug.c	2026-10-16 21:08:59.000000000 +0200
++++ b/dlls/kernelbase/debug.c	2026-10-21 23:05:10.036817778 +0200
+@@ -453,6 +453,105 @@
+ }
+ 
+ 
++/*******************************************************************
++ *         crash report
++ *
++ * Where Wine's debugger cannot attach to a process (Haiku has no ptrace), a crashing process describes
++ * itself: its registers, the code at the fault, the frame pointer chain and the stack words that point
++ * into a module (as module+offset), and its modules. On stderr, each line starting "crash:"; off with
++ * WINE_CRASH_REPORT=0.
++ */
++static BOOL crash_readable( const void *addr, SIZE_T size )
++{
++    MEMORY_BASIC_INFORMATION info;
++
++    if (!VirtualQuery( addr, &info, sizeof(info) ) || info.State != MEM_COMMIT) return FALSE;
++    if (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return FALSE;
++    return (const char *)addr + size <= (const char *)info.BaseAddress + info.RegionSize;
++}
++
++/* "name+offset" of a code address, or "" outside every module */
++static void crash_symbol( ULONG_PTR addr, char *buffer, int size )
++{
++    LDR_DATA_TABLE_ENTRY *mod;
++
++    buffer[0] = 0;
++    if (!LdrFindEntryForAddress( (void *)addr, &mod ))
++        snprintf( buffer, size, "%.*ls+%#Ix", mod->BaseDllName.Length / (int)sizeof(WCHAR), mod->BaseDllName.Buffer,
++                  addr - (ULONG_PTR)mod->DllBase );
++}
++
++static void crash_report( const EXCEPTION_POINTERS *epointers )
++{
++    const EXCEPTION_RECORD *rec = epointers->ExceptionRecord;
++    const CONTEXT *ctx = epointers->ContextRecord;
++    const LIST_ENTRY *head, *entry;
++    ULONG_PTR pc, sp, fp, *frame;
++    const unsigned char *code;
++    char sym[160], line[200];
++    int i, n;
++
++    if (GetEnvironmentVariableA( "WINE_CRASH_REPORT", line, sizeof(line) ) && !strcmp( line, "0" )) return;
++#ifdef __i386__
++    pc = ctx->Eip; sp = ctx->Esp; fp = ctx->Ebp;
++    MESSAGE( "crash: eax %08lx ebx %08lx ecx %08lx edx %08lx esi %08lx edi %08lx\n",
++             ctx->Eax, ctx->Ebx, ctx->Ecx, ctx->Edx, ctx->Esi, ctx->Edi );
++    MESSAGE( "crash: eip %08lx esp %08lx ebp %08lx eflags %08lx cs %04lx ds %04lx es %04lx fs %04lx gs %04lx ss %04lx\n",
++             ctx->Eip, ctx->Esp, ctx->Ebp, ctx->EFlags, ctx->SegCs, ctx->SegDs, ctx->SegEs, ctx->SegFs,
++             ctx->SegGs, ctx->SegSs );
++#elif defined(__x86_64__)
++    pc = ctx->Rip; sp = ctx->Rsp; fp = ctx->Rbp;
++    MESSAGE( "crash: rax %016I64x rbx %016I64x rcx %016I64x rdx %016I64x\n", ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx );
++    MESSAGE( "crash: rsi %016I64x rdi %016I64x r8 %016I64x r9 %016I64x\n", ctx->Rsi, ctx->Rdi, ctx->R8, ctx->R9 );
++    MESSAGE( "crash: rip %016I64x rsp %016I64x rbp %016I64x eflags %08lx\n", ctx->Rip, ctx->Rsp, ctx->Rbp, ctx->EFlags );
++#elif defined(__aarch64__)
++    pc = ctx->Pc; sp = ctx->Sp; fp = ctx->Fp;
++    for (i = 0; i < 29; i += 4)
++        MESSAGE( "crash: x%-2d %016I64x %016I64x %016I64x %016I64x\n", i, ctx->X[i], i + 1 < 29 ? ctx->X[i + 1] : 0,
++                 i + 2 < 29 ? ctx->X[i + 2] : 0, i + 3 < 29 ? ctx->X[i + 3] : 0 );
++    MESSAGE( "crash: pc %016I64x sp %016I64x fp %016I64x lr %016I64x\n", ctx->Pc, ctx->Sp, ctx->Fp, ctx->Lr );
++#else
++    return;
++#endif
++    crash_symbol( pc, sym, sizeof(sym) );
++    MESSAGE( "crash: exception %08lx at %p (%s), parameters %lu: %Ix %Ix\n", rec->ExceptionCode,
++             rec->ExceptionAddress, sym[0] ? sym : "no module", rec->NumberParameters,
++             rec->NumberParameters > 0 ? rec->ExceptionInformation[0] : 0,
++             rec->NumberParameters > 1 ? rec->ExceptionInformation[1] : 0 );
++    code = (const unsigned char *)pc;
++    if (crash_readable( code - 16, 48 ))
++    {
++        for (n = 0, i = -16; i < 32; i++)
++            n += snprintf( line + n, sizeof(line) - n, i ? " %02x" : " [%02x]", code[i] );
++        MESSAGE( "crash: code at pc-16:%s\n", line );
++    }
++    else MESSAGE( "crash: code at pc: not readable\n" );
++
++    /* the frame pointer chain: each frame's saved frame pointer and return address */
++    frame = (ULONG_PTR *)fp;
++    for (i = 0; i < 24 && frame && crash_readable( frame, 2 * sizeof(*frame) ); i++, frame = (ULONG_PTR *)frame[0])
++    {
++        crash_symbol( frame[1], sym, sizeof(sym) );
++        MESSAGE( "crash: frame %2d fp %p return %Ix %s\n", i, frame, frame[1], sym );
++        if (frame[0] <= (ULONG_PTR)frame) break;
++    }
++    /* the stack words that point into a module: return addresses, function pointers */
++    for (i = 0; i < 256 && crash_readable( (ULONG_PTR *)sp + i, sizeof(ULONG_PTR) ); i++)
++    {
++        ULONG_PTR word = ((ULONG_PTR *)sp)[i];
++        crash_symbol( word, sym, sizeof(sym) );
++        if (sym[0]) MESSAGE( "crash: stack sp+%#05x %Ix %s\n", (int)(i * sizeof(ULONG_PTR)), word, sym );
++    }
++    head = &NtCurrentTeb()->Peb->LdrData->InLoadOrderModuleList;
++    for (entry = head->Flink; entry != head; entry = entry->Flink)
++    {
++        const LDR_DATA_TABLE_ENTRY *mod = CONTAINING_RECORD( entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks );
++        MESSAGE( "crash: module %p-%p %.*ls\n", mod->DllBase, (char *)mod->DllBase + mod->SizeOfImage,
++                 mod->FullDllName.Length / (int)sizeof(WCHAR), mod->FullDllName.Buffer );
++    }
++}
++
++
+ /******************************************************************
+  *		start_debugger
+  *
+@@ -472,6 +571,7 @@
+ 
+     format_exception_msg( epointers, buffer, sizeof(buffer) );
+     MESSAGE( "wine: %s (thread %04lx), starting debugger...\n", buffer, GetCurrentThreadId() );
++    crash_report( epointers );
+ 
+     InitializeObjectAttributes( &attr, &nameW, 0, 0, NULL );
+     if (!NtOpenKey( &dbg_key, KEY_READ, &attr ))
