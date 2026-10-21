@@ -1,0 +1,23 @@
+wowbox64: the TEB as the base of the FS selector
+
+Under WoW64 a 32-bit thread starts with FS = 0x53 and its 32-bit TEB as
+FS's base. Code that reloads FS (mov fs, ax — Watcom's C runtime does,
+e.g. Fallout) went through GetSegmentBase(), which returned NULL for Wine
+DLLs, so the next fs:[0x18] read address 0x18 and the program crashed.
+The TEB selector (0x53, or 0x3b as on 32-bit Windows) now gives the
+thread's 32-bit TEB; other selectors stay flat.
+
+--- a/src/os/os_wine.c	2026-10-21 15:22:57.181704794 +0200
++++ b/src/os/os_wine.c	2026-10-21 15:22:57.192882300 +0200
+@@ -37,7 +37,10 @@
+ 
+ void* GetSegmentBase(void* emu, uint32_t desc)
+ {
+-    printf_log(LOG_NONE, "GetSegmentBase does not apply to Wine dlls\n");
++    // a program that reloads FS (mov fs, ax: Watcom's runtime, say) gets Wine's 32-bit TEB selector back,
++    // 0x53 under WoW64 (0x3b on 32-bit Windows): its base is this thread's 32-bit TEB; the others are flat
++    if ((desc & ~3u) == 0x50 || (desc & ~3u) == 0x38)
++        return (void*)calculate_fs();
+     return NULL;
+ }
+ 
