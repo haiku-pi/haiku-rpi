@@ -594,11 +594,19 @@ pkgman install sqlite_devel
 
 Both repositories and `pkgman install sqlite_devel` over HTTPS worked on the Pi on 2026-10-20.
 
-**What our repository has** (88 packages on 2026-10-20): Mesa and GLU; SDL2; ffmpeg 6.1 with the HEVC
-hardware decoder; HaikuWebKit and the libraries it needs (brotli, dav1d, lcms, libavif, libwebp,
-libxml2, libxslt, sqlite, woff2, ...); NetSurf; OpenSSL 3 and curl; ICU 74; Python 3.14 with libedit
-and ncurses; zstd; libogg, libvorbis, fluidlite; gzip, tar, bzip2, unzip; and the `_devel` packages
-(headers and link libraries) of most of them.
+**What our repository has** (113 packages on 2026-10-21): Firefox 157; the games OpenArena and
+SuperTuxKart (their data in parts); Mesa and GLU; SDL2; ffmpeg 6.1 with the HEVC hardware decoder;
+HaikuWebKit and the libraries it needs (brotli, dav1d, lcms, libavif, libwebp, libxml2, libxslt, sqlite,
+woff2, ...); NetSurf; OpenSSL 3 and curl; ICU 74; Python 3.14 with libedit and ncurses; zstd;
+libogg, libvorbis, fluidlite; gzip, tar, bzip2, unzip; and the `_devel` packages (headers and link
+libraries) of most of them.
+
+**Command-line tools** (since 2026-10-21): `pkgman install nano vim git wget rsync openssh htop_rivoreo`
+— nano 9.1, vim 9.1 (console), git 2.56 (no Perl or Python helpers), wget 1.24 (HTTPS), rsync 3.2,
+OpenSSH 10.6 (ssh, ssh-keygen, sshd; the host keys are generated when the package is activated) and htop
+2.3. On the Pi, after installing them from the repository: a git repository initialised and a commit made,
+an rsync copy, an edit with vim, an ed25519 key made, `sshd -t` passing, a file fetched with wget
+(`tools/pi-tests/cli-tools.sh`).
 
 **What it does not have:** the Quake engines (their game data is not free; §6 shows how to build them). The repository is not signed; Haiku does not check repository signatures today.
 

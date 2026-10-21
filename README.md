@@ -85,7 +85,7 @@ not yet been tried by hand. Firefox and the games are in the public package repo
 OpenSSL, curl, Python and more. Haiku's own arm64 system repository is configured as well:
 
 ```sh
-pkgman install sqlite_devel
+pkgman install git vim openssh      # or firefox, openarena, supertuxkart, sqlite_devel, ...
 ```
 
 How packages are built and published is covered in [docs/BUILD.md](docs/BUILD.md). The patches we apply to
