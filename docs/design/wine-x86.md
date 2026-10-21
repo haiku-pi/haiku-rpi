@@ -49,14 +49,18 @@ with sources. What it settles:
 - Step 1 done: arm64 console programs, and windows through the Wayland driver (WineMine on the Haiku desktop).
 - Step 2: the WoW64 + Box64 path runs 32-bit x86 games on DirectDraw through wined3d's GDI renderer, which is
   exact at 8, 16 and 32 bpp (`tools/wine-tests/ddtest.c`). Heroes III's demo plays its intro video and shows its
-  main menu; Fallout's demo gets past its dialogs to a black screen; SimCity 3000's demo shows its title, then
-  fails as it does with the same Wine on x86-64 (a game/Wine defect, not the port's).
+  main menu and plays a game. SimCity 3000's demo shows its title, then a garbled city — exactly as the same Wine on
+  x86-64 does with the GDI renderer (`tools/wine-ref/run.sh`); with Wine's OpenGL renderer it is right there, so the
+  fault is wined3d's GDI renderer (blits from its 8-bit surfaces), not the port. Fallout's demo gets past its dialogs
+  to a black screen; on x86-64 Wine it stops on a privileged instruction (0046bfd5), so it is not ours either (under
+  Box64 the instruction is not trapped).
 - Fixed on the way: libwayland-client's dispatch on Haiku (`patches/wayland`), FreeType for Wine, Box64's FS
   selector under WoW64 (`patches/box64/0002`), a mapping for user-write-only pages (kernel), drive D: = /boot for
   programs that check free space (Z:, Haiku's rootfs `/`, has none).
 - Next: **audio** — Wine has no driver for Haiku (HaikuPorts' Wine uses OSS, whose drivers do not cover the Pi):
-  a `winehaiku` mmdevapi driver on the Media Kit, modelled on `wineoss`; probably what Fallout's movie player
-  waits for. Then OpenGL (WineD3D on the V3D: Half-Life, UT), x86-64 (FEX-2601 ARM64EC), packages.
+  a `winehaiku` mmdevapi driver on the Media Kit, modelled on `wineoss` (`patches/wine/0002`, to test). Then
+  OpenGL (WineD3D on the V3D: SimCity 3000, Half-Life, UT), or the GDI renderer's 8-bit blits fixed; x86-64
+  (FEX-2601 ARM64EC); packages.
 
 ## Test programs (to be chosen and license-checked at the start)
 

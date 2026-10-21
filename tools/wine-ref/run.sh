@@ -38,13 +38,20 @@ if [ ! -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; then
 	wineserver -w
 fi
 wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d "${RENDERER:-gdi}" /f > /dev/null 2>&1
+# a Wine virtual desktop the size of the screen for every program: it emulates display mode changes, as the Pi's
+# Wayland driver does (Xvfb has one mode only, so SetDisplayMode would fail)
+wine reg add 'HKCU\Software\Wine\Explorer' /v Desktop /d Default /f > /dev/null 2>&1
+wine reg add 'HKCU\Software\Wine\Explorer\Desktops' /v Default /d 1920x1080 /f > /dev/null 2>&1
 wineserver -w
 
 cd "$dir"
-# in a Wine virtual desktop the size of the screen: it emulates a program's display mode changes, as the Pi's Wayland
-# driver does (Xvfb has one mode only, so SetDisplayMode would fail)
-env "$@" wine explorer /desktop=ref,1920x1080 "$exe" > "$shots/$name.txt" 2>&1 &
+env "$@" wine "$exe" > "$shots/$name.txt" 2>&1 &
 pid=$!
+# CLICK="TITLE|BUTTON[|TITLE|BUTTON]...": those dialogs' buttons pressed as they appear (tools/wine-tests/click.c,
+# built for x86 as artifacts/wine-ref/click-x86.exe)
+if [ -n "${CLICK:-}" ]; then
+	( IFS='|'; wine "$root/artifacts/wine-ref/click-x86.exe" -t "$secs" $CLICK ) >> "$shots/$name.txt" 2>&1 &
+fi
 for ((t = shot, n = 1; t <= secs; t += shot, n++)); do
 	sleep "$shot"
 	ffmpeg -loglevel error -y -f x11grab -video_size 1920x1080 -i ":$d" -frames:v 1 "$shots/$name-$n.png"
