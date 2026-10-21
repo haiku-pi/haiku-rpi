@@ -26,21 +26,8 @@ bounded() {
 }
 bounded 60 /tmp/version.txt wine --version
 say "wine --version: exit $?: $(head -n 5 /tmp/version.txt | tr '\n' ' ' | cut -c1-200)"
-# where does startup stop? the server in the foreground with debug output, the client with the startup channels,
-# and the threads' states while it hangs
-WINEDEBUG= wineserver -f -d2 > /tmp/ws.txt 2>&1 &
-sleep 2
-( sleep 45; ps -a > /tmp/ps.txt 2>&1 ) &
-WINEDEBUG=+process,+server,+module,+loaddll,+virtual,+seh,+thread bounded 90 /tmp/dbg.txt \
-	wine /boot/system/non-packaged/data/wine-tests/hello-arm64.exe
-say "debug run: exit $?"
-tail -n 60 /tmp/dbg.txt | while read -r line; do say "  dbg: $(echo "$line" | cut -c1-200)"; done
-tail -n 25 /tmp/ws.txt | while read -r line; do say "  srv: $(echo "$line" | cut -c1-200)"; done
-grep -a -A12 -E 'wine|preloader' /tmp/ps.txt | head -n 50 | while read -r line; do say "  ps: $line"; done
-for t in $(ps | grep -a -E 'wine' | grep -a -v grep | awk '{print $2}'); do kill -9 $t 2> /dev/null; done
-sleep 2
 start=$(date +%s)
-bounded 200 /tmp/wineboot.txt wineboot -i
+bounded 300 /tmp/wineboot.txt wineboot -i
 say "wineboot: exit $? in $(( $(date +%s) - start )) s"
 tail -n 30 /tmp/wineboot.txt | while read -r line; do say "  boot: $line"; done
 start=$(date +%s)
