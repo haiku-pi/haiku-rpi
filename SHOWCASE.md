@@ -94,6 +94,17 @@ The others: [the Quake II desktop from another angle](docs/screenshots/03-deskto
 [WebPositive](docs/screenshots/05-webpositive.png), [SuperTuxKart's OpenGL 2.1
 renderer](docs/screenshots/09-supertuxkart.png), [Firefox in a window](docs/screenshots/10-firefox-window.png).
 
+## Windows games through Wine
+
+Wine 11 runs on Haiku arm64, and 32-bit x86 Windows programs run in it through WoW64 with Box64 as the x86
+emulator. **Heroes of Might and Magic III** (its 1999 demo) plays its intro, its menus and a game:
+
+![Heroes III on the adventure map, on Haiku on the Pi](docs/screenshots/16-wine-heroes3-adventure-map.png)
+
+A 40-second clip: [docs/video/wine-heroes3-pi4.mp4](docs/video/wine-heroes3-pi4.mp4). The demo is downloaded
+for the test only; nothing of it is in this repository. Still to come: sound, OpenGL games, 64-bit x86
+(docs/design/wine-x86.md).
+
 ## One hard bug: the freeze that was a livelock
 
 Less than an hour after the first desktop, about half of all boots stopped silently. Everything the

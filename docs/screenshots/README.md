@@ -16,6 +16,14 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 | `10-firefox-window.png` | **Firefox 157** in a Haiku window on the Pi (HDMI capture): a local test page — JavaScript reports "Haiku aarch64" |
 | `11-firefox-haiku-os-org.png` | Firefox 157 on the Pi rendering https://www.haiku-os.org/ (its own `--screenshot` of the page, top part) |
 | `12-supertuxkart-gles-shaders.png` | SuperTuxKart with its **GLES 3.1 shader renderer** (lit, sky) — Haiku's GL view now makes OpenGL ES contexts (BGL_CONTEXT_ES); 16–18 fps at 1280×720 |
+| `13-wine-winemine.png` | **Wine 11** on Haiku arm64: Wine's Minesweeper in a Haiku window (the Wayland driver over X547's in-process compositor) |
+| `14-wine-simcity3000-title.png` | SimCity 3000's demo (32-bit x86, 1999) under Wine + Box64: its title screen (the game itself then fails, as with the same Wine on x86-64) |
+| `15-wine-heroes3-menu.png` | **Heroes of Might and Magic III** demo (32-bit x86) under Wine (WoW64) + Box64: the main menu (DirectDraw 800×600×16, scaled to the HDMI height) |
+| `16-wine-heroes3-adventure-map.png` | Heroes III in a game: the adventure map, the hero, the castle — an x86 Windows game playing on Haiku on the Pi |
+| `17-wine-heroes3-welcome.png` | Heroes III: the demo scenario's welcome |
 
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
-`scripts/sd-cycle.sh --hdmi-every 15`.
+`scripts/sd-cycle.sh --hdmi-every 15`; the Wine ones (2026-10-21, network boot) with `tools/pi-tests/wine-games.sh`
+— the game demos are downloaded for the test only and are not part of this repository or our packages.
+A clip: [`../video/wine-heroes3-pi4.mp4`](../video/wine-heroes3-pi4.mp4) (40 s, the game area, from
+`netboot-cycle.sh --record`).
