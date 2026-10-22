@@ -12,8 +12,8 @@ power on. The desktop comes up in about 80 s.
 **When something is wrong**, the most useful things to send back are:
 - the system log: `/var/log/syslog` (Terminal: `cp /var/log/syslog ~/Desktop/` and copy it off on a USB
   stick, or `scp` it), and the time it happened;
-- a screenshot (the Print Screen key; saved in `~/Desktop` or `~/config/settings/...` as Screenshot says),
-  or a phone photo of the monitor;
+- a screenshot (the Print Screen key opens Screenshot, which saves where you choose), or a phone photo of
+  the monitor;
 - for a program that crashed: Haiku's crash dialog offers "Save report" — save it and send it too.
 
 | # | Check | Do | Expected |
