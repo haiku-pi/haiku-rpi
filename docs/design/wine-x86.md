@@ -68,9 +68,17 @@ with sources. What it settles:
   v0.4.0 removed), with crash reports and the Haiku arm64 write-fault fix
   ([wine-debugging.md](wine-debugging.md)). On the Pi: OpenGL on the V3D, sound, Heroes III, and
   **Half-Life: Uplink playing its first map** (software renderer, windowed).
+- Half-Life full screen (2026-10-22, wine 11.20-8): four faults, one under the other. Wine 0012 — the
+  game hides the window that holds the exclusive DirectDraw device and plays in another full-screen window, so
+  a hidden full-screen GDI swapchain now presents into the process's foreground window. Wine 0013 — wined3d
+  evicted a texture's system memory while a DC drew from it (after a swapchain resize, the back buffer's; after
+  the next flip the screen showed freed memory: stripes; SimCity 3000's garbled GDI picture was the same
+  fault). wayland_server 3 — `WaylandWindow::WindowActivated`/`FrameResized` used the toplevel after the client
+  destroyed it. Wine 0011 + haiku 6e517bb52c — a fault in a thread Wine did not create (that Wayland window
+  thread) faulted again in Wine's handler with SIGSEGV blocked, and Haiku retried it forever: now the handler
+  reports it and the kernel ends a team whose fault signal is blocked (as Linux does).
 - Next: wined3d's OpenGL renderer for DirectDraw/Direct3D games (its present path; the P8 recursion on GL
-  2.1), Half-Life's rare full-screen fault (instrumented), StarCraft's picture, x86-64 through FEX, the
-  packages published.
+  2.1).
 
 ## Step 3: x86-64 through ARM64EC + FEX (work in progress, 2026-10-22)
 

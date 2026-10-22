@@ -711,10 +711,9 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
 
 **Known limits** (2026-10-22):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1). **Direct3D and DirectDraw
-  games use wined3d's software (GDI) renderer**, which is enough for 2D games (Heroes III plays) and for
-  Half-Life's software renderer in a window. Its 8-bit-to-16-bit blits are wrong, so SimCity 3000's city
-  view is garbled. wined3d's OpenGL renderer (`WINE_D3D_CONFIG=renderer=gl`) does not show DirectDraw
-  games yet.
+  games use wined3d's software (GDI) renderer**, which is enough for 2D games (Heroes III, StarCraft,
+  SimCity 3000) and for Half-Life's software renderer, in a window or full screen (from wine 11.20-8).
+  wined3d's OpenGL renderer (`WINE_D3D_CONFIG=renderer=gl`) does not show DirectDraw games yet.
 - Sound plays through Haiku's Media Kit (`winehaiku.drv`). Wine can play sound but not record it.
 - 32-bit x86 programs run in Box64's emulator, 64-bit x86 programs in FEX's; both are slower than native
   code (the Pi's Cortex-A72 has no LSE atomics or LRCPC, which make x86 memory ordering cheaper).
