@@ -1,7 +1,8 @@
 /* hello.c — a first Windows program for Wine on Haiku arm64: console output, system information,
    a thread, and an access violation handled by a vectored exception handler (Wine's signal path).
-   Built with llvm-mingw: aarch64-w64-mingw32-clang -O2 -o hello-arm64.exe hello.c, and for 32-bit x86 (WoW64):
-   i686-w64-mingw32-clang -O2 -o hello-x86.exe hello.c */
+   Built with llvm-mingw: aarch64-w64-mingw32-clang -O2 -o hello-arm64.exe hello.c, for 32-bit x86 (WoW64):
+   i686-w64-mingw32-clang -O2 -o hello-x86.exe hello.c, and for x86-64 (ARM64EC + FEX):
+   x86_64-w64-mingw32-clang -O2 -o hello-x64.exe hello.c */
 #include <stdio.h>
 #include <windows.h>
 

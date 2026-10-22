@@ -1,0 +1,35 @@
+ntdll: the ARM64EC code map without a memory commitment on Haiku
+
+Every ARM64EC process (an x86-64 program run through FEX) maps a bitmap with one bit per page of the address
+space, 4 GiB for Wine's 47-bit user space, readable everywhere and written only where code is registered.
+Wine maps it as committed read-only memory, which costs nothing on Linux. Haiku commits memory for every
+readable private mapping (vm.cpp, vm_map_cache) unless it is mapped with MAP_NORESERVE (libroot's mmap makes
+that an overcommitting area): 4 GiB on a 4 GB Raspberry Pi 4 fails, and alloc_arm64ec_map() ends the process
+("failed to allocate ARM64EC map"). On Haiku the map is now reserved, mapped readable with MAP_NORESERVE, and
+its pages recorded as committed; commit_arm64ec_map() makes parts of it writable as before, and Haiku
+allocates those pages when they are written.
+
+--- a/dlls/ntdll/unix/virtual.c	2026-10-22 02:54:03.676962151 +0200
++++ b/dlls/ntdll/unix/virtual.c	2026-10-22 02:54:03.693363236 +0200
+@@ -2467,7 +2467,21 @@
+     SIZE_T size = ((ULONG_PTR)address_space_limit + page_size) >> (page_shift + 3);  /* one bit per page */
+ 
+     size = ROUND_SIZE( 0, size, host_page_mask );
++#ifdef __HAIKU__
++    /* Haiku commits memory for every readable private mapping, here 4 GiB for a 47-bit address space,
++     * unless it is mapped with MAP_NORESERVE. The map is only written where commit_arm64ec_map() makes
++     * it writable; elsewhere it reads as zeros. So reserve it, map it readable without a commitment,
++     * and record its pages as committed */
++    status = map_view( &arm64ec_view, NULL, size, MEM_TOP_DOWN, VPROT_READ, 0, 0, 0 );
++    if (!status && anon_mmap_fixed( arm64ec_view->base, size, PROT_READ, MAP_NORESERVE ) == MAP_FAILED)
++    {
++        delete_view( arm64ec_view );
++        status = STATUS_NO_MEMORY;
++    }
++    if (!status) set_page_vprot( arm64ec_view->base, size, VPROT_READ | VPROT_COMMITTED );
++#else
+     status = map_view( &arm64ec_view, NULL, size, MEM_TOP_DOWN, VPROT_READ | VPROT_COMMITTED, 0, 0, 0 );
++#endif
+     if (status)
+     {
+         ERR( "failed to allocate ARM64EC map: %08x\n", status );

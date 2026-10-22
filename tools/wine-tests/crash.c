@@ -6,7 +6,7 @@
  *                                            smc: code that is run, changed and run again — no fault at all,
  *                                            an x86 emulator must notice the change; smc-image: the same in
  *                                            the program's own code section, made writable by VirtualProtect
- *                                            (an image page: copy-on-write); x86 only)
+ *                                            (an image page: copy-on-write); x86 and x86-64 only)
  * Prints "CRASH" lines before the fault. */
 #include <windows.h>
 #include <stdio.h>
@@ -14,10 +14,15 @@
 
 static volatile int sink;
 
-#ifdef __i386__
-/* mov eax, 1; ret — in the code section, for smc-image */
+#if defined(__i386__) || defined(__x86_64__)
+#define X86 1
+/* mov eax, 1; ret — in the code section, for smc-image (i386 symbols have a leading underscore) */
 int smc_image_fn(void);
+#ifdef __i386__
 __asm__(".text\n.globl _smc_image_fn\n_smc_image_fn:\n\tmovl $1, %eax\n\tret\n");
+#else
+__asm__(".text\n.globl smc_image_fn\nsmc_image_fn:\n\tmovl $1, %eax\n\tret\n");
+#endif
 #endif
 
 __declspec(noinline) static void inner(const char *how)
@@ -35,7 +40,7 @@ __declspec(noinline) static void inner(const char *how)
 		fflush(stdout);
 		page[1] = 42;
 	} else if (!strcmp(how, "smc")) {
-#ifdef __i386__
+#ifdef X86
 		/* mov eax, imm32; ret — run, then patched to return another value (as Quake's renderer patches itself) */
 		unsigned char *code = VirtualAlloc(NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 		int (*fn)(void) = (int (*)(void))code;
@@ -49,7 +54,7 @@ __declspec(noinline) static void inner(const char *how)
 		printf("CRASH smc: x86 only\n");
 #endif
 	} else if (!strcmp(how, "smc-image")) {
-#ifdef __i386__
+#ifdef X86
 		DWORD old;
 		int a, b;
 		a = smc_image_fn();

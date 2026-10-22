@@ -72,6 +72,95 @@ with sources. What it settles:
   2.1), Half-Life's rare full-screen fault (instrumented), StarCraft's picture, x86-64 through FEX, the
   packages published.
 
+## Step 3: x86-64 through ARM64EC + FEX (work in progress, 2026-10-22)
+
+**State:** this builds, but it does not run yet. The ARM64EC-enabled Wine does not finish a new prefix on the Pi
+(win32u: "Session object id doesn't match"; the build without ARM64EC does). x86-64 programs are untested.
+
+### How it fits together (Wine 11.20 and FEX-2610 sources, Hangover 11.16)
+
+- **Wine** is configured with `--enable-archs=arm64ec,aarch64,i386`, as Hangover does. With both arm64ec and
+  aarch64, every 64-bit PE module is built **ARM64X**: one file holds the aarch64 code and the ARM64EC code. Native
+  arm64 programs use the first. In a process whose main executable is x86-64, the loader applies the file's
+  ARM64X relocations and uses the second (`virtual.c` `update_arm64x_mapping`). `rundll32.exe` and the DLLs are
+  ARM64X; `wineboot`, `explorer` and `services` are plain ARM64. arm64ec also makes configure build some modules
+  for x86_64 (`extra_arch`); llvm-mingw 20260826 provides `arm64ec-w64-mingw32-clang` and `x86_64-w64-mingw32-clang`.
+- **The emulator:** the ARM64EC `ntdll` loads the DLL named by the default value of
+  `HKLM\Software\Microsoft\Wow64\amd64` (`wine.inf`: `xtajit64.dll`), from `C:\windows\system32`, which Wine
+  serves from `lib/wine/aarch64-windows`. Its `BTCpu64*` exports and `DispatchJump`, `RetToEntryThunk` and
+  `ExitToX64` are the emulator interface. FEX's `Source/Windows/ARM64EC` builds `libarm64ecfex.dll` with those
+  exports. `build-wine.sh` installs it under both names, as it does for Box64 (`wowbox64.dll` as `xtajit.dll`).
+  So no registry change is needed; another emulator can be chosen with the registry value.
+- **32-bit x86 through FEX:** `Source/Windows/WOW64` builds `libwow64fex.dll` (the `BTCpu*` WoW64 interface).
+  It is installed next to Box64 and chosen with `HKLM\Software\Microsoft\Wow64\x86` = `libwow64fex.dll`. Box64
+  (`xtajit.dll`) stays the default.
+- **Building FEX** (`scripts/build-fex.sh`): CMake with `Data/CMake/toolchain_mingw.cmake` and
+  `MINGW_TRIPLE=arm64ec-w64-mingw32` (target `arm64ecfex`) or `aarch64-w64-mingw32` (target `wow64fex`). The flags
+  follow Hangover's `.packaging/*/fexpeec/Dockerfile`: `ENABLE_LTO=False`, `BUILD_TESTING=False`,
+  `TUNE_CPU=none`, `ENABLE_JEMALLOC_GLIBC_ALLOC=False`.
+  - Hangover's COMPILE.md writes `BUILD_TESTS`, which is not a FEX option.
+  - Hangover and FEX's wiki use bylaws' llvm-mingw fork; the upstream 20260826 (LLVM 23.1) builds both DLLs.
+    Its only warning is "register X23 is disallowed on ARM64EC" from FEX's own `Module.S` (×5): FEX uses x23
+    on purpose.
+  - A tag archive has no submodules. The six the MinGW build adds (fmt, xxHash, range-v3, unordered_dense,
+    rpmalloc, cpp-optparse) are fetched as archives of the commits the tag pins, each with a SHA-256.
+  - Every import of both DLLs exists in Wine 11.20's `ntdll.spec`/`wow64.spec`.
+- **FEX's Unix library** (`Source/Windows/UnixLib`, `libarm64ecfex.so`) is not built. It is Linux-only (`prctl`,
+  `shm_open`), and every use of it is optional (`UnixLib::Available()`). Without it, FEX has no hardware-TSO
+  switch (no such thing on the A72), no unaligned-atomic prctl, no VMA names, no SHM statistics and no
+  file-backed code cache.
+- **FEX's CPU features come from the registry**
+  (`HKLM\Hardware\Description\System\CentralProcessor\N`, values `CP 4030` = ID_AA64ISAR0, `CP 4020`, …,
+  `CP 4000` = MIDR, `CP 5801` = CTR_EL0). Wine's Unix side reads them only on Linux (`system.c`
+  `get_core_id_regs_arm64`, `#ifdef linux`: Linux emulates EL0 reads of the ID registers; Haiku does not), so on
+  Haiku they are 0.
+  - FEX then assumes FP/AdvSIMD (encoded as 0), no LSE, no LRCPC and no AES/SHA/PMULL, which is what the
+    Cortex-A72 of the Pi 4 has anyway.
+  - It also assumes **no CRC32**, which the A72 has. FEX then reports **no SSE4.2** in CPUID, so programs that
+    require SSE4.2 refuse to start.
+  - The fix is an EL0 ID-register emulation in Haiku's kernel (as Linux and FreeBSD do) plus enabling that
+    branch for Haiku. Not done yet.
+- **Packages:** the ARM64X DLLs double the 64-bit PE side (717 MB unpacked), and `wine` came out at 115 MB, over
+  GitHub's 100 MiB. Now the packages are:
+
+  | Package | Size | Contents |
+  |---|---|---|
+  | `wine` | 81 MB | Requires the next two |
+  | `wine_data` | 14 MB | `data/wine` |
+  | `wine_directx` | 20 MB | 64-bit D3DX 9–11, D3DCompiler, XAudio2/XACT |
+  | `wine_x86` | | i386 side, Box64, and `libwow64fex.dll` |
+  | `wine_x86_64` | | `libarm64ecfex.dll` + `xtajit64.dll` |
+
+  `wine_data` and `wine_directx` are split off only for GitHub's file limit.
+- **Test programs:** `hello-x64.exe`, `crash-x64.exe` (with the `smc` and `smc-image` self-modifying-code tests,
+  now also for x86-64), `ddtest-x64.exe`, `tone-x64.exe`, `gltest-x64.exe` in `data/wine-tests`.
+
+### Haiku-specific changes
+
+- **`0007-ntdll-haiku-arm64ec-map-noreserve`:** every ARM64EC process maps a one-bit-per-page code bitmap of the
+  address space. That is 4 GiB for Wine's 47-bit user space, mapped committed read-only. Haiku commits memory
+  for every readable private mapping without `MAP_NORESERVE`, which would end every x64 process on a 4 GB Pi
+  ("failed to allocate ARM64EC map"). On Haiku the map is now reserved, mapped with `MAP_NORESERVE` and recorded
+  as committed. Not yet run on the Pi.
+- The rest of the ARM64EC Unix-side code (`loader.c`, `virtual.c`, `thread.c`, the server's
+  `init_supported_machines`) has no OS-specific branch.
+
+### Open, in the order to look at them
+
+1. **Prefix creation on the ARM64X build fails** (win32u `find_shared_session_object`: the session object's id
+   does not match). The Unix side is configured identically (`config.h` byte for byte). The suspect is
+   `virtual.c` `map_file_into_view()`: when `mmap()` of a section fails with EINVAL/EACCES/EPERM/ENODEV, it falls
+   back **silently** to `pread()`, which gives a private snapshot that win32u then reuses for every later session
+   object in that block.
+   - One way Haiku's `mmap()` returns EINVAL for a shared file mapping: when the range reaches past the file
+     cache's end (`vm.cpp` `_vm_map_file`).
+   - A diagnostic `ntdll.so` that logs that fallback is in `artifacts/wine-11.20/diag/` (not in git).
+2. The ID registers for FEX (above).
+3. `NtFlushProcessWriteBuffers` is a stub on Haiku (Linux: `membarrier`). FEX does not call it; some programs do
+   (.NET's GC).
+4. Runtime checks: FEX on a Cortex-A72 without LSE/LRCPC (no public report found), its TSO emulation cost, and
+   the code cache.
+
 ## Test programs (to be chosen and license-checked at the start)
 
 The owner's guidance (2026-10-21 00:13): test with older, very popular Windows games that are known to run under
