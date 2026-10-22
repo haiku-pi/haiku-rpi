@@ -76,6 +76,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Network | Gigabit Ethernet (GENET), TCP about 915 Mbit/s each way; WiFi (BCM43455, WPA2); NFSv4 client |
 | Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching and inquiry. Pairing is untested |
 | Web | WebPositive (HaikuWebKit, JavaScript JIT) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback |
+| Windows programs | **Wine 11.20** with x86 translation: 32-bit x86 programs through Box64, x86-64 programs through FEX (`pkgman install wine wine_x86 wine_x86_64`). Heroes III, StarCraft, SimCity 3000, Half-Life (also full screen), Chocolate Doom and OpenTTD (x86-64) play; Direct3D 9 on the V3D |
 | Software | Python 3.14, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
 
 Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: no HDMI audio, video in Firefox
@@ -149,7 +150,7 @@ artifacts/                             (not in git) build output: images, packag
   rolling branch.
 - Every change is tested on a real Pi 4 before it is called done, through the bench scripts described in
   [docs/LAB-SETUP.md](docs/LAB-SETUP.md).
-- The next milestone after the current backlog is running Windows programs through Wine with x86 translation:
+- Windows programs run through Wine with x86 and x86-64 translation: how it is built and what is open is in
   [docs/design/wine-x86.md](docs/design/wine-x86.md).
 
 ## License

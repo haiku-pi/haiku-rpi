@@ -170,6 +170,7 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
 | OpenSSL, curl | 3.5.9, 8.22.0 | TLS for the network kit and pkgman |
 | NetSurf | 3.11 | in the image |
 | WebPositive / HaikuWebKit | 1.10.0 | in the image; JavaScriptCore JIT (baseline/DFG/FTL/wasm) on |
+| Wine, Box64, FEX | Wine 11.20 (-11), Box64 v0.4.4, FEX-2610 | in our repository (`wine`, `wine_x86`, `wine_x86_64`): ARM64X build; Windows programs in Wayland windows over Haiku's (X547's in-process server); DirectDraw/Direct3D 9 through wined3d on the V3D |
 | Firefox | 157.0.1 (-4) | in the image and published (zstd, 102 MB); WebGL 1 and 2 on an OpenGL ES 3.1 context; plays H.264, VP8/9, AV1, HEVC |
 | SpiderMonkey `js` shell | 157.0.1 | 11/11 tests on the Pi, JIT on (10-20) |
 | Rust | 1.90.0, target `aarch64-unknown-haiku` with std | a host cross toolchain; test programs 3/3 on the Pi |
@@ -215,8 +216,9 @@ From the "Next" list of [log/WEEK-2026-W43.md](log/WEEK-2026-W43.md), in its ord
    (asynchronous queues). The design also leaves YCbCr overlays open, and rpivid has no zero-copy display.
 6. **Smaller items**: WiFi throughput (37/46 Mbit/s, near the 2.4 GHz access point's limit on the bench);
    WebPositive's Web Inspector data.
-7. **Windows programs (H15)**: Wine on Haiku arm64 with x86-64/x86 translation, scheduled after all of the
-   above ([design/wine-x86.md](design/wine-x86.md)).
+7. **Windows programs (H15)**: Wine 11.20 runs arm64, x86 (Box64) and x86-64 (FEX) programs and is published;
+   open: full-screen speed, wined3d's remaining gaps, the items in KNOWN-ISSUES §5
+   ([design/wine-x86.md](design/wine-x86.md)).
 
 Not reachable on this hardware with the current approach: H.264 hardware decoding (VideoCore firmware only).
 Not started: HDMI audio, I²C, SPI.
