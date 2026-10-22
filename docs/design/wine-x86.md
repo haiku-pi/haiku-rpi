@@ -74,8 +74,12 @@ with sources. What it settles:
 
 ## Step 3: x86-64 through ARM64EC + FEX (work in progress, 2026-10-22)
 
-**State:** this builds, but it does not run yet. The ARM64EC-enabled Wine does not finish a new prefix on the Pi
-(win32u: "Session object id doesn't match"; the build without ARM64EC does). x86-64 programs are untested.
+**State:** this builds; the first run on the Pi is in progress. x86-64 programs are untested so far.
+
+**Disk space:** an ARM64X Wine tree and a prefix need about **2 GB on the boot volume** (tree 974 MB, prefix
+~725 MB). Test images need `-sHAIKU_IMAGE_SIZE` ≥ 5500. A full volume looked like an ARM64X bug at first:
+wineserver could not grow its session file, and win32u reported "Session object id doesn't match"
+(2026-10-22).
 
 ### How it fits together (Wine 11.20 and FEX-2610 sources, Hangover 11.16)
 
@@ -147,18 +151,10 @@ with sources. What it settles:
 
 ### Open, in the order to look at them
 
-1. **Prefix creation on the ARM64X build fails** (win32u `find_shared_session_object`: the session object's id
-   does not match). The Unix side is configured identically (`config.h` byte for byte). The suspect is
-   `virtual.c` `map_file_into_view()`: when `mmap()` of a section fails with EINVAL/EACCES/EPERM/ENODEV, it falls
-   back **silently** to `pread()`, which gives a private snapshot that win32u then reuses for every later session
-   object in that block.
-   - One way Haiku's `mmap()` returns EINVAL for a shared file mapping: when the range reaches past the file
-     cache's end (`vm.cpp` `_vm_map_file`).
-   - A diagnostic `ntdll.so` that logs that fallback is in `artifacts/wine-11.20/diag/` (not in git).
-2. The ID registers for FEX (above).
-3. `NtFlushProcessWriteBuffers` is a stub on Haiku (Linux: `membarrier`). FEX does not call it; some programs do
+1. The ID registers for FEX (above).
+2. `NtFlushProcessWriteBuffers` is a stub on Haiku (Linux: `membarrier`). FEX does not call it; some programs do
    (.NET's GC).
-4. Runtime checks: FEX on a Cortex-A72 without LSE/LRCPC (no public report found), its TSO emulation cost, and
+3. Runtime checks: FEX on a Cortex-A72 without LSE/LRCPC (no public report found), its TSO emulation cost, and
    the code cache.
 
 ## Test programs (to be chosen and license-checked at the start)
