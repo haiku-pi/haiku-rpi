@@ -1,0 +1,47 @@
+wined3d: do not evict the system memory of a texture that has a DC
+
+wined3d_texture_create_dc() makes a DIB section over the texture's system
+memory, and the DC keeps using that memory until it is destroyed.
+wined3d_texture_evict_sysmem() freed the memory anyway when another
+location became valid: after wined3d_swapchain_resize_buffers() it freed
+the back buffer's memory under the DC the GDI swapchain had made over it.
+After the next swapchain_gdi_present() (which exchanges the front and back
+buffers' memory and DCs) the front buffer's DC drew from the freed memory:
+Half-Life full screen (DirectDraw on the no-3D adapter) showed vertical
+stripes, the DC's bits 0x073e0030 against the texture's 0x0fb10030, and a
+read of them faulted.
+
+A texture with a DC keeps its system memory.
+
+--- a/dlls/wined3d/texture.c
++++ b/dlls/wined3d/texture.c
+@@ -119,6 +119,19 @@
+     }
+ }
+ 
++/* A DC made by wined3d_texture_create_dc() draws into the system memory it was made over. */
++static bool wined3d_texture_has_dc(const struct wined3d_texture *texture)
++{
++    unsigned int i, sub_count = texture->level_count * texture->layer_count;
++
++    if (!texture->dc_info)
++        return false;
++    for (i = 0; i < sub_count; ++i)
++        if (texture->dc_info[i].dc)
++            return true;
++    return false;
++}
++
+ static void wined3d_texture_evict_sysmem(struct wined3d_texture *texture)
+ {
+     struct wined3d_texture_sub_resource *sub_resource;
+@@ -126,7 +139,8 @@
+ 
+     if ((texture->flags & WINED3D_TEXTURE_CONVERTED)
+             || texture->resource.pin_sysmem
+-            || texture->download_count > WINED3D_TEXTURE_DYNAMIC_MAP_THRESHOLD)
++            || texture->download_count > WINED3D_TEXTURE_DYNAMIC_MAP_THRESHOLD
++            || wined3d_texture_has_dc(texture))
+     {
+         TRACE("Not evicting system memory for texture %p.\n", texture);
+         return;

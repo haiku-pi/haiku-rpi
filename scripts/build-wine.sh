@@ -82,7 +82,7 @@ tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
 # the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=7
+wineRevision=8
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
@@ -326,7 +326,7 @@ step_package() {
 	# commit after hrev60262): before it, the ARM64X build's processes detached wineserver's session mapping
 	# and no prefix could be made. wayland_server 2 centres a fullscreen window smaller than the screen.
 	requires="haiku>=r1~beta6_hrev60262_138 $(elf_requires "$pkg/wine/bin/wineserver" "$pkg/wine/lib/wine/aarch64-unix"/*)"
-	requires+=" lib:libfreetype lib:libegl wayland_server>=0.1.20251004-2 wine_data==$wineVersion-$wineRevision"
+	requires+=" lib:libfreetype lib:libegl wayland_server>=0.1.20251004-3 wine_data==$wineVersion-$wineRevision"
 	requires+=" wine_directx==$wineVersion-$wineRevision"
 	make_package wine_data "$pkg/wine_data" "Wine's data files" \
 		"The data of Wine $wineVersion (data/wine: NLS tables, fonts, wine.inf), a package of its own only for size; wine requires it. Cross-built for the Raspberry Pi 4 by the haiku-pi project (scripts/build-wine.sh)." \

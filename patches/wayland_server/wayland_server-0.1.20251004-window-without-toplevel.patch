@@ -1,0 +1,32 @@
+wayland-server: a window whose toplevel is gone ignores activation and resizing
+
+When a client destroys an xdg_toplevel (Wine does whenever it hides a
+window), ~HaikuXdgToplevel clears the window's fToplevel and posts
+B_QUIT_REQUESTED; QuitRequested() expects the NULL. A B_WINDOW_ACTIVATED or
+B_WINDOW_RESIZED already queued for the window is dispatched first, and
+WindowActivated()/FrameResized() dereferenced the NULL toplevel: the
+window thread crashed (Half-Life full screen, which hides and shows its
+launcher's window at every frame: WindowActivated+0x4c, a load at 0x58),
+and with it the program.
+
+--- a/HaikuXdgToplevel.cpp
++++ b/HaikuXdgToplevel.cpp
+@@ -58,6 +58,9 @@
+ void WaylandWindow::WindowActivated(bool isActive)
+ {
+ 	WaylandEnv vlEnv(this);
++	// the toplevel is gone, the B_QUIT_REQUESTED it posted not handled yet
++	if (fToplevel == NULL)
++		return;
+ 	if (isActive != fToplevel->fState.activated) {
+ 		fToplevel->fState.activated = !fToplevel->fState.activated;
+ 		fToplevel->DoSendConfigure();
+@@ -76,6 +79,8 @@
+ void WaylandWindow::FrameResized(float newWidth, float newHeight)
+ {
+ 	WaylandEnv vlEnv(this);
++	if (fToplevel == NULL)
++		return;
+ 
+ 	if (fToplevel->fSizeChanged) {
+ 		fToplevel->fSizeChanged = false;
