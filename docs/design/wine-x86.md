@@ -150,6 +150,27 @@ across protection changes and never makes a file's cache copy-on-write. Reproduc
 - **Test programs:** `hello-x64.exe`, `crash-x64.exe` (with the `smc` and `smc-image` self-modifying-code tests,
   now also for x86-64), `ddtest-x64.exe`, `tone-x64.exe`, `gltest-x64.exe` in `data/wine-tests`.
 
+### Box64 or FEX, measured (2026-10-22, the Pi, `tools/wine-tests/cpubench.c`, ms)
+
+| Build, emulator | integer | float | memory | qsort | total |
+|---|---|---|---|---|---|
+| arm64, native | 93 | 209 | 367 | 1300 | 1969 |
+| x86, Box64 (default) | 199 | 219 | 370 | 2169 | 2957 |
+| x86, FEX | 191 | 215 | 370 | 8511 | 9286 |
+| x86, FEX, `FEX_TSOENABLED=0` | 191 | 214 | 371 | 1874 | 2650 |
+| x86-64, FEX | 109 | 215 | 368 | 16618 | 17311 |
+| x86-64, FEX, `FEX_TSOENABLED=0` | 110 | 215 | 368 | 16412 | 17105 |
+
+- Straight-line code is close to native under both.
+- FEX emulates x86's strong memory ordering by default. The Cortex-A72 has neither LSE nor LRCPC, so that
+  ordering costs 4.5x on memory-heavy code (qsort). Box64 does not emulate it by default (`BOX64_DYNAREC_STRONGMEM=0`),
+  so the fair comparison is FEX with TSO off: then FEX is slightly ahead. Box64 stays the default for 32-bit.
+- x86-64's qsort is slow for another reason: the ARM64EC `ucrtbase.dll` is native code that calls the program's
+  x86-64 comparison function 20 million times, each call a transition into the emulator (~0.8 µs). Programs that
+  spend their time in their own code do not pay it.
+- The checksums of the x86 and x86-64 builds agree; the arm64 build's differs (floating point: arm64 fuses
+  multiply-adds).
+
 ### Haiku-specific changes
 
 - **`0007-ntdll-haiku-arm64ec-map-noreserve`:** every ARM64EC process maps a one-bit-per-page code bitmap of the
