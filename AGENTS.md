@@ -3,6 +3,15 @@
 This is the **coordination repository** for porting Haiku to the Raspberry Pi 4 (BCM2711, 4× Cortex-A72).
 It holds scripts, tools, documentation and integration manifests. **No Haiku source code lives here.**
 
+## Autonomy (owner, 2026-10-22)
+
+- **Never ask the owner anything and never wait for an answer** — no Yes/No questions, no confirmations, no
+  turn that ends on a question; the owner is away most of the time. Decide, write the reason in the weekly
+  log, keep working. Subagents get the same rule in their briefs.
+- The host, the Pi bench and the `haiku-pi` GitHub org are dedicated to this project: local rig actions
+  (builds, Pi sessions, deleting our own artifacts) and pushes/publishing to `haiku-pi` need no approval.
+  Still never push upstream, never force-push.
+
 ## Repositories
 
 | Path | What | Remotes |
