@@ -82,7 +82,7 @@ tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
 # the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=1
+wineRevision=3
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
@@ -255,7 +255,7 @@ elf_requires() {
 }
 
 # make_package NAME DIR SUMMARY DESCRIPTION LICENSES PROVIDES REQUIRES [COPYRIGHTS] (resolvables separated by
-# spaces, written without spaces: cmd:wine=11.20, wine==11.20-1)
+# spaces, written without spaces: cmd:wine=11.20, wine==11.20-1, haiku>=r1~beta6_hrev60262_138)
 make_package() {
 	local name="$1" dir="$2" hpkg="$out/$1-$wineVersion-$wineRevision-arm64.hpkg"
 	{
@@ -265,7 +265,7 @@ make_package() {
 		printf 'licenses\t\t{ %s }\n' "$5"
 		printf 'copyrights\t\t{ "1993-2026 the Wine project authors"%s }\n' "${8:+ $8}"
 		printf 'provides {\n%s\n}\nrequires {\n%s\n}\n' "$(printf '\t%s\n' $6)" "$(printf '\t%s\n' $7)"
-	} | sed 's/==/ == /; t; s/=/ = /' > "$dir/.PackageInfo"
+	} | sed -E 's/(==|>=|<=)/ \1 /; t; s/=/ = /' > "$dir/.PackageInfo"
 	rm -f "$hpkg"
 	LD_LIBRARY_PATH="$gen/objects/linux/lib" "$pkgtool" create -q -z zstd -C "$dir" -i "$dir/.PackageInfo" "$hpkg"
 	rm -f "$dir/.PackageInfo"
@@ -319,8 +319,11 @@ step_package() {
 	for f in "$pkg/wine/bin"/*; do provides+=" cmd:$(basename "$f")=$wineVersion"; done
 	# the libraries Wine loads at run time (NEEDED cannot show them): FreeType (text), EGL (OpenGL), and
 	# X547's in-process Wayland server, which libwayland-client loads
-	requires="haiku $(elf_requires "$pkg/wine/bin/wineserver" "$pkg/wine/lib/wine/aarch64-unix"/*)"
-	requires+=" lib:libfreetype lib:libegl wayland_server wine_data==$wineVersion-$wineRevision"
+	# haiku: a kernel that keeps MAP_SHARED mappings shared across mprotect() (haiku-pi 894c4abe7f, the 138th
+	# commit after hrev60262): before it, the ARM64X build's processes detached wineserver's session mapping
+	# and no prefix could be made. wayland_server 2 centres a fullscreen window smaller than the screen.
+	requires="haiku>=r1~beta6_hrev60262_138 $(elf_requires "$pkg/wine/bin/wineserver" "$pkg/wine/lib/wine/aarch64-unix"/*)"
+	requires+=" lib:libfreetype lib:libegl wayland_server>=0.1.20251004-2 wine_data==$wineVersion-$wineRevision"
 	requires+=" wine_directx==$wineVersion-$wineRevision"
 	make_package wine_data "$pkg/wine_data" "Wine's data files" \
 		"The data of Wine $wineVersion (data/wine: NLS tables, fonts, wine.inf), a package of its own only for size; wine requires it. Cross-built for the Raspberry Pi 4 by the haiku-pi project (scripts/build-wine.sh)." \

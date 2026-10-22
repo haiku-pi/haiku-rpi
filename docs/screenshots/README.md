@@ -28,6 +28,7 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 | `22-wine-halflife-fullscreen-opengl.png` | Half-Life full screen through wined3d's **OpenGL renderer on the V3D** — with an experimental ddraw change (its picture drawn into the game's full-screen window) that is not in the build yet: it stretches DirectDraw games (Heroes III) wrongly, see the log of 10-22 |
 | `23-wine-simcity3000-opengl.png` | **SimCity 3000** demo (1999, 32-bit x86, DirectDraw) on wined3d's **OpenGL renderer on the V3D**: the city right (the GDI renderer garbles it); Wine patch 0006 made DirectDraw show on the GL renderer |
 | `24-wine-starcraft-intro.png` | **StarCraft** (1998 shareware) playing its intro under Box64's dynarec — it crashed before the Haiku write-fault fix; its main menu follows (cut off on the right: the full-screen scaling still to fix) |
+| `25-wine-heroes3-fullscreen-aspect.png` | **Heroes III** full screen at its own 4:3 aspect: the 800x600 game scaled to 1440x1080 and centred on black (Wine 0008 + the Wayland server's centring, 2026-10-22); before, it was stretched and cut off on the right |
 
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
 `scripts/sd-cycle.sh --hdmi-every 15`; the Wine ones (2026-10-21, network boot) with `tools/pi-tests/wine-games.sh`

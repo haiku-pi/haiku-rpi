@@ -663,17 +663,27 @@ More threads barely help stories15M: every token streams the 60 MB of weights fr
 
 Wine 11.20 runs Windows programs on Haiku arm64. Programs built for 64-bit Arm Windows run directly;
 32-bit x86 Windows programs (most older games and applications) run through WoW64 and the Box64
-emulator. Install both packages from our repository:
+emulator; 64-bit x86 (x86-64) programs run through ARM64EC and the FEX emulator. Install the packages
+from our repository:
 
 ```sh
-pkgman install wine wine_x86
+pkgman install wine wine_x86 wine_x86_64
 ```
 
-- `wine` (75 MB download, ~550 MB installed): the Unix side, the 64-bit Arm Windows libraries, and
-  Wine's fonts and data. pkgman also installs the window driver's Wayland libraries (wayland,
-  wayland_server, libxkbcommon, xkeyboard_config) and Mesa.
-- `wine_x86` (66 MB download, ~190 MB installed): the 32-bit x86 Windows libraries and Box64 0.4.4's
-  `wowbox64.dll` (also installed as `xtajit.dll`). Leave it out if you only run Arm programs.
+- `wine` (77 MB download; pkgman adds `wine_data` and `wine_directx`, 33 MB): the Unix side, the 64-bit
+  Windows libraries (ARM64X: Arm and ARM64EC code in one file), and Wine's fonts and data. pkgman also
+  installs the window driver's Wayland libraries (wayland, wayland_server, libxkbcommon,
+  xkeyboard_config) and Mesa.
+- `wine_x86` (64 MB download): the 32-bit x86 Windows libraries and Box64 0.4.4's `wowbox64.dll` (also
+  installed as `xtajit.dll`). Leave it out if you only run Arm programs.
+- `wine_x86_64` (2.4 MB): FEX-2610's ARM64EC emulator (`libarm64ecfex.dll`, also as `xtajit64.dll`) for
+  x86-64 programs.
+
+**Wine 11.20-3 needs an image built on or after 2026-10-22** (the haiku package hrev60262_138 or later:
+a kernel fix that keeps shared file mappings shared, without which no Wine prefix can be made; pkgman
+refuses to install it on an older image). x86-64 programs also need the next kernel change (hrev60262_139:
+the CPU's feature registers readable by programs, which FEX reads). Build a new image
+([TRY-IT.md](TRY-IT.md#build-the-image)).
 
 The packages were built on 2026-10-22 (`scripts/build-wine.sh`) and are in our repository with the Wayland
 packages they need. The first start asks to install Wine Mono (.NET); Cancel is fine for most programs.
@@ -705,7 +715,10 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
   view is garbled. wined3d's OpenGL renderer (`WINE_D3D_CONFIG=renderer=gl`) does not show DirectDraw
   games yet.
 - Sound plays through Haiku's Media Kit (`winehaiku.drv`). Wine can play sound but not record it.
-- 32-bit x86 programs run in Box64's emulator, which is slower than native code.
+- 32-bit x86 programs run in Box64's emulator, 64-bit x86 programs in FEX's; both are slower than native
+  code (the Pi's Cortex-A72 has no LSE atomics or LRCPC, which make x86 memory ordering cheaper).
+- **Full-screen games** that set a lower display mode (800x600, 640x480) are scaled to the screen's height
+  at their own aspect ratio and centred, with black bars at the sides.
 - Not built in: Vulkan, printing, scanners, USB devices, joysticks.
 - **A crashing program** prints a crash report in Terminal (lines starting `crash:`: the registers, the
   faulting code and the call chain as `module+offset`). Wine's debugger cannot attach to a program on
