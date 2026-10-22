@@ -1,0 +1,29 @@
+wined3d: the GLSL blitter draws a P8 surface to the drawable without an attachable format
+
+glsl_blitter_supported() declined any blit whose destination format is
+not FBO-attachable and not a render target, also when the destination
+location is the drawable, which renders into the window's framebuffer and
+never attaches the texture. Without ARB_texture_rg (OpenGL 2.1, the V3D's
+desktop profile on a Raspberry Pi 4) P8 is GL_ALPHA8, not attachable: the
+front buffer of an 8-bit DirectDraw game went to the CPU blitter, which
+loads the drawable again, which blits again -- an endless recursion and a
+stack overflow (StarCraft, an 8 bpp DirectDraw test).
+
+The attachability is checked only for blits to a texture location; an
+8 bpp DirectDraw test now shows its colour bars and grey ramp exactly.
+
+--- a/dlls/wined3d/glsl_shader.c
++++ b/dlls/wined3d/glsl_shader.c
+@@ -12878,7 +12878,11 @@
+         return FALSE;
+     }
+ 
+-    if (!((dst_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_FBO_ATTACHABLE)
++    /* A blit to the drawable renders into the window's framebuffer, not into the texture: a P8 front buffer
++     * (GL_ALPHA8 without ARB_texture_rg, not attachable) is drawn through the palette that way. Declined, it
++     * went to the CPU blitter, which loads the drawable again, which blits again: endless recursion on GL 2.1. */
++    if (dst_location != WINED3D_LOCATION_DRAWABLE
++            && !((dst_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_FBO_ATTACHABLE)
+             || (dst_resource->bind_flags & WINED3D_BIND_RENDER_TARGET)))
+     {
+         TRACE("Destination texture is not FBO attachable.\n");
