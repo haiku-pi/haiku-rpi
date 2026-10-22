@@ -24,7 +24,7 @@ rc=$?
 [ $rc = 0 ] || head -n 5 /tmp/sshd.txt /boot/home/sshd.log 2> /dev/null | while read -r line; do say "sshd: $line"; done
 say "sshd: exit $rc, $(ifconfig 2> /dev/null | grep -a -o 'inet addr: [0-9.]*' | grep -v 127.0.0.1 | tr '\n' ' ')"
 # no screen saver: work over ssh is no input to Haiku, and after a few idle minutes screen_blanker covers the
-# screen (black screenshots that look like a program's fault)
-( while sleep 30; do
+# screen (black screenshots that look like a program's fault); it comes back within seconds, so every 5 s
+( while sleep 5; do
 	for t in $(ps | awk '$1 ~ /screen_blanker$/ { print $2 }'); do kill $t; done
 done ) > /dev/null 2>&1 &
