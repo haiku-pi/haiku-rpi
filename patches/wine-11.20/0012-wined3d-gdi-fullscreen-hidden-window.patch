@@ -1,0 +1,81 @@
+wined3d: a full-screen GDI front buffer whose window is hidden goes to the foreground window
+
+On Windows the front buffer of a full-screen (exclusive) swapchain is the
+screen. wined3d's GDI swapchain draws it into the swapchain's window, and
+win32u gives a hidden window no surface (the dummy surface), so whatever is
+drawn there is lost. Half-Life's software renderer in full screen: the
+launcher holds the exclusive DirectDraw device (SetCooperativeLevel with
+its window), then the game hides the launcher and runs in a new full-screen
+popup window of its own, and every Flip went to the hidden launcher -- the
+screen stayed white (the new window's background).
+
+When the full-screen swapchain's window is hidden, the front buffer is now
+drawn into the foreground window, if that is visible and belongs to this
+process.
+
+--- a/dlls/wined3d/swapchain.c
++++ b/dlls/wined3d/swapchain.c
+@@ -1312,13 +1312,30 @@
+     swapchain_frontbuffer_updated,
+ };
+ 
++/* On Windows the front buffer of a full-screen swapchain is the screen; here it is drawn into the swapchain's
++ * window. A game may hide that window and show one of its own instead: Half-Life's launcher holds the
++ * exclusive DirectDraw device, and the game hides it and runs in a new full-screen window, which then stayed
++ * white. The front buffer goes to the foreground window then, when it is one of this process's. */
++static HWND swapchain_gdi_replacement_window(const struct wined3d_swapchain *swapchain)
++{
++    HWND foreground;
++    DWORD pid;
++
++    if (swapchain->state.desc.windowed || IsWindowVisible(swapchain->win_handle))
++        return NULL;
++    if (!(foreground = GetForegroundWindow()) || !IsWindowVisible(foreground))
++        return NULL;
++    GetWindowThreadProcessId(foreground, &pid);
++    return pid == GetCurrentProcessId() ? foreground : NULL;
++}
++
+ static void swapchain_gdi_frontbuffer_updated(struct wined3d_swapchain *swapchain)
+ {
+     struct wined3d_dc_info *front;
+     POINT offset = {0, 0};
+     RECT draw_rect;
+-    HWND window;
+-    HDC src_dc;
++    HWND window, replacement;
++    HDC src_dc, dst_dc;
+ 
+     TRACE("swapchain %p.\n", swapchain);
+ 
+@@ -1333,10 +1350,16 @@
+ 
+     src_dc = front->dc;
+     window = swapchain->win_handle;
++    dst_dc = swapchain->dc;
+ 
+     /* Front buffer coordinates are screen coordinates. Map them to the
+      * destination window if not fullscreened. */
+-    if (swapchain->state.desc.windowed)
++    if ((replacement = swapchain_gdi_replacement_window(swapchain)))
++    {
++        dst_dc = GetDCEx(replacement, 0, DCX_USESTYLE | DCX_CACHE);
++        ClientToScreen(replacement, &offset);
++    }
++    else if (swapchain->state.desc.windowed)
+         ClientToScreen(window, &offset);
+ 
+     TRACE("offset %s.\n", wine_dbgstr_point(&offset));
+@@ -1345,9 +1368,11 @@
+             swapchain->front_buffer->resource.height);
+     IntersectRect(&draw_rect, &draw_rect, &swapchain->front_buffer_update);
+ 
+-    BitBlt(swapchain->dc, draw_rect.left - offset.x, draw_rect.top - offset.y,
++    BitBlt(dst_dc, draw_rect.left - offset.x, draw_rect.top - offset.y,
+             draw_rect.right - draw_rect.left, draw_rect.bottom - draw_rect.top,
+             src_dc, draw_rect.left, draw_rect.top, SRCCOPY);
++    if (replacement)
++        ReleaseDC(replacement, dst_dc);
+ 
+     SetRectEmpty(&swapchain->front_buffer_update);
+ }
