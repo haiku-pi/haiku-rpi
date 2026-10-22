@@ -93,7 +93,8 @@ want gltest-gdi && run gltest-gdi ../wine-tests "gltest-arm64.exe 30 gdi" 50
 want gltest-trace && run gltest-trace ../wine-tests "gltest-arm64.exe 5" 40 WINEDEBUG=err+all,fixme-all,+wgl,+opengl
 want simcity3000-gl && run simcity3000-gl SC3 sc3demo.exe 300 WINE_D3D_CONFIG=renderer=gl
 want ddtest8 && run ddtest8 ../wine-tests "ddtest-x86.exe 640 480 8 50" 60
-want simcity3000 && run simcity3000 SC3 sc3demo.exe 360
+# SimCity 3000 on wined3d's OpenGL renderer (its GDI renderer garbles the 8-bit city; Wine 0006 made DirectDraw show on GL)
+want simcity3000 && run simcity3000 SC3 sc3demo.exe 360 WINE_D3D_CONFIG=renderer=gl
 # StarCraft (the 1998 shareware CD, installed on the host's reference Wine: tools/wine-ref; 640x480x8): the game
 # reads the CD's INSTALL.EXE (data/wine-games/SCCD) where the installer's registry keys say
 if want starcraft || want starcraft-interp || want starcraft-safe; then
