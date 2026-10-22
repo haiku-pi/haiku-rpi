@@ -9,7 +9,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-10-21 00:40**.
+Checked against the weekly logs up to **2026-10-23 00:30**.
 
 ## 1. Correctness: crashes and hangs
 
@@ -44,14 +44,26 @@ Checked against the weekly logs up to **2026-10-21 00:40**.
 |---|---|---|---|---|
 | F1 | **Not yet checked by hand** (needs a person at the bench): audio by ear (the driver measures 44117.657 Hz, 0 underruns); typing on the USB keyboard and pointing with the mouse (both enumerate); keyboard and mouse in SDL games (their events now go through SDL's event thread); the hardware cursor with a real mouse; joining WiFi from Network preferences. | — | — | W43 "Next" item 1 |
 | F2 | **GPU stages 6 and 7 not done**: no page flips on firmware planes (full-screen GL presents by a GPU blit; at most ~15 % to gain at 1080p), no YCbCr overlays (MediaPlayer converts to B_RGB32), no asynchronous per-queue job FIFOs. rpivid frames are copied to the display. | — | — | [design/gpu-v3d.md](design/gpu-v3d.md) §3; W43 "Next" item 5 |
-| F3 | **Bluetooth beyond inquiry is untested**: pairing and profiles have not been tried; `bluetooth_server` is not started at boot (as on other Haiku systems); Haiku's own command-line tools are broken upstream (`bt_dev_info` prints a BString with `%s`; `bt_discovery` does not compile). | — | Start `bluetooth_server` by hand; the port's `tools/bt-tests/btinquiry` | W43: 10-19 14:10 |
+| F3 | **Bluetooth beyond the local device is untested**: pairing and profiles have not been tried; `bluetooth_server` is not started at boot (as on other Haiku systems). `bt_dev_info` works since 10-23 (the controller's name and address); `bt_discovery` now builds but waits forever for its inquiry's results through `bluetooth_server`. | — | Start `bluetooth_server` by hand; the port's `tools/bt-tests/btinquiry` | W43: 10-19 14:10; 10-23 |
 | F4 | **WiFi throughput is modest**: 37.4 up / 46.0 down Mbit/s, close to what the bench's 2.4 GHz access point gives; SDIO runs PIO and is CPU-bound. No wpa_supplicant on arm64: the kernel joins WPA2-PSK networks itself, and an unscanned network is assumed to be WPA2-PSK. | — | Ethernet | W43: 10-19 12:30; "Next" item 6 |
-| F5 | **Native package builds (H14)**: haikuporter has built one port (hoedown) natively in QEMU; the packages in our repository are cross-built on the host. Haiku has no official arm64 HaikuPorts repository. | — | Cross-builds (`scripts/cross-port.sh`, `scripts/package-port.py`) | W43: 10-19 05:45; "Next" item 4 |
+| F5 | **Native package builds (H14)**: haikuporter builds ports on the Pi itself (hoedown 37 s, gperf 52 s, from the development image), but only with a trimmed recipe tree (the whole HaikuPorts tree costs ~9 min of recipe parsing per port); the packages in our repository are cross-built on the host. Haiku has no official arm64 HaikuPorts repository. | — | Cross-builds (`scripts/cross-port.sh`, `scripts/package-port.py`) | W43: 10-21 09:20 |
 | F6 | **The Quake engines are not packaged** (QuakeSpasm, vkQuake, Yamagi Quake II, ioquake3 for Quake III): their game data is not free, and a packaged engine would find none in its read-only directory. | — | `scripts/build-games.sh` and friends with your own data files ([BUILD.md](BUILD.md)) | W43: 10-20 15:55 |
 | F7 | **WebPositive**: the Web Inspector's resources are not installed — as on x86 Haiku: the HaikuPorts recipe does not install them either. (Its user agent, "Macintosh; Intel Haiku/…", is upstream's deliberate Safari-compatible string — Safari on Apple Silicon Macs also says "Intel" — so it stays.) | — | — | W43: 10-19 23:40; "Next" item 6 |
 | F8 | **Network boot reads 1 KiB per request** (16 requests in flight in the kernel, 8 in the loader), and is not an NFS root: Haiku boots from a block device. | — | — | [design/netboot.md](design/netboot.md) |
 
-## 5. Debt and cleanup
+## 5. Windows programs (Wine)
+
+| # | Issue | How often | Workaround | Tracked |
+|---|---|---|---|---|
+| W1 | **Full-screen games are slower than in a window**: a game's display mode is scaled to the screen on the CPU every frame, and an OpenGL/Direct3D frame is read back from the GPU first. A 640x480 Direct3D 9 test: ~120 fps in a window, ~25 full screen (9.5 before wine 11.20-10). | Always | Run the game in a window | W43: 10-22 22:40; 10-23 00:00 |
+| W2 | **A few Wine helper processes (`services.exe`) can stay alive after their wineserver was killed** (`wineserver -k`, or a crash before 11.20-9). | Seen once, 3 processes | `kill` them; a new start is not affected | W43: 10-22 22:40 |
+| W3 | **SimCity 3000 crashed once** in wined3d's command-stream thread (a write through a garbage buffer pointer; i386 wined3d under Box64). | 1 in 7 runs, then 0 in 9 | Start it again | W43: 10-22 14:10 |
+| W4 | **StarCraft with Box64's "safe" settings** (`BOX64_DYNAREC_STRONGMEM=2`, no big blocks) stayed black for its first 2 minutes; with the default settings it plays. Slow or broken, not yet known. | The sweep's `starcraft-safe` run | Box64's default settings | W43: 10-22 22:00 |
+| W5 | **After a Wine package update the prefix is updated at the next start** (about 7 minutes, and Wine asks again to install Wine Mono). | Every Wine update | `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` once; Cancel at the Mono question | W43: 10-23 00:00 |
+| W6 | **`NtFlushProcessWriteBuffers` is a stub on Haiku**: Wine cannot make the other threads' stores visible on demand (the membarrier Linux has). Programs and the x86 emulators that rely on it for memory ordering between threads may misbehave; nothing has been traced to it yet. | — | — | the x86-64 build notes (10-22) |
+| W7 | **Not checked by hand**: the mouse in full-screen games (emulated display mode), and sound through Wine by ear. | — | — | W43 "Next" item 7 |
+
+## 6. Debt and cleanup
 
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
