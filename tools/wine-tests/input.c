@@ -8,6 +8,7 @@
  *   click:X,Y        left click at X,Y of the window's client area
  *   move:X,Y         move the mouse there
  *   key:VK           press and release a virtual key (decimal or 0x hex: 0x0d Return, 0x1b Escape, 0x20 Space)
+ *   hold:VK,MS       press a virtual key, keep it down MS milliseconds, release it (walking in a game: 0x26 Up)
  *   text:STRING      type STRING
  * The input goes in by SendInput, as from the hardware: DirectInput sees it too. Each step is printed, with the
  * foreground window's title. */
@@ -101,6 +102,12 @@ int main(int argc, char **argv)
 			WORD vk = (WORD)strtol(v, NULL, 0);
 			send_key(vk, FALSE);
 			Sleep(60);
+			send_key(vk, TRUE);
+		} else if (strncmp(a, "hold:", 5) == 0) {
+			char *ms;
+			WORD vk = (WORD)strtol(v, &ms, 0);
+			send_key(vk, FALSE);
+			Sleep(*ms == ',' ? atoi(ms + 1) : 500);
 			send_key(vk, TRUE);
 		} else if (strncmp(a, "text:", 5) == 0) {
 			for (const char *c = v; *c; c++) {

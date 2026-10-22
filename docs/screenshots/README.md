@@ -32,5 +32,5 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
 `scripts/sd-cycle.sh --hdmi-every 15`; the Wine ones (2026-10-21, network boot) with `tools/pi-tests/wine-games.sh`
 — the game demos are downloaded for the test only and are not part of this repository or our packages.
-A clip: [`../video/wine-heroes3-pi4.mp4`](../video/wine-heroes3-pi4.mp4) (74 s: the intro, then the scenario's welcome and its map; the game area, from
+Clips: [`../video/wine-halflife-pi4.mp4`](../video/wine-halflife-pi4.mp4) (45 s: Half-Life: Uplink walked through its first map — x86 game, Box64, Wine, Haiku, on the Pi; the 320x240 window, 3×) and [`../video/wine-heroes3-pi4.mp4`](../video/wine-heroes3-pi4.mp4) (74 s: the intro, then the scenario's welcome and its map; the game area, from
 `netboot-cycle.sh --record`).
