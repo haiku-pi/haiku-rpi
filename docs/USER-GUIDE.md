@@ -679,7 +679,7 @@ pkgman install wine wine_x86 wine_x86_64
 - `wine_x86_64` (2.4 MB): FEX-2610's ARM64EC emulator (`libarm64ecfex.dll`, also as `xtajit64.dll`) for
   x86-64 programs.
 
-**Wine 11.20-3 needs an image built on or after 2026-10-22** (the haiku package hrev60262_138 or later:
+**Wine 11.20 from revision 3 on needs an image built on or after 2026-10-22** (the haiku package hrev60262_138 or later:
 a kernel fix that keeps shared file mappings shared, without which no Wine prefix can be made; pkgman
 refuses to install it on an older image). x86-64 programs also need the next kernel change (hrev60262_139:
 the CPU's feature registers readable by programs, which FEX reads). Build a new image
