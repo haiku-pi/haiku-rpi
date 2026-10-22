@@ -1,0 +1,49 @@
+ddraw: an exclusive full-screen window's present rect follows the display mode
+
+wined3d gives the exclusive window a present rect (win32u's full-screen rect) when the program takes exclusive
+mode, at the mode of that time. When the program then sets a lower mode (Half-Life: SetCooperativeLevel at the
+desktop's 1920x1080, then SetDisplayMode 640x480), the present rect stayed 1920x1080 in the emulated mode's
+coordinates, and the window got a surface 2.25 times the desktop's: a 4352x2688 (47 MB) buffer copied every
+frame. SetDisplayMode now updates the present rect to the new mode and lays the window out again, which gives
+it a 1536x1152 surface. (Half-Life's full-screen game view stays white for another reason: the engine's own
+320x240 window lies under the full-screen launcher window.)
+
+--- a/dlls/ddraw/ddraw.c
++++ b/dlls/ddraw/ddraw.c
+@@ -26,6 +26,8 @@
+ #include "d3dhal.h"
+ 
+ #include "wine/exception.h"
++#include "winternl.h"
++#include "ddk/d3dkmthk.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(ddraw);
+ 
+@@ -1156,6 +1158,27 @@
+             SetRect(&clip_rect, 0, 0, width, height);
+             ClipCursor(&clip_rect);
+         }
++
++        /* wined3d gave the exclusive window a present rect (win32u's full-screen rect) at the mode of the time
++         * the program took exclusive mode; follow the new mode with it. A stale one (the desktop's 1920x1080
++         * under an emulated 640x480) gave the window a surface 2.25 times the desktop's, which the screen
++         * showed white (Half-Life full screen). */
++        if ((ddraw->cooperative_level & (DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN)) == (DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN)
++                && ddraw->dest_window)
++        {
++            D3DKMT_ESCAPE escape = {0};
++            RECT present_rect = {0, 0, width, height};
++
++            escape.Type = D3DKMT_ESCAPE_SET_PRESENT_RECT_WINE;
++            escape.hContext = HandleToULong(ddraw->dest_window);
++            escape.pPrivateDriverData = &present_rect;
++            escape.PrivateDriverDataSize = sizeof(present_rect);
++            if (D3DKMTEscape(&escape))
++                WARN("Failed to update the present rect of window %p.\n", ddraw->dest_window);
++            /* the window's surface follows its present rect when the window is laid out again */
++            SetWindowPos(ddraw->dest_window, NULL, 0, 0, width, height,
++                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
++        }
+     }
+ 
+     InterlockedCompareExchange(&ddraw->device_state, DDRAW_DEVICE_STATE_NOT_RESTORED, DDRAW_DEVICE_STATE_OK);
