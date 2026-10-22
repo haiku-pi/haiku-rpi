@@ -34,6 +34,9 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver, the hardware random number generator (feeds `/dev/random`) |
 | Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; https://www.haiku-os.org/ in 8–10 s once started before; **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — frames drop only in the first seconds after the browser starts; `scripts/build-firefox.sh`) |
 
+What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monitor, WiFi from the preferences) is
+listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
+
 Known limits: no HDMI audio; video in Firefox drops frames for the first seconds after the browser starts;
 the first network boot of a Pi that was off for minutes stops at ~52 s about 1 time in 10 — power-cycle (SD boots are not affected; [KNOWN-ISSUES.md](KNOWN-ISSUES.md)).
 
