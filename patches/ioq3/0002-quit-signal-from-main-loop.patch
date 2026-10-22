@@ -1,0 +1,57 @@
+sys: quit on SIGTERM/SIGINT from the main loop, not from the signal handler
+
+Sys_SigHandler() shut the client, the renderer and the server down from
+inside the signal handler, that is inside whatever frame the signal
+interrupted, under the locks that frame held. On Haiku about one process
+in four then stayed alive after a SIGTERM (a normal quit is clean).
+
+A request to quit now sets a flag, and the main loop quits through
+Com_Quit_f() between two frames; a second request while that quit is
+under way, or a request before the main loop runs (still starting up),
+ends the process at once. Crash signals are handled as before.
+
+--- a/code/sys/sys_main.c
++++ b/code/sys/sys_main.c
+@@ -751,10 +751,27 @@
+ Sys_SigHandler
+ =================
+ */
++/* a request to quit (SIGTERM, SIGINT) is carried out by the main loop, between two frames; before the
++ * main loop runs (still starting up) there is nothing to shut down cleanly and the process ends at once */
++static volatile sig_atomic_t sys_quitSignal, sys_mainLoopRunning;
++
+ void Sys_SigHandler( int signal )
+ {
+ 	static qboolean signalcaught = qfalse;
+ 
++	/* Shutting the client and the renderer down in here ran inside the interrupted frame, under the locks it
++	 * held, and on Haiku left about one process in four alive after a SIGTERM. A second request while the
++	 * first quit is under way, or one before the main loop runs, ends the process at once. */
++	if( signal == SIGTERM || signal == SIGINT )
++	{
++		if( sys_mainLoopRunning && !sys_quitSignal )
++		{
++			sys_quitSignal = signal;
++			return;
++		}
++		_Exit( 1 );
++	}
++
+ 	if( signalcaught )
+ 	{
+ 		fprintf( stderr, "DOUBLE SIGNAL FAULT: Received signal %d, exiting...\n",
+@@ -890,8 +907,14 @@
+ #ifdef __EMSCRIPTEN__
+ 	emscripten_set_main_loop( Com_Frame, 0, 1 );
+ #else
++	sys_mainLoopRunning = 1;
+ 	while( 1 )
+ 	{
++		if( sys_quitSignal )
++		{
++			Com_Printf( "Received signal %d, quitting\n", (int)sys_quitSignal );
++			Com_Quit_f( );
++		}
+ 		Com_Frame( );
+ 	}
+ #endif
