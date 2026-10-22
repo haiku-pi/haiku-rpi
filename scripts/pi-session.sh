@@ -79,6 +79,9 @@ status)
 stop)
 	p=$(session_pid) || true
 	[ -n "$p" ] || { echo "pi-session: none"; exit 0; }
+	# the disk's block cache first: the Pi is powered off, and what was written last (a package just
+	# installed) is otherwise lost — on 10-22 the last 163 kB of a 66 MB package, which then did not activate
+	timeout 60 "$HAIKU_RPI_ROOT/scripts/pi-ssh.sh" sync || echo "pi-session: no sync (the Pi did not answer)"
 	kill -TERM "$p"
 	while kill -0 "$p" 2>/dev/null; do sleep 1; done
 	rm -f "$state"
