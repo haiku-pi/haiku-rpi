@@ -56,6 +56,13 @@ All numbers were measured on the bench Pi (4 GB) on 2026-10-18 to 2026-10-20; th
   the hardware random number generator, CPython 3.14, Rust 1.90 for arm64 Haiku, llama2.c at 45.7
   tokens/s.
 
+## Video
+
+[**docs/video/haiku-pi4-showcase.mp4**](docs/video/haiku-pi4-showcase.mp4) (64 s, 2026-10-22): the desktop, Firefox,
+GLTeapot, then Windows programs through Wine — Heroes III (x86, Box64), Chocolate Doom playing Freedoom and
+OpenTTD (x86-64, FEX) — one captioned segment each, recorded from the Pi's HDMI output by
+`scripts/record-showcase.sh`.
+
 ## Screenshots
 
 Grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited), 2026-10-20. More in
@@ -96,14 +103,23 @@ renderer](docs/screenshots/09-supertuxkart.png), [Firefox in a window](docs/scre
 
 ## Windows games through Wine
 
-Wine 11 runs on Haiku arm64, and 32-bit x86 Windows programs run in it through WoW64 with Box64 as the x86
-emulator. **Heroes of Might and Magic III** (its 1999 demo) plays its intro, its menus and a game:
+Wine 11.20 runs on Haiku arm64 as an ARM64X build: 32-bit x86 Windows programs run through WoW64 with
+Box64 as the x86 emulator, x86-64 programs through ARM64EC with FEX (2026-10-22, after two Haiku kernel
+fixes: a shared mapping that lost its file after `fork()`, and user-mode reads of the CPU ID registers).
+`pkgman install wine wine_x86 wine_x86_64` installs it from the package repository.
+**Heroes of Might and Magic III** (its 1999 demo) plays its intro, its menus and a game:
 
 ![Heroes III on the adventure map, on Haiku on the Pi](docs/screenshots/16-wine-heroes3-adventure-map.png)
 
-A 74-second clip — intro, then the scenario and its adventure map: [docs/video/wine-heroes3-pi4.mp4](docs/video/wine-heroes3-pi4.mp4). The demo is downloaded
-for the test only; nothing of it is in this repository. Still to come: sound, OpenGL games, 64-bit x86
-(docs/design/wine-x86.md).
+![OpenTTD 15.3, the x86-64 Windows build, through FEX](docs/screenshots/27-wine-x86-64-openttd.png)
+*OpenTTD 15.3's x86-64 Windows build on its title screen, through Wine and FEX.*
+
+Clips: [Heroes III](docs/video/wine-heroes3-pi4.mp4) (74 s: intro, then the scenario and its adventure map),
+[Half-Life: Uplink](docs/video/wine-halflife-pi4.mp4) (45 s, OpenGL, windowed),
+[Chocolate Doom x86-64](docs/video/wine-x86-64-doom-pi4.mp4) (45 s, full screen, FEX). Also tested: StarCraft
+(menus, full screen at its aspect), SimCity 3000. The demos are downloaded for the test only; nothing of
+them is in this repository or the packages. How it is built and what is open:
+[docs/design/wine-x86.md](docs/design/wine-x86.md).
 
 ## One hard bug: the freeze that was a livelock
 
