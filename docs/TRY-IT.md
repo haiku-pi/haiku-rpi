@@ -4,6 +4,13 @@ The **regular Haiku image** for the Pi 4: the full desktop with Haiku's applicat
 media kit, plus this port's drivers and the ported libraries. Everything below was measured on the
 bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-10-21).
 
+**Download:** a ready-to-flash image is on the
+[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-22)
+(`haiku-pi4-2026-10-22.img.xz`, 340 MB; 8 GB card or larger; written with
+`xz -dc haiku-pi4-2026-10-22.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
+Imager's "Use custom"). It is this page's regular image, built 2026-10-22, booted from a card before publishing.
+Wine (`pkgman install wine wine_x86 wine_x86_64`) needs this image or a newer one.
+
 This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md) (first time, step by step),
 [USER-GUIDE.md](USER-GUIDE.md) (using everything), [BUILD.md](BUILD.md) (building, all options),
 [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md), [KNOWN-ISSUES.md](KNOWN-ISSUES.md).
