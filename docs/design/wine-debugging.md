@@ -76,12 +76,13 @@ the same program for comparison: a fault there too is Wine's or the program's, n
 ## 5. A hang or a busy loop: where the threads are
 
 Haiku's Debugger cannot attach to an arm64 team ("Operation not supported"), and winedbg cannot attach on
-Haiku. `threadpcs.exe` (`tools/wine-tests/threadpcs.c`, in `data/wine-tests` from wine 11.20-5) asks Wine
+Haiku. `threadpcs.exe` (`tools/wine-tests/threadpcs.c`; `scripts/build-wine.sh` builds it into the install
+tree's `data/wine-tests`, not into the packages: copy it to the Pi) asks Wine
 itself: it suspends each thread of a process and prints its native pc, lr and sp as module+offset, a few
 samples apart, through `GetThreadContext` (no ptrace). The pid is Wine's (`wine cmd /c tasklist`).
 
 ```sh
-wine /boot/system/data/wine-tests/threadpcs.exe 0x24 5 200
+wine threadpcs.exe 0x24 5 200
 ```
 
 Before that, `ps -a` shows each thread's state and user/kernel time: a thread `run`ning with tens of seconds
