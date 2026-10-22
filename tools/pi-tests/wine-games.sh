@@ -32,12 +32,11 @@ fi
 # (Heroes III) refuses to run from it; Wine maps a folder to its deepest drive, so the games are on D:
 ln -sfn /boot $WINEPREFIX/dosdevices/d:
 say "disk: $(df /boot 2> /dev/null | grep -a -i -E 'free|total' | tr -s ' ' | tr '\n' ' ')"
-# wined3d's renderer: GDI (DirectDraw games are right there; wined3d's OpenGL one presents a DirectDraw game's
-# front buffer through a path that does not reach the window yet); a game can ask for OpenGL with
-# WINE_D3D_CONFIG=renderer=gl in its run line. Plain OpenGL programs (gltest) use the V3D either way. In the
-# environment, not the registry: a registry value set just before was lost when a wineserver was killed (Wine
-# 11.20: a DirectDraw test then ran on the OpenGL renderer)
-export WINE_D3D_CONFIG=renderer=gdi
+# wined3d's renderer: OpenGL, what the packages give a user (DirectDraw and Direct3D on the V3D; since Wine
+# 0006/0016 a DirectDraw game's frames reach its window there too); the GDI one with WINE_D3D_CONFIG=renderer=gdi
+# in the environment of this script or in a game's run line. Plain OpenGL programs (gltest) use the V3D either way.
+# (The registry value the GDI renderer was once set by was lost at the wineserver's exit: Wine 0014.)
+export WINE_D3D_CONFIG=${WINE_D3D_CONFIG:-renderer=gl}
 
 # GAME DIR "EXE [ARGS]" SECONDS [VAR=VALUE...]   (the variables for that game only, e.g. BOX64_DYNAREC=0); with
 # click="TITLE|BUTTON[|TITLE|BUTTON]..." set, those dialogs' buttons are pressed in turn as they appear

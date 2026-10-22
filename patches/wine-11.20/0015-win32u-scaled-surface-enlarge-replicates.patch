@@ -1,0 +1,26 @@
+win32u: a scaled window surface replicates pixels when it enlarges
+
+scaled_surface_flush() stretched every flush with HALFTONE, which dibdrv
+computes per pixel on the CPU. A game's emulated display mode is drawn
+through such a surface: 640x480 scaled to the screen's 1440x1080, every
+frame. On a Raspberry Pi 4 a Direct3D 9 test ran at 9.5 frames per
+second full screen against 120 in a window; replicating pixels when the
+surface is enlarged gives 25.8. Shrinking (a DPI-unaware window on a
+smaller scale) still uses HALFTONE.
+
+--- a/dlls/win32u/dce.c
++++ b/dlls/win32u/dce.c
+@@ -185,7 +185,12 @@
+     NtGdiSelectBitmap( hdc_dst, surface->target_surface->color_bitmap );
+ 
+     /* FIXME: implement HALFTONE with alpha for layered surfaces */
+-    if (!window_surface->alpha_mask) set_stretch_blt_mode( hdc_dst, STRETCH_HALFTONE );
++    /* enlarging (a game's emulated display mode scaled to the screen) replicates pixels: HALFTONE filters
++     * every pixel on the CPU, a 640x480 game scaled to 1440x1080 ran at 9.5 frames per second on a
++     * Raspberry Pi 4 against 25.8 this way; shrinking still filters */
++    if (!window_surface->alpha_mask)
++        set_stretch_blt_mode( hdc_dst, dst.right - dst.left > src.right - src.left ? STRETCH_DELETESCANS
++                                                                                   : STRETCH_HALFTONE );
+ 
+     NtGdiStretchBlt( hdc_dst, dst.left, dst.top, dst.right - dst.left, dst.bottom - dst.top,
+                      hdc_src, src.left, src.top, src.right - src.left, src.bottom - src.top,

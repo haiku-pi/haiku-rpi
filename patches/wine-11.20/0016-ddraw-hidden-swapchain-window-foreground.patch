@@ -1,0 +1,75 @@
+ddraw: draw the screen into the foreground window when the exclusive swapchain window is hidden
+
+ddraw_surface_update_frontbuffer() draws to the screen DC when the
+swapchain window is not the foreground window (a popup in front of it in
+exclusive mode). A game may hide the window it gave SetCooperativeLevel()
+and play in another window of its own: Half-Life hides its launcher's
+window and runs in a new full-screen popup, which becomes the foreground
+window. With a window driver that has no desktop surface (Wayland on
+Haiku) the screen DC shows nothing: on wined3d's OpenGL renderer the game
+stayed white. (On the GDI renderer the frame went through the swapchain:
+see 0012.)
+
+When the swapchain window is hidden and the foreground window is a visible
+window of this process, the frame is drawn into that window, at its client
+coordinates.
+
+--- a/dlls/ddraw/surface.c
++++ b/dlls/ddraw/surface.c
+@@ -70,9 +70,28 @@
+  * applications from drawing to the screen while we've locked the frontbuffer.
+  * We'd like to do this in wined3d instead, but for that to work wined3d needs
+  * to support windowless rendering first. */
++/* The window the screen is drawn into when the exclusive swapchain's window is hidden: a game may hide the
++ * window it gave SetCooperativeLevel() and show another of its own (Half-Life hides its launcher and plays in a
++ * new full-screen window). With a window driver that has no desktop surface (Wayland), drawing to the screen DC
++ * shows nothing; the frame goes to the foreground window instead, when that is this process's. */
++static HWND ddraw_hidden_swapchain_replacement(const struct ddraw *ddraw)
++{
++    HWND foreground;
++    DWORD pid;
++
++    if (!ddraw->swapchain_window || IsWindowVisible(ddraw->swapchain_window))
++        return NULL;
++    if (!(foreground = GetForegroundWindow()) || !IsWindowVisible(foreground))
++        return NULL;
++    GetWindowThreadProcessId(foreground, &pid);
++    return pid == GetCurrentProcessId() ? foreground : NULL;
++}
++
+ HRESULT ddraw_surface_update_frontbuffer(struct ddraw_surface *surface,
+         const RECT *rect, BOOL read, unsigned int swap_interval)
+ {
++    POINT offset = {0, 0};
++    HWND replacement;
+     struct wined3d_texture *dst_texture, *wined3d_texture;
+     struct ddraw *ddraw = surface->ddraw;
+     HDC surface_dc, screen_dc;
+@@ -177,7 +196,10 @@
+     if (surface->palette)
+         wined3d_palette_apply_to_dc(surface->palette->wined3d_palette, surface_dc);
+ 
+-    if (!(screen_dc = GetDC(NULL)))
++    /* screen coordinates, mapped to the replacement window's client area */
++    if ((replacement = ddraw_hidden_swapchain_replacement(ddraw)))
++        ClientToScreen(replacement, &offset);
++    if (!(screen_dc = GetDC(replacement)))
+     {
+         wined3d_texture_release_dc(wined3d_texture, surface->sub_resource_idx, surface_dc);
+         ERR("Failed to get screen DC.\n");
+@@ -186,12 +208,12 @@
+ 
+     if (read)
+         ret = BitBlt(surface_dc, x, y, w, h,
+-                screen_dc, x, y, SRCCOPY);
++                screen_dc, x - offset.x, y - offset.y, SRCCOPY);
+     else
+-        ret = BitBlt(screen_dc, x, y, w, h,
++        ret = BitBlt(screen_dc, x - offset.x, y - offset.y, w, h,
+                 surface_dc, x, y, SRCCOPY);
+ 
+-    ReleaseDC(NULL, screen_dc);
++    ReleaseDC(replacement, screen_dc);
+     wined3d_texture_release_dc(wined3d_texture, surface->sub_resource_idx, surface_dc);
+ 
+     if (!ret)

@@ -697,6 +697,9 @@ wine notepad          # Wine's own programs: notepad, winecfg, regedit, winemine
 
 The first start creates the Wine prefix `~/.wine`, the Windows `C:` drive. That takes about 7–8 minutes on the
 Pi 4 and about 1 GB of disk; a program's first start after that takes 20–45 s, later ones a few seconds.
+After `pkgman update` brings a new Wine revision, the next start updates the prefix the same way (about 7
+minutes, and the Wine Mono question again); `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` does it
+without the question.
 Windows open as normal Haiku windows.
 
 **Programs that check free space.** Wine maps Haiku's root `/` to drive `Z:`. That file system reports no
@@ -710,10 +713,13 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
 **Known limits** (2026-10-22):
-- **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1). **Direct3D and DirectDraw
-  games use wined3d's software (GDI) renderer**, which is enough for 2D games (Heroes III, StarCraft,
-  SimCity 3000) and for Half-Life's software renderer, in a window or full screen (from wine 11.20-8).
-  wined3d's OpenGL renderer (`WINE_D3D_CONFIG=renderer=gl`) does not show DirectDraw games yet.
+- **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
+  Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
+  second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike; 2D games (Heroes III, StarCraft, SimCity 3000)
+  and Half-Life (from wine 11.20-11 also full screen) play. wined3d's software renderer is there too
+  (`WINE_D3D_CONFIG=renderer=gdi` in the environment): DirectDraw only, no Direct3D.
+- Full screen is slower than a window: a game's display mode is scaled to the screen by the CPU (a 640x480
+  Direct3D game: ~25 frames per second full screen, ~120 in a window).
 - Sound plays through Haiku's Media Kit (`winehaiku.drv`). Wine can play sound but not record it.
 - 32-bit x86 programs run in Box64's emulator, 64-bit x86 programs in FEX's; both are slower than native
   code (the Pi's Cortex-A72 has no LSE atomics or LRCPC, which make x86 memory ordering cheaper).
