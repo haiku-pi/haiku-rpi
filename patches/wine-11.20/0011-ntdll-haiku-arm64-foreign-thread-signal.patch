@@ -1,0 +1,96 @@
+ntdll: Haiku arm64: a fault in a thread Wine did not create
+
+Haiku's own threads run in a Wine process: a window's BWindow thread, the
+media kit's, X547's in-process Wayland server's. They have no thread data
+(get_thread_data() is NULL), and the arm64 signal handlers dereference it:
+segv_handler in handle_syscall_fault, after virtual_handle_fault. The
+second fault comes with the signal blocked; Haiku then retries the faulting
+instruction, which faults again, millions of times a second, and the
+program hangs at full CPU (Half-Life full screen: the Wayland server's
+window thread "w>Half-Life", a FAR-0 loop at segv_handler+0x138).
+
+A signal in such a thread is now reported on stderr (with write(): Wine's
+debug output needs the thread data) and takes the default action, so the
+team ends the way it would without Wine and the first fault is named.
+
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -1194,6 +1194,27 @@
+     return ((DWORD64)ESR_ELx_EC_DABT_LOW << 26) | (misaligned ? ESR_ELx_ISS_DFSC_ALIGN_FAULT : 0) |
+            (a64_is_store( *(const UINT *)pc ) ? 1 << 6 : 0);
+ }
++
++extern int find_thread( const char *name );
++
++/* Haiku's own threads run in a Wine process too (a window's BWindow thread, the media kit's, the Wayland
++ * server's): they have no thread data, and their fault is not a Windows exception. The handlers below would
++ * dereference the missing thread data, fault again with the signal blocked, and so retry that instruction
++ * forever. Such a fault is reported (Wine's debug output needs the thread data, so with write()) and takes
++ * the signal's default action instead: the team ends, as on a fault without Wine. */
++static BOOL haiku_foreign_thread_signal( int signal, const siginfo_t *siginfo, const ucontext_t *sigcontext )
++{
++    struct sigaction action = { .sa_handler = SIG_DFL };
++    char text[160];
++    int len;
++
++    if (get_thread_data()) return FALSE;
++    len = snprintf( text, sizeof(text), "wine: signal %d in thread %d, not a Wine thread: pc %p, address %p\n",
++                    signal, find_thread( NULL ), (void *)PC_sig(sigcontext), siginfo->si_addr );
++    write( 2, text, len );
++    sigaction( signal, &action, NULL );
++    return TRUE;
++}
+ #endif
+ 
+ /**********************************************************************
+@@ -1213,6 +1234,10 @@
+     DWORD64 esr = get_fault_esr( sigcontext );
+ #endif
+ 
++#ifdef __HAIKU__
++    if (haiku_foreign_thread_signal( signal, siginfo, sigcontext )) return;
++#endif
++
+     switch (ESR_ELx_EC(esr))
+     {
+     case ESR_ELx_EC_IABT_LOW:
+@@ -1262,6 +1287,9 @@
+     CONTEXT context;
+     EXCEPTION_RECORD rec = { .ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION,
+                              .ExceptionAddress = (void *)PC_sig(sigcontext) };
++#ifdef __HAIKU__
++    if (haiku_foreign_thread_signal( signal, siginfo, sigcontext )) return;
++#endif
+ 
+     if (!(PSTATE_sig( sigcontext ) & 0x10) && /* AArch64 (not WoW) */
+         !(PC_sig( sigcontext ) & 3))
+@@ -1295,6 +1323,9 @@
+     EXCEPTION_RECORD rec = { .ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION,
+                              .ExceptionAddress = (void *)PC_sig(sigcontext) };
+     DWORD64 esr = 0;
++#ifdef __HAIKU__
++    if (haiku_foreign_thread_signal( signal, siginfo, sigcontext )) return;
++#endif
+ 
+     save_context( &context, sigcontext );
+ 
+@@ -1360,6 +1391,9 @@
+     struct thread_data *data = get_thread_data();
+     CONTEXT context;
+     EXCEPTION_RECORD rec = { .ExceptionAddress = (void *)PC_sig(sigcontext) };
++#ifdef __HAIKU__
++    if (haiku_foreign_thread_signal( signal, siginfo, sigcontext )) return;
++#endif
+ 
+     switch (siginfo->si_code & 0xffff )
+     {
+@@ -1439,6 +1473,9 @@
+     EXCEPTION_RECORD rec = { .ExceptionCode = EXCEPTION_WINE_ASSERTION,
+                              .ExceptionFlags = EXCEPTION_NONCONTINUABLE,
+                              .ExceptionAddress = (void *)PC_sig(sigcontext) };
++#ifdef __HAIKU__
++    if (haiku_foreign_thread_signal( signal, siginfo, sigcontext )) return;
++#endif
+ 
+     save_context( &context, sigcontext );
+     setup_raise_exception( data, sigcontext, &rec, &context );

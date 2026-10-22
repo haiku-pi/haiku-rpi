@@ -82,7 +82,7 @@ tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
 # the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=5
+wineRevision=6
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
