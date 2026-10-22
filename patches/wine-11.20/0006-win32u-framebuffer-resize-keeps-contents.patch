@@ -1,0 +1,69 @@
+win32u: a window framebuffer's resize keeps what it holds
+
+The surfaceless EGL driver's window framebuffer (Haiku: no window surface) is resized at the first flush
+after the window's size changed, and its color buffers were reallocated empty. A DirectDraw program draws
+its picture once into the front buffer right after a display mode change: wined3d's OpenGL renderer drew
+it into the old (desktop-sized) buffer, the flush that presents it resized first, and the window showed an
+empty (white) buffer. Color textures are now resized by a copy that keeps the lower left part both sizes
+share. ddtest on wined3d's OpenGL renderer: the picture instead of white.
+
+--- a/dlls/win32u/opengl.c	2026-10-22 02:17:01.113189833 +0200
++++ b/dlls/win32u/opengl.c	2026-10-22 01:59:19.795005968 +0200
+@@ -899,6 +899,46 @@
+     return fbo;
+ }
+ 
++/* Resizes a color texture attachment keeping what it holds (the lower left part both sizes share): a window
++ * whose size changes between a frame's drawing and its presentation (a DirectDraw program drawing once into
++ * the front buffer right after a display mode change, say) would otherwise show an empty buffer. */
++static BOOL resize_framebuffer_texture_keep( struct opengl_drawable *drawable, GLuint fbo, GLenum attachment,
++                                             const struct wgl_pixel_format *desc, SIZE size )
++{
++    const struct opengl_funcs *funcs = &display_funcs;
++    GLint old_width = 0, old_height = 0;
++    GLuint old_name, name, tmp_fbo;
++    GLenum type;
++
++    funcs->p_glGetFramebufferAttachmentParameteriv( GL_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type );
++    if (type != GL_TEXTURE || desc->samples) return FALSE;
++    funcs->p_glGetFramebufferAttachmentParameteriv( GL_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&old_name );
++    funcs->p_glBindTexture( GL_TEXTURE_2D, old_name );
++    funcs->p_glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &old_width );
++    funcs->p_glGetTexLevelParameteriv( GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &old_height );
++
++    funcs->p_glGenTextures( 1, &name );
++    init_framebuffer_attachment( drawable, fbo, attachment, GL_TEXTURE, name, desc, size );
++
++    funcs->p_glGenFramebuffers( 1, &tmp_fbo );
++    funcs->p_glBindFramebuffer( GL_DRAW_FRAMEBUFFER, tmp_fbo );
++    funcs->p_glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, name, 0 );
++    funcs->p_glDrawBuffer( GL_COLOR_ATTACHMENT0 );
++    funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, fbo );
++    funcs->p_glReadBuffer( attachment );
++    funcs->p_glBlitFramebuffer( 0, 0, min( old_width, size.cx ), min( old_height, size.cy ),
++                                0, 0, min( old_width, size.cx ), min( old_height, size.cy ), GL_COLOR_BUFFER_BIT, GL_NEAREST );
++
++    funcs->p_glBindFramebuffer( GL_FRAMEBUFFER, fbo );
++    funcs->p_glFramebufferTexture2D( GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, name, 0 );
++    funcs->p_glDeleteFramebuffers( 1, &tmp_fbo );
++    funcs->p_glDeleteTextures( 1, &old_name );
++
++    TRACE( "drawable %p/%u resized color buffer %#x/%u to %s, keeping %dx%d of %u\n", drawable, fbo, attachment, name,
++           wine_dbgstr_point( (POINT *)&size ), min( old_width, size.cx ), min( old_height, size.cy ), old_name );
++    return TRUE;
++}
++
+ static void resize_framebuffer( struct opengl_drawable *drawable, const struct wgl_pixel_format *desc, GLuint fbo, SIZE size )
+ {
+     const struct opengl_funcs *funcs = &display_funcs;
+@@ -907,7 +947,9 @@
+ 
+     funcs->p_glBindFramebuffer( GL_FRAMEBUFFER, fbo );
+ 
+-    for (GLuint i = 0; i < count; i++) resize_framebuffer_attachment( drawable, fbo, GL_COLOR_ATTACHMENT0 + i, desc, size );
++    for (GLuint i = 0; i < count; i++)
++        if (!resize_framebuffer_texture_keep( drawable, fbo, GL_COLOR_ATTACHMENT0 + i, desc, size ))
++            resize_framebuffer_attachment( drawable, fbo, GL_COLOR_ATTACHMENT0 + i, desc, size );
+     if (desc->pfd.cDepthBits) resize_framebuffer_attachment( drawable, fbo, GL_DEPTH_ATTACHMENT, desc, size );
+ 
+     ret = funcs->p_glCheckFramebufferStatus( GL_FRAMEBUFFER );

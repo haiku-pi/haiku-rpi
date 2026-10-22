@@ -36,7 +36,7 @@
 #              wowbox64.dll and xtajit.dll. Then the test tree <out>/install/boot/system/non-packaged:
 #              the same files (hard links; Wine finds bin/, lib/wine and data/wine relative to ntdll.so, so
 #              the packaged layout also runs from non-packaged/) plus the test programs of tools/wine-tests
-#              (hello.c, ddtest.c, tone.c, gltest.c, crash.c for arm64 and x86; click.c, input.c) in data/wine-tests
+#              (hello.c, ddtest.c, tone.c, gltest.c, crash.c for arm64 and x86; click.c, input.c, winlist.c) in data/wine-tests
 #              (~690 MB; a prefix takes ~1 GB more: images need -sHAIKU_IMAGE_SIZE=3500)
 #   package    from the staged tree, zstd-compressed, into <out> (and, for the default version, artifacts/packages
 #              and jam's download directory):
@@ -204,6 +204,7 @@ step_install() {
 		"$root/tools/wine-tests/hello.c"
 	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/click.exe" "$root/tools/wine-tests/click.c"
 	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/input.exe" "$root/tools/wine-tests/input.c"
+	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/winlist.exe" "$root/tools/wine-tests/winlist.c"
 	for a in aarch64:arm64 i686:x86; do
 		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/ddtest-${a#*:}.exe" \
 			"$root/tools/wine-tests/ddtest.c" -lddraw -ldxguid
