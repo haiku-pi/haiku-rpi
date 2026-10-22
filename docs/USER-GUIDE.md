@@ -695,8 +695,9 @@ wine program.exe
 wine notepad          # Wine's own programs: notepad, winecfg, regedit, winemine, ...
 ```
 
-The first start creates the Wine prefix `~/.wine`, the Windows `C:` drive. That takes a few minutes and
-about 1 GB of disk. Windows open as normal Haiku windows.
+The first start creates the Wine prefix `~/.wine`, the Windows `C:` drive. That takes about 7–8 minutes on the
+Pi 4 and about 1 GB of disk; a program's first start after that takes 20–45 s, later ones a few seconds.
+Windows open as normal Haiku windows.
 
 **Programs that check free space.** Wine maps Haiku's root `/` to drive `Z:`. That file system reports no
 free space, so some installers and games (Heroes of Might and Magic III, for example) refuse to start
