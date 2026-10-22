@@ -4,8 +4,8 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds `haiku-pi4-2026-10-23.img` (hrev60262+146: the 10-22
-release plus the kernel's fault-signal fix, `remote_disk` only on network boots, the fixed Bluetooth tools in the image).
+**The image:** the SD card of the bench Pi holds `haiku-pi4-2026-10-23.img` (hrev60262+147: the 10-22
+release plus the kernel's fault-signal fix, `remote_disk` only on network boots, the fixed Bluetooth tools in the image, a kernel panic on a failed fork() fixed).
 Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the Ethernet cable;
 power on. The desktop comes up in about 80 s.
 
