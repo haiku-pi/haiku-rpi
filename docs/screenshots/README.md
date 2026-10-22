@@ -31,6 +31,7 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 | `25-wine-heroes3-fullscreen-aspect.png` | **Heroes III** full screen at its own 4:3 aspect: the 800x600 game scaled to 1440x1080 and centred on black (Wine 0008 + the Wayland server's centring, 2026-10-22); before, it was stretched and cut off on the right |
 | `26-wine-x86-64-chocolate-doom-freedoom.png` | **An x86-64 Windows program**: Chocolate Doom 3.1.1's 64-bit Windows build playing Freedoom: Phase 2's demo, full screen — ARM64EC Wine with the FEX-2610 emulator, SDL2 on OpenGL (the V3D), 2026-10-22 (both GPL/BSD, downloaded for the test only) |
 | `27-wine-x86-64-openttd.png` | **OpenTTD 15.3**, its x86-64 Windows build, at its title screen (the live demo map) with OpenGFX and OpenSFX — FEX, Wine's GDI video path (`-v win32`; OpenTTD's OpenGL driver wants 3.2, the V3D has 2.1), 2026-10-22 (all free; downloaded for the test only) |
+| `28-wine-starcraft-menu-fullscreen.png` | **StarCraft**'s main menu full screen at 4:3, centred (2026-10-22, Wine 0008 + the server's centring; before, cut off on the right) |
 
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
 `scripts/sd-cycle.sh --hdmi-every 15`; the Wine ones (2026-10-21, network boot) with `tools/pi-tests/wine-games.sh`
