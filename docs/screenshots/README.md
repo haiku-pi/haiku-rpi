@@ -29,9 +29,10 @@ port, grabbed from the Pi's HDMI output by a capture card (1920×1080, unedited)
 | `23-wine-simcity3000-opengl.png` | **SimCity 3000** demo (1999, 32-bit x86, DirectDraw) on wined3d's **OpenGL renderer on the V3D**: the city right (the GDI renderer garbles it); Wine patch 0006 made DirectDraw show on the GL renderer |
 | `24-wine-starcraft-intro.png` | **StarCraft** (1998 shareware) playing its intro under Box64's dynarec — it crashed before the Haiku write-fault fix; its main menu follows (cut off on the right: the full-screen scaling still to fix) |
 | `25-wine-heroes3-fullscreen-aspect.png` | **Heroes III** full screen at its own 4:3 aspect: the 800x600 game scaled to 1440x1080 and centred on black (Wine 0008 + the Wayland server's centring, 2026-10-22); before, it was stretched and cut off on the right |
+| `26-wine-x86-64-chocolate-doom-freedoom.png` | **An x86-64 Windows program**: Chocolate Doom 3.1.1's 64-bit Windows build playing Freedoom: Phase 2's demo, full screen — ARM64EC Wine with the FEX-2610 emulator, SDL2 on OpenGL (the V3D), 2026-10-22 (both GPL/BSD, downloaded for the test only) |
 
 How they are made: `tools/pi-tests/showcase.sh` (a boot script that opens and arranges the windows) with
 `scripts/sd-cycle.sh --hdmi-every 15`; the Wine ones (2026-10-21, network boot) with `tools/pi-tests/wine-games.sh`
 — the game demos are downloaded for the test only and are not part of this repository or our packages.
-Clips: [`../video/wine-halflife-pi4.mp4`](../video/wine-halflife-pi4.mp4) (45 s: Half-Life: Uplink walked through its first map — x86 game, Box64, Wine, Haiku, on the Pi; the 320x240 window, 3×) and [`../video/wine-heroes3-pi4.mp4`](../video/wine-heroes3-pi4.mp4) (74 s: the intro, then the scenario's welcome and its map; the game area, from
+Clips: [`../video/wine-halflife-pi4.mp4`](../video/wine-halflife-pi4.mp4) (45 s: Half-Life: Uplink walked through its first map — x86 game, Box64, Wine, Haiku, on the Pi; the 320x240 window, 3×) [`../video/wine-x86-64-doom-pi4.mp4`](../video/wine-x86-64-doom-pi4.mp4) (45 s: Chocolate Doom's x86-64 build playing Freedoom's demo through FEX, full screen; `scripts/hdmi-record.sh` during a session) and [`../video/wine-heroes3-pi4.mp4`](../video/wine-heroes3-pi4.mp4) (74 s: the intro, then the scenario's welcome and its map; the game area, from
 `netboot-cycle.sh --record`).
