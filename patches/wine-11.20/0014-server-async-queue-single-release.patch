@@ -1,0 +1,30 @@
+server: free_async_queue() drops the queue's reference to an async once
+
+free_async_queue() called async_terminate() with the async still on the
+queue. When no APC can be queued (the async's process is gone, as at
+the wineserver's exit), async_terminate() sets the result at once, and
+async_set_result() removes a queued async from its queue and drops the
+queue's reference; free_async_queue() then dropped it again. On Haiku this
+happened at every wineserver exit (a named pipe server's listen queue):
+"server/object.c:566:release_object: obj->refcount", Abort -- before the
+registry was saved, so a value written less than the save period before
+the exit was lost (reg add, then the server's exit: the value is gone).
+
+The async now leaves the queue before it is terminated.
+
+--- a/server/async.c
++++ b/server/async.c
+@@ -277,8 +277,12 @@
+     {
+         if (!async->completion) async->completion = fd_get_completion( async->fd, &async->comp_key );
+         async->fd = NULL;
+-        async_terminate( async, STATUS_HANDLES_CLOSED );
++        /* off the queue before it terminates: when no APC can be queued (the process is gone),
++         * async_terminate() sets the result at once, and async_set_result() would drop the queue's
++         * reference itself, which is dropped below */
++        list_remove( &async->queue_entry );
+         async->queue = NULL;
++        async_terminate( async, STATUS_HANDLES_CLOSED );
+         release_object( &async->obj );
+     }
+ }

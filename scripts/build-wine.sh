@@ -39,7 +39,7 @@
 #              <out>/install/boot/system/non-packaged:
 #              the same files (hard links; Wine finds bin/, lib/wine and data/wine relative to ntdll.so, so
 #              the packaged layout also runs from non-packaged/) plus the test programs of tools/wine-tests
-#              (hello.c, ddtest.c, tone.c, gltest.c, crash.c for arm64, x86 and x64; click.c, input.c,
+#              (hello.c, ddtest.c, tone.c, gltest.c, d3dtest.c, crash.c for arm64, x86 and x64; click.c, input.c,
 #              winlist.c, threadpcs.c, cpubench.c) in data/wine-tests
 #              (~690 MB; a prefix takes ~1 GB more: images need -sHAIKU_IMAGE_SIZE=3500)
 #   package    from the staged tree, zstd-compressed, into <out> (and, for the default version, artifacts/packages
@@ -82,7 +82,7 @@ tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
 # the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=8
+wineRevision=9
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
@@ -233,6 +233,8 @@ step_install() {
 			"$root/tools/wine-tests/tone.c" -lwinmm
 		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/gltest-${a#*:}.exe" \
 			"$root/tools/wine-tests/gltest.c" -lopengl32 -lgdi32
+		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/d3dtest-${a#*:}.exe" \
+			"$root/tools/wine-tests/d3dtest.c" -ld3d9
 		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/cpubench-${a#*:}.exe" \
 			"$root/tools/wine-tests/cpubench.c"
 		# with DWARF: its crash report symbolizes on the build host (llvm-symbolizer --obj=...)
