@@ -74,12 +74,24 @@ with sources. What it settles:
 
 ## Step 3: x86-64 through ARM64EC + FEX (work in progress, 2026-10-22)
 
-**State:** this builds; the first run on the Pi is in progress. x86-64 programs are untested so far.
+**State (2026-10-22):** x86-64 programs run on the Pi: hello-x64 (threads, SEH), self-modifying code (crash-x64
+`smc`, `smc-image`) and crash reports pass under FEX-2610, next to x86 (Box64) and arm64. It took two kernel
+fixes (shared file mappings, below; ID registers) and Wine 0004/0009.
 
 **Disk space:** an ARM64X Wine tree and a prefix need about **2 GB on the boot volume** (tree 974 MB, prefix
-~725 MB). Test images need `-sHAIKU_IMAGE_SIZE` ≥ 5500. A full volume looked like an ARM64X bug at first:
-wineserver could not grow its session file, and win32u reported "Session object id doesn't match"
-(2026-10-22).
+~725 MB). Test images need `-sHAIKU_IMAGE_SIZE` ≥ 5500.
+
+**The prefix failure was the kernel's** (haiku 894c4abe7f, 2026-10-22). With the ARM64X build, a new prefix
+never finished: win32u reported "Session object id doesn't match" for every new process. That happened with a
+full boot volume, and also with 1.1 GiB free. wineserver keeps the session's shared objects in a temp file that
+it writes through a `MAP_SHARED` mapping and every Wine process maps read-only. Tracing showed the file stopped
+receiving the server's writes the moment a new process mapped it. Haiku's VM moved every mapping of the file
+onto a private copy-on-write cache: `mprotect()` dropped `B_SHARED_AREA` from a shared mapping, `fork()` then
+copied that mapping privately (a consumer of the file's cache), and the next `mprotect()` of a mapping of the
+file, seeing a consumer, made the file's cache copy-on-write for all its areas. The fix keeps the area flags
+across protection changes and never makes a file's cache copy-on-write. Reproducer:
+`tools/kernel-tests/mmap-shared-mprotect.c` (FAIL before, PASS after). The ARM64X build gave the failure an
+`mprotect()` and a `fork()` in the right order; the arm64-only build happened not to.
 
 ### How it fits together (Wine 11.20 and FEX-2610 sources, Hangover 11.16)
 
@@ -115,15 +127,14 @@ wineserver could not grow its session file, and win32u reported "Session object 
   file-backed code cache.
 - **FEX's CPU features come from the registry**
   (`HKLM\Hardware\Description\System\CentralProcessor\N`, values `CP 4030` = ID_AA64ISAR0, `CP 4020`, …,
-  `CP 4000` = MIDR, `CP 5801` = CTR_EL0). Wine's Unix side reads them only on Linux (`system.c`
-  `get_core_id_regs_arm64`, `#ifdef linux`: Linux emulates EL0 reads of the ID registers; Haiku does not), so on
-  Haiku they are 0.
-  - FEX then assumes FP/AdvSIMD (encoded as 0), no LSE, no LRCPC and no AES/SHA/PMULL, which is what the
-    Cortex-A72 of the Pi 4 has anyway.
-  - It also assumes **no CRC32**, which the A72 has. FEX then reports **no SSE4.2** in CPUID, so programs that
-    require SSE4.2 refuse to start.
-  - The fix is an EL0 ID-register emulation in Haiku's kernel (as Linux and FreeBSD do) plus enabling that
-    branch for Haiku. Not done yet.
+  `CP 4000` = MIDR, `CP 5801` = CTR_EL0). Without the key FEX stops on an assertion (`hlt #1`, which Wine
+  reports as an illegal instruction). On Haiku wineboot made no such key: Wine's logical processor information
+  was a stub, and the ID registers were read only on Linux, which emulates EL0 reads of them.
+  - Wine 0009: the processor information on Haiku (one package, a core per CPU), and the ID registers read by
+    `MRS` as on Linux.
+  - The kernel emulates those reads as Linux does (haiku 7225a5f244; on an ARMv8.0 CPU they are undefined).
+    The Pi reports MIDR 0x410fd083 and ISAR0 0x10000 (CRC32, no AES/SHA/PMULL, no LSE, no LRCPC), so FEX
+    reports SSE4.2. On a kernel without the emulation, 0009 catches the SIGILL and the registers read as 0.
 - **Packages:** the ARM64X DLLs double the 64-bit PE side (717 MB unpacked), and `wine` came out at 115 MB, over
   GitHub's 100 MiB. Now the packages are:
 
@@ -145,13 +156,18 @@ wineserver could not grow its session file, and win32u reported "Session object 
   address space. That is 4 GiB for Wine's 47-bit user space, mapped committed read-only. Haiku commits memory
   for every readable private mapping without `MAP_NORESERVE`, which would end every x64 process on a 4 GB Pi
   ("failed to allocate ARM64EC map"). On Haiku the map is now reserved, mapped with `MAP_NORESERVE` and recorded
-  as committed. Not yet run on the Pi.
+  as committed. Runs on the Pi.
+- **`0004-ntdll-haiku-arm64-fault-write`** makes up the ESR Haiku's signal frame lacks. It now also gives an
+  alignment fault (SIGBUS, `BUS_ADRALN`) its status: FEX emits an x86 store as a store-release, which faults when
+  misaligned, and handles that only as `EXCEPTION_DATATYPE_MISALIGNMENT`. As an access violation FEX took it for
+  a write to code it had translated and unprotected the page forever (crash-x64 `smc`).
 - The rest of the ARM64EC Unix-side code (`loader.c`, `virtual.c`, `thread.c`, the server's
   `init_supported_machines`) has no OS-specific branch.
 
 ### Open, in the order to look at them
 
-1. The ID registers for FEX (above).
+1. wineboot's syswow64 pass on the ARM64X build (a new prefix had an empty `syswow64`; run by hand,
+   `rundll32 setupapi,InstallHinfSection Wow64Install` fills it).
 2. `NtFlushProcessWriteBuffers` is a stub on Haiku (Linux: `membarrier`). FEX does not call it; some programs do
    (.NET's GC).
 3. Runtime checks: FEX on a Cortex-A72 without LSE/LRCPC (no public report found), its TSO emulation cost, and

@@ -6,9 +6,12 @@ it had translated (Box64's protection of self-modifying code: Half-Life's softwa
 first map), and crash reports said "read" for stores. The ESR is now made up from the fault: an
 instruction abort when the fault is at the pc, otherwise a data abort whose write bit says whether the
 instruction at the pc (just fetched, so readable) is an A64 store, atomic, compare-and-swap or DC ZVA.
+An alignment fault (SIGBUS, BUS_ADRALN) is a misaligned pc, or a data abort with the alignment fault
+status: FEX's ARM64EC emulator handles a misaligned store-release (its x86 stores) only as a misalignment,
+and took it for a write to code it had translated, unprotecting the page forever (crash-x64 smc).
 
---- a/dlls/ntdll/unix/signal_arm64.c	2026-10-21 23:13:16.623805114 +0200
-+++ b/dlls/ntdll/unix/signal_arm64.c	2026-10-21 23:08:15.479013115 +0200
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
 @@ -152,7 +152,7 @@
  
  static DWORD64 get_fault_esr( ucontext_t *sigcontext )
@@ -18,7 +21,7 @@ instruction at the pc (just fetched, so readable) is an A64 store, atomic, compa
      return 0;
  }
  
-@@ -1153,6 +1153,43 @@
+@@ -1153,6 +1153,49 @@
  }
  
  
@@ -49,20 +52,26 @@ instruction at the pc (just fetched, so readable) is an A64 store, atomic, compa
 +/* Haiku's signal frame has no ESR: one made up from the fault. At the pc, an instruction abort; elsewhere a
 + * data abort, a write when the instruction at the pc (just fetched, so readable) is a store. Without the
 + * write flag, Wine's write watches and copy-on-write pages, and an x86 emulator's protection of the code it
-+ * translated (Box64: a program that changes its own code), take every write fault for a read. */
++ * translated (Box64: a program that changes its own code), take every write fault for a read. An alignment
++ * fault (SIGBUS, BUS_ADRALN) is a misaligned pc or an alignment fault of the data abort: without it, FEX
++ * took the misaligned store-release it emits for an x86 store for a write to code it had translated, and
++ * unprotected the page forever. */
 +static DWORD64 haiku_fault_esr( const ucontext_t *sigcontext, const siginfo_t *siginfo )
 +{
 +    ULONG_PTR pc = PC_sig( sigcontext ), addr = (ULONG_PTR)siginfo->si_addr;
++    BOOL misaligned = siginfo->si_signo == SIGBUS && siginfo->si_code == BUS_ADRALN;
 +
++    if (misaligned && addr == pc) return (DWORD64)ESR_ELx_EC_PC_ALIGN << 26;
 +    if (addr - pc < 4) return (DWORD64)ESR_ELx_EC_IABT_LOW << 26;
-+    return ((DWORD64)ESR_ELx_EC_DABT_LOW << 26) | (a64_is_store( *(const UINT *)pc ) ? 1 << 6 : 0);
++    return ((DWORD64)ESR_ELx_EC_DABT_LOW << 26) | (misaligned ? ESR_ELx_ISS_DFSC_ALIGN_FAULT : 0) |
++           (a64_is_store( *(const UINT *)pc ) ? 1 << 6 : 0);
 +}
 +#endif
 +
  /**********************************************************************
   *		segv_handler
   *
-@@ -1164,7 +1201,11 @@
+@@ -1164,7 +1207,11 @@
      struct thread_data *data = get_thread_data();
      CONTEXT context;
      EXCEPTION_RECORD rec = { .ExceptionAddress = (void *)PC_sig(sigcontext) };

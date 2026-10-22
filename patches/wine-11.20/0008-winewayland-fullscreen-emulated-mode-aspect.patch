@@ -1,0 +1,30 @@
+winewayland: a fullscreen window of an emulated display mode keeps its aspect ratio
+
+win32u draws an emulated mode's fullscreen window (a 640x480 game on a 1920x1080 monitor) scaled at one
+ratio for both axes into its window rect, (240,0)-(1680,1080), and stretches its visible rect over the
+whole monitor. The driver presented the visible rect: the window's 1536-wide buffer (1440 drawn, rounded
+up to 128) as the viewport's source, scaled to 1920 — the picture 1800 px wide, its right part cut off.
+The driver now presents the window rect when it lies inside the visible one: the 1440x1080 picture,
+which the compositor centers on the output (xdg_toplevel.set_fullscreen; X547's server: patches/
+wayland_server/...-fullscreen-center.patch).
+
+--- a/dlls/winewayland.drv/window.c	2026-10-22 08:57:33.324853406 +0200
++++ b/dlls/winewayland.drv/window.c	2026-10-22 08:57:33.332814013 +0200
+@@ -139,6 +139,17 @@
+     DWORD style;
+ 
+     conf->rect = data->rects.visible;
++    /* A fullscreen window of an emulated display mode keeps its aspect ratio:
++     * win32u stretches its visible rect over the whole monitor, but draws its
++     * contents scaled into its window rect, inside the visible one. Present
++     * the window rect, which the compositor centers on the output. */
++    if (data->is_fullscreen && !EqualRect(&data->rects.window, &data->rects.visible))
++    {
++        RECT inside;
++        if (intersect_rect(&inside, &data->rects.window, &data->rects.visible) &&
++            EqualRect(&inside, &data->rects.window))
++            conf->rect = data->rects.window;
++    }
+     style = NtUserGetWindowLongW(data->hwnd, GWL_STYLE);
+ 
+     TRACE("window=%s style=%#x\n", wine_dbgstr_rect(&conf->rect), style);

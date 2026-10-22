@@ -1,0 +1,132 @@
+wayland-server: center a fullscreen surface smaller than the screen
+
+xdg_toplevel.set_fullscreen: a surface that does not cover the output is
+centered on it and the rest filled. The server made the window the size
+of the screen, then resized it to the surface's geometry at its next
+commit, leaving it at the top left with the desktop beside it. Wine's
+fullscreen windows of an emulated display mode (a 640x480 game on a
+1920x1080 screen) present their picture at its own aspect ratio, a
+1440x1080 surface: now centered on black.
+
+The window stays the size of the screen while fullscreen; the surface's
+view moves inside it, over a black view.
+
+diff -u -r ws-a/HaikuXdgSurface.cpp ws-b/HaikuXdgSurface.cpp
+--- a/HaikuXdgSurface.cpp	2026-10-22 08:58:44.896661923 +0200
++++ b/HaikuXdgSurface.cpp	2026-10-22 08:58:44.911108631 +0200
+@@ -63,7 +63,8 @@
+ 			newSize.width = fXdgSurface->fPendingGeometry.width - 1;
+ 			newSize.height = fXdgSurface->fPendingGeometry.height - 1;
+ 
+-			if (oldSize != newSize) {
++			// a fullscreen window stays the size of the screen
++			if (oldSize != newSize && !fXdgSurface->fToplevel->fState.fullscreen) {
+ 				fXdgSurface->fToplevel->fSizeChanged = true;
+ 				fXdgSurface->fToplevel->fWidth = (int32_t)newSize.width + 1;
+ 				fXdgSurface->fToplevel->fHeight = (int32_t)newSize.height + 1;
+@@ -81,7 +82,8 @@
+ 				fXdgSurface->fGeometry.y - fXdgSurface->fPendingGeometry.y
+ 			);
+ 		}
+-		if (fXdgSurface->Surface()->Bitmap() != NULL) {
++		if (fXdgSurface->Surface()->Bitmap() != NULL
++			&& (fXdgSurface->fToplevel == NULL || !fXdgSurface->fToplevel->fState.fullscreen)) {
+ 			BSize oldSize = fXdgSurface->Window()->Size();
+ 			BSize newSize = fXdgSurface->Surface()->Size();
+ 			if (oldSize != newSize) {
+@@ -90,6 +92,8 @@
+ 		}
+ 	}
+ 	fXdgSurface->fGeometry = fXdgSurface->fPendingGeometry;
++	if (fXdgSurface->fToplevel != NULL && fXdgSurface->fToplevel->fState.fullscreen)
++		fXdgSurface->fToplevel->PlaceFullscreenSurface();
+ 
+ 	// initial window show
+ 	if (!fXdgSurface->fSurfaceInitalized && fXdgSurface->Surface()->Bitmap() != NULL) {
+diff -u -r ws-a/HaikuXdgToplevel.cpp ws-b/HaikuXdgToplevel.cpp
+--- a/HaikuXdgToplevel.cpp	2026-10-22 08:58:44.896703420 +0200
++++ b/HaikuXdgToplevel.cpp	2026-10-22 08:58:44.910821432 +0200
+@@ -240,15 +240,56 @@
+ 	fWindow->ResizeTo(screenFrame.Width(), screenFrame.Height());
+ 	fWidth = (int32_t)screenFrame.Width() + 1;
+ 	fHeight = (int32_t)screenFrame.Height() + 1;
++	// a surface smaller than the screen is centered on a black border fill
++	if (fFullscreenBorder == NULL) {
++		fFullscreenBorder = new BView(screenFrame.OffsetToCopy(B_ORIGIN), "fullscreen border",
++			B_FOLLOW_ALL, B_WILL_DRAW);
++		fFullscreenBorder->SetViewColor(0, 0, 0);
++		fWindow->AddChild(fFullscreenBorder, fWindow->ChildAt(0));
++	}
++	PlaceFullscreenSurface();
+ 	DoSendConfigure();
+ 	XdgSurface()->SendConfigure(XdgSurface()->NextSerial());
+ }
+ 
++/* xdg_toplevel.set_fullscreen: a surface that does not cover the output is
++ * centered on it, the rest is border fill. The window stays the size of the
++ * screen; the surface's view moves inside it. */
++void HaikuXdgToplevel::PlaceFullscreenSurface()
++{
++	BView *view = XdgSurface()->Surface()->View();
++	if (view == NULL)
++		return;
++	HaikuXdgSurface::GeometryInfo geometry = XdgSurface()->Geometry();
++	BSize size = XdgSurface()->Surface()->Size();
++	float width = size.width + 1, height = size.height + 1;
++	int32_t x = 0, y = 0;
++	if (geometry.valid) {
++		width = geometry.width;
++		height = geometry.height;
++		x = geometry.x;
++		y = geometry.y;
++	}
++	BRect screenFrame = BScreen(fWindow).Frame();
++	AppKitPtrs::LockedPtr(view)->MoveTo(
++		floorf((screenFrame.Width() + 1 - width) / 2) - x,
++		floorf((screenFrame.Height() + 1 - height) / 2) - y);
++}
++
+ void HaikuXdgToplevel::HandleUnsetFullscreen()
+ {
+ 	if (!fState.fullscreen) return;
+ 	fState.fullscreen = false;
+ 	fSizeChanged = true;
++	if (fFullscreenBorder != NULL) {
++		fFullscreenBorder->RemoveSelf();
++		delete fFullscreenBorder;
++		fFullscreenBorder = NULL;
++	}
++	if (BView *view = XdgSurface()->Surface()->View()) {
++		HaikuXdgSurface::GeometryInfo geometry = XdgSurface()->Geometry();
++		AppKitPtrs::LockedPtr(view)->MoveTo(geometry.valid ? -geometry.x : 0, geometry.valid ? -geometry.y : 0);
++	}
+ 	fWindow->MoveTo(fSavedPos.LeftTop());
+ 	fWindow->ResizeTo(fSavedPos.Width(), fSavedPos.Height());
+ 	fWidth = (int32_t)fSavedPos.Width() + 1;
+diff -u -r ws-a/HaikuXdgToplevel.h ws-b/HaikuXdgToplevel.h
+--- a/HaikuXdgToplevel.h	2026-10-22 08:58:44.896727235 +0200
++++ b/HaikuXdgToplevel.h	2026-10-22 08:58:44.910608022 +0200
+@@ -6,6 +6,7 @@
+ struct HaikuXdgSurface;
+ class WaylandWindow;
+ class BWindow;
++class BView;
+ 
+ class HaikuXdgToplevel: public XdgToplevel {
+ private:
+@@ -23,6 +24,7 @@
+ 	int32_t fWidth = 0;
+ 	int32_t fHeight = 0;
+ 	BRect fSavedPos;
++	BView *fFullscreenBorder{};
+ 	union {
+ 		struct {
+ 			uint32_t maximized: 1;
+@@ -45,6 +47,7 @@
+ 	void MinSize(int32_t &width, int32_t &height) {width = fMinWidth; height = fMinHeight;}
+ 	void MaxSize(int32_t &width, int32_t &height) {width = fMaxWidth; height = fMaxHeight;}
+ 	void DoSendConfigure();
++	void PlaceFullscreenSurface();
+ 
+ 	void HandleSetParent(struct wl_resource *parent) override;
+ 	void HandleSetTitle(const char *title) override;

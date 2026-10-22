@@ -1,0 +1,141 @@
+ntdll: Haiku: logical processor information and the arm64 ID registers
+
+Haiku had neither: create_logical_proc_info was a stub, so the SMBIOS table
+Wine makes had one processor with no threads, and wineboot created no
+HKLM\Hardware\Description\System\CentralProcessor\<n> keys. FEX's ARM64EC
+emulator reads the CPU's features from them ("CP 4030" = ID_AA64ISAR0_EL1
+...) and stops on an assertion without them, so no x86-64 program ran.
+
+The logical processor information is one package with a core per CPU
+(get_system_info). The ID registers are read as on Linux, by MRS, which the
+kernel emulates (haiku-pi's, as Linux does); a kernel that does not makes
+it an illegal instruction, so one read is tried first with SIGILL caught.
+
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -28,6 +28,8 @@
+ #define cpu_info haiku_cpu_info
+ #include <OS.h>
+ #undef cpu_info
++#include <setjmp.h>
++#include <signal.h>
+ #endif
+ 
+ #include <assert.h>
+@@ -1618,6 +1620,32 @@
+     return nt_status;
+ }
+ 
++#elif defined(__HAIKU__)
++
++/* Haiku: one package, one core per CPU (its CPU topology tree has no more for an Arm CPU) */
++static NTSTATUS create_logical_proc_info(void)
++{
++    ULONG_PTR all_cpus_mask = 0;
++    system_info info;
++    DWORD i, num_cpus;
++
++    if (get_system_info( &info ) != B_OK) return STATUS_NOT_IMPLEMENTED;
++    num_cpus = min( info.cpu_count, MAXIMUM_PROCESSORS );
++
++    for (i = 0; i < num_cpus; i++)
++    {
++        ULONG_PTR mask = (ULONG_PTR)1 << i;
++
++        if (!logical_proc_info_add_by_id( RelationProcessorPackage, 0, mask ) ||
++            !logical_proc_info_add_by_id( RelationProcessorCore, i, mask ))
++            return STATUS_NO_MEMORY;
++        all_cpus_mask |= mask;
++    }
++    if (!logical_proc_info_add_numa_node( all_cpus_mask, 0 )) return STATUS_NO_MEMORY;
++    logical_proc_info_add_group( num_cpus, all_cpus_mask );
++    return STATUS_SUCCESS;
++}
++
+ #else
+ 
+ static NTSTATUS create_logical_proc_info(void)
+@@ -2049,17 +2077,57 @@
+ }
+ 
+ #ifdef __aarch64__
+-#ifdef linux
++#if defined(linux) || defined(__HAIKU__)
++
++#ifdef __HAIKU__
++
++static sigjmp_buf id_regs_probe_jmp;
++
++static void id_regs_probe_handler( int sig )
++{
++    siglongjmp( id_regs_probe_jmp, 1 );
++}
++
++/* Haiku's kernel emulates user reads of the ID registers as Linux does (haiku-pi kernels); one that
++ * does not makes them an illegal instruction, so read one first with SIGILL caught. */
++static BOOL kernel_emulates_id_regs(void)
++{
++    struct sigaction sa = { .sa_handler = id_regs_probe_handler }, old_sa;
++    BOOL ret = FALSE;
++    UINT64 value;
++
++    sigemptyset( &sa.sa_mask );
++    if (sigaction( SIGILL, &sa, &old_sa )) return FALSE;
++    if (!sigsetjmp( id_regs_probe_jmp, 1 ))
++    {
++        __asm__ __volatile__( "mrs %0, midr_el1" : "=r"(value) );
++        ret = TRUE;
++    }
++    sigaction( SIGILL, &old_sa, NULL );
++    return ret;
++}
++
++#endif
+ 
+ static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs,
+                                      WORD logical_thread_id )
+ {
+-    static const char midr_el1_path[] = "/sys/devices/system/cpu/cpu%u/regs/identification/midr_el1";
+-    char path_buf[0x100];
+     unsigned long value;
+     DWORD regidx = 0;
++#ifdef linux
++    static const char midr_el1_path[] = "/sys/devices/system/cpu/cpu%u/regs/identification/midr_el1";
++    char path_buf[0x100];
+     FILE *fp;
++#endif
++
++#define STR(a) #a
++#define READ_ID_REG(reg_id) \
++    /* mrs x0, #reg_id */ \
++    __asm__ __volatile__( ".inst " STR(0xd5300000 | reg_id << 5) "\n\t" \
++                          "mov %0, x0" : "=r"(value) :: "x0" ); \
++    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ reg_id, value };
+ 
++#ifdef linux
+     /* MIDR_EL1 can vary across cores, so read it from sysfs. */
+     snprintf( path_buf, sizeof(path_buf), midr_el1_path, logical_thread_id );
+     if ((fp = fopen( path_buf, "r" )))
+@@ -2074,13 +2142,15 @@
+         WARN( "Skipping ID register population as kernel is missing emulation support.\n" );
+         return regidx;
+     }
+-
+-#define STR(a) #a
+-#define READ_ID_REG(reg_id) \
+-    /* mrs x0, #reg_id */ \
+-    __asm__ __volatile__( ".inst " STR(0xd5300000 | reg_id << 5) "\n\t" \
+-                          "mov %0, x0" : "=r"(value) :: "x0" ); \
+-    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ reg_id, value };
++#else
++    if (!kernel_emulates_id_regs())
++    {
++        WARN( "Skipping ID register population as kernel is missing emulation support.\n" );
++        return regidx;
++    }
++    /* the core the thread runs on; the cores of a Raspberry Pi 4 are all the same */
++    READ_ID_REG( 0x4000 ); /* MIDR_EL1 */
++#endif
+ 
+     /* Linux traps reads to these ID registers and emulates them. They do not vary across cores,
+      * if the kernel doesn't support a specific ID register it will read as zero. */
