@@ -73,6 +73,22 @@ modules, with arguments — large), `+wgl,+opengl` (OpenGL), `+d3d,+ddraw` (Dire
 (our audio driver). The host's reference Wine (`tools/wine-ref/run.sh`, x86-64, with `INPUT=` keys) runs
 the same program for comparison: a fault there too is Wine's or the program's, not the port's.
 
+## 5. A hang or a busy loop: where the threads are
+
+Haiku's Debugger cannot attach to an arm64 team ("Operation not supported"), and winedbg cannot attach on
+Haiku. `threadpcs.exe` (`tools/wine-tests/threadpcs.c`, in `data/wine-tests` from wine 11.20-5) asks Wine
+itself: it suspends each thread of a process and prints its native pc, lr and sp as module+offset, a few
+samples apart, through `GetThreadContext` (no ptrace). The pid is Wine's (`wine cmd /c tasklist`).
+
+```sh
+wine /boot/system/data/wine-tests/threadpcs.exe 0x24 5 200
+```
+
+Before that, `ps -a` shows each thread's state and user/kernel time: a thread `run`ning with tens of seconds
+of user time is spinning, one in `wait` is blocked. FEX's own log (`FEX_SILENTLOG=0`) prints each exception
+it handles with its thread id. And the kernel's low-resource state is on the serial line and in syslog
+("low resource memory: critical"): when memory commitment runs out, allocations fail far from the cause.
+
 ## What it found first (2026-10-21)
 
 1. **Every page fault on Haiku arm64 was a read** — Haiku's signal frame carries no ESR. Wine's write

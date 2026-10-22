@@ -40,7 +40,7 @@
 #              the same files (hard links; Wine finds bin/, lib/wine and data/wine relative to ntdll.so, so
 #              the packaged layout also runs from non-packaged/) plus the test programs of tools/wine-tests
 #              (hello.c, ddtest.c, tone.c, gltest.c, crash.c for arm64, x86 and x64; click.c, input.c,
-#              winlist.c) in data/wine-tests
+#              winlist.c, threadpcs.c) in data/wine-tests
 #              (~690 MB; a prefix takes ~1 GB more: images need -sHAIKU_IMAGE_SIZE=3500)
 #   package    from the staged tree, zstd-compressed, into <out> (and, for the default version, artifacts/packages
 #              and jam's download directory):
@@ -82,7 +82,7 @@ tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
 # the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=3
+wineRevision=4
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
@@ -223,6 +223,7 @@ step_install() {
 		"$root/tools/wine-tests/hello.c"
 	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/click.exe" "$root/tools/wine-tests/click.c"
 	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/input.exe" "$root/tools/wine-tests/input.c"
+	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/threadpcs.exe" "$root/tools/wine-tests/threadpcs.c"
 	"$mingw/aarch64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/winlist.exe" "$root/tools/wine-tests/winlist.c"
 	"$mingw/x86_64-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/hello-x64.exe" "$root/tools/wine-tests/hello.c"
 	for a in aarch64:arm64 i686:x86 x86_64:x64; do
