@@ -115,8 +115,8 @@ fixes: a shared mapping that lost its file after `fork()`, and user-mode reads o
 *OpenTTD 15.3's x86-64 Windows build on its title screen, through Wine and FEX.*
 
 Clips: [Heroes III](docs/video/wine-heroes3-pi4.mp4) (74 s: intro, then the scenario and its adventure map),
-[Half-Life: Uplink](docs/video/wine-halflife-pi4.mp4) (45 s, windowed; it also plays full screen since
-2026-10-22: [screenshot](docs/screenshots/29-wine-halflife-fullscreen.png)),
+[Half-Life: Uplink](docs/video/wine-halflife-pi4.mp4) (45 s, windowed) and [full screen](docs/video/wine-halflife-fullscreen-pi4.mp4)
+(30 s, 2026-10-22, walking its first map; [screenshot](docs/screenshots/29-wine-halflife-fullscreen.png)),
 [Chocolate Doom x86-64](docs/video/wine-x86-64-doom-pi4.mp4) (45 s, full screen, FEX). Also tested: StarCraft
 (menus, full screen at its aspect), [SimCity 3000](docs/screenshots/30-wine-simcity3000-gdi.png). The demos are downloaded for the test only; nothing of
 them is in this repository or the packages. How it is built and what is open:
