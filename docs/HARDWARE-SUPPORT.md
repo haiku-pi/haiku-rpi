@@ -117,7 +117,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 
 | Component | Haiku driver | Status | Measured (date) | Limitations / missing |
 |---|---|---|---|---|
-| BCM43455 Bluetooth on the AUX mini-UART (GPIO 30–33) | `drivers/bluetooth/h4/bcm2711_bt` (`/dev/bluetooth/h4/bcm2711_bt/0`) | 🟡 | patch RAM 323/323 records acknowledged, address read, bluetooth_server registers the device; an inquiry through Haiku's DiscoveryAgent completes (10-19); each open 7 s | `bluetooth_server` is not started at boot (as on other Haiku systems). Pairing and profiles are untested. Haiku's own command-line Bluetooth tools are broken upstream |
+| BCM43455 Bluetooth on the AUX mini-UART (GPIO 30–33) | `drivers/bluetooth/h4/bcm2711_bt` (`/dev/bluetooth/h4/bcm2711_bt/0`) | 🟡 | patch RAM 323/323 records acknowledged, address read, bluetooth_server registers the device; an inquiry through Haiku's DiscoveryAgent completes (10-19) and `bt_discovery` finds a discoverable laptop with its class and name (10-23); each open 7 s | `bluetooth_server` is not started at boot (as on other Haiku systems). Pairing and profiles are untested. Haiku's own command-line Bluetooth tools are broken upstream |
 
 ## 13. GPIO and buses
 

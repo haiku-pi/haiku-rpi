@@ -506,9 +506,13 @@ Terminal:
   name ("BCM43455 37.4MHz Raspberry Pi 3+-0190"), and an inquiry through Haiku's discovery API that
   ran to completion (it found nothing: no device near the bench was discoverable).
 - Each open of the device takes about **7 s** (the firmware patch).
-- **Pairing a device is untested**, and so are Bluetooth keyboards, mice and audio.
-- Haiku's own command-line tools are broken upstream: `bt_dev_info` prints its name field wrongly,
-  `bt_discovery` does not compile. The Bluetooth preferences have not been tried.
+- **Finding devices** (2026-10-23): `bt_discovery` runs a 13-second inquiry and lists what answers with
+  its class and name (on the bench: a discoverable laptop, "Audio, Telephony | Computer | Laptop",
+  its name read back). Make the other device discoverable first. `bt_dev_info` prints the controller's
+  name and address. (Both were broken upstream: images built before 2026-10-23 evening have a
+  `bt_discovery` that waits forever.)
+- **Pairing a device is untested**, and so are Bluetooth keyboards, mice and audio. The Bluetooth
+  preferences have not been tried.
 
 ### 9.4 NFS client
 

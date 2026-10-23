@@ -9,7 +9,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-10-23 17:00**.
+Checked against the weekly logs up to **2026-10-23 18:30**.
 
 ## 1. Correctness: crashes and hangs
 
@@ -45,7 +45,7 @@ Checked against the weekly logs up to **2026-10-23 17:00**.
 |---|---|---|---|---|
 | F1 | **Not yet checked by hand** (needs a person at the bench): audio by ear (the driver measures 44117.657 Hz, 0 underruns); typing on the USB keyboard and pointing with the mouse (both enumerate); keyboard and mouse in SDL games (their events now go through SDL's event thread); the hardware cursor with a real mouse; joining WiFi from Network preferences. | — | — | W43 "Next" item 1 |
 | F2 | **GPU stages 6 and 7 not done**: no page flips on firmware planes (full-screen GL presents by a GPU blit; at most ~15 % to gain at 1080p), no YCbCr overlays (MediaPlayer converts to B_RGB32), no asynchronous per-queue job FIFOs. rpivid frames are copied to the display. | — | — | [design/gpu-v3d.md](design/gpu-v3d.md) §3; W43 "Next" item 5 |
-| F3 | **Bluetooth beyond the local device is untested**: pairing and profiles have not been tried; `bluetooth_server` is not started at boot (as on other Haiku systems). `bt_dev_info` works since 10-23 (the controller's name and address); `bt_discovery` now builds but waits forever for its inquiry's results through `bluetooth_server`. | — | Start `bluetooth_server` by hand; the port's `tools/bt-tests/btinquiry` | W43: 10-19 14:10; 10-23 |
+| F3 | **Bluetooth pairing and profiles are untested** (keyboards, mice, audio); `bluetooth_server` is not started at boot (as on other Haiku systems). Discovery works: since haiku 0c12640aa2 `bt_discovery` finds a discoverable device with its class and name (10-23: the bench host, 13 s); `bt_dev_info` prints the controller's name and address. | — | Start `bluetooth_server` by hand | W43: 10-19 14:10; 10-23 18:30 |
 | F4 | **WiFi throughput is modest**: 37.4 up / 46.0 down Mbit/s, close to what the bench's 2.4 GHz access point gives; SDIO runs PIO and is CPU-bound. No wpa_supplicant on arm64: the kernel joins WPA2-PSK networks itself, and an unscanned network is assumed to be WPA2-PSK. | — | Ethernet | W43: 10-19 12:30; "Next" item 6 |
 | F5 | **Native package builds (H14)**: haikuporter builds ports on the Pi itself (hoedown 37 s, gperf 52 s, from the development image), but only with a trimmed recipe tree (the whole HaikuPorts tree costs ~9 min of recipe parsing per port); the packages in our repository are cross-built on the host. Haiku has no official arm64 HaikuPorts repository. | — | Cross-builds (`scripts/cross-port.sh`, `scripts/package-port.py`) | W43: 10-21 09:20 |
 | F6 | **The Quake engines are not packaged** (QuakeSpasm, vkQuake, Yamagi Quake II, ioquake3 for Quake III): their game data is not free, and a packaged engine would find none in its read-only directory. | — | `scripts/build-games.sh` and friends with your own data files ([BUILD.md](BUILD.md)) | W43: 10-20 15:55 |
