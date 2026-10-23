@@ -511,8 +511,12 @@ Terminal:
   its name read back). Make the other device discoverable first. `bt_dev_info` prints the controller's
   name and address. (Both were broken upstream: images built before 2026-10-23 evening have a
   `bt_discovery` that waits forever.)
-- **Pairing a device is untested**, and so are Bluetooth keyboards, mice and audio. The Bluetooth
-  preferences have not been tried.
+- **Pairing** (2026-10-23): another computer can pair with the Pi by PIN. The Pi must be connectable
+  (inquiry and page scan on; the port's `tools/bt-tests/btscan 3` sets that), then a "PIN Code Request"
+  window opens on the Pi: enter the PIN the other side uses (the field proposes 0000) and press Pair.
+  **On images of 2026-10-23 and older, do not pair**: unpairing from the other side could panic the
+  kernel (KNOWN-ISSUES C6, fixed in the next image).
+- Bluetooth keyboards, mice and audio are untested, and so are the Bluetooth preferences.
 
 ### 9.4 NFS client
 
