@@ -5,14 +5,18 @@ inside the signal handler, that is inside whatever frame the signal
 interrupted, under the locks that frame held. On Haiku about one process
 in four then stayed alive after a SIGTERM (a normal quit is clean).
 
-A request to quit now sets a flag, and the main loop quits through
-Com_Quit_f() between two frames; a second request while that quit is
-under way, or a request before the main loop runs (still starting up),
-ends the process at once. Crash signals are handled as before.
+A request to quit now sets a flag, and the main loop runs "quit" between
+two frames (through the command system: Com_Quit_f() reads the arguments
+of the command being run, which a direct call would take from whatever
+command ran last); a second request while that quit is under way, or a
+request before the main loop runs (still starting up), ends the process at
+once, and so does any other signal while the quit is under way (a thread
+running into what the quit tore down): the shutdown must not run a second
+time from that thread. Crash signals are otherwise handled as before.
 
 --- a/code/sys/sys_main.c
 +++ b/code/sys/sys_main.c
-@@ -751,10 +751,27 @@
+@@ -751,10 +751,32 @@
  Sys_SigHandler
  =================
  */
@@ -37,10 +41,15 @@ ends the process at once. Crash signals are handled as before.
 +		_Exit( 1 );
 +	}
 +
++	/* Any other signal while that quit is under way (a thread running into what the quit already tore
++	 * down) ends the process: the shutdown below must not run a second time, from that thread. */
++	if( sys_quitSignal )
++		_Exit( 128 + signal );
++
  	if( signalcaught )
  	{
  		fprintf( stderr, "DOUBLE SIGNAL FAULT: Received signal %d, exiting...\n",
-@@ -890,8 +907,14 @@
+@@ -890,8 +912,15 @@
  #ifdef __EMSCRIPTEN__
  	emscripten_set_main_loop( Com_Frame, 0, 1 );
  #else
@@ -50,7 +59,8 @@ ends the process at once. Crash signals are handled as before.
 +		if( sys_quitSignal )
 +		{
 +			Com_Printf( "Received signal %d, quitting\n", (int)sys_quitSignal );
-+			Com_Quit_f( );
++			/* through the command system: Com_Quit_f() reads the arguments of the command being run */
++			Cbuf_ExecuteText( EXEC_NOW, "quit\n" );
 +		}
  		Com_Frame( );
  	}

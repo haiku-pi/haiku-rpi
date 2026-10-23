@@ -828,7 +828,7 @@ work that way, which also lets you run things on a Pi without a keyboard.
 | Quake II: the GL3 renderer does not start | It needs desktop OpenGL 3.2; use `+set vid_renderer gl1` (§6.3). |
 | SuperTuxKart says "OpenGL version is too old" | That is about its shader renderer; it falls back to the legacy one. For shaders, start `SuperTuxKart-GLES`. |
 | An SDL game crashed at a full-screen start with "double free" | Fixed in libsdl2 2.32.10-5 (2026-10-20). On an older image: `pkgman update libsdl2`. |
-| ioquake3/OpenArena stays alive after `kill` | About 1 in 4 runs needs `kill -9` after a plain `kill` (its signal handler shuts the renderer down mid-frame). Quitting from the game's menu is not affected. |
+| ioquake3/OpenArena stays alive after `kill` | From openarena 0.8.8-3 about 1 in 10 (was 1 in 4) needs `kill -9` after a plain `kill`: it hangs in the GL teardown at exit. Quitting from the game's menu is not affected. |
 | Expected noise in the games' logs | OpenArena: "Couldn't read q3history" on the first start, two "Failed to load model file models/players/characters/ayumi/lower.md3" (that model's file is left out). SuperTuxKart: "Material: Missing container id for ..." (texture compression off), "kartDirt shader is missing". |
 | QuakeSpasm's timedemo prints no result | Its standard output is buffered and lost when the game is killed; add `-condebug` and read `qconsole.log` (§6.3). |
 | A program crashed and its window is frozen | Haiku keeps a crashed program in the debugger (`debug_server`) until you answer its dialog. `kill -9` the team from Terminal if needed. |

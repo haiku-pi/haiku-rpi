@@ -1,0 +1,30 @@
+sys: no external dialog programs on Haiku
+
+Sys_Dialog() forks and runs zenity, kdialog or xmessage. Haiku has none of
+them, and in a program with a BApplication (SDL's) the forked child's
+exit() after the failed exec stops in the debugger ("exit() called after
+fork from a BApplication"): a crash alert on the screen, and the parent
+waiting for that child forever in Sys_Exec(). An error during a quit left
+the game alive this way.
+
+On Haiku the message goes to stderr (it is on the console already) and the
+answer is the one given when no dialog program is found.
+
+--- a/code/sys/sys_unix.c
++++ b/code/sys/sys_unix.c
+@@ -1111,6 +1111,15 @@
+ 	dialogCommandType_t     preferredCommandType = NONE;
+ 	int                     i;
+ 
++#ifdef __HAIKU__
++	/* Haiku has none of these programs, and a forked child of a program with a BApplication (SDL's) must
++	 * not call exit(): libbe stops it in the debugger with a crash alert, and Sys_Exec() waits for it
++	 * forever. The message is on the console already; answer as when no dialog program is found. */
++	(void)session; (void)tried; (void)commands; (void)preferredCommandType; (void)i;
++	fprintf( stderr, "%s: %s\n", title, message );
++	return type == DT_YES_NO ? DR_NO : DR_OK;
++#endif
++
+ 	commands[ ZENITY ] = &Sys_ZenityCommand;
+ 	commands[ KDIALOG ] = &Sys_KdialogCommand;
+ 	commands[ XMESSAGE ] = &Sys_XmessageCommand;
