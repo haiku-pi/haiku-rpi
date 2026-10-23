@@ -688,6 +688,11 @@ pkgman install wine wine_x86 wine_x86_64
   installed as `xtajit.dll`). Leave it out if you only run Arm programs.
 - `wine_x86_64` (2.4 MB): FEX-2610's ARM64EC emulator (`libarm64ecfex.dll`, also as `xtajit64.dll`) for
   x86-64 programs.
+- `wine_mono` (85 MB, optional): Wine Mono 11.3.0, the .NET Framework replacement. With it installed a
+  prefix gets Mono without the download question, and .NET programs run. Install it **together with the
+  other three, before Wine first starts**: Mono's Windows support part needs the x86 libraries in the
+  prefix. Checked 10-23: a new prefix in 56 s with Mono; a C# program compiled on the Pi with Mono's
+  `mcs.exe` and ran (Wine runs such "Any CPU" programs as x86-64, through FEX).
 
 **Wine 11.20 from revision 3 on needs an image built on or after 2026-10-22** (the haiku package hrev60262_138 or later:
 a kernel fix that keeps shared file mappings shared, without which no Wine prefix can be made; pkgman
@@ -696,7 +701,8 @@ the CPU's feature registers readable by programs, which FEX reads). Build a new 
 ([TRY-IT.md](TRY-IT.md#build-the-image)).
 
 The packages were built on 2026-10-23 (`scripts/build-wine.sh`) and are in our repository with the Wayland
-packages they need. The first start asks to install Wine Mono (.NET); Cancel is fine for most programs.
+packages they need. Without `wine_mono` the first start asks to install Wine Mono (.NET); Cancel is fine
+for most programs.
 
 Run a program from Terminal:
 
@@ -711,8 +717,9 @@ the SD card** (177 s, the bench card writing 6–8 MB/s); on a network-booted Pi
 older images, 61 s from image-2026-10-23c on (the remote disk's writes pipelined). A
 program's first start after that takes 20–45 s, later ones a few seconds (from wine 11.20-15 the
 wineserver waits on Haiku's kqueue instead of poll(): a console program starts in ~0.4 s, was ~0.7).
-After `pkgman update` brings a new Wine revision, the next start updates the prefix (and asks the Wine Mono
-question again; `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` updates it without the question). From
+After `pkgman update` brings a new Wine revision, the next start updates the prefix (without `wine_mono` it
+asks the Wine Mono question again; `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` updates it without the
+question). From
 wine 11.20-16 the update rewrites only the libraries that changed: 15 → 16 took **61 s on the SD card**
 (was ~3 minutes) and 141 s on a network boot (was ~7 minutes).
 Windows open as normal Haiku windows.
