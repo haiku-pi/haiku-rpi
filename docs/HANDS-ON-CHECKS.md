@@ -4,10 +4,11 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds `haiku-pi4-2026-10-23.img` (hrev60262+147: the 10-22
-release plus the kernel's fault-signal fix, `remote_disk` only on network boots, the fixed Bluetooth tools in the image, a kernel panic on a failed fork() fixed).
+**The image:** the SD card of the bench Pi holds the release `image-2026-10-23c` (`haiku-pi4-2026-10-23c.img`,
+hrev60262+153: the Bluetooth fixes — pairing by PIN, `bt_discovery`, no kernel panic when a paired device
+unpairs — and the faster network-boot disk, on top of the 2026-10-23 images' kernel fixes).
 Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the Ethernet cable;
-power on. The desktop comes up in about 80 s.
+power on. The desktop comes up in about 75 s.
 
 **When something is wrong**, the most useful things to send back are:
 - the system log: `/var/log/syslog` (Terminal: `cp /var/log/syslog ~/Desktop/` and copy it off on a USB
@@ -26,7 +27,7 @@ power on. The desktop comes up in about 80 s.
 | 6 | **A real monitor while a GL program runs** | Run GLTeapot (`/boot/system/demos/GLTeapot`) and look closely at the desktop around it | No sparkling dots ("speckles") on the desktop. The capture card shows some; whether a real monitor does is the question |
 | 7 | **WiFi from Network preferences** | Unplug the Ethernet cable. Deskbar → Network status (or Preferences → Network) → choose your WPA2 network, enter its password | Joins and gets an address; WebPositive loads a page |
 | 8 | **Windows programs (Wine)** | `pkgman install wine wine_x86 wine_x86_64` (~1.5 min), then `wine winemine` in Terminal (the first start makes `~/.wine`: ~3 min from the SD card, Cancel the Wine Mono question), then `wine notepad` | Minesweeper takes mouse clicks (left and right); Notepad takes typing, capitals with Shift too; in File → Save As, typing a name replaces the proposed one (fixed in wine 11.20-17). A 32-bit x86 Windows game you own can be tried too (e.g. a 1990s demo: `wine game.exe` in its folder) |
-| 9 | **Bluetooth (optional)** | Terminal: `/boot/system/servers/bluetooth_server &`, then `bt_dev_info` | It prints the controller: `BCM43455 ... DC:A6:32:3C:DD:F5`. **Do not pair a device on this card's image**: unpairing it from the other side can panic the kernel (KNOWN-ISSUES C6, fixed for the next image); `bt_discovery` on this image waits forever (also fixed) |
+| 9 | **Bluetooth (optional)** | Terminal: `/boot/system/servers/bluetooth_server &`, then `bt_dev_info`; with a phone or laptop set discoverable, `bt_discovery` | `bt_dev_info` prints the controller: `BCM43455 ... DC:A6:32:3C:DD:F5`; `bt_discovery` lists the other device with its class and name after ~13 s. Pairing from the other device works by PIN (a "PIN Code Request" window opens on the Pi; the Pi must be connectable first, which only the port's test tool `btscan` sets — optional) |
 | 10 | **Shutting down** | Deskbar → Shut down | The Pi powers down cleanly; the next boot is normal (no disk check) |
 
 Known limits you may run into ([KNOWN-ISSUES.md](KNOWN-ISSUES.md)): no HDMI audio (use the jack); the first
