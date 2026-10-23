@@ -692,7 +692,11 @@ pkgman install wine wine_x86 wine_x86_64
   prefix gets Mono without the download question, and .NET programs run. Install it **together with the
   other three, before Wine first starts**: Mono's Windows support part needs the x86 libraries in the
   prefix. Checked 10-23: a new prefix in 56 s with Mono; a C# program compiled on the Pi with Mono's
-  `mcs.exe` and ran (Wine runs such "Any CPU" programs as x86-64, through FEX).
+  `mcs.exe` and ran. Wine runs such "Any CPU" .NET programs as x86-64, through FEX, so that a program
+  calling into an x86-64 library of its own works. From wine 11.20-19, **`WINE_DOTNET_NATIVE=1 wine
+  program.exe`** runs them as Arm programs on Mono's arm64 runtime instead: a small program starts in
+  8 s instead of 18 s. Only for programs without x86-64 libraries of their own (KeePass 2, which has one,
+  does not start that way).
 
 **Wine 11.20 from revision 3 on needs an image built on or after 2026-10-22** (the haiku package hrev60262_138 or later:
 a kernel fix that keeps shared file mappings shared, without which no Wine prefix can be made; pkgman

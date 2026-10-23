@@ -1,0 +1,122 @@
+ntdll, server: WINE_DOTNET_NATIVE=1 runs .NET "Any CPU" programs natively on ARM64
+
+An IL-only image without 32BITREQUIRED (a .NET "Any CPU" program) runs as
+x86-64 on every 64-bit host, so on ARM64 it ran under the x86-64 emulator,
+Wine Mono's JIT included, although Wine Mono has an arm64 runtime
+(libmono-2.0-arm64.dll). That default stays: a program that P/Invokes into
+an x86-64 library of its own needs it. With WINE_DOTNET_NATIVE=1 in the
+environment, ntdll runs such an image as ARM64 on an ARM64 host. ntdll
+now tells the server the machine it chose when it maps the main image
+(the server took the file's I386 and decided AMD64 on its own), so a
+wineserver started without the variable agrees.
+
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -471,6 +471,28 @@
+ 
+ 
+ /***********************************************************************
++ *           il_only_machine
++ *
++ * The machine an IL-only (.NET "Any CPU") image runs as: x86-64 on a 64-bit host, so that P/Invoke into
++ * x86-64 libraries works; with WINE_DOTNET_NATIVE=1 an ARM64 host runs it as ARM64, on Wine Mono's
++ * arm64 runtime and without x86-64 emulation.
++ */
++USHORT il_only_machine(void)
++{
++    static int native = -1;
++
++    if (!is_machine_64bit( native_machine )) return native_machine;
++    if (native == -1)
++    {
++        const char *value = getenv( "WINE_DOTNET_NATIVE" );
++        native = value && atoi( value ) > 0;
++    }
++    if (native && native_machine == IMAGE_FILE_MACHINE_ARM64) return IMAGE_FILE_MACHINE_ARM64;
++    return IMAGE_FILE_MACHINE_AMD64;
++}
++
++
++/***********************************************************************
+  *           exec_wineloader
+  *
+  * argv[0] and argv[1] must be reserved for the preloader and loader respectively.
+@@ -484,7 +506,7 @@
+ 
+     if (pe_info->wine_fakedll) res_start = res_end = 0;
+     if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady)
+-        machine = is_machine_64bit( native_machine ) ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
++        machine = il_only_machine();
+ 
+     signal( SIGPIPE, SIG_DFL );
+ 
+@@ -1451,9 +1473,10 @@
+     if (!status)
+     {
+         status = virtual_map_main_module( mapping, load_machine );
+-        if (status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH && main_image_info.ComPlusNativeReady)
++        if ((!status || status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH) && main_image_info.ComPlusNativeReady)
+         {
+-            main_image_info.Machine = is_machine_64bit( native_machine ) ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
++            /* the machine virtual_map_main_module() told the server */
++            main_image_info.Machine = il_only_machine();
+             status = STATUS_SUCCESS;
+         }
+         NtClose( mapping );
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -246,6 +246,7 @@
+                               ULONG_PTR limit_low, ULONG_PTR limit_high, off_t offset );
+ extern NTSTATUS load_unixlib_by_name( const UNICODE_STRING *nt_name, void **handle_ret );
+ extern BOOL is_system_dir_path( const UNICODE_STRING *path, WORD *machine );
++extern USHORT il_only_machine(void);
+ extern NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine );
+ extern NTSTATUS load_start_exe( UNICODE_STRING *nt_name );
+ extern ULONG_PTR redirect_arm64ec_rva( void *module, ULONG_PTR rva, const IMAGE_ARM64EC_METADATA *metadata );
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3068,6 +3068,8 @@
+ }
+ 
+ 
++static BOOL mapping_main_module;  /* virtual_map_main_module() is mapping it (at startup) */
++
+ /***********************************************************************
+  *             virtual_map_image
+  *
+@@ -3134,6 +3136,9 @@
+             req->size    = size;
+             req->entry   = pe_mapping->image.entry_point;
+             req->machine = pe_mapping->image.machine;
++            /* an IL-only main image runs as the machine ntdll chose for it (il_only_machine()) */
++            if (mapping_main_module && (pe_mapping->image.image_flags & IMAGE_FLAGS_ComPlusNativeReady))
++                req->machine = il_only_machine();
+             req->offset  = offset;
+             status = wine_server_call( req );
+         }
+@@ -3494,8 +3499,10 @@
+     status = load_builtin( pe_mapping, machine, &main_image_info, &main_module, &size, 0, limit_high, 0 );
+     if (status == STATUS_IMAGE_ALREADY_LOADED)
+     {
++        mapping_main_module = TRUE;
+         status = virtual_map_image( mapping, &main_module, &size, 0, limit_high, 0,
+                                     pe_mapping, machine, FALSE, 0 );
++        mapping_main_module = FALSE;
+         virtual_fill_image_information( &pe_mapping->image, &main_image_info );
+     }
+     free_pe_mapping_info( pe_mapping );
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -1680,8 +1680,10 @@
+         {
+             current->entry_point = view->base + req->entry;
+             if (view->image.image_flags & IMAGE_FLAGS_ComPlusNativeReady)
+-                current->process->machine = is_machine_64bit( native_machine )
+-                    ? IMAGE_FILE_MACHINE_AMD64 : native_machine;
++                /* x86-64 on a 64-bit host, or the host's own machine when the client maps the image as
++                 * that (WINE_DOTNET_NATIVE on an ARM64 host: ntdll's choice, see exec_wineloader) */
++                current->process->machine = !is_machine_64bit( native_machine ) ? native_machine
++                    : req->machine == native_machine ? native_machine : IMAGE_FILE_MACHINE_AMD64;
+             else
+                 current->process->machine = req->machine;
+         }
