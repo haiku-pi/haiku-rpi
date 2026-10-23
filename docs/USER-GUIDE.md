@@ -734,8 +734,6 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
   Haiku: its "Program Error" dialog only offers OK. Developers: docs/design/wine-debugging.md.
 - **Before updating or removing Wine, quit every Windows program** (and `wineserver -k`): a Wine process
   left running from the old package keeps the new one from starting programs (kill it, or restart Haiku).
-- 1 game start in about 5 failed to open a window (an intermittent start hang that is still being
-  investigated). Close it and start the program again.
 
 ## 12. The CPU, clocks and temperature
 
