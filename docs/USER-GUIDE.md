@@ -88,7 +88,8 @@ on 2026-10-18). With the factory boot order this does not apply.
 
 For development, the Pi can also boot an image straight from a Linux build host, with no SD card
 writing: the firmware loads its files and U-Boot by TFTP, and the Haiku loader and kernel read the
-boot volume from the host as a remote disk. The desktop then appears after **~55–60 s** (2026-10-20/21).
+boot volume from the host as a remote disk. The desktop then appears after **~55–60 s** (2026-10-20/21);
+from the next image on, the remote disk also writes at ~70 MB/s (it wrote ~3 MB/s), faster than the SD card.
 This needs the host-side scripts; see [TRY-IT.md](TRY-IT.md#boot-from-the-network-no-sd-card-writing)
 and [design/netboot.md](design/netboot.md). It is not an NFS root: Haiku boots from a block
 device. Network boots have a known rare stop (§14).
@@ -706,7 +707,8 @@ wine notepad          # Wine's own programs: notepad, winecfg, regedit, winemine
 
 The first start creates the Wine prefix `~/.wine`, the Windows `C:` drive: about 1 GB, nearly all of it
 copies of Wine's Windows libraries. Writing them is most of the time: **about 3 minutes with the prefix on
-the SD card** (177 s, the bench card writing 6–8 MB/s), about 6–7 minutes on a network-booted Pi. A
+the SD card** (177 s, the bench card writing 6–8 MB/s); on a network-booted Pi about 6–7 minutes with the
+2026-10-23 images, 61 s with the next one (the remote disk's writes pipelined). A
 program's first start after that takes 20–45 s, later ones a few seconds (from wine 11.20-15 the
 wineserver waits on Haiku's kqueue instead of poll(): a console program starts in ~0.4 s, was ~0.7).
 After `pkgman update` brings a new Wine revision, the next start updates the prefix (and asks the Wine Mono

@@ -9,7 +9,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-10-23 21:00**.
+Checked against the weekly logs up to **2026-10-23 22:00**.
 
 ## 1. Correctness: crashes and hangs
 
@@ -51,7 +51,7 @@ Checked against the weekly logs up to **2026-10-23 21:00**.
 | F5 | **Native package builds (H14)**: haikuporter builds ports on the Pi itself (hoedown 37 s, gperf 52 s, from the development image), but only with a trimmed recipe tree (the whole HaikuPorts tree costs ~9 min of recipe parsing per port); the packages in our repository are cross-built on the host. Haiku has no official arm64 HaikuPorts repository. | — | Cross-builds (`scripts/cross-port.sh`, `scripts/package-port.py`) | W43: 10-21 09:20 |
 | F6 | **The Quake engines are not packaged** (QuakeSpasm, vkQuake, Yamagi Quake II, ioquake3 for Quake III): their game data is not free, and a packaged engine would find none in its read-only directory. | — | `scripts/build-games.sh` and friends with your own data files ([BUILD.md](BUILD.md)) | W43: 10-20 15:55 |
 | F7 | **WebPositive**: the Web Inspector's resources are not installed — as on x86 Haiku: the HaikuPorts recipe does not install them either. (Its user agent, "Macintosh; Intel Haiku/…", is upstream's deliberate Safari-compatible string — Safari on Apple Silicon Macs also says "Intel" — so it stays.) | — | — | W43: 10-19 23:40; "Next" item 6 |
-| F8 | **Network boot reads 1 KiB per request** (16 requests in flight in the kernel, 8 in the loader), and is not an NFS root: Haiku boots from a block device. | — | — | [design/netboot.md](design/netboot.md) |
+| F8 | **Network boot moves 1 KiB per request** (16 requests in flight in the kernel for reads, and since haiku 84fd3835a4 for writes too: ~70 MB/s synced, was 2.9; 8 in flight in the loader), and is not an NFS root: Haiku boots from a block device. Images of 2026-10-23 and older write one request at a time. | — | — | [design/netboot.md](design/netboot.md); W43: 10-23 22:00 |
 
 ## 5. Windows programs (Wine)
 
