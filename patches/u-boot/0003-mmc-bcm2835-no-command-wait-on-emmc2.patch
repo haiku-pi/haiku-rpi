@@ -1,0 +1,29 @@
+From: haiku-rpi
+Subject: [PATCH] mmc: bcm2835_sdhci: no 1 ms wait after each command on the BCM2711 EMMC2
+
+SDHCI_QUIRK_WAIT_SEND_CMD (udelay(1000) after every command) works around the
+BCM2835 Arasan controller. The BCM2711 EMMC2 does not need it -- Linux drives it
+with sdhci-iproc, whose bcm2711 data has only SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12
+-- and with CMD18 + CMD12 per read it cost ~2 ms of every block read: an EFI
+loader reading 4.7 MB in 728 reads spent 2.5 s in them.
+---
+diff --git a/drivers/mmc/bcm2835_sdhci.c b/drivers/mmc/bcm2835_sdhci.c
+index efa4d14f..f0759e2b 100644
+--- a/drivers/mmc/bcm2835_sdhci.c
++++ b/drivers/mmc/bcm2835_sdhci.c
+@@ -211,7 +211,14 @@ static int bcm2835_sdhci_probe(struct udevice *dev)
+ 	host->name = dev->name;
+ 	host->ioaddr = (void *)(uintptr_t)base;
+ 	host->quirks = SDHCI_QUIRK_BROKEN_VOLTAGE | SDHCI_QUIRK_BROKEN_R1B |
+-		SDHCI_QUIRK_WAIT_SEND_CMD | SDHCI_QUIRK_NO_HISPD_BIT;
++		SDHCI_QUIRK_NO_HISPD_BIT;
++	/*
++	 * The 1 ms wait after every command is for the BCM2835's Arasan
++	 * controller; the BCM2711's EMMC2 does not need it (Linux's sdhci-iproc
++	 * has no such quirk for it), and it costs ~2 ms of every block read.
++	 */
++	if (clock_id != BCM2835_MBOX_CLOCK_ID_EMMC2)
++		host->quirks |= SDHCI_QUIRK_WAIT_SEND_CMD;
+ 	host->max_clk = emmc_freq;
+ 	host->voltages = MMC_VDD_32_33 | MMC_VDD_33_34 | MMC_VDD_165_195;
+ 	host->ops = &bcm2835_ops;
