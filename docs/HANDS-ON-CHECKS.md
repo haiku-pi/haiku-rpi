@@ -30,5 +30,5 @@ power on. The desktop comes up in about 80 s.
 | 10 | **Shutting down** | Deskbar → Shut down | The Pi powers down cleanly; the next boot is normal (no disk check) |
 
 Known limits you may run into ([KNOWN-ISSUES.md](KNOWN-ISSUES.md)): no HDMI audio (use the jack); the first
-video played after Firefox starts drops frames (play it again); full-screen Windows games are slower than
-windowed ones; Bluetooth pairing is untested.
+video played after Firefox starts drops frames (play it again); a full-screen Windows game switches the screen
+to its own resolution (the monitor shows it scaled, with black bars at the sides) until it ends; Bluetooth pairing is untested.

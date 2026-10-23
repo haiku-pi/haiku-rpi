@@ -712,20 +712,22 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (2026-10-23, wine 11.20-13):
+**Known limits** (2026-10-23, wine 11.20-14):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
   Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
   second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike; 2D games (Heroes III, StarCraft, SimCity 3000)
   and Half-Life (from wine 11.20-11 also full screen) play; 8-bit (256-colour) DirectDraw games such as
   StarCraft draw on OpenGL from 11.20-12. wined3d's software renderer is there too
   (`WINE_D3D_CONFIG=renderer=gdi` in the environment): DirectDraw only, no Direct3D.
-- Full screen is slower than a window: a game's display mode is scaled to the screen by the CPU (a 640x480
-  Direct3D game: ~25 frames per second full screen, ~120 in a window).
+- **A full-screen game sets its own display mode** (from wine 11.20-14 with wayland_server 5): the screen
+  switches to the game's resolution (640x480, 800x600, ...; also the small 320x200 to 512x384 ones) and the
+  Pi's display hardware scales it to the monitor, so full screen runs as fast as a window (a 640x480
+  Direct3D 9 test: ~140 frames per second; it was ~25 when Wine scaled the mode on the CPU). The desktop's
+  resolution comes back when the game ends, also when it crashes.
 - Sound plays through Haiku's Media Kit (`winehaiku.drv`). Wine can play sound but not record it.
 - 32-bit x86 programs run in Box64's emulator, 64-bit x86 programs in FEX's; both are slower than native
   code (the Pi's Cortex-A72 has no LSE atomics or LRCPC, which make x86 memory ordering cheaper).
-- **Full-screen games** that set a lower display mode (800x600, 640x480) are scaled to the screen's height
-  at their own aspect ratio and centred, with black bars at the sides.
+- A 4:3 game mode on a 16:9 monitor fills the screen's height, with black bars at the sides.
 - Not built in: Vulkan, printing, scanners, USB devices, joysticks.
 - **A crashing program** prints a crash report in Terminal (lines starting `crash:`: the registers, the
   faulting code and the call chain as `module+offset`). Wine's debugger cannot attach to a program on

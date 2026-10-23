@@ -56,7 +56,6 @@ Checked against the weekly logs up to **2026-10-23 00:30**.
 
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
-| W1 | **Full-screen games are slower than in a window**: a game's display mode is scaled to the screen on the CPU every frame, and an OpenGL/Direct3D frame is read back from the GPU first. A 640x480 Direct3D 9 test: ~120 fps in a window, ~25 full screen (9.5 before wine 11.20-10). | Always | Run the game in a window | W43: 10-22 22:40; 10-23 00:00 |
 | W2 | **A few Wine helper processes (`services.exe`) can stay alive after their wineserver was killed** (`wineserver -k`, or a crash before 11.20-9). | Seen once, 3 processes | `kill` them; a new start is not affected | W43: 10-22 22:40 |
 | W4 | **StarCraft with Box64's "safe" settings** (`BOX64_DYNAREC_STRONGMEM=2`, no big blocks) stayed black for its first 2 minutes; with the default settings it plays. Slow or broken, not yet known. | The sweep's `starcraft-safe` run | Box64's default settings | W43: 10-22 22:00 |
 | W5 | **After a Wine package update the prefix is updated at the next start** (about 7 minutes, and Wine asks again to install Wine Mono). | Every Wine update | `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` once; Cancel at the Mono question | W43: 10-23 00:00 |
