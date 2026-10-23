@@ -11,7 +11,7 @@ out=/dev/dprintf
 say() { echo "WGM $*" > $out; }
 export PATH=/boot/system/non-packaged/bin:$PATH
 export WINEPREFIX=/boot/home/wineprefix
-export WINEDEBUG=err+all,fixme-all
+export WINEDEBUG=${WINEDEBUG:-err+all,fixme-all}
 export XKB_CONFIG_ROOT=/boot/system/non-packaged/data/X11/xkb
 games=/boot/system/non-packaged/data/wine-games
 
@@ -112,6 +112,10 @@ fi
 # the difficulty (Return), then the first map
 input="focus:Half-Life|wait:60000|key:0x4e|wait:5000|key:0x0d"
 want halflife && run halflife HL "hldemo.exe -windowed -condebug" 300
+# full screen (-full: the engine mode is saved, and a -windowed run saves windowed); since wine 11.20-14
+# with wayland_server 5 the game's display mode is a real one: the screen switches to it, the display
+# hardware scales it
+want halflife-fullscreen && run halflife-fullscreen HL "hldemo.exe -full -condebug" 240
 # the same with where each module loaded and the exceptions traced, and with Box64's interpreter
 want halflife-trace && run halflife-trace HL "hldemo.exe -windowed -condebug" 200 \
 	WINEDEBUG=+loaddll,+seh,err+all,fixme-all
