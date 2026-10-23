@@ -686,7 +686,7 @@ refuses to install it on an older image). x86-64 programs also need the next ker
 the CPU's feature registers readable by programs, which FEX reads). Build a new image
 ([TRY-IT.md](TRY-IT.md#build-the-image)).
 
-The packages were built on 2026-10-22 (`scripts/build-wine.sh`) and are in our repository with the Wayland
+The packages were built on 2026-10-23 (`scripts/build-wine.sh`) and are in our repository with the Wayland
 packages they need. The first start asks to install Wine Mono (.NET); Cancel is fine for most programs.
 
 Run a program from Terminal:
@@ -696,12 +696,15 @@ wine program.exe
 wine notepad          # Wine's own programs: notepad, winecfg, regedit, winemine, ...
 ```
 
-The first start creates the Wine prefix `~/.wine`, the Windows `C:` drive. That takes about 7–8 minutes on the
-Pi 4 and about 1 GB of disk; a program's first start after that takes 20–45 s, later ones a few seconds (from wine 11.20-15 the
+The first start creates the Wine prefix `~/.wine`, the Windows `C:` drive: about 1 GB, nearly all of it
+copies of Wine's Windows libraries. Writing them is most of the time: **about 3 minutes with the prefix on
+the SD card** (177 s, the bench card writing 6–8 MB/s), about 6–7 minutes on a network-booted Pi. A
+program's first start after that takes 20–45 s, later ones a few seconds (from wine 11.20-15 the
 wineserver waits on Haiku's kqueue instead of poll(): a console program starts in ~0.4 s, was ~0.7).
-After `pkgman update` brings a new Wine revision, the next start updates the prefix the same way (about 7
-minutes, and the Wine Mono question again); `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` does it
-without the question.
+After `pkgman update` brings a new Wine revision, the next start updates the prefix (and asks the Wine Mono
+question again; `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` updates it without the question). From
+wine 11.20-16 the update rewrites only the libraries that changed: 15 → 16 took **61 s on the SD card**
+(was ~3 minutes) and 141 s on a network boot (was ~7 minutes).
 Windows open as normal Haiku windows.
 
 **Programs that check free space.** Wine maps Haiku's root `/` to drive `Z:`. That file system reports no
@@ -714,7 +717,7 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (2026-10-23, wine 11.20-15):
+**Known limits** (2026-10-23, wine 11.20-16):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
   Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
   second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike; 2D games (Heroes III, StarCraft, SimCity 3000)

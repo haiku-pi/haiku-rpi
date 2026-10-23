@@ -86,7 +86,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 
 | Component | Haiku driver | Status | Measured (date) | Limitations / missing |
 |---|---|---|---|---|
-| EMMC2 SDHCI (boot card) | upstream `busses/mmc/sdhci.cpp` + `busses/mmc/sdhci_fdt.cpp` (FDT attach for `brcm,bcm2711-emmc2`), `bus_managers/mmc`, `drivers/disk/mmc` | ✅ | ADMA2, UHS-I DDR50 at 1.8 V: raw reads **42.6 MB/s**, a package through the file cache 44 MB/s, writes 29–36 MB/s (10-20); 4 KiB reads 7.1 MB/s (10-19) | The controller's base clock is 100 MHz: SDR50 and DDR50 both top out at 50 MB/s, and SDR104 is out of reach. Fixes on the way: W1C interrupt status, 32-bit register access, one ADMA2 command per transfer, an interrupt-storm report |
+| EMMC2 SDHCI (boot card) | upstream `busses/mmc/sdhci.cpp` + `busses/mmc/sdhci_fdt.cpp` (FDT attach for `brcm,bcm2711-emmc2`), `bus_managers/mmc`, `drivers/disk/mmc` | ✅ | ADMA2, UHS-I DDR50 at 1.8 V: raw reads **42.6 MB/s**, a package through the file cache 44 MB/s (10-20); 4 KiB reads 7.1 MB/s (10-19). Writes: the bench card sustains only 6–8 MB/s (10-23, raw 1 MiB writes and BFS alike; 29–36 MB/s in 64 MiB samples on 10-20), and reads measured 27 MB/s the same day — likely the card, much rewritten by the flash lane (the bus ran DDR50 at 1.8 V both days) | The controller's base clock is 100 MHz: SDR50 and DDR50 both top out at 50 MB/s, and SDR104 is out of reach. Fixes on the way: W1C interrupt status, 32-bit register access, one ADMA2 command per transfer, an interrupt-storm report |
 | Legacy Arasan SDHCI (WiFi SDIO) | `busses/mmc/sdhci_fdt.cpp` (`brcm,bcm2835-mmc`) | ✅ | see WiFi | PIO only; shares a GIC interrupt with EMMC2 |
 
 ## 9. PCIe and USB

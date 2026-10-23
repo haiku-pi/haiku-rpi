@@ -1,0 +1,71 @@
+setupapi: do not rewrite a builtin DLL in the prefix that is already identical
+
+A prefix update (wineboot -u, run at the first start after every Wine package
+update) copies every builtin PE DLL and program into system32 and syswow64
+again, truncating and rewriting each one: about 0.9 GB on an arm64 Wine with
+the i386 half (ARM64X DLLs are large). On a Raspberry Pi 4 with Haiku that is
+the whole cost of the update, 176 s with the prefix on the SD card, although
+between two builds of one Wine version most DLLs come out byte-identical (477
+of 666 arm64 ones between two of our package revisions).
+
+A file that already has the same size and contents is now left alone (it is
+still registered, as before); everything else is written as before. The same
+update with all files current takes 34 s.
+
+--- a/dlls/setupapi/fakedll.c
++++ b/dlls/setupapi/fakedll.c
+@@ -935,6 +935,30 @@
+     if (FAILED(hr)) ERR( "failed to register %s: %lx\n", debugstr_w(name), hr );
+ }
+ 
++/* check whether the dest file already holds exactly this data */
++static BOOL is_same_file_data( const WCHAR *name, const void *data, SIZE_T size )
++{
++    HANDLE h, mapping;
++    LARGE_INTEGER file_size;
++    void *view;
++    BOOL ret = FALSE;
++
++    h = CreateFileW( name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
++    if (h == INVALID_HANDLE_VALUE) return FALSE;
++    if (GetFileSizeEx( h, &file_size ) && file_size.QuadPart == size && size &&
++        (mapping = CreateFileMappingW( h, NULL, PAGE_READONLY, 0, 0, NULL )))
++    {
++        if ((view = MapViewOfFile( mapping, FILE_MAP_READ, 0, 0, 0 )))
++        {
++            ret = !memcmp( view, data, size );
++            UnmapViewOfFile( view );
++        }
++        CloseHandle( mapping );
++    }
++    CloseHandle( h );
++    return ret;
++}
++
+ /* copy a fake dll file to the dest directory */
+ static int install_fake_dll( WCHAR *dest, WCHAR *file, BOOL delete, struct list *delay_copy )
+ {
+@@ -958,7 +982,12 @@
+     destname[len] = 0;
+     if (!add_handled_dll( destname )) ret = -1;
+ 
+-    if (ret != -1)
++    if (ret != -1 && !delete && is_same_file_data( dest, data, size ))
++    {
++        TRACE( "%s is up to date\n", debugstr_w(dest) );
++        register_fake_dll( dest, data, size, delay_copy );
++    }
++    else if (ret != -1)
+     {
+         HANDLE h = create_dest_file( dest, delete );
+ 
+@@ -997,7 +1026,8 @@
+             continue;
+         }
+ 
+-        h = create_dest_file( copy->dest, FALSE );
++        if (is_same_file_data( copy->dest, data, size )) h = 0;
++        else h = create_dest_file( copy->dest, FALSE );
+         if (h && h != INVALID_HANDLE_VALUE)
+         {
+             ret = (WriteFile( h, data, size, &written, NULL ) && written == size);
