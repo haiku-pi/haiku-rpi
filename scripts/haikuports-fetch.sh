@@ -31,6 +31,17 @@ subst = lambda s: re.sub(r'\$\{portVersion(//?)\\?(.)/([^}]*)\}',
     .replace('${portName}', port).replace('$portName', port) \
     .replace('${srcGitRev}', rev).replace('$srcGitRev', rev) \
     .replace('${HOMEPAGE}', home).replace('$HOMEPAGE', home)
+# the recipe's own variables (ncurses6: srcVersion=${portVersion//./_}), in the order it sets them
+recipeVars = []
+for m in re.finditer(r'^([a-z][A-Za-z0-9_]*)="?([^"\n]*?)"?$', text, re.M):
+    if m.group(1) != 'srcGitRev' and '$(' not in m.group(2):
+        recipeVars.append((m.group(1), subst(m.group(2))))
+baseSubst = subst
+def subst(s):
+    s = baseSubst(s)
+    for var, value in recipeVars:
+        s = re.sub(r'\$\{' + var + r'\}|\$' + var + r'\b', lambda _: value, s)
+    return s
 download = os.path.join(os.path.dirname(recipe), 'download')
 os.makedirs(download, exist_ok=True)
 filename = field('SOURCE_FILENAME')

@@ -93,6 +93,7 @@ this board's console layout happened to reach.
 | `9148d14cac` ★ | `CNTKCTL_EL1` after the EL2 drop | It was set only for EL1 or VHE entry. Its reset value traps EL0 counter reads, so `launch_daemon` died at its first `system_time()`. |
 | `a6502fab74` ★ | Keep the firmware's UART setup when its clock is unknown | The Pi's PL011 clock comes from a clock controller, so `dtb_get_clock_frequency()` returns −1. The loader then programmed a divisor from 0xffffffff (about 1300 baud), garbling everything after `ExitBootServices()`. |
 | `bce76d6e73` ★ | Wait for a boot device that is published late | SD (the MMC bus scans in its own thread) and USB disks could appear after the boot partitions were searched, so boot failed with "did not find any boot partitions". The kernel now rescans for up to 10 s for a strict match before falling back to a looser one. |
+| `daaaf7a848` | The loader caches the last decompressed package chunks | The loader has no file cache, and an ELF image is read in many small pieces (headers, segments, symbols). Each piece read its compressed 64 KiB chunk again and decompressed all of it. The package heap reader now keeps its last eight chunks (boot mode only). Loading the kernel and boot modules from SD went from 2185 device reads (15.4 MB) and 666 decompressions to 728 reads (4.7 MB) and 180. Together with U-Boot's EMMC2 fix ([../patches/u-boot/](../patches/u-boot/)), the loader's part of an SD boot fell from 3.1 s to 1.2 s. Not Pi-specific. |
 
 ### Network boot (remote disk)
 
@@ -383,7 +384,7 @@ the packages staged in `download/`. [TRY-IT.md](TRY-IT.md) has the build steps.
 Some of the port lives in other trees: the haiku-pi/mesa fork (the Haiku winsys for v3d/v3dv,
 OpenGL ES contexts in `BGLView`, a Vulkan WSI for Haiku windows) and patches the coordination repo
 carries in [../patches/](../patches/). Those patches are for U-Boot (GENET transmit delay for
-`rgmii-rxid`, BGR pixel order), FFmpeg (the rpivid hwaccel), SDL2, the Vulkan loader, Firefox,
+`rgmii-rxid`, BGR pixel order, no 1 ms wait after each EMMC2 command), FFmpeg (the rpivid hwaccel), SDL2, the Vulkan loader, Firefox,
 HaikuWebKit, CPython, Rust and the game ports. They reach the Haiku image as the binary packages in
 the table below.
 
@@ -418,5 +419,6 @@ repo builds and publishes. The notes say what a bump fixed, where it fixed somet
 | `5f8581cdae` | icu74 74.1-1 | ICU with its data in libicudata, as Linux distributions build it, replacing the bootstrap ICU and its shim. |
 | `6aa2792481` | mesa 26.2.0-5, glu 9.0.3-5 | Rebuilt with a toolchain that links libgcc_s: libEGL_mesa and libGLU had private unwinders for the C++ exceptions they throw and catch. The package now also ships the V3DV ICD manifest (`add-ons/vulkan/icd.d`); before, Vulkan worked only from a staging tree. |
 | `a4f0d50da1` | firefox 157.0.1-4 (zstd), openarena 0.8.8-2 + openarena_data_1..5, supertuxkart 1.5-2 + supertuxkart_data_1..3 | Firefox zstd-compressed (112 → 102 MB) and the games' data split into parts, each under GitHub's 100 MiB file limit: all three published (owner, 10-21). |
+| `0c09391cfc` | ncurses6 6.6-1 | Built with the packaged prefix ([../scripts/build-ncurses.sh](../scripts/build-ncurses.sh)), so the terminfo database is `/boot/system/data/terminfo`. It replaces the bootstrap ncurses6 and the shim that gave it its database path. |
 
 `e98b67a5bd` and `be395e19f4` (section 8) also bump ffmpeg6, to 6.1.6-2 and 6.1.6-3.

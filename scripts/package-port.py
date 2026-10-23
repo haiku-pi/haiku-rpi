@@ -18,7 +18,8 @@ Provides come from the sonames, requires from the libraries' NEEDED entries (oth
 sysroot, libstdc++/libgcc_s/libatomic; the system's own libraries need nothing but "haiku"), the
 license and summary from the recipe. --static-suffix renames lib<name>.a to lib<name><SUFFIX>.a
 (fluidlite: "-static", as jam's fluidlite build feature expects). Both packages are also extracted into the
-sysroot's boot/system, as the image will have them.
+sysroot's boot/system, as the image will have them. Other run-time names of a library, symlinks to its
+soname in lib/ (ncurses6: libncurses.so.6 -> libncursesw.so.6), are kept and provided too.
 
 A port installed with the packaged prefix (--system-prefix: install/boot/system, e.g. CPython, whose
 build bakes its prefix into sysconfig) may also have develop/headers/ (to the _devel package as they
@@ -132,6 +133,9 @@ def main():
     parser.add_argument('recipe')
     parser.add_argument('--revision', default='1')
     parser.add_argument('--static-suffix', default='')
+    parser.add_argument('--lib-version', default='',
+        help='the version the libraries are provided at, as the recipe has it (ncurses6: 6.6.0; '
+            'default: from the file name)')
     parser.add_argument('--source-package', action='store_true',
         help='also <port>_source: the patched sources, as HaikuPorts source packages hold them '
             '(jam builds parts of some, e.g. zstd for packagefs)')
@@ -195,9 +199,20 @@ def main():
             continue
         subprocess.run([tools + 'strip', '--strip-unneeded', '-o',
             os.path.join(runtime, 'lib', soname), path], check=True)
-        libVersion = f.split('.so')[1].lstrip('.') or version
+        libVersion = args.lib_version or f.split('.so')[1].lstrip('.') or version
         libs.append((soname, libVersion, needed))
     sonames = {s for s, _, _ in libs}
+    # other names the port gives its libraries at run time, as symlinks to a soname (ncurses6:
+    # libncurses.so.6 -> libncursesw.so.6): kept, and provided as libraries of their own
+    libLinks = []
+    for f in (sorted(os.listdir(libDir)) if os.path.isdir(libDir) else []):
+        path = os.path.join(libDir, f)
+        if not os.path.islink(path) or '.so.' not in f or f in sonames:
+            continue
+        soname, _ = elf_dynamic(os.path.realpath(path))
+        if soname in sonames:
+            os.symlink(soname, os.path.join(runtime, 'lib', f))
+            libLinks.append((f, next(v for s, v, _ in libs if s == soname)))
 
     # programs (symlinks between them kept: gunzip -> gzip)
     commands = []
@@ -282,6 +297,11 @@ def main():
         provides.append(f'lib:{resolvable(base)} = {libVersion}{compat}')
         develProvides.append(f'devel:{resolvable(base)} = {libVersion}{compat}')
         programNeeded.extend(needed)
+    for name, libVersion in libLinks:
+        major = libVersion.split('.')[0]
+        compat = f' compat >= {major}' if major.isdigit() else ''
+        provides.append(f'lib:{resolvable(lib_base(name))} = {libVersion}{compat}')
+        develProvides.append(f'devel:{resolvable(lib_base(name))} = {libVersion}{compat}')
     for c in commands:
         provides.append(f'cmd:{resolvable(c.replace("+", "_"))} = {version}')
     for c in args.devel_bin:

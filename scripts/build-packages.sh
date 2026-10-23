@@ -14,8 +14,7 @@
 #   libedit (+_devel)                      scripts/cross-port.sh + scripts/package-port.py
 #   python3.14 (+_devel)                   scripts/build-python.sh (after OpenSSL, sqlite, libedit)
 #   icu74 (+_devel)                        scripts/build-icu.sh (its data in libicudata)
-#   ncurses6_bootstrap                     scripts/make-bootstrap-shim.sh (the terminfo path of ncurses6's
-#                                          bootstrap package)
+#   ncurses6 (+_devel)                     scripts/build-ncurses.sh (its terminfo in /boot/system/data)
 #   nano, wget, rsync, vim, openssh, git,  scripts/cross-port.sh + scripts/package-port.py (for pkgman: no
 #   htop_rivoreo; lz4, xxhash, libpcre2    image has them, so the repository definition does not list them)
 #   (+_devel)
@@ -81,7 +80,10 @@ rm -rf "$DEST/share"'
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/build-netsurf.sh"
 "$root/scripts/build-webkit.sh"
-# libedit: CPython's readline module (ncurses6, the bootstrap package, is in the sysroot)
+# ncurses6: ours replaces upstream's bootstrap package (which looked for its terminfo database under a
+# package name it is not activated under); before the ports that link it
+"$root/scripts/build-ncurses.sh"
+# libedit: CPython's readline module
 "$root/scripts/cross-port.sh" "$ports/sys-libs/libedit/libedit-20260512_3.1.recipe" autotools \
 	--enable-examples=no --enable-widec --disable-static
 "$root/scripts/package-port.py" "$ports/sys-libs/libedit/libedit-20260512_3.1.recipe" \
@@ -89,12 +91,8 @@ rm -rf "$DEST/share"'
 "$root/scripts/build-python.sh"
 "$root/scripts/fetch-any-packages.sh"
 "$root/scripts/build-icu.sh"
-# ncurses6 is upstream's bootstrap package (the build's download directory); published with ours, as
-# python3.14 and libedit need it, with the shim that gives it its terminfo database
-cp "$download"/ncurses6-6.6_bootstrap-1-arm64.hpkg "$root/artifacts/packages/"
-"$root/scripts/make-bootstrap-shim.sh" ncurses6_bootstrap 6.6-1 ncurses6 "the terminfo database (data/terminfo)"
 
-# everyday command-line tools. Libraries in /boot/system/lib (the bootstrap ncurses6, zlib, expat) are
+# everyday command-line tools. Libraries in /boot/system/lib (ncurses6, zlib, expat) are
 # not ours to package-port.py, which takes them for the system's: their requires are named here.
 # nano: syntax files in data/nano, nanorc read from settings/ (no gettext, no libmagic)
 AUTORECONF=0 "$root/scripts/cross-port.sh" "$ports/app-editors/nano/nano-9.1.recipe" autotools --disable-nls \
