@@ -697,7 +697,8 @@ wine notepad          # Wine's own programs: notepad, winecfg, regedit, winemine
 ```
 
 The first start creates the Wine prefix `~/.wine`, the Windows `C:` drive. That takes about 7–8 minutes on the
-Pi 4 and about 1 GB of disk; a program's first start after that takes 20–45 s, later ones a few seconds.
+Pi 4 and about 1 GB of disk; a program's first start after that takes 20–45 s, later ones a few seconds (from wine 11.20-15 the
+wineserver waits on Haiku's kqueue instead of poll(): a console program starts in ~0.4 s, was ~0.7).
 After `pkgman update` brings a new Wine revision, the next start updates the prefix the same way (about 7
 minutes, and the Wine Mono question again); `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` does it
 without the question.
@@ -713,7 +714,7 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (2026-10-23, wine 11.20-14):
+**Known limits** (2026-10-23, wine 11.20-15):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
   Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
   second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike; 2D games (Heroes III, StarCraft, SimCity 3000)
