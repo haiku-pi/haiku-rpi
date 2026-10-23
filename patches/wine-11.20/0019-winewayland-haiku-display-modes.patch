@@ -1,0 +1,161 @@
+winewayland.drv: set display modes through Haiku's in-process Wayland server
+
+Wayland has no way to set a display mode, so win32u emulated a game's mode by
+scaling its windows to the screen on the CPU every frame: a 640x480 Direct3D 9
+test ran at ~22 fps full screen on a Raspberry Pi 4 against ~130 in a window.
+On Haiku, X547's Wayland server runs in the process and lists the screen's
+sizes on wl_output (with patches/wayland_server's wl-output-modes); its
+wl_ips_haiku_set_mode() sets one, and the display hardware scales the mode to
+the monitor: the same test runs at ~140 fps full screen, scaled crisply.
+
+ChangeDisplaySettings looks up that function (dlsym, once) and sets each
+display's mode with it, then waits for the output to report the new mode
+(wl_output events, handled on another thread) so that the display devices are
+updated with it. Without the function it does nothing, as before; the
+compositor then lists only its current mode and win32u keeps emulating. With
+several modes listed, each is also offered at 8 and 16 bits per pixel, as the
+emulated modes are. A mode set this way is temporary: Wine restores the
+desktop's when the program ends, and app_server when its process quits.
+
+--- a/dlls/winewayland.drv/display.c
++++ b/dlls/winewayland.drv/display.c
+@@ -24,6 +24,10 @@
+ 
+ #include "config.h"
+ 
++#include <dlfcn.h>
++#include <pthread.h>
++#include <unistd.h>
++
+ #include "ntstatus.h"
+ #include "waylanddrv.h"
+ 
+@@ -261,10 +265,107 @@
+         modes[modes_count++] = mode;
+     }
+ 
++    /* A compositor that lists several modes can set them (Haiku's, see
++     * WAYLAND_ChangeDisplaySettings): each one is offered in the depths games ask
++     * for, as the virtual modes are; the screen stays at 32 bits per pixel. */
++    if (modes_count > 1)
++    {
++        static const DWORD depths[] = {8, 16};
++        int count = modes_count, i, j;
++        DEVMODEW *more;
++
++        if ((more = realloc(modes, modes_count * (1 + ARRAY_SIZE(depths)) * sizeof(*modes))))
++        {
++            modes = more;
++            for (i = 0; i < count; i++)
++            {
++                for (j = 0; j < ARRAY_SIZE(depths); j++)
++                {
++                    modes[modes_count] = modes[i];
++                    modes[modes_count++].dmBitsPerPel = depths[j];
++                }
++            }
++        }
++    }
++
+     device_manager->add_modes(&current, modes_count, modes, param);
+     free(modes);
+ }
+ 
++/* Haiku's in-process Wayland server (X547's wayland-server-inproc.so) sets the
++ * screen's display mode; the display hardware scales it to the monitor, so a
++ * game's mode costs nothing per frame, where an emulated one is scaled on the CPU. */
++typedef int32_t (*haiku_set_mode_func)(int32_t width, int32_t height, int32_t refresh_mhz);
++static haiku_set_mode_func haiku_set_mode;
++
++static void init_haiku_set_mode(void)
++{
++    void *server = dlopen("wayland-server-inproc.so", RTLD_NOW);
++    if (server) haiku_set_mode = (haiku_set_mode_func)dlsym(server, "wl_ips_haiku_set_mode");
++    TRACE("wl_ips_haiku_set_mode %p\n", haiku_set_mode);
++}
++
++/* The new mode reaches this process as wl_output events, handled on another
++ * thread: wait for it, or the display devices would be updated with the old one. */
++static BOOL wait_for_output_mode(DWORD width, DWORD height)
++{
++    int tries;
++
++    for (tries = 0; tries < 400; tries++)
++    {
++        struct wayland_output *output;
++        BOOL done = FALSE;
++
++        pthread_mutex_lock(&process_wayland.output_mutex);
++        wl_list_for_each(output, &process_wayland.output_list, link)
++        {
++            if (output->current.current_mode &&
++                output->current.current_mode->width == width &&
++                output->current.current_mode->height == height)
++                done = TRUE;
++        }
++        pthread_mutex_unlock(&process_wayland.output_mutex);
++        if (done) return TRUE;
++        usleep(5000);
++    }
++    return FALSE;
++}
++
++/***********************************************************************
++ *      ChangeDisplaySettings (WAYLAND.@)
++ */
++LONG WAYLAND_ChangeDisplaySettings(LPDEVMODEW displays, LPCWSTR primary_name, HWND hwnd,
++                                   DWORD flags, LPVOID lparam)
++{
++    static pthread_once_t once = PTHREAD_ONCE_INIT;
++    DEVMODEW *mode;
++
++    pthread_once(&once, init_haiku_set_mode);
++    /* without a way to set modes, the compositor lists only its current one, and
++     * win32u emulates the others */
++    if (!haiku_set_mode) return DISP_CHANGE_SUCCESSFUL;
++
++    for (mode = displays; mode->dmSize;
++         mode = (DEVMODEW *)((char *)(mode + 1) + mode->dmDriverExtra))
++    {
++        int32_t ret;
++
++        if (!mode->dmPelsWidth || !mode->dmPelsHeight) continue;  /* detached */
++        TRACE("%s: %ux%u %u Hz\n", debugstr_w(mode->dmDeviceName),
++              (UINT)mode->dmPelsWidth, (UINT)mode->dmPelsHeight, (UINT)mode->dmDisplayFrequency);
++        if ((ret = haiku_set_mode(mode->dmPelsWidth, mode->dmPelsHeight,
++                                  mode->dmDisplayFrequency * 1000)))
++        {
++            WARN("%ux%u: %d\n", (UINT)mode->dmPelsWidth, (UINT)mode->dmPelsHeight, ret);
++            return DISP_CHANGE_BADMODE;
++        }
++        if (!wait_for_output_mode(mode->dmPelsWidth, mode->dmPelsHeight))
++            WARN("%ux%u: the output did not report the new mode\n",
++                 (UINT)mode->dmPelsWidth, (UINT)mode->dmPelsHeight);
++    }
++    return DISP_CHANGE_SUCCESSFUL;
++}
++
+ /***********************************************************************
+  *      UpdateDisplayDevices (WAYLAND.@)
+  */
+--- a/dlls/winewayland.drv/waylanddrv.h
++++ b/dlls/winewayland.drv/waylanddrv.h
+@@ -471,6 +471,8 @@
+ void WAYLAND_SetWindowText(HWND hwnd, LPCWSTR text);
+ LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT *pos);
+ void WAYLAND_UpdateLayeredWindow(HWND hwnd, BYTE alpha, UINT flags);
++LONG WAYLAND_ChangeDisplaySettings(LPDEVMODEW displays, LPCWSTR primary_name, HWND hwnd,
++                                   DWORD flags, LPVOID lparam);
+ UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager, void *param);
+ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags,
+--- a/dlls/winewayland.drv/waylanddrv_main.c
++++ b/dlls/winewayland.drv/waylanddrv_main.c
+@@ -49,6 +49,7 @@
+     .pSetWindowText = WAYLAND_SetWindowText,
+     .pSysCommand = WAYLAND_SysCommand,
+     .pUpdateLayeredWindow = WAYLAND_UpdateLayeredWindow,
++    .pChangeDisplaySettings = WAYLAND_ChangeDisplaySettings,
+     .pUpdateDisplayDevices = WAYLAND_UpdateDisplayDevices,
+     .pWindowMessage = WAYLAND_WindowMessage,
+     .pWindowPosChanged = WAYLAND_WindowPosChanged,

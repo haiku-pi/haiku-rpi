@@ -1,0 +1,383 @@
+wayland-server: the screen's display modes on wl_output, and a way to set one
+
+wl_output sent only the current mode, so a client could not know the screen's
+other modes: Wine emulated a game's display mode by scaling its windows on the
+CPU every frame (a 640x480 Direct3D game full screen: ~22 fps on a Raspberry Pi
+4, against ~140 with the screen really at 640x480, whose display hardware
+scales the mode to the monitor).
+
+- wl_output sends the screen's sizes: each mode of its list once, at the
+  refresh rate closest to 60 Hz, and the small sizes old games ask for
+  (320x200 to 1024x768; the screen takes any size up to its list's largest),
+  the current one flagged, the one at the first bind preferred.
+- wl_ips_haiku_set_mode(width, height, refresh_mHz), exported for Wine's
+  Wayland driver (an in-process client): sets that size (a mode of the list,
+  else the current mode's timing at that size) as a temporary mode, which
+  app_server undoes when the process quits; refits the fullscreen toplevels to
+  the new screen and sends the new current mode to every bound wl_output. Runs
+  on the server's thread (a message to the server handler from any other).
+
+--- a/HaikuOutput.cpp
++++ b/HaikuOutput.cpp
+@@ -1,6 +1,10 @@
+ #include "HaikuOutput.h"
++#include "HaikuXdgToplevel.h"
+ #include <Screen.h>
+ #include <AutoDeleter.h>
++#include <stdlib.h>
++#include <algorithm>
++#include <vector>
+ 
+ extern const struct wl_interface wl_output_interface;
+ 
+@@ -12,9 +16,162 @@
+ 
+ class HaikuOutput: public WlOutput {
+ protected:
+-	virtual ~HaikuOutput() = default;
++	virtual ~HaikuOutput();
++
++public:
++	void SendModes();
++};
++
++// every bound output (only touched on the server's thread): a display mode change
++// is sent to all of them
++static std::vector<HaikuOutput*> sOutputs;
++
++// the mode the screen had when the first client bound: the preferred one
++static int32 sPreferredWidth, sPreferredHeight;
++
++
++static int32 RefreshMilliHz(const display_mode &mode)
++{
++	int64 total = (int64)mode.timing.h_total * mode.timing.v_total;
++	if (total == 0)
++		return 60000;
++	return (int32)((int64)mode.timing.pixel_clock * 1000 * 1000 / total);
++}
++
++
++HaikuOutput::~HaikuOutput()
++{
++	sOutputs.erase(std::remove(sOutputs.begin(), sOutputs.end(), this), sOutputs.end());
++}
++
++struct OutputMode {
++	int32 width, height, refresh;
+ };
+ 
++/* The sizes the screen can take: each mode of the screen's list once, at the
++ * refresh rate closest to 60 Hz (the display hardware scales a mode to the
++ * monitor, whose own timing does not change), and the small sizes old games ask
++ * for (the screen takes any size up to its mode list's largest). */
++static std::vector<OutputMode> ScreenModes(const display_mode &current, display_mode **_list = NULL,
++	uint32 *_count = NULL)
++{
++	static const OutputMode kGameModes[] = {
++		{320, 200, 0}, {320, 240, 0}, {400, 300, 0}, {512, 384, 0}, {640, 400, 0},
++		{640, 480, 0}, {800, 600, 0}, {1024, 768, 0}
++	};
++	std::vector<OutputMode> sizes;
++	display_mode *list = NULL;
++	uint32 count = 0;
++	int32 maxWidth = current.virtual_width, maxHeight = current.virtual_height;
++	if (BScreen().GetModeList(&list, &count) != B_OK)
++		count = 0;
++	for (uint32 i = 0; i < count; i++) {
++		if (list[i].space != current.space)
++			continue;
++		OutputMode mode = {list[i].timing.h_display, list[i].timing.v_display,
++			RefreshMilliHz(list[i])};
++		maxWidth = std::max(maxWidth, mode.width);
++		maxHeight = std::max(maxHeight, mode.height);
++		auto same = std::find_if(sizes.begin(), sizes.end(), [&](const OutputMode &other) {
++			return other.width == mode.width && other.height == mode.height;
++		});
++		if (same == sizes.end())
++			sizes.push_back(mode);
++		else if (abs(mode.refresh - 60000) < abs(same->refresh - 60000))
++			same->refresh = mode.refresh;
++	}
++	for (const OutputMode &game : kGameModes) {
++		if (game.width > maxWidth || game.height > maxHeight)
++			continue;
++		if (std::find_if(sizes.begin(), sizes.end(), [&](const OutputMode &other) {
++				return other.width == game.width && other.height == game.height;
++			}) == sizes.end())
++			sizes.push_back({game.width, game.height, 60000});
++	}
++	if (_list != NULL) {
++		*_list = list;
++		*_count = count;
++	} else
++		free(list);
++	return sizes;
++}
++
++
++/* The screen's display modes, the current one flagged: a client (Wine) can then
++ * set a mode instead of scaling its windows to emulate it. */
++void HaikuOutput::SendModes()
++{
++	BScreen screen;
++	display_mode current;
++	if (screen.GetMode(&current) != B_OK) {
++		SendMode(WlOutput::modeCurrent | WlOutput::modePreferred,
++			(int32_t)screen.Frame().Width() + 1, (int32_t)screen.Frame().Height() + 1, 60000);
++		return;
++	}
++	for (const OutputMode &mode : ScreenModes(current)) {
++		uint32 flags = 0;
++		if (mode.width == current.virtual_width && mode.height == current.virtual_height)
++			flags |= WlOutput::modeCurrent;
++		if (mode.width == sPreferredWidth && mode.height == sPreferredHeight)
++			flags |= WlOutput::modePreferred;
++		SendMode(flags, mode.width, mode.height, mode.refresh);
++	}
++}
++
++
++status_t HaikuOutputSetMode(int32 width, int32 height, int32 refreshMilliHz)
++{
++	BScreen screen;
++	display_mode current, *list;
++	uint32 count;
++	status_t status = screen.GetMode(&current);
++	if (status != B_OK)
++		return status;
++	std::vector<OutputMode> sizes = ScreenModes(current, &list, &count);
++	if (std::find_if(sizes.begin(), sizes.end(), [&](const OutputMode &mode) {
++			return mode.width == width && mode.height == height;
++		}) == sizes.end()) {
++		free(list);
++		return B_BAD_VALUE;
++	}
++
++	// a mode of the list, the refresh rate closest to the one asked for (60 Hz if
++	// none); else (a game size) the current mode's timing at that size
++	const display_mode *best = NULL;
++	int32 wanted = refreshMilliHz != 0 ? refreshMilliHz : 60000;
++	for (uint32 i = 0; i < count; i++) {
++		if (list[i].space != current.space || list[i].timing.h_display != width
++			|| list[i].timing.v_display != height)
++			continue;
++		if (best == NULL || abs(RefreshMilliHz(list[i]) - wanted) < abs(RefreshMilliHz(*best) - wanted))
++			best = &list[i];
++	}
++	display_mode mode = current;
++	if (best != NULL)
++		mode = *best;
++	else {
++		mode.virtual_width = mode.timing.h_display = width;
++		mode.virtual_height = mode.timing.v_display = height;
++		mode.h_display_start = mode.v_display_start = 0;
++	}
++	free(list);
++
++	if (current.virtual_width != mode.virtual_width || current.virtual_height != mode.virtual_height
++		|| RefreshMilliHz(current) != RefreshMilliHz(mode)) {
++		// not the default mode: app_server goes back to that one when this team quits
++		status = screen.SetMode(&mode);
++		if (status != B_OK)
++			return status;
++	}
++
++	HaikuXdgToplevel::ScreenChanged();
++	for (HaikuOutput *output : sOutputs) {
++		output->SendModes();
++		output->SendDone();
++	}
++	return B_OK;
++}
++
+ 
+ HaikuOutputGlobal *HaikuOutputGlobal::Create(struct wl_display *display)
+ {
+@@ -38,8 +195,13 @@
+ 	BScreen screen;
+ 	int32_t width = (int32_t)screen.Frame().Width() + 1;
+ 	int32_t height = (int32_t)screen.Frame().Height() + 1;
++	if (sPreferredWidth == 0) {
++		sPreferredWidth = width;
++		sPreferredHeight = height;
++	}
++	sOutputs.push_back(output);
+ 	output->SendGeometry(0, 0, (float)width * 0.3528, (float)height * 0.3528, WlOutput::subpixelUnknown, "Unknown make", "Unknown model", WlOutput::transformNormal);
+-	output->SendMode(WlOutput::modeCurrent | WlOutput::modePreferred, width, height, 60000);
++	output->SendModes();
+ 	output->SendScale(1);
+ 	output->SendDone();
+ }
+--- a/HaikuOutput.h
++++ b/HaikuOutput.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ #include "Wayland.h"
+ #include "WlGlobal.h"
++#include <SupportDefs.h>
+ 
+ 
+ class HaikuOutputGlobal: public WlGlocal {
+@@ -9,3 +10,8 @@
+ 	virtual ~HaikuOutputGlobal() = default;
+ 	void Bind(struct wl_client *wl_client, uint32_t version, uint32_t id) override;
+ };
++
++/* Sets the screen's display mode, one of the sizes wl_output lists (at the refresh
++ * rate closest to refreshMilliHz, 60 Hz if 0), and sends the new mode to every
++ * bound wl_output. Runs on the server's thread. */
++status_t HaikuOutputSetMode(int32 width, int32 height, int32 refreshMilliHz);
+--- a/HaikuXdgToplevel.cpp
++++ b/HaikuXdgToplevel.cpp
+@@ -1,4 +1,6 @@
+ #include "HaikuXdgToplevel.h"
++#include <algorithm>
++#include <vector>
+ #include "HaikuXdgShell.h"
+ #include "HaikuXdgSurface.h"
+ #include "HaikuCompositor.h"
+@@ -234,17 +236,16 @@
+ {
+ }
+ 
++// the fullscreen toplevels (only touched on the server's thread)
++static std::vector<HaikuXdgToplevel*> sFullscreenToplevels;
++
+ void HaikuXdgToplevel::HandleSetFullscreen(struct wl_resource *output)
+ {
+ 	if (fState.fullscreen) return;
+ 	fState.fullscreen = true;
+-	fSizeChanged = true;
++	sFullscreenToplevels.push_back(this);
+ 	fSavedPos = fWindow->Frame();
+ 	BRect screenFrame = BScreen(fWindow).Frame();
+-	fWindow->MoveTo(screenFrame.LeftTop());
+-	fWindow->ResizeTo(screenFrame.Width(), screenFrame.Height());
+-	fWidth = (int32_t)screenFrame.Width() + 1;
+-	fHeight = (int32_t)screenFrame.Height() + 1;
+ 	// a surface smaller than the screen is centered on a black border fill
+ 	if (fFullscreenBorder == NULL) {
+ 		fFullscreenBorder = new BView(screenFrame.OffsetToCopy(B_ORIGIN), "fullscreen border",
+@@ -252,11 +253,30 @@
+ 		fFullscreenBorder->SetViewColor(0, 0, 0);
+ 		fWindow->AddChild(fFullscreenBorder, fWindow->ChildAt(0));
+ 	}
++	FitToScreen();
++}
++
++/* A fullscreen toplevel's window covers the screen: on set_fullscreen and when the
++ * screen's display mode changes; the client is asked for a surface of that size. */
++void HaikuXdgToplevel::FitToScreen()
++{
++	fSizeChanged = true;
++	BRect screenFrame = BScreen(fWindow).Frame();
++	fWindow->MoveTo(screenFrame.LeftTop());
++	fWindow->ResizeTo(screenFrame.Width(), screenFrame.Height());
++	fWidth = (int32_t)screenFrame.Width() + 1;
++	fHeight = (int32_t)screenFrame.Height() + 1;
+ 	PlaceFullscreenSurface();
+ 	DoSendConfigure();
+ 	XdgSurface()->SendConfigure(XdgSurface()->NextSerial());
+ }
+ 
++void HaikuXdgToplevel::ScreenChanged()
++{
++	for (HaikuXdgToplevel *toplevel : sFullscreenToplevels)
++		toplevel->FitToScreen();
++}
++
+ /* xdg_toplevel.set_fullscreen: a surface that does not cover the output is
+  * centered on it, the rest is border fill. The window stays the size of the
+  * screen; the surface's view moves inside it. */
+@@ -285,6 +305,8 @@
+ {
+ 	if (!fState.fullscreen) return;
+ 	fState.fullscreen = false;
++	sFullscreenToplevels.erase(std::remove(sFullscreenToplevels.begin(), sFullscreenToplevels.end(), this),
++		sFullscreenToplevels.end());
+ 	fSizeChanged = true;
+ 	if (fFullscreenBorder != NULL) {
+ 		fFullscreenBorder->RemoveSelf();
+@@ -328,6 +350,8 @@
+ 
+ HaikuXdgToplevel::~HaikuXdgToplevel()
+ {
++	sFullscreenToplevels.erase(std::remove(sFullscreenToplevels.begin(), sFullscreenToplevels.end(), this),
++		sFullscreenToplevels.end());
+ 	fXdgSurface->Surface()->Detach();
+ 
+ 	if (fWindow != NULL) {
+--- a/HaikuXdgToplevel.h
++++ b/HaikuXdgToplevel.h
+@@ -37,6 +37,8 @@
+ 	uint32_t fResizeSerial = 0;
+ 	bool fSizeChanged = false;
+ 
++	void FitToScreen();
++
+ public:
+ 	virtual ~HaikuXdgToplevel();
+ 	static HaikuXdgToplevel *Create(HaikuXdgSurface *xdg_surface, uint32_t id);
+@@ -48,6 +50,8 @@
+ 	void MaxSize(int32_t &width, int32_t &height) {width = fMaxWidth; height = fMaxHeight;}
+ 	void DoSendConfigure();
+ 	void PlaceFullscreenSurface();
++	// the screen's display mode changed: fullscreen toplevels take its new size
++	static void ScreenChanged();
+ 
+ 	void HandleSetParent(struct wl_resource *parent) override;
+ 	void HandleSetTitle(const char *title) override;
+--- a/WaylandServer.cpp
++++ b/WaylandServer.cpp
+@@ -59,6 +59,13 @@
+ 		wl_client_dispatch(client, closure);
+ 		return;
+ 	}
++	case setModeMsg: {
++		BMessage reply(B_REPLY);
++		reply.AddInt32("status", HaikuOutputSetMode(msg->GetInt32("width", 0),
++			msg->GetInt32("height", 0), msg->GetInt32("refresh", 0)));
++		msg->SendReply(&reply);
++		return;
++	}
+ 	default:
+ 		break;
+ 	}
+@@ -176,6 +183,26 @@
+ */
+ }
+ 
++/* Not part of the in-process protocol: Wine's Wayland driver sets the screen's
++ * display mode with it (a game's display mode becomes the screen's, scaled to the
++ * monitor by the display hardware), then waits for the outputs' new mode. */
++extern "C" _EXPORT status_t wl_ips_haiku_set_mode(int32 width, int32 height, int32 refreshMilliHz)
++{
++	if (gWaylandLooper == NULL)
++		return B_NO_INIT;
++	if (find_thread(NULL) == gWaylandLooper->Thread())
++		return HaikuOutputSetMode(width, height, refreshMilliHz);
++
++	BMessage msg(ServerHandler::setModeMsg), reply;
++	msg.AddInt32("width", width);
++	msg.AddInt32("height", height);
++	msg.AddInt32("refresh", refreshMilliHz);
++	status_t status = gServerMessenger.SendMessage(&msg, &reply);
++	if (status != B_OK)
++		return status;
++	return reply.GetInt32("status", B_ERROR);
++}
++
+ extern "C" _EXPORT void wl_ips_client_disconnected(void *client)
+ {
+ 	// TODO: implement
+--- a/WaylandServer.h
++++ b/WaylandServer.h
+@@ -8,6 +8,7 @@
+ public:
+ 	enum {
+ 		closureSendMsg = 1,
++		setModeMsg,
+ 	};
+ 
+ 	ServerHandler();
