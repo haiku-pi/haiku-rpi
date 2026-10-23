@@ -4,8 +4,8 @@
  * B_MODIFIERS_CHANGED, so a Wayland client of the in-process server (Wine) sees the keys and the modifier
  * state a real keyboard gives. For unattended tests of keyboard input; no input_server involved.
  *
- *   keyinject TEAM TITLE-PART TEXT [MS]   (letters, digits, space, ".,-!"; TEXT may use upper case; MS: the
- *                                          pause after each message, default 30)
+ *   keyinject TEAM TITLE-PART TEXT [MS]   (letters, digits, space, ".,-!"; TEXT may use upper case; "^x" is
+ *                                          Ctrl+x, "~" is Return; MS: the pause after each message, default 30)
  *
  * Build (cross):
  *   g=sources/haiku/generated.arm64
@@ -25,6 +25,8 @@
 #include <string.h>
 
 static const int32 kLeftShift = 0x4b;
+static const int32 kLeftControl = 0x5c;
+static const int32 kReturn = 0x47;
 
 // the US keymap's key codes
 static int32
@@ -95,14 +97,16 @@ main(int argc, char** argv)
 		get.AddSpecifier("Title");
 		get.AddSpecifier("Window", i);
 		const char* title;
-		if (target.SendMessage(&get, &reply) != B_OK || reply.FindString("result", &title) != B_OK)
+		// timeouts: a team with a BApplication whose looper does not run never answers
+		if (target.SendMessage(&get, &reply, 1000000, 1000000) != B_OK
+			|| reply.FindString("result", &title) != B_OK)
 			break;
 		if (strstr(title, argv[2]) == NULL)
 			continue;
 		BMessage getMessenger(B_GET_PROPERTY), messengerReply;
 		getMessenger.AddSpecifier("Messenger");
 		getMessenger.AddSpecifier("Window", i);
-		if (target.SendMessage(&getMessenger, &messengerReply) == B_OK)
+		if (target.SendMessage(&getMessenger, &messengerReply, 1000000, 1000000) == B_OK)
 			messengerReply.FindMessenger("result", &window);
 		printf("keyinject: window %" B_PRId32 " \"%s\"\n", i, title);
 	}
@@ -115,7 +119,26 @@ main(int argc, char** argv)
 		BMessenger::Private(window).Port(), B_PREFERRED_TOKEN);
 
 	const uint32 shift = B_SHIFT_KEY | B_LEFT_SHIFT_KEY;
+	const uint32 control = B_CONTROL_KEY | B_LEFT_CONTROL_KEY;
 	for (const char* c = argv[3]; *c != '\0'; c++) {
+		if (*c == '~') {
+			post_key(window, B_KEY_DOWN, kReturn, 0, B_ENTER);
+			post_key(window, B_KEY_UP, kReturn, 0, B_ENTER);
+			continue;
+		}
+		if (*c == '^' && c[1] != '\0') {
+			c++;
+			int32 key = key_code(*c);
+			if (key < 0)
+				continue;
+			post_key(window, B_UNMAPPED_KEY_DOWN, kLeftControl, control, 0);
+			post_modifiers(window, 0, control);
+			post_key(window, B_KEY_DOWN, key, control, tolower(*c) & 0x1f);
+			post_key(window, B_KEY_UP, key, control, tolower(*c) & 0x1f);
+			post_key(window, B_UNMAPPED_KEY_UP, kLeftControl, 0, 0);
+			post_modifiers(window, control, 0);
+			continue;
+		}
 		int32 key = key_code(*c);
 		if (key < 0) {
 			fprintf(stderr, "keyinject: no key for '%c'\n", *c);

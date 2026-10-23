@@ -1,0 +1,24 @@
+comdlg32: select the proposed file name when the item dialog opens
+
+IFileDialog's dialog (itemdlg) puts the proposed name (IFileDialog::SetFileName,
+e.g. Notepad++'s "new 1") into the name field and gives the field the focus by
+SetFocus(), which leaves the caret at the start and nothing selected: a name
+typed right away goes in front of the proposed one ("mynamenew 1.txt"). On
+Windows the proposed name is selected and typing replaces it.
+
+The field's text is now selected after it gets the focus.
+
+--- a/dlls/comdlg32/itemdlg.c
++++ b/dlls/comdlg32/itemdlg.c
+@@ -2192,7 +2192,11 @@
+         events_OnTypeChange(This);
+ 
+     if ((hitem = GetDlgItem(This->dlg_hwnd, IDC_FILENAME)))
++    {
+         SetFocus(hitem);
++        /* as Windows: the proposed name is selected, so a typed name replaces it */
++        SendMessageW(hitem, EM_SETSEL, 0, -1);
++    }
+ 
+     return FALSE;
+ }
