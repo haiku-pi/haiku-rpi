@@ -707,6 +707,11 @@ wine 11.20-16 the update rewrites only the libraries that changed: 15 → 16 too
 (was ~3 minutes) and 141 s on a network boot (was ~7 minutes).
 Windows open as normal Haiku windows.
 
+**Everyday programs tried** (2026-10-23, wine 11.20-16, each as 32-bit x86 and as x86-64): PuTTY 0.83
+(its configuration window), Notepad++ 8.7.9 (typing, capitals included, arrives exactly), SumatraPDF 3.5.2 (a
+93-page PDF, typeset), 7-Zip's console `7zr` (packs and tests an archive). None crashed. Typing very fast into
+Notepad++ can lose a character where its word-completion list opens (KNOWN-ISSUES W9).
+
 **Programs that check free space.** Wine maps Haiku's root `/` to drive `Z:`. That file system reports no
 free space, so some installers and games (Heroes of Might and Magic III, for example) refuse to start
 from it. Map `/boot` to `D:`:
