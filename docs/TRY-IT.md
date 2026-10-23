@@ -5,10 +5,10 @@ media kit, plus this port's drivers and the ported libraries. Everything below w
 bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-10-21).
 
 **Download:** a ready-to-flash image is on the
-[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-22)
-(`haiku-pi4-2026-10-22.img.xz`, 340 MB; 8 GB card or larger; written with
-`xz -dc haiku-pi4-2026-10-22.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
-Imager's "Use custom"). It is this page's regular image, built 2026-10-22, booted from a card before publishing.
+[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-23)
+(`haiku-pi4-2026-10-23b.img.xz`, 340 MB; 8 GB card or larger; written with
+`xz -dc haiku-pi4-2026-10-23b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
+Imager's "Use custom"). It is this page's regular image, built 2026-10-23, booted from a card before publishing.
 Wine (`pkgman install wine wine_x86 wine_x86_64`) needs this image or a newer one.
 
 This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md) (first time, step by step),
@@ -19,7 +19,7 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 
 | Area | State |
 |---|---|
-| Boot | SD card → U-Boot → Haiku loader → desktop in about 80 s (first boot a little longer); or **from the network**, the boot volume served by the build host (below) |
+| Boot | SD card → U-Boot → Haiku loader → desktop in about 75 s (first boot a little longer); or **from the network**, the boot volume served by the build host (below) |
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences or from a fullscreen game (SDL), scaled to the monitor by the firmware; hardware cursor; 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1, and **Vulkan 1.3** (V3DV, presenting into Haiku windows; SDL2's Vulkan windows). GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
 | Games (OpenArena + SuperTuxKart: packages, `-sHAIKU_PI_GAMES=1`; the Quakes: test images) | QuakeSpasm (demo1, in a window): 66–72 frames/s at 640×480, 56–70 at 1280×720, 30–43 at 1920×1080. Yamagi Quake II, GL1 renderer: 135–171 frames/s at 640×480, 81–89 at 1280×720. **vkQuake** (Vulkan): 52 fps at 1280×720. **OpenArena** (Quake III engine, ioquake3): 46 fps at 1280×720, 22–29 at 1920×1080. **SuperTuxKart 1.5**: 28–38 fps at 1280×720 (its OpenGL 2.1 renderer). A fullscreen game at 1280×720 switches the display mode (OpenArena: 46.8 fps, against 26 at 1920×1080) |
@@ -89,7 +89,7 @@ sudo dd if=artifacts/images/haiku-pi4-regular.img of=/dev/sdX bs=4M conv=fsync s
 ```
 
 Put the card in the Pi, connect HDMI (and USB keyboard/mouse, Ethernet), power on. The rainbow
-screen, U-Boot and the Haiku boot log pass by; the desktop appears after about 80 s. A serial console
+screen, U-Boot and the Haiku boot log pass by; the desktop appears after about 75 s. A serial console
 (115200 8N1 on GPIO 14/15) shows the kernel log.
 
 ## Without a monitor: HDMI capture card + serial console

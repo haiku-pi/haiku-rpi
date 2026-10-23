@@ -65,13 +65,14 @@ cable, then power on.
 | first | the firmware's rainbow screen | the firmware's messages |
 | then | U-Boot's text, briefly | U-Boot's log; it starts the Haiku loader (`EFI/BOOT/BOOTAA64.EFI`) |
 | next | the Haiku boot splash; its icons light up one by one as the boot advances | the loader's log, then the kernel log: CPUs, drivers, the boot volume (`Mounted boot partition: /dev/disk/mmc/0/1`) |
-| ~80 s | the desktop: Deskbar at the top right, the Tracker's desktop icons | `bcm2711_display: hardware cursor shown` and the servers' messages |
+| ~75 s | the desktop: Deskbar at the top right, the Tracker's desktop icons | `bcm2711_display: hardware cursor shown` and the servers' messages |
 
 The boot chain is: the Pi firmware (`start4.elf`, `config.txt` on the card's FAT partition) →
 U-Boot (it provides UEFI and the device tree) → `haiku_loader.efi` → the Haiku kernel and its modules
 from the card's BFS partition. BFS is Haiku's file system.
 
-**Timings** (bench Pi, SD card): the desktop appears **about 80 s** after power-on (2026-10-19/20).
+**Timings** (bench Pi, SD card): the desktop appears **about 75 s** after power-on (72.7 s, 2026-10-23); of that,
+U-Boot to the desktop is ~15 s, and most of the rest is the Pi's firmware trying the network first (below).
 The **first boot** of a freshly written card takes a little longer: the package daemon processes the
 packages once. There is no language prompt: the image ships English locale settings, so the first
 boot goes straight to the desktop.

@@ -26,11 +26,11 @@ work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNE
 ## Quick start
 
 **Download** the SD card image (unofficial, built from these sources):
-[releases/image-2026-10-22](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-22) — 340 MB,
-`haiku-pi4-2026-10-22.img.xz`, for an 8 GB or larger card:
+[releases/image-2026-10-23](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-23) — 340 MB,
+`haiku-pi4-2026-10-23b.img.xz`, for an 8 GB or larger card:
 
 ```sh
-xz -dc haiku-pi4-2026-10-22.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dc haiku-pi4-2026-10-23b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Or build the image yourself on an x86-64 Linux host and write it to a microSD card:
@@ -47,7 +47,7 @@ sudo dd if=artifacts/images/haiku-pi4-regular.img of=/dev/sdX bs=4M conv=fsync s
 
 Before `bootstrap.sh`, install the host packages and build Haiku's `jam`, as described in [docs/BUILD.md](docs/BUILD.md).
 Check `/dev/sdX` before you run `dd`, because it overwrites the whole device. Then put the card in the Pi, connect
-HDMI, a USB keyboard and mouse and Ethernet, and power on. The desktop appears after about 80 seconds.
+HDMI, a USB keyboard and mouse and Ethernet, and power on. The desktop appears after about 75 seconds.
 
 - **First time?** Follow [TUTORIAL.md](TUTORIAL.md). It walks through the whole path: hardware, build, flashing,
   first boot and what to try.
@@ -65,7 +65,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 
 | Area | State |
 |---|---|
-| Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop in about 80 s. Over the network (the boot volume served by the build host): about 55 s |
+| Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop in about 75 s. Over the network (the boot volume served by the build host): about 55 s |
 | CPU | 4 × Cortex-A72 (SMP). The clock follows the load from 600 to 1500 MHz. Temperature, throttling and clocks are in `/dev/power/bcm2835_thermal/0` |
 | Display | HDMI at the monitor's native mode (1920×1080 on the bench), with lower modes scaled by the firmware. Hardware cursor and 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows |
