@@ -3,7 +3,13 @@
 # (scripts/build-games.sh, scripts/build-q3.sh, scripts/build-stk.sh), each a self-contained directory in
 # apps/ with a Deskbar entry (Applications menu).
 #
-#   scripts/package-games.sh [--revision N]      (default 1)
+#   scripts/package-games.sh [--revision N] [--game NAME [--data-revision M]]
+#
+# --revision N        the packages' revision (default 1)
+# --game NAME         only that game (openarena or supertuxkart)
+# --data-revision M   with --game: keep the game's data packages already in artifacts/packages at revision M
+#                     (not rebuilt, the new engine package requires them), so an engine fix republishes
+#                     only the engine
 #
 # Output: artifacts/packages/{openarena,supertuxkart}-<version>-<N>-arm64.hpkg and their data packages
 #   {openarena,supertuxkart}_data_<i>-<version>-<N>-arm64.hpkg
@@ -23,9 +29,13 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 revision=1
+only=""
+dataRevision=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--revision) revision="$2"; shift 2 ;;
+	--game) only="$2"; shift 2 ;;
+	--data-revision) dataRevision="$2"; shift 2 ;;
 	*) echo "package-games: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -36,8 +46,12 @@ stk="$root/artifacts/stk/non-packaged/apps/SuperTuxKart"
 out="$root/artifacts/packages"
 work="$out/build-games"
 download="$gen/download"
-[ -x "$games/OpenArena/ioquake3" ] || { echo "package-games: run scripts/build-games.sh first" >&2; exit 1; }
-[ -x "$stk/SuperTuxKart" ] || { echo "package-games: run scripts/build-stk.sh first" >&2; exit 1; }
+[ -n "$dataRevision" ] && [ -z "$only" ] && { echo "package-games: --data-revision needs --game" >&2; exit 2; }
+want() { [ -z "$only" ] || [ "$only" = "$1" ]; }
+want openarena && { [ -x "$games/OpenArena/ioquake3" ] \
+	|| { echo "package-games: run scripts/build-games.sh first" >&2; exit 1; }; }
+want supertuxkart && { [ -x "$stk/SuperTuxKart" ] \
+	|| { echo "package-games: run scripts/build-stk.sh first" >&2; exit 1; }; }
 partBytes=95000000
 mkdir -p "$out"
 rm -rf "$work"
@@ -84,6 +98,17 @@ packageInfo() {
 # them; sets dataRequires to the requires lines for NAME's package
 splitData() {
 	local name="$1" version="$2" dir="$3" sub="$4" parts="$work/$1-data" n i
+	if [ -n "$dataRevision" ]; then
+		# the published parts stay: require them, leave their files out of the engine package
+		n=$(ls "$out/${name}_data_"*"-$version-$dataRevision-arm64.hpkg" 2> /dev/null | wc -l)
+		[ "$n" -gt 0 ] || { echo "package-games: no ${name}_data_* at $version-$dataRevision in $out" >&2; exit 1; }
+		rm -rf "${dir:?}/$sub"
+		dataRequires=""
+		for i in $(seq 1 "$n"); do
+			dataRequires+="	${name}_data_$i == $version-$dataRevision"$'\n'
+		done
+		return
+	fi
 	n=$(python3 - "$dir" "$sub" "$parts" "$partBytes" <<-'PY'
 	import os, sys
 	top, sub, parts, limit = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
@@ -119,6 +144,7 @@ splitData() {
 }
 
 # openarena: ioquake3 loads libGL at run time (mesa)
+if want openarena; then
 d="$work/openarena"
 mkdir -p "$d/apps"
 cp -a "$games/OpenArena" "$d/apps/"
@@ -131,8 +157,10 @@ packageInfo openarena 0.8.8 "A free first-person shooter (Quake III Arena engine
 	lib:libSDL2_2.0
 $dataRequires	mesa" > "$d/.PackageInfo"
 create openarena 0.8.8 "$d"
+fi
 
 # supertuxkart
+if want supertuxkart; then
 d="$work/supertuxkart"
 mkdir -p "$d/apps"
 cp -a "$stk" "$d/apps/"
@@ -154,4 +182,5 @@ packageInfo supertuxkart 1.5 "A free 3D kart racing game" \
 	lib:libstdc++
 $dataRequires	mesa" > "$d/.PackageInfo"
 create supertuxkart 1.5 "$d"
+fi
 rm -rf "$work"
