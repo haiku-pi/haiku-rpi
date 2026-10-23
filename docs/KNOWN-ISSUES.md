@@ -9,7 +9,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-10-23 19:30**.
+Checked against the weekly logs up to **2026-10-23 21:00**.
 
 ## 1. Correctness: crashes and hangs
 
@@ -57,8 +57,6 @@ Checked against the weekly logs up to **2026-10-23 19:30**.
 
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
-| W2 | **A few Wine helper processes (`services.exe`) can stay alive after their wineserver was killed** (`wineserver -k`, or a crash before 11.20-9). | Seen once, 3 processes | `kill` them; a new start is not affected | W43: 10-22 22:40 |
-| W4 | **StarCraft with Box64's "safe" settings** (`BOX64_DYNAREC_STRONGMEM=2`, no big blocks) stayed black for its first 2 minutes; with the default settings it plays. Slow or broken, not yet known. | The sweep's `starcraft-safe` run | Box64's default settings | W43: 10-22 22:00 |
 | W5 | **After a Wine package update the prefix is updated at the next start**, and Wine asks again to install Wine Mono. From wine 11.20-16 only the libraries that changed are rewritten (15 → 16: 61 s with the prefix on the SD card, was ~3 min; 141 s on a network boot, was ~7 min); an update to a new Wine version still rewrites most of the ~1 GB. | Every Wine update | `WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -u` once; Cancel at the Mono question | W43: 10-23 00:00, 11:00 |
 | W6 | **Memory ordering between threads of x86 code is not x86's.** Box64's default dynarec translates plain x86 loads and stores to plain arm64 ones, so a 32-bit program (or an i386 Wine DLL) that relies on x86 ordering between threads may misbehave — wined3d's command stream did (W3, fixed by Wine 0018). Also, `NtFlushProcessWriteBuffers` is a stub on Haiku (no membarrier). | Program-dependent | `BOX64_DYNAREC_STRONGMEM=1` in the program's environment (barriers on stores: store-heavy code up to 3× slower, cpubench's sort 2.2 → 6.8 s) | W43: 10-23 04:00 |
 | W7 | **Not checked by hand**: the mouse in full-screen games (since wine 11.20-14 a real display mode), and sound through Wine by ear. | — | — | W43 "Next" item 7 |
