@@ -10,6 +10,12 @@ unpairs — and the faster network-boot disk, on top of the 2026-10-23 images' k
 Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the Ethernet cable;
 power on. The desktop comes up in about 75 s.
 
+**Before switching the Pi off, shut down** (Deskbar → Shut down) **or run `sync`** in a Terminal: on this
+image the kernel keeps the last ~1 MB of file data written in memory until a sync, so pulling the power can
+lose a screenshot or a note saved even minutes earlier ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C7; fixed in
+`image-2026-10-23d`). `pkgman update` brings the newer mesa and openarena packages (the OpenGL and
+OpenArena SIGTERM fixes) to this card.
+
 **When something is wrong**, the most useful things to send back are:
 - the system log: `/var/log/syslog` (Terminal: `cp /var/log/syslog ~/Desktop/` and copy it off on a USB
   stick, or `scp` it), and the time it happened;
