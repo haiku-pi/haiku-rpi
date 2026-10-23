@@ -829,6 +829,7 @@ work that way, which also lets you run things on a Pi without a keyboard.
 | Expected noise in the games' logs | OpenArena: "Couldn't read q3history" on the first start, two "Failed to load model file models/players/characters/ayumi/lower.md3" (that model's file is left out). SuperTuxKart: "Material: Missing container id for ..." (texture compression off), "kartDirt shader is missing". |
 | QuakeSpasm's timedemo prints no result | Its standard output is buffered and lost when the game is killed; add `-condebug` and read `qconsole.log` (§6.3). |
 | A program crashed and its window is frozen | Haiku keeps a crashed program in the debugger (`debug_server`) until you answer its dialog. `kill -9` the team from Terminal if needed. |
+| A program (often a small Wine one, e.g. WineMine) started while a crash dialog is open shows no window | Its window opened behind the dialog: both are centred on the screen and the crash dialog floats above all windows. Answer the dialog. |
 | curses programs fall back to "dumb terminal" settings | Images built before 2026-10-20 had no usable terminfo database; fixed in later images. |
 | The clock stays at 600 MHz under load | Check ProcessController's mode (Power saving holds the minimum) and the `Throttled:` line of `/dev/power/bcm2835_thermal/0` (heat or under-voltage) (§12). |
 | `top` or `time` shows almost all CPU time as "system" | Images before 2026-10-20 counted user time as kernel time (§12.3). |
