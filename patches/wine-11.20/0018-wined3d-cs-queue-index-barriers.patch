@@ -1,0 +1,98 @@
+wined3d: order the command stream queue's indices with barriers, also when emulated
+
+A queue's head and tail pass packets between the application's thread and the
+command stream thread, so a reader must see the packet data written before the
+index that covers it. wined3d_cs_queue_is_empty() and the producer's waits read
+the indices with plain volatile loads, no acquire; on i386 the release stores
+and acquire loads are plain moves anyway, which x86 orders. Running the i386
+DLL in an emulator on a weakly ordered CPU (Box64 on arm64 for a 32-bit
+program under WoW64) those moves become plain loads and stores without
+barriers, and the command stream thread executed stale packet data: SimCity
+3000's demo hit "wined3d_cs_execute_next Invalid opcode" or a page fault in
+the command stream thread in 6 of 8 starts (0 of 8 with Box64's
+BOX64_DYNAREC_STRONGMEM=1, which adds barriers to every store).
+
+The indices are now read with acquire and written with release semantics; on
+i386 with locked instructions, which an emulator translates with barriers.
+
+--- a/dlls/wined3d/cs.c
++++ b/dlls/wined3d/cs.c
+@@ -3371,7 +3371,7 @@
+ static BOOL wined3d_cs_queue_is_empty(const struct wined3d_cs *cs, const struct wined3d_cs_queue *queue)
+ {
+     wined3d_from_cs(cs);
+-    return *(volatile ULONG *)&queue->head == queue->tail;
++    return wined3d_cs_queue_read_index(&queue->head) == wined3d_cs_queue_read_index(&queue->tail);
+ }
+ 
+ static void wined3d_cs_queue_submit(struct wined3d_cs_queue *queue, struct wined3d_cs *cs)
+@@ -3382,7 +3382,7 @@
+     packet = (struct wined3d_cs_packet *)&queue->data[queue->head & WINED3D_CS_QUEUE_MASK];
+     TRACE("Queuing %s.\n", debug_cs_packet(packet));
+     packet_size = FIELD_OFFSET(struct wined3d_cs_packet, data[packet->size]);
+-    WriteRelease((LONG *)&queue->head, queue->head + packet_size);
++    wined3d_cs_queue_write_index(&queue->head, queue->head + packet_size);
+ 
+     if (InterlockedCompareExchange(&cs->waiting_for_event, FALSE, TRUE))
+     {
+@@ -3439,7 +3439,7 @@
+ 
+     for (;;)
+     {
+-        ULONG tail = (*(volatile ULONG *)&queue->tail) & WINED3D_CS_QUEUE_MASK;
++        ULONG tail = wined3d_cs_queue_read_index(&queue->tail) & WINED3D_CS_QUEUE_MASK;
+         ULONG new_pos;
+ 
+         /* Empty. */
+@@ -3584,7 +3584,7 @@
+         TRACE("%s executed.\n", debug_cs_packet(packet));
+     }
+ 
+-    WriteRelease((LONG *)&queue->tail, tail);
++    wined3d_cs_queue_write_index(&queue->tail, tail);
+     return true;
+ }
+ 
+--- a/dlls/wined3d/wined3d_private.h
++++ b/dlls/wined3d/wined3d_private.h
+@@ -3866,6 +3866,31 @@
+ }
+ C_ASSERT(WINED3D_CS_QUEUE_SIZE < UINT_MAX / 4);
+ 
++/* A queue's head and tail pass packets between the application's thread and the
++ * command stream thread: a reader must see the packet data written before the
++ * index that covers it. On i386 the acquire and release forms are plain moves,
++ * which x86 orders; an emulator running this code on a weakly ordered CPU (Box64
++ * on arm64) translates plain moves without barriers, and the command stream
++ * thread then executed stale packet data ("Invalid opcode", wild pointers).
++ * Locked instructions keep their barriers there. */
++static inline ULONG wined3d_cs_queue_read_index(const ULONG *index)
++{
++#ifdef __i386__
++    return InterlockedCompareExchange((LONG *)index, 0, 0);
++#else
++    return ReadAcquire((const volatile LONG *)index);
++#endif
++}
++
++static inline void wined3d_cs_queue_write_index(ULONG *index, ULONG value)
++{
++#ifdef __i386__
++    InterlockedExchange((LONG *)index, value);
++#else
++    WriteRelease((volatile LONG *)index, value);
++#endif
++}
++
+ static inline void wined3d_resource_wait_idle(const struct wined3d_resource *resource)
+ {
+     const struct wined3d_cs *cs = resource->device->cs;
+@@ -3902,7 +3927,7 @@
+ 
+     for (;;)
+     {
+-        tail = *(volatile ULONG *)&cs->queue[WINED3D_CS_QUEUE_DEFAULT].tail;
++        tail = wined3d_cs_queue_read_index(&cs->queue[WINED3D_CS_QUEUE_DEFAULT].tail);
+         if (head == tail) /* Queue empty. */
+             break;
+ 
