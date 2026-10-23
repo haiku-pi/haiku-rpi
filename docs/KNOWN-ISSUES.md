@@ -68,4 +68,3 @@ Checked against the weekly logs up to **2026-10-23 16:30**.
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
 | D1 | **devfs reloads `remote_disk` from /boot on a network boot**, and the reloaded instance's server search fails ("Network is unreachable"). Harmless so far; it must never replace the boot disk's driver. (On an SD boot the driver now declines to start: the kernel keeps the boot method, haiku 8f0df61a1c — no remote-disk search there since 10-23.) | Every network boot | — | W43: 10-20 08:05; 10-23 |
-| D4 | **QEMU `virt` with virtio-blk-pci**: block I/O stalls and then fails in userland; virtio-blk over MMIO is clean. PCI interrupt delivery on arm64 is the suspect. Affects the reference platform only. | Every run with that device | `scripts/qemu-virt.sh` uses virtio-MMIO | W42: 10-17 |

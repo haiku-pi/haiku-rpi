@@ -2,27 +2,29 @@
 # qemu-virt.sh — boot a Haiku arm64 image on QEMU's generic `virt` machine with EDK2 (the
 # reference platform: if something fails here it is not a Pi problem).
 #
-#   scripts/qemu-virt.sh [--image IMG] [--secs N] [--smp N] [--gdb] [--vnc] [-- extra qemu args]
+#   scripts/qemu-virt.sh [--image IMG] [--secs N] [--smp N] [--blk mmio|pci] [--gdb] [--vnc] [-- extra qemu args]
 #
 # Serial goes to artifacts/qemu/<ts>-virt.log (and stdout). --secs N kills QEMU after N s and
 # saves a screenshot of the display just before that (artifacts/qemu/<ts>-virt.png).
-# The block device is virtio-MMIO: virtio-blk-pci gets I/O errors in userland (docs/knowledge/qemu-virt.md).
+# The block device is virtio-MMIO by default; --blk pci attaches it as virtio-blk-pci instead (KNOWN-ISSUES D4).
 # A writable copy of the image is used, so the build output is never modified.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 img="$root/sources/haiku/generated.arm64/haiku-mmc.image"
-secs=0 smp=4 gdb=() display=(-display none)
+secs=0 smp=4 blk=mmio gdb=() display=(-display none)
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--image) img="$2"; shift 2 ;;
 	--secs) secs="$2"; shift 2 ;;
 	--smp) smp="$2"; shift 2 ;;
+	--blk) blk="$2"; shift 2 ;;
 	--gdb) gdb=(-s -S); shift ;;
 	--vnc) display=(-vnc :7); shift ;;
 	--) shift; break ;;
 	*) echo "qemu-virt: unknown option $1" >&2; exit 2 ;;
 	esac
 done
+case "$blk" in mmio) blkdev=virtio-blk-device ;; pci) blkdev=virtio-blk-pci ;; *) echo "qemu-virt: --blk mmio|pci" >&2; exit 2 ;; esac
 out="$root/artifacts/qemu"; mkdir -p "$out"
 ts="$(date +%Y%m%d-%H%M%S)"
 # a copy per run (and its own monitor socket), so that runs can overlap
@@ -32,7 +34,7 @@ trap 'rm -f "$disk" "$qmp"' EXIT
 cp --reflink=auto "$img" "$disk"
 cmd=(qemu-system-aarch64 -M virt -cpu cortex-a72 -smp "$smp" -m 2G
 	-bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
-	-drive "file=$disk,if=none,format=raw,id=hd0" -device virtio-blk-device,drive=hd0
+	-drive "file=$disk,if=none,format=raw,id=hd0" -device "$blkdev",drive=hd0
 	-device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet
 	-serial stdio -monitor none -qmp "unix:$qmp,server,nowait" "${display[@]}" "${gdb[@]}" "$@")
 echo "qemu-virt: ${cmd[*]}" >&2
