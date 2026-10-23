@@ -14,6 +14,26 @@ once, and so does any other signal while the quit is under way (a thread
 running into what the quit tore down): the shutdown must not run a second
 time from that thread. Crash signals are otherwise handled as before.
 
+The handler now returns, so its declaration loses Q_NO_RETURN: with it
+the compiler left the return out, and the handler ran on into the next
+function in the binary (Sys_Error(): an empty "Error: ." and Sys_Exit(),
+SDL_Quit() included, from the thread that took the signal, racing the main
+loop's quit -- the double free behind the processes left stopped after a
+SIGTERM).
+
+--- a/code/sys/sys_local.h
++++ b/code/sys/sys_local.h
+@@ -61,7 +61,9 @@
+ void Sys_GLimpInit( void );
+ void Sys_PlatformInit( void );
+ void Sys_PlatformExit( void );
+-void Sys_SigHandler( int signal ) Q_NO_RETURN;
++/* returns: a request to quit is carried out by the main loop (with Q_NO_RETURN the compiler drops the
++ * return, and the handler runs on into whatever function follows it) */
++void Sys_SigHandler( int signal );
+ void Sys_ErrorDialog( const char *error );
+ void Sys_AnsiColorPrint( const char *msg );
+ 
 --- a/code/sys/sys_main.c
 +++ b/code/sys/sys_main.c
 @@ -751,10 +751,32 @@
