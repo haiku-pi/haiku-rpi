@@ -16,6 +16,9 @@ scales the mode to the monitor).
   app_server undoes when the process quits; refits the fullscreen toplevels to
   the new screen and sends the new current mode to every bound wl_output. Runs
   on the server's thread (a message to the server handler from any other).
+- The fullscreen border view is added and removed with the window locked: the
+  window's thread may be resizing to the new mode or quitting meanwhile (a
+  window closed right after a mode change deleted a view twice).
 
 --- a/HaikuOutput.cpp
 +++ b/HaikuOutput.cpp
@@ -237,7 +240,7 @@ scales the mode to the monitor).
  #include "HaikuXdgShell.h"
  #include "HaikuXdgSurface.h"
  #include "HaikuCompositor.h"
-@@ -234,17 +236,16 @@
+@@ -234,29 +236,50 @@
  {
  }
  
@@ -259,9 +262,12 @@ scales the mode to the monitor).
  	// a surface smaller than the screen is centered on a black border fill
  	if (fFullscreenBorder == NULL) {
  		fFullscreenBorder = new BView(screenFrame.OffsetToCopy(B_ORIGIN), "fullscreen border",
-@@ -252,11 +253,30 @@
+ 			B_FOLLOW_ALL, B_WILL_DRAW);
  		fFullscreenBorder->SetViewColor(0, 0, 0);
++		// the window's thread may be drawing, resizing or quitting meanwhile
++		fWindow->LockLooper();
  		fWindow->AddChild(fFullscreenBorder, fWindow->ChildAt(0));
++		fWindow->UnlockLooper();
  	}
 +	FitToScreen();
 +}
@@ -290,7 +296,7 @@ scales the mode to the monitor).
  /* xdg_toplevel.set_fullscreen: a surface that does not cover the output is
   * centered on it, the rest is border fill. The window stays the size of the
   * screen; the surface's view moves inside it. */
-@@ -285,6 +305,8 @@
+@@ -285,9 +308,13 @@
  {
  	if (!fState.fullscreen) return;
  	fState.fullscreen = false;
@@ -298,8 +304,13 @@ scales the mode to the monitor).
 +		sFullscreenToplevels.end());
  	fSizeChanged = true;
  	if (fFullscreenBorder != NULL) {
++		fWindow->LockLooper();
  		fFullscreenBorder->RemoveSelf();
-@@ -328,6 +350,8 @@
++		fWindow->UnlockLooper();
+ 		delete fFullscreenBorder;
+ 		fFullscreenBorder = NULL;
+ 	}
+@@ -328,6 +355,8 @@
  
  HaikuXdgToplevel::~HaikuXdgToplevel()
  {

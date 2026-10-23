@@ -1,0 +1,83 @@
+server: use kqueue on Haiku (libbsd), adding and deleting filters
+
+Without epoll or kqueue the wineserver's main loop polls every client file
+descriptor for each request, and on Haiku poll() registers and unregisters a
+select on each of them every time: under a full-screen game 40 % of the
+server's time went to the kernel's locks for that. Haiku has kqueue, in libbsd
+on the kernel's event queues; configure now finds it there and builds the
+server's fd.c with it (HAVE_KQUEUE for that file only: ntdll's kqueue code needs
+EVFILT_USER, which Haiku lacks) and links the server with -lbsd.
+
+Haiku's kqueue keeps one entry per file descriptor and ignores EV_ENABLE and
+EV_DISABLE (with them both filters would stay active and a writable descriptor
+would wake the server forever), so on Haiku the wanted filters are added and the
+others deleted.
+
+On a Raspberry Pi 4: SetEvent/ResetEvent round trips 5,400/s -> 28,000-40,000/s,
+CreateEvent/CloseHandle 2,800/s -> 15,000/s (tools/wine-tests/serverbench.c);
+`wine cmd /c echo` 710 -> 400 ms, a 32-bit x86 hello under Box64 515 -> 370 ms.
+--- a/configure.ac
++++ b/configure.ac
+@@ -2138,6 +2138,15 @@
+ 	tcdrain \
+ 	thr_kill2
+ )
++
++dnl Haiku: kqueue is in libbsd (on the kernel's event queues)
++if test "$ac_cv_header_sys_event_h" = "yes" -a "$ac_cv_func_kqueue" != "yes"
++then
++    dnl for the server only: ntdll's kqueue code needs EVFILT_USER, which Haiku lacks
++    AC_CHECK_LIB(bsd,kqueue,
++                 [AC_SUBST(KQUEUE_DEFS,"-DHAVE_KQUEUE")
++                  AC_SUBST(KQUEUE_LIBS,"-lbsd")])
++fi
+ CFLAGS="$ac_save_CFLAGS"
+ 
+ dnl Check for clock_gettime which may be in -lrt
+--- a/server/Makefile.in
++++ b/server/Makefile.in
+@@ -52,6 +52,7 @@
+ 	winstation.c
+ 
+ UNIX_CFLAGS = $(INOTIFY_CFLAGS)
+-UNIX_LIBS   = $(LDEXECFLAGS) $(RT_LIBS) $(INOTIFY_LIBS) $(PROCSTAT_LIBS)
++UNIX_LIBS   = $(LDEXECFLAGS) $(RT_LIBS) $(INOTIFY_LIBS) $(PROCSTAT_LIBS) $(KQUEUE_LIBS)
+ 
+ unicode_EXTRADEFS = -DBINDIR="\"${bindir}\"" -DDATADIR="\"${datadir}\""
++fd_EXTRADEFS = $(KQUEUE_DEFS)
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -594,6 +594,25 @@
+ 
+     if (kqueue_fd == -1) return;
+ 
++#ifdef __HAIKU__
++    /* Haiku's kqueue (libbsd, on the kernel's event queues) keeps one entry per file
++     * descriptor and ignores EV_ENABLE and EV_DISABLE: a filter is added or deleted */
++    if (events == -1)  /* stop waiting on this fd completely */
++    {
++        if (pollfd[user].fd == -1) return;  /* already removed */
++        events = 0;
++    }
++    else if (pollfd[user].fd == -1)
++    {
++        if (!(events & (POLLIN | POLLOUT))) return;  /* nothing to add */
++    }
++    else if (pollfd[user].events == events) return;  /* nothing to do */
++
++    EV_SET( &ev[0], fd->unix_fd, EVFILT_READ, (events & POLLIN) ? EV_ADD : EV_DELETE, 0, 0,
++            (void *)(long)user );
++    EV_SET( &ev[1], fd->unix_fd, EVFILT_WRITE, (events & POLLOUT) ? EV_ADD : EV_DELETE, 0, 0,
++            (void *)(long)user );
++#else
+     EV_SET( &ev[0], fd->unix_fd, EVFILT_READ, 0, NOTE_LOWAT, 1, (void *)(long)user );
+     EV_SET( &ev[1], fd->unix_fd, EVFILT_WRITE, 0, NOTE_LOWAT, 1, (void *)(long)user );
+ 
+@@ -614,6 +633,7 @@
+         ev[0].flags |= (events & POLLIN) ? EV_ENABLE : EV_DISABLE;
+         ev[1].flags |= (events & POLLOUT) ? EV_ENABLE : EV_DISABLE;
+     }
++#endif
+ 
+     if (kevent( kqueue_fd, ev, 2, NULL, 0, NULL ) == -1)
+     {
