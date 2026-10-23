@@ -82,7 +82,7 @@ tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
 # the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=17
+wineRevision=18
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
@@ -332,7 +332,7 @@ step_package() {
 	# and no prefix could be made. wayland_server 2 centres a fullscreen window smaller than the screen; wayland_server 5 lists the
 	# screen's modes and sets one (Wine 0019: real display modes).
 	requires="haiku>=r1~beta6_hrev60262_138 $(elf_requires "$pkg/wine/bin/wineserver" "$pkg/wine/lib/wine/aarch64-unix"/*)"
-	requires+=" lib:libfreetype lib:libegl wayland_server>=0.1.20251004-5 wine_data==$wineVersion-$wineRevision"
+	requires+=" lib:libfreetype lib:libegl wayland_server>=0.1.20251004-7 wine_data==$wineVersion-$wineRevision"
 	requires+=" wine_directx==$wineVersion-$wineRevision"
 	make_package wine_data "$pkg/wine_data" "Wine's data files" \
 		"The data of Wine $wineVersion (data/wine: NLS tables, fonts, wine.inf), a package of its own only for size; wine requires it. Cross-built for the Raspberry Pi 4 by the haiku-pi project (scripts/build-wine.sh)." \

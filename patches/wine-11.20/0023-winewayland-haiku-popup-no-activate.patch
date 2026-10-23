@@ -1,0 +1,69 @@
+winewayland: on Haiku, an owned popup shown without activation stays inactive
+
+winewayland manages an owned WS_POPUP with a resize frame (is_window_managed),
+so Scintilla's auto-completion list (Notepad++) becomes an xdg_toplevel. Haiku's
+in-process Wayland server shows a toplevel as a window that becomes the active
+one: the keyboard focus left the editor for a moment, and a key typed then was
+lost (on the Pi 4 about one line in two typed at 30 ms per key event lost one
+character, always where the list opened).
+
+When such a window - owned, WS_POPUP, no caption, no WS_EX_APPWINDOW - gets
+its toplevel role in a SetWindowPos with SWP_NOACTIVATE, the server is told
+(wl_ips_haiku_surface_no_activate, wayland_server's
+wl-surface-no-activate.patch) to show it without activating it.
+
+--- a/dlls/winewayland.drv/window.c
++++ b/dlls/winewayland.drv/window.c
+@@ -26,6 +26,9 @@
+ 
+ #include <assert.h>
+ #include <stdlib.h>
++#ifdef __HAIKU__
++#include <dlfcn.h>
++#endif
+ 
+ #include "ntstatus.h"
+ 
+@@ -439,6 +442,32 @@
+     return TRUE;
+ }
+ 
++#ifdef __HAIKU__
++/* Haiku's in-process Wayland server activates a toplevel's window when it is shown. An owned popup without a
++ * caption shown with SWP_NOACTIVATE (an auto-completion list, which winewayland manages when it has a resize
++ * frame) must not take the keyboard focus from its owner: a key typed then would be lost. */
++static void haiku_no_activate(HWND hwnd, UINT swp_flags, struct wayland_surface *surface)
++{
++    static void (*no_activate)(unsigned int surface_id);
++    static BOOL looked_up;
++    DWORD style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
++
++    if (!surface || surface->role != WAYLAND_SURFACE_ROLE_TOPLEVEL || !(swp_flags & SWP_NOACTIVATE)) return;
++    if (!(style & WS_POPUP) || (style & WS_CAPTION) == WS_CAPTION) return;
++    if (!NtUserGetWindowRelative(hwnd, GW_OWNER)) return;
++    if (NtUserGetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_APPWINDOW) return;
++
++    if (!looked_up)
++    {
++        void *server = dlopen("wayland-server-inproc.so", RTLD_NOW);
++        if (server) no_activate = dlsym(server, "wl_ips_haiku_surface_no_activate");
++        looked_up = TRUE;
++    }
++    TRACE("hwnd %p surface %u\n", hwnd, wl_proxy_get_id((struct wl_proxy *)surface->wl_surface));
++    if (no_activate) no_activate(wl_proxy_get_id((struct wl_proxy *)surface->wl_surface));
++}
++#endif
++
+ /***********************************************************************
+  *           WAYLAND_WindowPosChanged
+  */
+@@ -477,6 +506,9 @@
+     else if (wayland_win_data_create_wayland_surface(data, owner_surface))
+     {
+         wayland_win_data_update_wayland_state(data);
++#ifdef __HAIKU__
++        haiku_no_activate(hwnd, swp_flags, data->wayland_surface);
++#endif
+     }
+ 
+     if (owner_data) wayland_win_data_release(owner_data);

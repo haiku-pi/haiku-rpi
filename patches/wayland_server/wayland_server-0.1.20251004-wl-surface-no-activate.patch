@@ -1,0 +1,99 @@
+wayland-server: a surface whose window is shown without being activated
+
+Wine shows some popups as toplevels: an owned WS_POPUP with a resize frame,
+like Scintilla's auto-completion list (Notepad++), is a "managed" window for
+winewayland. Its BWindow became the active window when it was shown, so the
+keyboard focus left the editor for a moment and a key typed then was lost
+(Windows shows such a popup with SWP_NOACTIVATE: the editor keeps the keys).
+
+- wl_ips_haiku_surface_no_activate(surface id), exported for Wine: that
+  surface's window is shown with B_AVOID_FOCUS. The client's requests reach
+  the server through the same looper as this call's message, so the surface
+  exists when the message is handled.
+
+--- a/HaikuCompositor.h
++++ b/HaikuCompositor.h
+@@ -109,6 +109,7 @@
+ 	HaikuSubsurface *fSubsurface{};
+ 
+ 	HaikuSubsurface::SurfaceList fSurfaceList;
++	bool fNoActivate = false;
+ 
+ public:
+ 	static HaikuSurface *Create(struct wl_client *client, uint32_t version, uint32_t id);
+@@ -123,6 +124,9 @@
+ 	HaikuXdgSurface *XdgSurface() {return fXdgSurface;}
+ 	HaikuSubsurface *Subsurface() {return fSubsurface;}
+ 	HaikuServerDecoration *ServerDecoration() {return fServerDecoration;}
++	// shown without taking the keyboard focus (Wine: an owned popup shown with SWP_NOACTIVATE)
++	bool NoActivate() const {return fNoActivate;}
++	void SetNoActivate(bool noActivate) {fNoActivate = noActivate;}
+ 	HaikuSubsurface::SurfaceList &SurfaceList() {return fSurfaceList;}
+ 	void AttachWindow(BWindow *window);
+ 	void AttachView(BView *view);
+--- a/HaikuXdgSurface.cpp
++++ b/HaikuXdgSurface.cpp
+@@ -103,6 +103,8 @@
+ 		if (fXdgSurface->fToplevel != NULL) {
+ 			fXdgSurface->Window()->CenterOnScreen();
+ 		}
++		if (fXdgSurface->Surface()->NoActivate())
++			fXdgSurface->Window()->SetFlags(fXdgSurface->Window()->Flags() | B_AVOID_FOCUS);
+ 		fXdgSurface->Window()->Show();
+ 		fXdgSurface->fSurfaceInitalized = true;
+ 	}
+--- a/WaylandServer.cpp
++++ b/WaylandServer.cpp
+@@ -18,6 +18,7 @@
+ #include <wayland-server-protocol.h>
+ #include <xdg-shell-protocol.h>
+ #include <stdio.h>
++#include <string.h>
+ #include <new>
+ 
+ #include <Application.h>
+@@ -59,6 +60,17 @@
+ 		wl_client_dispatch(client, closure);
+ 		return;
+ 	}
++	case noActivateMsg: {
++		// the client's requests come through this looper in order, so the surface exists by now
++		uint32 id = (uint32)msg->GetInt32("surface", 0);
++		struct wl_client *client;
++		wl_client_for_each(client, wl_display_get_client_list(sDisplay)) {
++			struct wl_resource *resource = wl_client_get_object(client, id);
++			if (resource != NULL && strcmp(wl_resource_get_class(resource), "wl_surface") == 0)
++				HaikuSurface::FromResource(resource)->SetNoActivate(true);
++		}
++		return;
++	}
+ 	case setModeMsg: {
+ 		BMessage reply(B_REPLY);
+ 		reply.AddInt32("status", HaikuOutputSetMode(msg->GetInt32("width", 0),
+@@ -203,6 +215,16 @@
+ 	return reply.GetInt32("status", B_ERROR);
+ }
+ 
++// Wine (winewayland): the window of this wl_surface (the id of the client's object) is shown without becoming
++// the active window, as Windows shows a popup with SWP_NOACTIVATE (an auto-completion list must not take the
++// keyboard focus from the editor it belongs to)
++extern "C" _EXPORT void wl_ips_haiku_surface_no_activate(uint32 surfaceId)
++{
++	BMessage msg(ServerHandler::noActivateMsg);
++	msg.AddInt32("surface", (int32)surfaceId);
++	gServerMessenger.SendMessage(&msg);
++}
++
+ extern "C" _EXPORT void wl_ips_client_disconnected(void *client)
+ {
+ 	// TODO: implement
+--- a/WaylandServer.h
++++ b/WaylandServer.h
+@@ -9,6 +9,7 @@
+ 	enum {
+ 		closureSendMsg = 1,
+ 		setModeMsg,
++		noActivateMsg,
+ 	};
+ 
+ 	ServerHandler();
