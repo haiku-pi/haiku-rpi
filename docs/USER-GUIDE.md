@@ -712,7 +712,7 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (2026-10-23, wine 11.20-12):
+**Known limits** (2026-10-23, wine 11.20-13):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
   Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
   second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike; 2D games (Heroes III, StarCraft, SimCity 3000)
