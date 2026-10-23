@@ -29,7 +29,9 @@ out="$root/artifacts/qemu"; mkdir -p "$out"
 ts="$(date +%Y%m%d-%H%M%S)"
 disk="$out/raspi-disk.img"
 cp "$img" "$disk"
-qemu-img resize -q -f raw "$disk" 512M	# raspi's SD model needs a power-of-two size
+# raspi's SD model needs a power-of-two size: the next one up from the image (512 MiB at least)
+size=$((512 << 20)); while [ "$size" -lt "$(stat -c %s "$disk")" ]; do size=$((size * 2)); done
+qemu-img resize -q -f raw "$disk" "$size"
 dtb="$out/raspi.dtb"
 cp "$root/artifacts/pi-firmware/bcm2711-rpi-4-b.dtb" "$dtb"
 [ "$uart1" = 1 ] || fdtput -t s "$dtb" /chosen stdout-path "/soc/serial@7e201000:115200n8"
