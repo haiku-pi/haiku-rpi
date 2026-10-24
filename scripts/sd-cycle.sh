@@ -101,7 +101,8 @@ fi
 # SD boot: no DHCP server may answer on the Pi LAN, or the firmware netboots instead.
 peer_netboot_down
 log="$uart_dir/$ts-$label.log"
-"$PYTHON" "$cap" --dev "$PI_UART" --log "$log" --secs "$secs" --quiet-secs "$quiet" "${caps[@]}" &
+"$PYTHON" "$cap" --dev "$PI_UART" --log "$log" --secs "$secs" --quiet-secs "$quiet" \
+	--inbox "$HAIKU_RPI_ROOT/artifacts/uart/inbox" "${caps[@]}" &
 cap_pid=$!
 sleep 0.5
 pi_power on

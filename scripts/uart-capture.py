@@ -4,7 +4,7 @@
     uart-capture.py --log FILE [--dev /dev/ttyUSB0] [--secs N] [--until REGEX]... [--fail REGEX]...
                     [--quiet-secs N] [--send SECS:TEXT]... [--echo]
                     [--silence-after N --silence-send OFFSET:TEXT... [--silence-arm REGEX]
-                     [--silence-disarm REGEX]...]
+                     [--silence-disarm REGEX]...] [--inbox DIR]
 
 Stops after --secs seconds; or as soon as a line matches an --until (exit 0) or a --fail
 (exit 3) regex; or after --quiet-secs of silence once something was received (exit 4).
@@ -20,7 +20,11 @@ kernel debugger's dumps of a boot that stopped, whenever it stops. A line matchi
 --silence-disarm regex (the boot got past where it stops) disarms it. With --silence-arm, the
 silence only counts after a line matching that regex (e.g. the kernel's banner): a slow stage
 before it (the firmware's TFTP) is not a stop, and keys typed then would land in U-Boot instead.
+--inbox DIR: while capturing, each file that appears in DIR holds "OFFSET:TEXT" lines (as
+--silence-send) that are typed OFFSET seconds after the file was found; the file is then removed.
+scripts/uart-send.sh writes them: the kernel debugger of a system that hangs long after boot.
 """
+import os
 import argparse
 import re
 import sys
@@ -44,6 +48,7 @@ def main():
     ap.add_argument("--silence-send", action="append", default=[])
     ap.add_argument("--silence-disarm", action="append", default=[])
     ap.add_argument("--silence-arm")
+    ap.add_argument("--inbox")
     a = ap.parse_args()
 
     sends = []
@@ -63,6 +68,11 @@ def main():
 
     until = [re.compile(p) for p in a.until]
     fail = [re.compile(p) for p in a.fail]
+    if a.inbox:
+        # texts left over from an earlier capture are not for this boot
+        os.makedirs(a.inbox, exist_ok=True)
+        for name in os.listdir(a.inbox):
+            os.remove(os.path.join(a.inbox, name))
     port = serial.Serial(a.dev, a.baud, timeout=0.2)
     port.reset_input_buffer()
     t0 = time.monotonic()
@@ -85,6 +95,23 @@ def main():
                 log.write("[%8.3f] uart-capture: %.0f s of silence, sending the --silence-send texts\n"
                           % (now - t0, now - last_rx))
                 sends = sorted(sends + [(now - t0 + off, text) for off, text in silence_sends])
+            if a.inbox and os.path.isdir(a.inbox):
+                for name in sorted(os.listdir(a.inbox)):
+                    if name.startswith("."):
+                        continue  # still being written
+                    path = os.path.join(a.inbox, name)
+                    try:
+                        with open(path, encoding="latin-1") as f:
+                            lines = [l.rstrip("\n") for l in f if ":" in l]
+                        os.remove(path)
+                    except OSError:
+                        continue
+                    for item in lines:
+                        when, text = item.split(":", 1)
+                        sends.append((now - t0 + float(when),
+                            text.encode("latin-1").decode("unicode_escape").encode("latin-1")))
+                    log.write("[%8.3f] uart-capture: %d texts from %s\n" % (now - t0, len(lines), name))
+                sends.sort()
             while sends and now - t0 >= sends[0][0]:
                 for byte in sends.pop(0)[1]:
                     port.write(bytes([byte]))

@@ -80,6 +80,7 @@ pi_power off >/dev/null 2>&1 || true
 "$HAIKU_RPI_ROOT/scripts/netboot-server.sh" up "$img"
 log="$uart_dir/$ts-$label.log"
 "$PYTHON" "$HAIKU_RPI_ROOT/scripts/uart-capture.py" --dev "$PI_UART" --log "$log" --secs "$secs" \
+	--inbox "$uart_dir/inbox" \
 	"${caps[@]}" &
 cap_pid=$!
 sleep 2
