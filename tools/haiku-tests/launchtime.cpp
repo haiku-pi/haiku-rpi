@@ -5,8 +5,10 @@
  *   launchtime [-q] APP-PATH-OR-SIGNATURE [TIMEOUT-S]     (default timeout 60 s)
  *
  * Prints "launchtime: NAME: window after N ms (team T)" and, with -q, quits the application afterwards
- * (B_QUIT_REQUESTED), so that a loop can measure cold and warm starts in turn. Exit 0 on a window,
- * 1 on a timeout or a failed launch.
+ * (B_QUIT_REQUESTED), so that a loop can measure cold and warm starts in turn, and waits for its team
+ * to end ("gone after N ms"). The quit comes 2 s after the window: Firefox sent a quit within
+ * ~100 ms of its first window stalls in shutdown until its 50-s watchdog aborts it, and the next launch
+ * then ran beside the dying one. Exit 0 on a window, 1 on a timeout or a failed launch.
  *
  * Build (cross):
  *   g=sources/haiku/generated.arm64
@@ -92,14 +94,16 @@ main(int argc, char** argv)
 		(long long)((system_time() - start) / 1000), (int)team);
 
 	if (quit) {
+		snooze(2000000);
 		BMessenger messenger(NULL, team);
 		messenger.SendMessage(B_QUIT_REQUESTED);
-		for (int i = 0; i < 200; i++) {
-			team_info info;
-			if (get_team_info(team, &info) != B_OK)
-				break;
-			snooze(50000);
-		}
+		bigtime_t quitTime = system_time();
+		team_info info;
+		while (get_team_info(team, &info) == B_OK && system_time() - quitTime < 90000000)
+			snooze(20000);
+		printf("launchtime: %s: %s after %lld ms\n", target,
+			get_team_info(team, &info) == B_OK ? "still running" : "gone",
+			(long long)((system_time() - quitTime) / 1000));
 	}
 	return 0;
 }
