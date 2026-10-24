@@ -42,8 +42,9 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version=157.0.1
 # the package's revision (3: WebGL on an OpenGL ES context; 4: zstd, 112 -> 102 MB, under GitHub's
-# 100 MiB file limit, so the published repository carries it)
-revision=4
+# 100 MiB file limit, so the published repository carries it; 5: getentropy() for random bytes, GNU
+# hash tables)
+revision=5
 target=aarch64-unknown-haiku
 src="$root/sources/firefox/firefox-$version"
 out="$root/artifacts/firefox"
@@ -149,6 +150,9 @@ export BINDGEN_CFLAGS="--sysroot=$sysroot -isystem $cxxInc -isystem $cxxInc/$tar
 # MOZ_LIBEVENT_CFLAGS); the deps step installs them under non-packaged/include: searched last
 export CFLAGS="-D__unix__=1 -D__unix=1 -idirafter $np/include"
 export CXXFLAGS="-D__unix__=1 -D__unix=1 -idirafter $np/include"
+# GNU hash tables too (as the Haiku build, haiku-pi 91012322ef): the runtime loader's symbol lookups
+# skip an image that lacks a symbol with a Bloom filter test instead of walking its hash chain
+export LDFLAGS="-Wl,--hash-style=both"
 export CC="$root/artifacts/rust/bin/$target-gcc"
 export CXX="$root/artifacts/rust/bin/$target-g++"
 export AR="$crossBin/$target-ar"
