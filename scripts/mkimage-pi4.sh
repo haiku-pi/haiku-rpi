@@ -89,6 +89,10 @@ dtc -@ -q -I dts -O dtb -o "$tmp/haiku-fkms.dtbo" "$root/tools/overlays/haiku-fk
 mcopy -o -i "$fat" "$fw/start4.elf" "$fw/fixup4.dat" "$fw/bcm2711-rpi-4-b.dtb" "$uboot" "$tmp/config.txt" ::
 mmd -i "$fat" ::overlays 2>/dev/null || true
 mcopy -o -i "$fat" "$fw"/overlays/*.dtbo "$tmp/haiku-v3d.dtbo" "$tmp/haiku-fkms.dtbo" ::overlays/
+# The Haiku build's ESP step can leave an empty loader (its FAT copy fails on a stale emulated attribute,
+# 10-24): U-Boot then cannot start Haiku from this partition, and a network boot silently uses the card
+loaderSize=$(mdir -i "$fat" -b ::EFI/BOOT/BOOTAA64.EFI >/dev/null 2>&1 && mtype -i "$fat" ::EFI/BOOT/BOOTAA64.EFI | wc -c)
+[ "${loaderSize:-0}" -gt 100000 ] || { echo "mkimage-pi4: EFI/BOOT/BOOTAA64.EFI is ${loaderSize:-missing} bytes" >&2; exit 1; }
 
 p2=$(( $(sfdisk -J "$out.tmp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
 bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"

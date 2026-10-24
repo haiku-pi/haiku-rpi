@@ -72,7 +72,7 @@ up)
 	# NETBOOT_ADD="FILE:PATH ...": each FILE copied onto the disk as PATH (/boot/... of the booted system)
 	for a in ${NETBOOT_ADD:-}; do
 		src="${a%%:*}" dest="/myfs${a#*:/boot}"
-		printf 'rm %s\ncp :%s %s\nsync\n' "$dest" "$src" "$dest" \
+		printf 'mkdir -p %s\nrm %s\ncp :%s %s\nsync\n' "$(dirname "$dest")" "$dest" "$src" "$dest" \
 			| "$bfs" --start-offset $((p2 * 512)) "$nb/disk.img" > "$st/bfs-add.log" 2>&1 || true
 		echo "ls -l $dest" | "$bfs" --start-offset $((p2 * 512)) "$nb/disk.img" 2>&1 | grep -q "$(stat -c %s "$src")" \
 			|| { cat "$st/bfs-add.log" >&2; echo "netboot: $src not copied to ${a#*:}" >&2; exit 1; }
