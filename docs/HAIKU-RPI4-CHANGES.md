@@ -11,7 +11,7 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-
 20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
 weekend; see [log/](log/).
 
-On top of that base the fork carries **146 commits of its own** (2026-10-18 to 2026-10-24). To list
+On top of that base the fork carries **149 commits of its own** (2026-10-18 to 2026-10-24). To list
 them, in `sources/haiku`:
 
 ```
@@ -33,7 +33,7 @@ not written here:
 | `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
 The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
-directories. Of the 146 commits, 24 are changes to the list of binary packages the arm64 build uses
+directories. Of the 149 commits, 24 are changes to the list of binary packages the arm64 build uses
 (`build/jam/repositories/HaikuPorts/arm64`), 23 of them changing nothing else; they are collected in
 one table at the end.
 
@@ -159,6 +159,7 @@ load, which QEMU did not provide. The last subsection is code that every archite
 | `e2aefd5d96` ★ | A failed `fork()` no longer panics | A user translation map gets its page table with its first mapping, but the destructor freed it unconditionally. Destroying an address space that never had a mapping (`fork_team()` failing early) freed "the table" at physical 0 and faulted at `KERNEL_PMAP_BASE`: a panic from a bash fork while Wine ran an x86-64 program. The same commit cuts user-exception logging (next table). |
 | `c8f3757b45` ★ | No page-table walk before a user map has a table | `ProcessRange()` only asserted that the table address was not 0, which a release kernel does not check, and then walked from physical 0: `UnmapPages()` on a map that never mapped anything faulted at 0xffffff0000000000. It panicked when `fork()` failed under memory pressure and `fork_team()` deleted the child's areas. Every operation now treats a map without a table as empty. |
 | `3a0ccc321f` ★ | `user_memcpy()` with Arm's memcpy | It used the kernel's generic C `memcpy()`, which copies one byte at a time when source and destination are not aligned alike, as for every `read()` at an odd file offset or into an odd buffer address. It now uses libroot's memcpy from Arm Optimized Routines (general-purpose registers only), built into the kernel as `arch_user_memcpy()`. It is not the kernel's `memcpy()`, because it makes unaligned accesses and that may touch device memory. `read()` of a cached file in 64 KiB pieces: into an aligned buffer 1718 → 2245 MB/s, into buffer + 1 630 → 2350, from file offset 1 630 → 2060. |
+| `0fe465e233` ★ | The instruction cache line size in `arch_cpu_sync_icache()` | It computed the line size as `4 << (CTR_EL0 << 15)` instead of `4 << (CTR_EL0 & 0xf)`; the shift count wraps to 0, so the instruction cache was invalidated every 4 bytes, 16 times per 64-byte line, for every page mapped executable (every exec, every code page fault). It was 45 % of the time of starting a program. Also honours CTR_EL0.IDC and DIC. Pi 4: fork + exec 7.8 → 4.7 ms, posix_spawn 7.4 → 3.4 ms. |
 
 ### Exceptions and time accounting
 
@@ -368,6 +369,7 @@ userspace half is a `hevc_rpivid` hwaccel in FFmpeg 6.1, carried as
 | commit | change | what and why |
 |---|---|---|
 | `c536a518b2` | `bcm2711_pwm`: hmulti driver for the 3.5 mm jack | PWM1 on GPIO 40/41, fed by legacy DMA channel 5 (paced by the PWM1 DREQ) from a two-period ring. Each period's end interrupts, and the handler silences the played half and completes one buffer exchange. 54 MHz ÷ 2 with a range of 612 gives 44 117.647 Hz, advertised as 44 100 (frame counts come from the hardware). Addresses and interrupt from the device tree. media_server picks it as default output ("Raspberry Pi headphones"); measured 44 117.657 Hz with no underrun. In the regular image. |
+| `6965caeb07` | `bcm2711_hdmi_audio`: hmulti driver for HDMI audio | The first HDMI port's MAI (multichannel audio interface), fed by legacy DMA channel 4 (DREQ 10) with IEC 60958 subframes built in the driver, under the display the firmware set up: the audio clock (CTS/N) from the measured pixel clock, an audio InfoFrame in a packet slot the firmware leaves free. Published only when a monitor that takes audio is connected at boot; 48 kHz stereo. Design: [design/hdmi-audio.md](design/hdmi-audio.md). |
 
 ---
 
@@ -442,6 +444,7 @@ the packages staged in `download/`. [TRY-IT.md](TRY-IT.md) has the build steps.
 |---|---|---|
 | `2c93aeea48` ★ | Memory and string routines from Arm Optimized Routines | libroot on arm64 used generic C for memcpy and memset (8 bytes per iteration, one byte when source and destination are not aligned alike) and musl's or Haiku's C versions of the rest. It now uses the Armv8.0 + Advanced SIMD routines, vendored unmodified with their licence (MIT OR Apache-2.0 WITH LLVM-exception) and built under libroot's names: memcpy, memmove, memset, memchr, memrchr, memcmp, strchr, strchrnul, strrchr, strcmp, strncmp, strlen, strnlen, strcpy and stpcpy. The C versions are left out of libroot and the runtime loader on arm64; the kernel and the boot loader keep the generic ones (no SIMD there). MB/s: memcpy 1 KiB 5280 → 11 223, memcpy from source + 1 731 → 9036, memset 4 KiB 5805 → 11 598, strlen 4256 → 8091, memchr 2908 → 6419. app_server bitmap drawing 162 → 181 frames/s. 3.8 million checks against reference versions (every length up to 300, every alignment up to 16, strings ending at an unmapped page) pass. |
 | `076da9813a` ★ | `__tls_get_addr()` without the runtime loader | Every access to a thread-local variable of a shared library (general-dynamic TLS: all `-fPIC` code) called the runtime loader's `get_tls_address()`, and a busy python3 spent a third of its time there. The runtime loader now publishes its TLS generation (the count of unloaded TLS images) in `rld_export`, and `__tls_get_addr()` returns the address directly when the thread's dynamic thread vector is of that generation and already holds the block. Anything else still goes through `get_tls_address()`. A TLS access in a shared library 35 → 17.4 ns (a global: 7.3 ns); `python3 -m timeit "sum(i*i for i in range(1000000))"` 521 → 391 ms. A test reloading two TLS libraries that reuse one module ID 500 times, with a second thread, passes. |
+| `91012322ef` ★ | Link with `--hash-style=both` | The runtime loader reads DT_GNU_HASH since upstream `ffc1a5219d`, but nothing was built with it. With a Bloom filter per image, looking up a symbol in an image that does not define it is mostly one test instead of a hash-chain walk with string compares, and starting an application is mostly such lookups. Pi 4: Terminal opens in 80 ms instead of 95, MediaPlayer in 81 instead of 120. DT_HASH stays. |
 
 ---
 
