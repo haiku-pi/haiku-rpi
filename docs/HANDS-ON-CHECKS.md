@@ -4,10 +4,10 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds release **image-2026-10-24** (hrev60280+141): everything of
-`image-2026-10-23d` (file data written to the card within seconds, the arm64 Debugger, the OpenGL and
-OpenArena fixes) plus a 3 s faster boot, thread-local variables twice as fast (Python 25 % faster), the
-profiler hang (C5) and a kernel stack overflow in file I/O fixed. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
+**The image:** the SD card of the bench Pi holds release **image-2026-10-24b** (hrev60295+145): everything of
+`image-2026-10-23d` plus a 3 s faster boot, thread-local variables twice as fast, memory and string functions
+2-15× faster (Arm's optimised routines), faster file reads, two kernel panics fixed (the profiler, C5; a `read()`
+into an inaccessible page, C8) and this week's upstream Haiku changes. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
 Ethernet cable; power on. The desktop comes up in about 70 s, most of it the bench Pi's firmware trying the
 network first. Wine: `pkgman install wine wine_x86 wine_x86_64 wine_mono` (wine 11.20-19, Wine Mono: .NET
 programs run, no Mono question).
