@@ -2,7 +2,9 @@
  * launchtime.cpp — how long an application takes from launch to its first shown window: launches it
  * through the roster (as the Deskbar or Tracker would) and polls the app_server's window list.
  *
- *   launchtime [-q] APP-PATH-OR-SIGNATURE [TIMEOUT-S]     (default timeout 60 s)
+ *   launchtime [-q] APP-PATH-OR-SIGNATURE [TIMEOUT-S [ARGS...]]     (default timeout 60 s)
+ *
+ * ARGS are passed to the application (as BRoster::Launch(ref, argc, argv) does: it gets them as argv).
  *
  * Prints "launchtime: NAME: window after N ms (team T)" and, with -q, quits the application afterwards
  * (B_QUIT_REQUESTED), so that a loop can measure cold and warm starts in turn, and waits for its team
@@ -59,11 +61,13 @@ main(int argc, char** argv)
 		arg++;
 	}
 	if (arg >= argc) {
-		fprintf(stderr, "usage: launchtime [-q] APP-PATH-OR-SIGNATURE [TIMEOUT-S]\n");
+		fprintf(stderr, "usage: launchtime [-q] APP-PATH-OR-SIGNATURE [TIMEOUT-S [ARGS...]]\n");
 		return 2;
 	}
 	const char* target = argv[arg];
 	bigtime_t timeout = (arg + 1 < argc ? atoi(argv[arg + 1]) : 60) * 1000000LL;
+	int appArgCount = arg + 2 < argc ? argc - (arg + 2) : 0;
+	const char* const* appArgs = (const char* const*)argv + arg + 2;
 
 	BApplication app("application/x-vnd.haiku-pi-launchtime");
 
@@ -74,9 +78,9 @@ main(int argc, char** argv)
 		entry_ref ref;
 		status = get_ref_for_path(target, &ref);
 		if (status == B_OK)
-			status = be_roster->Launch(&ref, (BMessage*)NULL, &team);
+			status = be_roster->Launch(&ref, appArgCount, appArgs, &team);
 	} else
-		status = be_roster->Launch(target, (BMessage*)NULL, &team);
+		status = be_roster->Launch(target, appArgCount, appArgs, &team);
 	if (status != B_OK && status != B_ALREADY_RUNNING) {
 		fprintf(stderr, "launchtime: %s: launch failed: %s\n", target, strerror(status));
 		return 1;
