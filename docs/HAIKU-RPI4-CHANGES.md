@@ -11,7 +11,7 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-
 20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
 weekend; see [log/](log/).
 
-On top of that base the fork carries **151 commits of its own** (2026-10-18 to 2026-10-24). To list
+On top of that base the fork carries **153 commits of its own** (2026-10-18 to 2026-10-24). To list
 them, in `sources/haiku`:
 
 ```
@@ -33,8 +33,8 @@ not written here:
 | `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
 The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
-directories. Of the 151 commits, 24 are changes to the list of binary packages the arm64 build uses
-(`build/jam/repositories/HaikuPorts/arm64`), 23 of them changing nothing else; they are collected in
+directories. Of the 153 commits, 25 are changes to the list of binary packages the arm64 build uses
+(`build/jam/repositories/HaikuPorts/arm64`), 24 of them changing nothing else; they are collected in
 one table at the end.
 
 The changes fall into three kinds:
@@ -447,6 +447,7 @@ the packages staged in `download/`. [TRY-IT.md](TRY-IT.md) has the build steps.
 | `2c93aeea48` ★ | Memory and string routines from Arm Optimized Routines | libroot on arm64 used generic C for memcpy and memset (8 bytes per iteration, one byte when source and destination are not aligned alike) and musl's or Haiku's C versions of the rest. It now uses the Armv8.0 + Advanced SIMD routines, vendored unmodified with their licence (MIT OR Apache-2.0 WITH LLVM-exception) and built under libroot's names: memcpy, memmove, memset, memchr, memrchr, memcmp, strchr, strchrnul, strrchr, strcmp, strncmp, strlen, strnlen, strcpy and stpcpy. The C versions are left out of libroot and the runtime loader on arm64; the kernel and the boot loader keep the generic ones (no SIMD there). MB/s: memcpy 1 KiB 5280 → 11 223, memcpy from source + 1 731 → 9036, memset 4 KiB 5805 → 11 598, strlen 4256 → 8091, memchr 2908 → 6419. app_server bitmap drawing 162 → 181 frames/s. 3.8 million checks against reference versions (every length up to 300, every alignment up to 16, strings ending at an unmapped page) pass. |
 | `076da9813a` ★ | `__tls_get_addr()` without the runtime loader | Every access to a thread-local variable of a shared library (general-dynamic TLS: all `-fPIC` code) called the runtime loader's `get_tls_address()`, and a busy python3 spent a third of its time there. The runtime loader now publishes its TLS generation (the count of unloaded TLS images) in `rld_export`, and `__tls_get_addr()` returns the address directly when the thread's dynamic thread vector is of that generation and already holds the block. Anything else still goes through `get_tls_address()`. A TLS access in a shared library 35 → 17.4 ns (a global: 7.3 ns); `python3 -m timeit "sum(i*i for i in range(1000000))"` 521 → 391 ms. A test reloading two TLS libraries that reuse one module ID 500 times, with a second thread, passes. |
 | `91012322ef` ★ | Link with `--hash-style=both` | The runtime loader reads DT_GNU_HASH since upstream `ffc1a5219d`, but nothing was built with it. With a Bloom filter per image, looking up a symbol in an image that does not define it is mostly one test instead of a hash-chain walk with string compares, and starting an application is mostly such lookups. Pi 4: Terminal opens in 80 ms instead of 95, MediaPlayer in 81 instead of 120. DT_HASH stays. |
+| `3e8577af06` ★ | Shared libraries bind calls to their own functions (`-Bsymbolic-functions`) | Every reference a library made to one of its own exported functions needed a global symbol lookup at load time, because another image could interpose it; in a C++ library that is most of its relocations (its vtables): 7372 of libbe's 8953. They become relative relocations; data stays interposable. libroot opts out (`KEEP_FUNCTIONS_INTERPOSABLE`): programs may replace `malloc()` and libroot's own callers must then use the replacement. A Terminal start makes 12 700 lookups instead of 23 000; applications open 10-20 % sooner. |
 
 ---
 
@@ -493,5 +494,6 @@ repo builds and publishes. The notes say what a bump fixed, where it fixed somet
 | `0c09391cfc` | ncurses6 6.6-1 | Built with the packaged prefix ([../scripts/build-ncurses.sh](../scripts/build-ncurses.sh)), so the terminfo database is `/boot/system/data/terminfo`. It replaces the bootstrap ncurses6 and the shim that gave it its database path. |
 | `bb0cbab1f7` | mesa 26.2.0-6, glu 9.0.3-6, openarena 0.8.8-4 | mesa: the EGL driver's presenter thread no longer ends on an interrupted semaphore wait (a program whose signal handler ran on that thread then waited for it at its next frame for ever). openarena: ioq3's SIGTERM handler returns instead of running on into `Sys_Error()`. |
 | `cb96327eec` | mesa 26.2.5-1 | |
+| `d7d6924a6e` | firefox 157.0.1-5 | getentropy() for random bytes, GNU hash tables |
 
 `e98b67a5bd` and `be395e19f4` (section 8) also bump ffmpeg6, to 6.1.6-2 and 6.1.6-3.
