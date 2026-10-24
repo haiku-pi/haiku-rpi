@@ -7,10 +7,11 @@ apply beyond this board.
 The fork is [haiku-pi/haiku](https://github.com/haiku-pi/haiku), branch `rpi4` (cloned into
 `sources/haiku` by `scripts/bootstrap.sh`). Its remote `upstream` is official Haiku and `origin` is
 haiku-pi/haiku. The branch starts from upstream **hrev60262** (committed 2026-10-17). Upstream was
-merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), so the merge base is now
-`hrev60262-21` (`af754c7c26`). Upstream is merged again every weekend; see [log/](log/).
+merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-24 (`2a0cb4ac45`,
+20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
+weekend; see [log/](log/).
 
-On top of that base the fork carries **114 commits of its own** (2026-10-18 to 2026-10-21). To list
+On top of that base the fork carries **146 commits of its own** (2026-10-18 to 2026-10-24). To list
 them, in `sources/haiku`:
 
 ```
@@ -22,17 +23,19 @@ are the 10-character short hashes from that list.
 
 ## Scope
 
-The raw diff against the merge base is **156 files, +33 053 / −869 lines**. Two blocks in it were not
-written here:
+The raw diff against the merge base is **229 files, +37 720 / −1 177 lines**. Three blocks in it were
+not written here:
 
 | excluded | lines | what it is |
 |---|---|---|
-| `headers/private/drivers/drm/` | +3 562 | Mesa's MIT copies of the Linux DRM and v3d uAPI headers, so Mesa's v3d driver can be used unchanged |
+| `headers/private/drivers/drm/` | +3 594 | Mesa's MIT copies of the Linux DRM and v3d uAPI headers, so Mesa's v3d driver can be used unchanged |
 | `drivers/network/wlan/broadcomfmac/dev/` | ~+6 400 | OpenBSD's bwfm driver, ported (the Haiku glue around it is ours) |
+| `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
-The hand-written surface is therefore roughly **23 000 lines**, most of it new drivers in new
-directories. Of the 114 commits, 21 are changes to the list of binary packages the arm64 build uses
-(`build/jam/repositories/HaikuPorts/arm64`); they are collected in one table at the end.
+The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
+directories. Of the 146 commits, 24 are changes to the list of binary packages the arm64 build uses
+(`build/jam/repositories/HaikuPorts/arm64`), 23 of them changing nothing else; they are collected in
+one table at the end.
 
 The changes fall into three kinds:
 
@@ -69,12 +72,29 @@ section for its area gives the detail.
 | 15 | **`BTimeSource` conversions in `float`** | `c41702df18` | A time more than 2^24 µs from the last published one stopped the program in the debugger. |
 | 16 | **The arm64 debug console read 0xff forever** | `b3a08271be` | "No input" (-1) became 255 because `char` is unsigned on AArch64. |
 | 17 | **PL011 output could hang the system** | `f5650324d6`, `80a6e1f2fb` | The loopback test left the line at 5 data bits when the clock was unknown, and `PutChar()` waited for FIFO room without a limit. |
+| 18 | **The page writer left a device's last modified pages unwritten** | `1539d29eee` | Since the per-device page writers (`3bfaa91290b`), a timeout of the 3 s wait went straight back to waiting, so up to 1 MB of a file stayed unwritten until a sync, and a power cut lost it. A 111 kB file was not on the disk after 60 s; now within 5 s. |
+| 19 | **`IORequest` iterated by recursion and overflowed the kernel stack** | `90fa3bc401` | With synchronous I/O (a device without an `io()` hook, such as `remote_disk`) each round of up to 8 file vecs added a stack level. The page writer panicked writing back a fragmented file. |
+| 20 | **`lock_memory_etc()` panicked on a partly wirable range** | `6f810ed2d7` | Any program could panic the kernel ("VMArea::Unwire(...): no such range"), for example with a `read()` into a buffer that runs into a `PROT_NONE` page. |
+| 21 | **`MAP_SHARED` file mappings lost their sharing across `mprotect()`** | `894c4abe7f` | `mprotect()` dropped `B_SHARED_AREA`. After a `fork()` and one more protection change, writes through every shared mapping of the file went to private pages and never reached the file. Wine's wineserver depends on such a mapping. |
+| 22 | **A fault whose signal is blocked or ignored repeated for ever** | `6e517bb52c` | The thread returned to the faulting instruction and faulted again, millions of times a second; a fault inside a signal handler does this. The signal is now unblocked and reset to its default first, as Linux's `force_sig_fault()` does. |
+| 23 | **The profiler left a timer armed on a CPU** | `5180e96119` | When a team's debugger went away while one of its threads ran on another CPU, that CPU's profiling timer stayed scheduled. The timer list then linked a timer to itself (a hang with interrupts off), or `profiling_event()` dereferenced NULL. `profile -f -k` of Wine did one or the other on its first run. |
+| 24 | **PCI I/O BARs had host address 0 on every architecture but x86** | `cafef4f9bb` | `pci_ram_address()` translates memory ranges only. On QEMU's arm64 virt machine virtio-blk-pci and virtio-net-pci both drove port 0, and the disk stopped working. |
+| 25 | **A failed `fork()` panicked on arm64** | `e2aefd5d96`, `c8f3757b45` | A user translation map gets its page table at its first mapping. Destroying, or unmapping from, a map that never had one freed or walked "the table" at physical address 0. |
+| 26 | **arm64 `mmap(PROT_WRITE)` mappings faulted for ever** | `8a7946ae00` | The access permissions cannot express write-only, so every user store faulted and the handler returned to it. Write now implies user read, as on Linux. |
+| 27 | **arm64 user reads of the ID registers raised SIGILL** | `7225a5f244` | Wine, Box64 and FEX read the CPU's features with `MRS`. The reads are now emulated as Linux does. |
+| 28 | **`remote_disk` was published on every boot** | `8f0df61a1c` | An SD-booted system looked for a remote disk server too. The kernel now keeps the boot method as a boot item, and the driver loads only on a network boot. |
+| 29 | **A Bluetooth L2CAP response to an unknown request panicked the kernel** | `b0ea06deaf` | The connection and disconnection response handlers called into a NULL endpoint, so a remote device could panic the kernel. A laptop unpairing (BlueZ) did it 2 times in 2. |
+| 30 | **Bluetooth tools and kit** | `02e02d4ba3`, `0c12640aa2`, `d226612219`, `3cad4e2996` | `bt_discovery` did not compile, and then waited for ever for the end of its inquiry. Both tools printed a `BString` through `%s`. libbluetooth printed "CALLED ..." in every release build. bluetooth_server left a PIN code window open for each failed pairing, and dereferenced NULL on a disconnection with an unknown handle. |
+| 31 | **xHCI left completed TDs' TRBs on the ring** | `c65ac5a2e6` | Haiku's rings never toggle the cycle bit (a cleared TRB marks the end), so old entries past the stop marker still look valid. A controller that prefetches TRBs, as the VL805 does, can replay them. Clearing completed entries is generic; the overfetch padding is for the VL805. On the Pi 4 the USB hub stopped answering in about 1 boot in 10; now 0 in 40. |
 
-Also generally useful, though new code rather than fixes: serial-console emergency keys
+Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
 UHS-I / SDIO in the MMC stack, ADMA2 in sdhci, a pipelined `remote_disk` in both the loader and the
-kernel, WPA-personal joins without the wpa_supplicant in openbsd_wlan, and the CPU clock measured
-with the PMU on arm64.
+kernel (reads and writes), WPA-personal joins without the wpa_supplicant in openbsd_wlan, the CPU
+clock measured with the PMU on arm64, an arm64 back end for the Debugger (`ad9b5551c8`), Arm
+Optimized Routines in libroot (`2c93aeea48`) and for `user_memcpy()` (`3a0ccc321f`), a faster
+`__tls_get_addr()` on arm64 (`076da9813a`), shorter boot-time device scans (`c82925eeb9`,
+`afb2823bb5`), and SavedClock for boards without a real-time clock (`0ce0612c25`).
 
 ---
 
@@ -113,8 +133,11 @@ path was broken in several places on arm64. After these commits a Pi 4 reaches t
 | `f316d4920e` ★ | Default route through the gateway | The network-boot default route had no gateway, so every off-link address was treated as on-link. The loader takes the gateway from `ip=` and the kernel routes through it. |
 | `b1ddc00b1f` ★ | Kernel `remote_disk`: 16 requests in flight | It sent one 1 KiB request and waited for the reply before the next, so the boot volume read at round-trip time. Requests are told apart by ID, resent every 0.5 s while overdue, and given up after 25 s. Desktop ~90 s → ~70–80 s, 8/8 boots, package checksums equal to the host's. |
 | `e1fe4f62bd` ★ | Loader remote disk: 8 requests in flight | The same for the loader, capped at 8 because the firmware's network driver buffers few frames. The loader's part 25 s → ~5.5 s; desktop ~60 s. |
+| `8f0df61a1c` ★ | `remote_disk` only on a network boot | The driver was published on every boot, so an SD-booted system looked for a remote disk server too (and showed its disk if one was on the LAN). The kernel arguments that say how the system booted are gone by then, so the kernel now keeps the boot method (`BOOT_METHOD_*`) as the boot item "boot method", and the driver's `init_hardware()` declines any other. |
+| `84fd3835a4` ★ | Kernel `remote_disk`: writes pipelined too | A write sent one 1 KiB block and waited for its reply, so a network-booted system wrote at 2.9 MB/s over gigabit. Writes larger than a block now keep up to 16 requests in flight, as reads do, and are resent while overdue (a write at an offset can be repeated). 200 MiB written and synced in 3 s (was ~74 s); Wine's packages installed in 42 s (94); a new Wine prefix (~1 GB) in 61 s (387). |
 
-**Open:** about 1 in 45 network boots wedges silently (every CPU stops; SD boots do not show it).
+**Open:** a network boot sometimes wedges silently (every CPU stops; SD boots do not show it): about
+1 in 10 after the Pi has been off for some minutes, and once so far in a warm session.
 `a46a16641e` and `80a6e1f2fb` (section 2) were written while hunting it. It is not fixed; see
 [log/WEEK-2026-W43.md](log/WEEK-2026-W43.md).
 
@@ -124,7 +147,7 @@ path was broken in several places on arm64. After these commits a Pi 4 reaches t
 
 Nearly everything here applies to any arm64 board. The Pi 4 found it because its Cortex-A72 has no
 LSE atomics and no hardware access/dirty flags, and because it is real hardware with real interrupt
-load, which QEMU did not provide.
+load, which QEMU did not provide. The last subsection is code that every architecture uses.
 
 ### Memory management and caches
 
@@ -132,13 +155,20 @@ load, which QEMU did not provide.
 |---|---|---|
 | `9e2efe1eff` | `arm64_dcache_clean_range()` / `arm64_dcache_flush_range()` | Helpers to write back (and discard) a virtual range, for drivers of devices that do not snoop the CPU caches. On the Pi 4 that is every device on the VideoCore bus, PCIe included. |
 | `dc849a150b` ★ | Map kernel stacks accessed and dirty from the start | The A72 manages neither flag in hardware, so a fresh page faults on first access and on first write. On a kernel stack that first access can be the exception entry storing an iframe; the fault then happens inside the vector, and each nested exception stores to the same page again. A `KDEBUG_LEVEL` 1 build (smaller frames) panicked at boot with it. Kernel stacks are never paged out, so the flags carry no information there. It matched the shape of the network-boot wedge but did not cure it (a wedge 17 network boots later). |
+| `8a7946ae00` ★ | A user write-only mapping is user-readable too | The access permissions cannot express write-only. Without user access an `mmap(PROT_WRITE)` mapping faulted on every user store, and the fault handler, finding writes allowed, returned to the same instruction: an endless fault loop (Wine's wineserver spun at 100 % CPU writing its shared data page). As execute already did, write now implies user read, as Linux maps it on arm64. |
+| `e2aefd5d96` ★ | A failed `fork()` no longer panics | A user translation map gets its page table with its first mapping, but the destructor freed it unconditionally. Destroying an address space that never had a mapping (`fork_team()` failing early) freed "the table" at physical 0 and faulted at `KERNEL_PMAP_BASE`: a panic from a bash fork while Wine ran an x86-64 program. The same commit cuts user-exception logging (next table). |
+| `c8f3757b45` ★ | No page-table walk before a user map has a table | `ProcessRange()` only asserted that the table address was not 0, which a release kernel does not check, and then walked from physical 0: `UnmapPages()` on a map that never mapped anything faulted at 0xffffff0000000000. It panicked when `fork()` failed under memory pressure and `fork_team()` deleted the child's areas. Every operation now treats a map without a table as empty. |
+| `3a0ccc321f` ★ | `user_memcpy()` with Arm's memcpy | It used the kernel's generic C `memcpy()`, which copies one byte at a time when source and destination are not aligned alike, as for every `read()` at an odd file offset or into an odd buffer address. It now uses libroot's memcpy from Arm Optimized Routines (general-purpose registers only), built into the kernel as `arch_user_memcpy()`. It is not the kernel's `memcpy()`, because it makes unaligned accesses and that may touch device memory. `read()` of a cached file in 64 KiB pieces: into an aligned buffer 1718 → 2245 MB/s, into buffer + 1 630 → 2350, from file offset 1 630 → 2060. |
 
 ### Exceptions and time accounting
 
 | commit | change | what and why |
 |---|---|---|
-| `cdd63d4b62` ★ | Classify unhandled user exceptions | An undefined instruction, an alignment fault or another unhandled class left the exception type and signal number uninitialised, so a crashing thread got whatever signal was in the register. Each class now gets its proper signal, and the syndrome, fault address and PC are logged. |
+| `cdd63d4b62` ★ | Classify unhandled user exceptions | An undefined instruction, an alignment fault or another unhandled class left the exception type and signal number uninitialised, so a crashing thread got whatever signal was in the register. Each class now gets its proper signal, and the syndrome, fault address and PC are logged (since `e2aefd5d96` only when the signal ends the program). |
 | `24b4e36dcf` ★ | Count user time on every exception from EL0 | `thread_at_kernel_entry()` ran only on system calls, while `thread_at_kernel_exit()` ran on every return. Timer and page-fault entries therefore billed the preceding user time as kernel time. It now works as on x86. |
+| `7225a5f244` ★ | Emulate user reads of the ID registers, as Linux does | Programs read the CPU's features with `MRS` of the ID registers: Wine for the processor registry keys that Windows programs and x86 emulators read, Box64, FEX. An ARMv8.0 CPU makes such a read an undefined instruction, so the program got SIGILL. As in Linux (`cpu-feature-registers.rst`), MIDR_EL1 and the AArch64 feature registers are passed on, MPIDR_EL1 reads as on a uniprocessor, and every other register of the space reads as 0. |
+| `e2aefd5d96` ★ | Log only the user exceptions that end the program | A program that handles its exceptions may take thousands (FEX's misaligned store-releases, Wine's write watches), and every logged line cost serial-console time. (The fork fix in the same commit is in the table above.) |
+| `898d65974f` ★ | Log a user abort whose FAR is 0 | Diagnostic. A Box64 store to a valid address once reached Wine as a write fault at address 0. ESR and ELR are now logged when FAR is 0, which tells whether FAR was valid (ESR.FnV) and what the fault was. |
 
 ### Interrupt controller (GICv2) and the CPU stall
 
@@ -182,12 +212,26 @@ spin-waits, and removed the watchdog and its diagnostics.** What survives:
 | `55348c5c46` ★ | Side effects out of `ASSERT()`; what `KDEBUG_LEVEL` < 2 needs | Found by building at level 1. arm and arm64 `arch_setup_signal_frame()` fetched the handler address inside `ASSERT()`. The FDT bus manager fetched node and driver inside `ASSERT()` (9 places, now `ASSERT_ALWAYS()`). Missing includes in `arch_int_gicv3` and sdhci, and a NULL guard in `dec_vnode_ref_count()` for a GCC `-Wstringop-overflow` false positive. |
 | `18e0d2a9db` | **`KDEBUG_LEVEL` 1** (was 2) | Level 2 (paranoid malloc/free, debug mutexes, `ASSERT()`s, block-cache checks) cost ~30 % of a TCP sender's kernel profile in the slab allocator and ~15 % in mutexes. Level 1 keeps the debug syslog, interrupt statistics and KDL commands; the spinlock and ICI checks do not depend on the level. Pi 4: TCP upload 600 → 914 Mbit/s, download 660 → 918; network boot to desktop 56.2 → 54.8 s (15/15); a 15-minute Firefox + SuperTuxKart + HEVC soak with 0 crashes. A fork configuration choice, not a fix (`build/config_headers/kernel_debug_config.h`). |
 
+### Not arm64-specific: VM, I/O, signals, profiling
+
+These are in kernel code that every architecture uses. Most were found by running Wine on the Pi.
+
+| commit | change | what and why |
+|---|---|---|
+| `894c4abe7f` ★ | Keep `MAP_SHARED` file mappings shared across `mprotect()` | `mprotect()` and `set_area_protection()` replaced an area's protection outright and dropped `B_SHARED_AREA` (and `B_OVERCOMMITTING_AREA`, `B_KERNEL_AREA`). The next `fork()` copied such a mapping as a private area, which made the child's cache a consumer of the file's cache. The next protection change of any mapping of that file then called `vm_copy_on_write_area()` on the file's cache, which moves every area of the file, writable shared mappings included, onto a new anonymous cache; their writes never reached the file again. The flags that say how an area was created are now kept, and no copy-on-write cache is inserted above a file's cache. Wine's wineserver writes the session's shared objects through such a mapping; once it was detached, new Wine processes read zeros and a new prefix never finished. |
+| `6e517bb52c` ★ | A fault whose signal is blocked or ignored ends the team | A faulting thread returns to the faulting instruction. When it blocks or ignores the signal of that fault (SIGSEGV, SIGBUS, SIGILL, SIGFPE), the signal stays pending and the thread faults again, for ever. A fault inside a signal handler, which runs with its own signal blocked, does exactly that: Wine's SIGSEGV handler, entered on a thread Wine did not create, faulted on its missing thread data, and the team spent minutes in millions of faults a second. `send_fault_signal()` now unblocks such a signal and resets its action to the default before sending it, as Linux's `force_sig_fault()` does. `vm_page_fault()` and the arm64 synchronous exception handler use it. |
+| `1539d29eee` ★ | Page writer: write what there is after the wait times out | Since the per-device page writers (`3bfaa91290b`), a timeout of the 3 s wait for a trigger went straight back to waiting, so a device's last modified pages, fewer than `kNumPages` (up to 1 MB of a file), stayed unwritten until a sync. A power cut lost them: a 111 kB file was not on the disk after 60 s (now within 5 s), and a package installed just before a power-off lost its last 163 kB. An idle writer still finds no pages and goes back to waiting. |
+| `90fa3bc401` ★ | `IORequest`: iterate in a loop, not by recursion | When the sub-requests an iteration callback schedules finish before it returns (synchronous I/O, as for a device without an `io()` hook such as `remote_disk`), the last one notified the parent, whose `NotifyFinished()` ran the callback again: one stack level per round of up to 8 file vecs. A fragmented file overflowed the kernel stack; on a network boot the page writer panicked writing back a Wine Mono install on a nearly full disk. A notification that arrives while the callback runs now only records that the I/O has finished, and the caller's loop goes on to the next round. Asynchronous completions are unchanged. Not reproduced synthetically; the Wine case passes with the fix. |
+| `6f810ed2d7` ★ | `lock_memory_etc()`: unwire what was wired when a page fails | When a page in the middle of an area could not be wired, the area's wired range stayed registered at its full size, and the revert for the part before that page looked for a range of the shorter size: "PANIC: VMArea::Unwire(...): no such range". A `read()` into a buffer that runs into a `PROT_NONE` page of the same area did it (`cache_io()` wires the buffer). The range is now shrunk to the wired pages first. `read()` and `write()` with buffers ending in a `PROT_NONE` page, at 64 offsets: an error return, no panic. |
+| `5180e96119` ★ | No profiling timer left behind on a CPU | When a team's debugger goes away, `THREAD_FLAGS_DEBUGGER_INSTALLED` is cleared on all its threads, including one running on another CPU with its profiling timer armed. `switch_thread()` then skipped `user_debug_thread_unscheduled()` for it, and the CPU's timer stayed scheduled after the thread was gone. Adding it again linked it to itself in the timer list, and the next walk spun with interrupts off; or it fired and `profiling_event()` dereferenced the current thread's NULL `installed_timer`. A thread is now unscheduled through the debugger code whenever it has a profiling timer, whatever its flags say. The timer is also cancelled before it is added and when a profiled thread exits. `profile -i 1000 -f -k wineboot -i` 3 times in a row (was a hang or a panic on the first run). |
+
 ---
 
 ## 3. Device and bus managers
 
-The FDT changes are ★: any board whose devices sit behind remapping buses needs them. The mailbox
-module and the PCIe driver are Pi-specific.
+The FDT changes are ★: any board whose devices sit behind remapping buses needs them. So are the
+`device_manager` and PCI bus manager changes. The mailbox module and the PCIe driver are
+Pi-specific.
 
 | commit | change | what and why |
 |---|---|---|
@@ -195,6 +239,8 @@ module and the PCIe driver are Pi-specific.
 | `08e65e6449` ★ | FDT: `get_dma_window()` | From the nearest `dma-ranges`: the offset between physical and DMA addresses and the end of reachable RAM. VideoCore-bus devices see the first GiB of RAM at 0xc0000000. |
 | `f2e5b2fab8` ★ | `get_dma_window()`: the RAM window, not the first one | `/scb` lists the peripheral window first, so its devices got a 56 MiB window. RAM's window is the largest one; use that. |
 | `81deb24f8c` ★ | `device_manager`: `get_next_child_node()` | Returned only the first child (see the shortlist). |
+| `c82925eeb9` ★ | `device_manager`: keep driver modules loaded while reprobing at boot | After the boot volume is mounted, `device_manager_init_post_modules()` reprobes every node, and each node loaded, asked and (with the last reference gone) unloaded the same driver modules again. On the Pi 4 (about a hundred device tree nodes) that took 2.9 s with the device manager lock held. The modules the reprobe loads now keep a reference until it is done: 0.76 s, with the same devices and drivers found. |
+| `cafef4f9bb` ★ | PCI: an I/O port BAR's host address is its port | `pci_ram_address()` translates memory addresses only, so for an I/O BAR it found no range and returned 0: on every architecture but x86, all I/O BARs read as "host 0". The `read_io`/`write_io` accessors take ports in PCI I/O space and map them through the controller's I/O window themselves, so the port is what drivers need. Found on QEMU's arm64 virt machine, not the Pi: virtio-blk-pci (port 0) and virtio-net-pci (port 0x80) both drove port 0 in legacy mode, virtio-net's reset stopped the disk, and every read after it failed. Both now work, and the system boots to the desktop. |
 | `eafa824d33` | `generic/bcm2835_mailbox`: VideoCore firmware property interface | Clock rates, temperature, power domains, board information and GPIO-expander lines via the ARM-to-VideoCore mailbox, with one request buffer inside the VideoCore's DMA window and the cache maintenance it needs. A boot module, because the SD card's base clock comes from the firmware. Later commits add tags (GPIO state, V3D power and clocks, planes, clock IDs, turbo). |
 | `5cb3a2d215` | `busses/pci/brcmstb`: Broadcom STB PCIe root complex | The BCM2711's single-lane PCIe, which connects the VIA VL805 USB 3 controller. U-Boot shuts the controller down, so it does the full bring-up as Linux's `brcm_pcie_setup()`/`brcm_pcie_start_link()`: reset, inbound and outbound windows, PERST# for 100 ms, link training. Haiku's PCI bus manager does not program bridges here, so the root port is set up as a bridge to bus 1. Boards without a VL805 EEPROM get its firmware loaded by the VideoCore (`NOTIFY_XHCI_RESET`). Legacy interrupts go through `interrupt-map`, devices behind it inherit the 3 GiB DMA limit, and MSI is not supported yet. Gen 2 x1 link. See [design/brcmstb-pcie.md](design/brcmstb-pcie.md). |
 
@@ -234,12 +280,14 @@ Pi-specific.
 
 ## 5. USB (xHCI behind the VL805)
 
-The xHCI driver works behind the PCIe driver above with only a diagnostic added. USB keyboards, mice and disks enumerate.
+The xHCI driver works behind the PCIe driver above with a diagnostic and one ring fix (`c65ac5a2e6`). USB keyboards, mice and disks enumerate.
 
 | commit | change | what and why |
 |---|---|---|
 | `71bc709601` | USB stack DMA below 3 GiB and non-cacheable on arm64 | The VL805 reaches only the first 3 GiB and does not snoop. This is applied to the stack's DMA areas on all of arm64 for now, **until the limits are taken from the host controller itself**. That makes it a stopgap, not upstreamable as is. |
 | `1d44b00380` ★ | xHCI: show the endpoint ring on a TRB error | Prints the event's TRB pointer and the ring, which identify the rejected TRB. Seen intermittently on a HID interrupt endpoint of the VL805. |
+| `afb2823bb5` ★ | USB: explore a new bus in the explore thread, not in its `Start()` | `BusManager::Start()` explored the new bus at once. On the Pi 4 the xHCI's `init_bus()` took 1.56 s of port resets and enumeration inside the device manager's initial scan, before the boot volume could be mounted. The explore thread does it now while the boot goes on; a USB boot disk published late is waited for by `get_boot_partitions()`, and other devices are hot-plugged as always. Boot volume mounted 5.8 s after the kernel starts, was 7.1 s. |
+| `c65ac5a2e6` ★ | xHCI: clear completed TDs' ring entries; pad TRBs against overfetch | In about one boot in ten (59 of 623) the board's USB hub stopped answering a few seconds after usb_hid started: every control transfer to it timed out until the next boot. At the timeout the controller's dequeue pointer had run past the stop marker, over entries of the ring's previous lap. Haiku's rings never toggle the cycle bit (a cleared TRB marks the end), so old entries still look valid, and the VL805 prefetches TRBs past where it stops and may use those copies later without reading them again (Linux's `XHCI_TRB_OVERFETCH`). It then replayed stale Link TRBs into freed TDs. Each TD's two ring entries are now cleared when its Event Data completion arrives, whatever the completion code; that part is generic. Every endpoint ring and every TD's TRBs are followed by four unused TRBs, as Linux does for the VL805. The VL805's firmware version is logged, since its other errata depend on it. 40 of 40 cold boots without a USB error. |
 
 ---
 
@@ -325,9 +373,18 @@ userspace half is a `hevc_rpivid` hwaccel in FFmpeg 6.1, carried as
 
 ## 10. Bluetooth
 
+The transport driver is Pi-specific. The fixes to the stack, the kit, bluetooth_server and the
+command-line tools are ★.
+
 | commit | change | what and why |
 |---|---|---|
 | `865c648344` | `bcm2711_bt`: on-board BCM43455 Bluetooth over UART | An H4 transport driver for Haiku's Bluetooth stack, like `h2generic` for USB: `/dev/bluetooth/h4/bcm2711_bt/0`. The controller sits on the AUX mini-UART, which the driver routes to GPIO 30–33 (ALT5) itself (`config.txt` disables the firmware's Bluetooth UART). Every open resets it through the firmware's `BT_ON` line, patches it from `BCM4345C0.hcd` (Download_Minidriver, records, Launch_RAM), resets it again, then registers it with the HCI module. Receive is interrupt-driven, with polling as a fallback. The baud divisor derives from the core clock. 323/323 patch records acknowledged; bluetooth_server reads features, name and class, and an inquiry completes. In the regular image. |
+| `02e02d4ba3` ★ | `bt_dev_info`, `bt_discovery`: build and print the device address | `bt_discovery` did not compile: `<bluetooth/RemoteDevice.h>` includes the private `bluetoothserver_p.h`, which was not on `src/bin`'s include path. Both tools passed the `BString` of `bdaddrUtils::ToString()` through `%s` (garbage on arm64), printed a `uint32` with `%ld`, and read the device number from `argv[0]` instead of `argv[1]`. `bt_dev_info` now prints the BCM43455's name and address. |
+| `a7535eab9d` | Regular image: ship `bt_dev_info` and `bt_discovery` | They were built but in no image, so the image's Bluetooth stack had no command to look at the local device. |
+| `d226612219` ★ | The kit traces only errors unless `DEBUG` is set | `headers/private/bluetooth/debug.h` defaulted to `DEBUG` 3 when `DEBUG` was not defined, as in every release build, so each libbluetooth call printed "CALLED ..." on the standard output of the program using the kit. |
+| `0c12640aa2` ★ | `bt_discovery` sees its inquiry end | The kit reports the end of an inquiry through `DiscoveryListener::InquiryResponse()`. `bt_discovery` overrode the old `InquiryCompleted()`, which nothing calls, and waited for ever. The callbacks are marked `override` now. |
+| `b0ea06deaf` ★ | L2CAP: ignore connection and disconnection responses to unknown requests | A signalling response is matched to its endpoint by the command identifier; for an unknown identifier (no request of ours, or its endpoint is gone) the lookup gives NULL. The command-reject and configuration-response handlers checked for that; the connection- and disconnection-response handlers called into the NULL endpoint, so a remote device could panic the kernel. A laptop paired by PIN and then unpaired (BlueZ) sent such a connection response, and `L2capEndpoint::_HandleConnectionRsp()` faulted at 0x6c, 2 times in 2. Both handlers now log the response and drop it (0 panics in 3). |
+| `3cad4e2996` ★ | bluetooth_server: close a pairing's PIN code window when the pairing is over | Each PIN code request opened a new window and nothing closed it, so every failed pairing left one more on the screen. The server keeps a messenger to the window of each remote address, sends a repeated request to the window already open, and closes it when the link key arrives or the link disconnects. `DisconnectionComplete()` also set the state of a remote device it may not have found (a NULL dereference for an unknown handle); now only when found. |
 
 ---
 
@@ -376,6 +433,15 @@ the packages staged in `download/`. [TRY-IT.md](TRY-IT.md) has the build steps.
 |---|---|---|
 | `0ef01f9d31` | `drivers/gpio/bcm2835_gpio` | `gpio/bcm2835/<n>` for `brcm,bcm2711-gpio`. Reading lists each pin's function, level and pull; writing text commands (`in <pin>`, `out <pin> <0\|1>`, `alt <pin> <0-5>`, `pull <pin> <none\|up\|down>`) changes them, so shell scripts can use it. Haiku has no GPIO framework yet, so this is a stopgap interface. |
 | `8a10e472dc` ★ | `tests/system/network/tcp_throughput` | Sends or receives TCP data against a sink or source (socat) and reports the rate; used to measure network drivers. |
+| `ad9b5551c8` ★ | Debugger: an arm64 back end | The Debugger had x86 and x86-64 back ends only, so on arm64 attaching to a team failed ("Operation not supported") and the crash dialog's Debug and Save report did nothing. `ArchitectureArm64` and `CpuStateArm64` add the registers of the kernel's `arm64_debug_cpu_state` and their DWARF numbers; CFI unwinding, with lr as the return address column; frame-record unwinding without CFI, taking the return address from lr for a top frame not yet in its frame record; instruction info (bl/blr as calls) and statements; and `EM_AARCH64` core files. No disassembler and no watchpoints yet (the kernel has no arm64 debug registers yet). A crashed program's report lists its whole call chain with DWARF variables. |
+| `0ce0612c25` ★ | SavedClock: keep the time across boots without a battery-backed clock | The Pi 4 has no real-time clock, so every boot started in 1970 until network time synchronisation ran: files got 1970 dates, HTTPS certificates were "not yet valid", and without a network the date stayed wrong. A launch job runs `/system/boot/SavedClock` once the volumes are mounted. It sets the clock forward to the time it last saved (the modification time of `/boot/system/settings/saved_clock`) if the clock is behind it, then saves the time every five minutes and at shutdown. It never moves the clock back; network time synchronisation still corrects it later. After a shutdown the next boot starts from the shutdown's time. |
+
+### libroot and the runtime loader (arm64)
+
+| commit | change | what and why |
+|---|---|---|
+| `2c93aeea48` ★ | Memory and string routines from Arm Optimized Routines | libroot on arm64 used generic C for memcpy and memset (8 bytes per iteration, one byte when source and destination are not aligned alike) and musl's or Haiku's C versions of the rest. It now uses the Armv8.0 + Advanced SIMD routines, vendored unmodified with their licence (MIT OR Apache-2.0 WITH LLVM-exception) and built under libroot's names: memcpy, memmove, memset, memchr, memrchr, memcmp, strchr, strchrnul, strrchr, strcmp, strncmp, strlen, strnlen, strcpy and stpcpy. The C versions are left out of libroot and the runtime loader on arm64; the kernel and the boot loader keep the generic ones (no SIMD there). MB/s: memcpy 1 KiB 5280 → 11 223, memcpy from source + 1 731 → 9036, memset 4 KiB 5805 → 11 598, strlen 4256 → 8091, memchr 2908 → 6419. app_server bitmap drawing 162 → 181 frames/s. 3.8 million checks against reference versions (every length up to 300, every alignment up to 16, strings ending at an unmapped page) pass. |
+| `076da9813a` ★ | `__tls_get_addr()` without the runtime loader | Every access to a thread-local variable of a shared library (general-dynamic TLS: all `-fPIC` code) called the runtime loader's `get_tls_address()`, and a busy python3 spent a third of its time there. The runtime loader now publishes its TLS generation (the count of unloaded TLS images) in `rld_export`, and `__tls_get_addr()` returns the address directly when the thread's dynamic thread vector is of that generation and already holds the block. Anything else still goes through `get_tls_address()`. A TLS access in a shared library 35 → 17.4 ns (a global: 7.3 ns); `python3 -m timeit "sum(i*i for i in range(1000000))"` 521 → 391 ms. A test reloading two TLS libraries that reuse one module ID 500 times, with a second thread, passes. |
 
 ---
 
@@ -420,5 +486,7 @@ repo builds and publishes. The notes say what a bump fixed, where it fixed somet
 | `6aa2792481` | mesa 26.2.0-5, glu 9.0.3-5 | Rebuilt with a toolchain that links libgcc_s: libEGL_mesa and libGLU had private unwinders for the C++ exceptions they throw and catch. The package now also ships the V3DV ICD manifest (`add-ons/vulkan/icd.d`); before, Vulkan worked only from a staging tree. |
 | `a4f0d50da1` | firefox 157.0.1-4 (zstd), openarena 0.8.8-2 + openarena_data_1..5, supertuxkart 1.5-2 + supertuxkart_data_1..3 | Firefox zstd-compressed (112 → 102 MB) and the games' data split into parts, each under GitHub's 100 MiB file limit: all three published (owner, 10-21). |
 | `0c09391cfc` | ncurses6 6.6-1 | Built with the packaged prefix ([../scripts/build-ncurses.sh](../scripts/build-ncurses.sh)), so the terminfo database is `/boot/system/data/terminfo`. It replaces the bootstrap ncurses6 and the shim that gave it its database path. |
+| `bb0cbab1f7` | mesa 26.2.0-6, glu 9.0.3-6, openarena 0.8.8-4 | mesa: the EGL driver's presenter thread no longer ends on an interrupted semaphore wait (a program whose signal handler ran on that thread then waited for it at its next frame for ever). openarena: ioq3's SIGTERM handler returns instead of running on into `Sys_Error()`. |
+| `cb96327eec` | mesa 26.2.5-1 | |
 
 `e98b67a5bd` and `be395e19f4` (section 8) also bump ffmpeg6, to 6.1.6-2 and 6.1.6-3.
