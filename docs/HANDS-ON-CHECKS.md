@@ -4,10 +4,10 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds release **image-2026-10-24b** (hrev60295+145): everything of
-`image-2026-10-23d` plus a 3 s faster boot, thread-local variables twice as fast, memory and string functions
-2-15× faster (Arm's optimised routines), faster file reads, two kernel panics fixed (the profiler, C5; a `read()`
-into an inaccessible page, C8) and this week's upstream Haiku changes. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
+**The image:** the SD card of the bench Pi holds release **image-2026-10-24c** (hrev60295+147, Mesa 26.2.5):
+everything of `image-2026-10-23d` plus a 3 s faster boot, faster memory/string functions, thread-local variables
+and file reads, two kernel panics fixed (C5, C8), and the onboard USB hub no longer dropping out in ~1 boot in 10
+(C9) — relevant for the keyboard and mouse checks below. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
 Ethernet cable; power on. The desktop comes up in about 70 s, most of it the bench Pi's firmware trying the
 network first. Wine: `pkgman install wine wine_x86 wine_x86_64 wine_mono` (wine 11.20-19, Wine Mono: .NET
 programs run, no Mono question).
