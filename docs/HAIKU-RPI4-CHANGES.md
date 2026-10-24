@@ -11,7 +11,7 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-
 20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
 weekend; see [log/](log/).
 
-On top of that base the fork carries **149 commits of its own** (2026-10-18 to 2026-10-24). To list
+On top of that base the fork carries **151 commits of its own** (2026-10-18 to 2026-10-24). To list
 them, in `sources/haiku`:
 
 ```
@@ -33,7 +33,7 @@ not written here:
 | `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
 The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
-directories. Of the 149 commits, 24 are changes to the list of binary packages the arm64 build uses
+directories. Of the 151 commits, 24 are changes to the list of binary packages the arm64 build uses
 (`build/jam/repositories/HaikuPorts/arm64`), 23 of them changing nothing else; they are collected in
 one table at the end.
 
@@ -225,6 +225,7 @@ These are in kernel code that every architecture uses. Most were found by runnin
 | `90fa3bc401` ★ | `IORequest`: iterate in a loop, not by recursion | When the sub-requests an iteration callback schedules finish before it returns (synchronous I/O, as for a device without an `io()` hook such as `remote_disk`), the last one notified the parent, whose `NotifyFinished()` ran the callback again: one stack level per round of up to 8 file vecs. A fragmented file overflowed the kernel stack; on a network boot the page writer panicked writing back a Wine Mono install on a nearly full disk. A notification that arrives while the callback runs now only records that the I/O has finished, and the caller's loop goes on to the next round. Asynchronous completions are unchanged. Not reproduced synthetically; the Wine case passes with the fix. |
 | `6f810ed2d7` ★ | `lock_memory_etc()`: unwire what was wired when a page fails | When a page in the middle of an area could not be wired, the area's wired range stayed registered at its full size, and the revert for the part before that page looked for a range of the shorter size: "PANIC: VMArea::Unwire(...): no such range". A `read()` into a buffer that runs into a `PROT_NONE` page of the same area did it (`cache_io()` wires the buffer). The range is now shrunk to the wired pages first. `read()` and `write()` with buffers ending in a `PROT_NONE` page, at 64 offsets: an error return, no panic. |
 | `5180e96119` ★ | No profiling timer left behind on a CPU | When a team's debugger goes away, `THREAD_FLAGS_DEBUGGER_INSTALLED` is cleared on all its threads, including one running on another CPU with its profiling timer armed. `switch_thread()` then skipped `user_debug_thread_unscheduled()` for it, and the CPU's timer stayed scheduled after the thread was gone. Adding it again linked it to itself in the timer list, and the next walk spun with interrupts off; or it fired and `profiling_event()` dereferenced the current thread's NULL `installed_timer`. A thread is now unscheduled through the debugger code whenever it has a profiling timer, whatever its flags say. The timer is also cancelled before it is added and when a profiled thread exits. `profile -i 1000 -f -k wineboot -i` 3 times in a row (was a hang or a panic on the first run). |
+| `127fb34239` ★ | `poll()` leaves the caller's `events` alone | It ORed `POLLNVAL \| POLLERR \| POLLHUP` into each pollfd's `events` and copied the array back. `events` is input only (POSIX), and libevent's poll backend drops a descriptor once its `events` is 0 — which never happened, so a descriptor closed while still listed made every `poll()` return at once with `POLLNVAL`. Firefox's IPC thread spun like that at every quit (~2000 calls per second for two seconds) and while child processes came and went. `tools/haiku-tests/polltest.c` in haiku-rpi checks it. |
 
 ---
 
@@ -392,7 +393,7 @@ command-line tools are ★.
 
 ## 11. Power, sensors, random numbers
 
-All Pi-specific. The firmware owns the sensors and the clocks, so these drivers talk to it through
+All Pi-specific except the random module's generator (★). The firmware owns the sensors and the clocks, so these drivers talk to it through
 the mailbox module.
 
 | commit | change | what and why |
@@ -401,6 +402,7 @@ the mailbox module.
 | `8f69771aea` | `power/cpufreq/bcm2835_cpufreq` (first version) | The firmware runs the ARM at maximum only for its boot-time turbo period. About two minutes after power-on it drops the ARM from 1500 to 600 MHz and the core clock from 500 to 200 MHz for good, unless the OS asks for a rate (Linux's cpufreq does). Everything after two minutes therefore ran at 40 % CPU clock. This first version pinned the maximum in low-latency mode; QuakeSpasm demo1 at 1920×1080 went 19–27 → 30–43 fps. The V3D driver asks for the maximum core clock while the GPU is on. **The policy was replaced by the next entry.** |
 | `5d8bcb1171` | cpufreq: the ARM clock follows the load; no firmware turbo | The scheduler's per-CPU performance requests move a level, as `intel_pstates` does. A thread checks every 50 ms and asks for the lowest of minimum/750/1000/1200 MHz/maximum that covers it, lowering only after four agreeing checks. With turbo on, the firmware answers every ARM rate with the maximum, so turbo is switched off at start and never requested (v3d, rpivid and bcm2711_bt skip it too). Turbo had also held the core clock at maximum, and at 200 MHz HEVC lost a fifth of its rate, so the core clock is set to maximum once. A 0.7 s burst from idle runs 7 % slower than at full speed; games and HEVC are unchanged. |
 | `fb4461ed54` | `busses/random/bcm2711_rng200` | The RNG200 (`brcm,bcm2711-rng200`) feeds the random module's pool like the other random controllers. It is reset and enabled at attach (as Linux's `iproc_rng200_restart()`) and checked to produce words. A periodic timer then queues a DPC that drains up to 16 FIFO words, and a failed health test restarts it. |
+| `67b972b5e1` ★ | `bus_managers/random`: ChaCha20 output keyed from the pool | Not Pi-specific. Every 32 bytes read reseeded the pool, which calls `thread_yield()` 257 times under the device lock: a 16-byte read took 145 µs, `/dev/urandom` gave 2.8 MB/s, and every `getentropy()`, TLS handshake and program start that wanted random bytes paid that. The output also was the mixer's internal state, not a cryptographic generator. Now a ChaCha20 keystream (OpenBSD's code, as libbsd's `arc4random`) keyed from the pool, with fast key erasure, stirred from the pool every 1 MiB, every 60 s, after a write and once 64 bytes of hardware entropy have arrived: 2.3 µs per read, 149 MB/s. |
 
 ---
 
