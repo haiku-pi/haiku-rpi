@@ -3,7 +3,7 @@
 # Firefox's first (cold) and second launch. Later boots: the whole Firefox package read from the card
 # (cold; timed) and its MD5 sums (one sum over all files, as on the host), the package file read
 # uncached in requests of 21/64/256 KiB at aligned and unaligned offsets (nocacheread), raw reads by
-# size (disklat), and Firefox's second launch. Serial lines "IOC ...". Needs /boot/home/launchtime,
+# size (disklat), 128 MB written to a file and synced (timed), and Firefox's second launch. Serial lines "IOC ...". Needs /boot/home/launchtime,
 # /boot/home/nocacheread and /boot/home/disklat (tools/haiku-tests).
 out=/dev/dprintf
 say() { echo "IOC $*" > $out; }
@@ -26,6 +26,8 @@ else
 	say "md5 $(cd $ff && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 md5sum | md5sum)"
 	/boot/home/nocacheread $(ls /boot/system/packages/firefox-*.hpkg | head -1) 16 2>&1 | while read l; do say "$l"; done
 	/boot/home/disklat /dev/disk/mmc/0/raw 100 2>&1 | while read l; do say "$l"; done
+	t0=$(date +%s%N); dd if=/dev/zero of=/boot/home/iocheck.tmp bs=1M count=128 conv=fsync 2> /dev/null
+	say "write-128M-fsync $(ms $t0)"; rm -f /boot/home/iocheck.tmp
 	run Firefox-warm
 fi
 say done
