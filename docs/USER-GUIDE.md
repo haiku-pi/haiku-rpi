@@ -388,9 +388,11 @@ in **Preferences → Media**.
 
 ### 8.1 First: the clock
 
-The Pi has no battery-backed clock. It starts in 1970, and HTTPS then fails with "certificate not
-yet valid". The image's Time settings synchronize the clock over NTP when the network comes up, so
-normally you need do nothing. To set it by hand, once the network is up:
+The Pi has no battery-backed clock. From image-2026-10-24d on, the system saves the time every five
+minutes and at shutdown (`/system/boot/SavedClock`) and starts the next boot from it, so the clock is
+only behind by the time the Pi was off; on the very first boot, and on older images, it starts in
+1970, and HTTPS then fails with "certificate not yet valid". The image's Time settings synchronize
+the clock over NTP when the network comes up, so normally you need do nothing. To set it by hand, once the network is up:
 
 ```sh
 /boot/system/preferences/Time --update
@@ -847,7 +849,7 @@ work that way, which also lets you run things on a Pi without a keyboard.
 | The Pi waits about a minute before booting the card | Its EEPROM boot order tries the network first and nothing answers. Harmless; change `BOOT_ORDER` in the EEPROM if it bothers you. |
 | The boot stops early, the splash showing no icon lit (serial output ends after `reserve_io_interrupt_vectors`) | An early-boot hang seen once in about 20–30 boots on 2026-10-20 (on a network boot); it did not recur in the SD benches that followed. Power-cycle. |
 | A **network** boot stops at ~54 s, with no serial output and no kernel debugger | The open "network-boot wedge", while the network drivers load and the first-boot package processing reads the remote disk. It strikes the first network boot of a Pi that was off for minutes: about 1 in 10 network boots of a Pi that was powered off for minutes, about 1 in 250 when it was on moments before; cold SD first boots 12 of 12 clean (2026-10-21). Power-cycle: the warm Pi boots. |
-| HTTPS pages fail with "certificate not yet valid" | The clock is in 1970: the network was not up for the boot-time NTP sync. `/boot/system/preferences/Time --update`, then reload (§8.1). |
+| HTTPS pages fail with "certificate not yet valid" | The clock is wrong (1970 on a first boot, or behind by the time the Pi was off): the network was not up for the boot-time NTP sync. `/boot/system/preferences/Time --update`, then reload (§8.1). |
 | `pkgman` fails with "Server not found" | Only images built before 2026-10-20 pointed their HaikuPorts repository at a server with no arm64 packages. Drop it and add ours: `pkgman drop-repo HaikuPorts`, then `pkgman add-repo https://haiku-pi.github.io/packages/arm64`. |
 | A package copied by hand into `/boot/system/packages` fails to activate ("failed to init package") | The package daemon saw a half-copied file. Copy it elsewhere on the same volume first, then `mv` it into `packages/`. |
 | Firefox takes long to start | The first start creates the profile and the font cache (16 s). Later starts: 6–10 s (§8.2). |
