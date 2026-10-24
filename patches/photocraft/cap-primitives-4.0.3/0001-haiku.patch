@@ -1,0 +1,68 @@
+cap-primitives: build on Haiku
+
+Haiku's dirent has no d_type (rustix has no DirEntry::file_type there: stat the entry, as on
+illumos), no O_PATH and no O_RSYNC (as on FreeBSD/macOS: not set), and a signed ino_t/nlink_t.
+Applies with -p1 to cap-primitives 4.0.3.
+
+diff -ruN a/src/rustix/fs/dir_entry_inner.rs b/src/rustix/fs/dir_entry_inner.rs
+--- a/src/rustix/fs/dir_entry_inner.rs	2026-10-25 00:58:05.787116145 +0200
++++ b/src/rustix/fs/dir_entry_inner.rs	2026-10-25 00:58:05.823557792 +0200
+@@ -40,7 +40,7 @@
+         self.read_dir.remove_dir(self.file_name_bytes())
+     }
+ 
+-    #[cfg(not(any(target_os = "illumos", target_os = "solaris")))]
++    #[cfg(not(any(target_os = "illumos", target_os = "solaris", target_os = "haiku")))]
+     #[inline]
+     #[allow(clippy::unnecessary_wraps)]
+     pub(crate) fn file_type(&self) -> io::Result<FileType> {
+@@ -60,7 +60,7 @@
+         })
+     }
+ 
+-    #[cfg(any(target_os = "illumos", target_os = "solaris"))]
++    #[cfg(any(target_os = "illumos", target_os = "solaris", target_os = "haiku"))]
+     #[inline]
+     pub(crate) fn file_type(&self) -> io::Result<FileType> {
+         // These platforms don't have the file type on the dirent, so we must lstat the file.
+diff -ruN a/src/rustix/fs/dir_utils.rs b/src/rustix/fs/dir_utils.rs
+--- a/src/rustix/fs/dir_utils.rs	2026-10-25 00:58:05.787209189 +0200
++++ b/src/rustix/fs/dir_utils.rs	2026-10-25 00:58:05.823628324 +0200
+@@ -145,6 +145,7 @@
+         target_os = "wasi",
+         target_os = "illumos",
+         target_os = "solaris",
++        target_os = "haiku",
+     ))]
+     {
+         OFlags::empty()
+diff -ruN a/src/rustix/fs/metadata_ext.rs b/src/rustix/fs/metadata_ext.rs
+--- a/src/rustix/fs/metadata_ext.rs	2026-10-25 00:58:05.787617955 +0200
++++ b/src/rustix/fs/metadata_ext.rs	2026-10-25 00:58:05.823905274 +0200
+@@ -159,10 +159,11 @@
+                 } else {
+                     u64::try_from(stat.st_dev).unwrap()
+                 },
+-                ino: stat.st_ino.into(),
++                // `ino_t` and `nlink_t` are signed on Haiku
++                ino: u64::try_from(stat.st_ino).unwrap(),
+                 #[cfg(not(target_os = "wasi"))]
+                 mode: u32::from(stat.st_mode),
+-                nlink: u64::from(stat.st_nlink),
++                nlink: u64::try_from(stat.st_nlink).unwrap(),
+                 #[cfg(not(target_os = "wasi"))]
+                 uid: stat.st_uid,
+                 #[cfg(not(target_os = "wasi"))]
+diff -ruN a/src/rustix/fs/oflags.rs b/src/rustix/fs/oflags.rs
+--- a/src/rustix/fs/oflags.rs	2026-10-25 00:58:05.787736227 +0200
++++ b/src/rustix/fs/oflags.rs	2026-10-25 00:58:05.823984582 +0200
+@@ -31,7 +31,8 @@
+         target_os = "watchos",
+         target_os = "visionos",
+         target_os = "freebsd",
+-        target_os = "fuchsia"
++        target_os = "fuchsia",
++        target_os = "haiku"
+     )))]
+     if options.rsync {
+         oflags |= OFlags::RSYNC;
