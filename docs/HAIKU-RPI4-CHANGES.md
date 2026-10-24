@@ -11,7 +11,7 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-
 20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
 weekend; see [log/](log/).
 
-On top of that base the fork carries **157 commits of its own** (2026-10-18 to 2026-10-24). To list
+On top of that base the fork carries **159 commits of its own** (2026-10-18 to 2026-10-24). To list
 them, in `sources/haiku`:
 
 ```
@@ -33,7 +33,7 @@ not written here:
 | `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
 The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
-directories. Of the 157 commits, 25 are changes to the list of binary packages the arm64 build uses
+directories. Of the 159 commits, 25 are changes to the list of binary packages the arm64 build uses
 (`build/jam/repositories/HaikuPorts/arm64`), 24 of them changing nothing else; they are collected in
 one table at the end.
 
@@ -86,6 +86,7 @@ section for its area gives the detail.
 | 29 | **A Bluetooth L2CAP response to an unknown request panicked the kernel** | `b0ea06deaf` | The connection and disconnection response handlers called into a NULL endpoint, so a remote device could panic the kernel. A laptop unpairing (BlueZ) did it 2 times in 2. |
 | 30 | **Bluetooth tools and kit** | `02e02d4ba3`, `0c12640aa2`, `d226612219`, `3cad4e2996` | `bt_discovery` did not compile, and then waited for ever for the end of its inquiry. Both tools printed a `BString` through `%s`. libbluetooth printed "CALLED ..." in every release build. bluetooth_server left a PIN code window open for each failed pairing, and dereferenced NULL on a disconnection with an unknown handle. |
 | 31 | **xHCI left completed TDs' TRBs on the ring** | `c65ac5a2e6` | Haiku's rings never toggle the cycle bit (a cleared TRB marks the end), so old entries past the stop marker still look valid. A controller that prefetches TRBs, as the VL805 does, can replay them. Clearing completed entries is generic; the overfetch padding is for the VL805. On the Pi 4 the USB hub stopped answering in about 1 boot in 10; now 0 in 40. |
+| 32 | **No ICMPv6 errors: lookups without DNS waited ~14 s** | `25c9881600`, `58022c954a` | IPv6 never sent Destination Unreachable (stubs) and dropped the ones it received, so the resolver's query to `[::]:53` on a machine without name servers ran into its time-outs; Firefox waited 14 s at every start. ICMPv6 errors are sent and delivered now, and the host's own name resolves from the hosts file's localhost entries. |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
@@ -313,6 +314,8 @@ WPA join path in `openbsd_wlan`/net_server are ★ and apply to any board.
 | `a6ca113d55` ★ | Plain PSK when PSK-SHA256 is also offered | SHA-256 key management needs PMF, which bwfm does not negotiate. APs offering both (hostapd's default with optional PMF) are joined with plain PSK, as the wpa_supplicant would. Result: 4-way handshake, DHCP lease, ping. |
 | `bf33dc5c29` ★ | Unscanned networks with a passphrase are WPA2-PSK | A network not yet in the scan results was taken to be open, so joining it with a passphrase failed. It is now tried as WPA2/CCMP/PSK. |
 | `f43d42c93b` ★ | openbsd_wlan: join with one interface restart, not three | Name, PSK and WPA parameters went through the driver's ioctl one by one; each returned `ENETRESET`, and bwfm restarted the interface three times. The last scan sometimes never finished (1 join in 2 failed). Name and key now go to net80211 directly. Result: 3/3 joins, each with one restart. |
+| `25c9881600` ★ | ipv6, icmp6: send ICMPv6 error messages; deliver Destination Unreachable | `ipv6_error_reply()` and `icmp6_error_reply()` were stubs: a datagram to a closed IPv6 port vanished and its sender waited for a time-out. With no name server configured the resolver asks `[::]:53` (loopback) as well as `0.0.0.0:53`, so every host name lookup without DNS settings waited ~14 s (Firefox's profile lock does one at every start: 17.1 → 3.1-3.7 s to its window on a Pi without a network). Now Destination Unreachable, Packet Too Big, Time Exceeded and Parameter Problem are sent (RFC 4443 2.4 rules), and Destination Unreachable and Time Exceeded are delivered on receive (they were dropped). |
+| `58022c954a` ★ | libnetwork: the host's own name resolves to the hosts file's localhost entries | Haiku's default host name is not in the hosts file, so looking it up went to the name servers. As systemd's nss-myhostname does, a lookup of the host name the hosts file does not list gets the localhost addresses. |
 
 Section 1 covers the network-boot changes to net_server and the kernel.
 
