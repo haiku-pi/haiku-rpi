@@ -80,7 +80,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 | Component | Haiku driver | Status | Measured (date) | Limitations / missing |
 |---|---|---|---|---|
 | 3.5 mm jack (PWM1, GPIO 40/41) | `drivers/audio/bcm2711_pwm` (hmulti) | 🟡 | media_server's default output "Raspberry Pi headphones"; 27 MHz / 612 = 44117.647 Hz (advertised as 44100); measured 44117.657 Hz over 128 periods, 0 underruns; DMA channel 5 paced by DREQ 1 (10-19) | Not yet listened to: the measurement is the driver's, the audible check is the owner's |
-| HDMI audio | — | ⬜ | — | No driver |
+| HDMI audio (HDMI0, MAI + DMA) | `drivers/audio/bcm2711_hdmi_audio` (hmulti) | 🟡 | "Raspberry Pi HDMI", 48 kHz stereo; recorded back through the capture card: 1 kHz at the level played, 48000.000 Hz, 0 underruns (10-24); the default output when present | Monitor must be connected at boot; HDMI1 not driven; [design/hdmi-audio.md](design/hdmi-audio.md) |
 
 ## 8. SD card
 
@@ -221,4 +221,4 @@ From the "Next" list of [log/WEEK-2026-W43.md](log/WEEK-2026-W43.md), in its ord
    ([design/wine-x86.md](design/wine-x86.md)).
 
 Not reachable on this hardware with the current approach: H.264 hardware decoding (VideoCore firmware only).
-Not started: HDMI audio, I²C, SPI.
+Not started: I²C, SPI.

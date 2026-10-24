@@ -20,6 +20,24 @@ Where a fact could not be established from these sources, the text says **not es
 
 ---
 
+## Result (2026-10-24): implemented and measured
+
+The plan below was followed and works: haiku rpi4 `6965caeb07`, driver `bcm2711_hdmi_audio` (in
+images from image-2026-10-24e). Bench facts that settled the open points:
+
+- The HSM clock (firmware clock 13) reports a **set rate of 0 but measures 150 MHz**: the driver checks
+  the measured rate (`GET_CLOCK_MEASURED`).
+- The firmware uses packet slots 0, 2 and **4 — slot 4 holds its own SPD InfoFrame** ("BroadcomVideocore"),
+  so the Audio InfoFrame goes into **slot 1**, not 4 as Linux's numbering suggests.
+- SCHEDULER_CONTROL 0x000cb00b (HDMI mode), packet RAM on, the DVP audio clock ungated, MAI_SMP and N/CTS
+  unset by the firmware: the firmware does not program audio itself.
+- Legacy DMA channel 4 with DREQ 10 into MAI_DATA at bus 0x7ef2001c streams at exactly 48000.000 Hz.
+- Recorded back through the capture card (tools/media-tests/hmultitone.cpp directly on the device,
+  tone.cpp through the media kit, tools/media-tests/wavtone.py on the host): 1 kHz at the level played,
+  both channels, no glitch over 20 s, 0 underruns.
+
+Not done: 44.1 kHz, HDMI1, following a hotplug or mode change after boot (KNOWN-ISSUES P3).
+
 ## 0. Answer first: is direct MAI programming viable under the firmware-owned display?
 
 Short answer: **probably yes, but it is unproven and has no precedent in the sources.** It must be

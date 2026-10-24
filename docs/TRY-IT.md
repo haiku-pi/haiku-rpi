@@ -23,7 +23,7 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences or from a fullscreen game (SDL), scaled to the monitor by the firmware; hardware cursor; 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1, and **Vulkan 1.3** (V3DV, presenting into Haiku windows; SDL2's Vulkan windows). GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
 | Games (OpenArena + SuperTuxKart: packages, `-sHAIKU_PI_GAMES=1`; the Quakes: test images) | QuakeSpasm (demo1, in a window): 66–72 frames/s at 640×480, 56–70 at 1280×720, 30–43 at 1920×1080. Yamagi Quake II, GL1 renderer: 135–171 frames/s at 640×480, 81–89 at 1280×720. **vkQuake** (Vulkan): 52 fps at 1280×720. **OpenArena** (Quake III engine, ioquake3): 46 fps at 1280×720, 22–29 at 1920×1080. **SuperTuxKart 1.5**: 28–38 fps at 1280×720 (its OpenGL 2.1 renderer). A fullscreen game at 1280×720 switches the display mode (OpenArena: 46.8 fps, against 26 at 1920×1080) |
-| Audio | 3.5 mm headphone jack through the media kit ("Raspberry Pi headphones", 44.1 kHz stereo); measured on the bench, **not yet listened to** |
+| Audio | HDMI (from image-2026-10-24e: "Raspberry Pi HDMI", 48 kHz stereo, recorded back on the bench) and the 3.5 mm headphone jack ("Raspberry Pi headphones", 44.1 kHz stereo); measured, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ...; **HEVC decoded by the SoC's decoder block** (bit-exact; 1080p at ~115 fps on under half a core, 4K at ~38 fps), the rest in software |
 | CPU | 4 cores (SMP), 600–1500 MHz: the ARM clock follows the load (a cpufreq module; the minimum in the power saving scheduler mode), the core clock stays at 500 MHz; the firmware still throttles when hot. `cat /dev/power/bcm2835_thermal/0`: temperature, throttling, clocks. `time` and ProcessController tell user from kernel time |
 | Storage | SD card at UHS-I DDR50 (~43 MB/s reads); USB 3 storage through the VL805 (~80–90 MB/s) |
@@ -37,7 +37,7 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monitor, WiFi from the preferences) is
 listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
-Known limits: no HDMI audio; video in Firefox drops frames for the first seconds after the browser starts;
+Known limits: HDMI audio only with a monitor connected at boot; video in Firefox drops frames for the first seconds after the browser starts;
 the first network boot of a Pi that was off for minutes stops at ~52 s about 1 time in 10 — power-cycle (SD boots are not affected; [KNOWN-ISSUES.md](KNOWN-ISSUES.md)).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,

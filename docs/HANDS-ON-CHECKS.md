@@ -23,7 +23,7 @@ programs run, no Mono question).
 |---|---|---|---|
 | 1 | **Keyboard** | Open Terminal (Applications → Terminal) and type `ls -l /boot/system`; try Shift, Ctrl+C, the arrow keys, Backspace | Every key appears once, no repeats or lost keys; Ctrl+C interrupts |
 | 2 | **Mouse** | Move the pointer, open the Deskbar menu, drag a window, scroll in a Terminal or in WebPositive with the wheel, right-click the desktop | The pointer follows smoothly (hardware cursor), clicks land where the pointer is, the wheel scrolls |
-| 3 | **Audio by ear** | Headphones in the 3.5 mm jack. Open MediaPlayer and play `/boot/system/data/sounds/Burg's Sparkly Tones/Burg's Sparkly Tones - Startup.ogg` (drag it onto MediaPlayer); then any music file you have (MP3/OGG/FLAC on a USB stick) | Clean sound at the right pitch and speed, no crackling or gaps; the volume control in the Deskbar works |
+| 3 | **Audio by ear** | Image-2026-10-24e and later: sound goes to the HDMI monitor by default if it takes audio — listen there first; then choose "Raspberry Pi headphones" in Preferences → Media and plug headphones into the 3.5 mm jack. Open MediaPlayer and play `/boot/system/data/sounds/Burg's Sparkly Tones/Burg's Sparkly Tones - Startup.ogg` (drag it onto MediaPlayer); then any music file you have (MP3/OGG/FLAC on a USB stick) | Clean sound at the right pitch and speed, no crackling or gaps; the volume control in the Deskbar works |
 | 4 | **Typing in browsers** | WebPositive and Firefox (Applications menu): type a search into a web page's text field (e.g. duckduckgo.com) and in the address bar | Every character arrives; Backspace, Shift and the arrow keys work |
 | 5 | **Keys and mouse in an SDL game** | `pkgman install supertuxkart openarena`, then Applications → SuperTuxKart: steer a race with the arrow keys; Applications → OpenArena: look around with the mouse, fire with the button | Steering and mouse look respond without delay; no keys stuck |
 | 6 | **A real monitor while a GL program runs** | Run GLTeapot (`/boot/system/demos/GLTeapot`) and look closely at the desktop around it | No sparkling dots ("speckles") on the desktop. The capture card shows some; whether a real monitor does is the question |
@@ -32,6 +32,6 @@ programs run, no Mono question).
 | 9 | **Bluetooth (optional)** | Terminal: `/boot/system/servers/bluetooth_server &`, then `bt_dev_info`; with a phone or laptop set discoverable, `bt_discovery` | `bt_dev_info` prints the controller: `BCM43455 ... DC:A6:32:3C:DD:F5`; `bt_discovery` lists the other device with its class and name after ~13 s. Pairing from the other device works by PIN (a "PIN Code Request" window opens on the Pi; the Pi must be connectable first, which only the port's test tool `btscan` sets — optional) |
 | 10 | **Shutting down** | Deskbar → Shut down | The Pi powers down cleanly; the next boot is normal (no disk check) |
 
-Known limits you may run into ([KNOWN-ISSUES.md](KNOWN-ISSUES.md)): no HDMI audio (use the jack); the first
+Known limits you may run into ([KNOWN-ISSUES.md](KNOWN-ISSUES.md)): HDMI audio only when the monitor is connected at boot; the first
 video played after Firefox starts drops frames (play it again); a full-screen Windows game switches the screen
 to its own resolution (the monitor shows it scaled, with black bars at the sides) until it ends; Bluetooth pairing is untested.

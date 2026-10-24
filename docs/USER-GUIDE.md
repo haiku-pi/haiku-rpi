@@ -48,7 +48,7 @@ desktop, built in: the **Deskbar** (the panel with the menu and the list of runn
 | **USB keyboard and mouse** | On the bench a Logitech K120 keyboard and a Pixart optical mouse **enumerate** and get their input devices (2026-10-20). Typing and pointing by hand have **not** been checked yet. |
 | **Network** (optional) | Wired Ethernet with a DHCP server, or WiFi (WPA2-PSK, §9.2). The Pi has no battery clock: the image sets the time over NTP once the network is up, and HTTPS needs that (§8.1). |
 | **Serial adapter** (optional) | A 3.3 V USB-serial adapter on GPIO 14/15, **115200 8N1**. It shows the boot log and the kernel log, and gives you the kernel debugger (§13). There is no shell on it. |
-| **Headphones** (optional) | On the 3.5 mm jack (§7.3). There is no HDMI audio. |
+| **Sound** (optional) | The monitor's speakers over HDMI, or headphones on the 3.5 mm jack (§7.3). |
 
 ## 2. Booting
 
@@ -372,17 +372,24 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
 - MediaPlayer converts every decoded frame to RGB on the CPU before showing it; showing the
   decoder's output directly is future work.
 
-### 7.3 Audio: the 3.5 mm jack
+### 7.3 Audio: HDMI and the 3.5 mm jack
 
-The headphone jack is driven by the Pi's PWM audio (this port's `bcm2711_pwm` driver). The media
-kit picks it as its default output, **"Raspberry Pi headphones"**, 44.1 kHz stereo. Choose outputs
-in **Preferences → Media**.
+Two outputs, chosen in **Preferences → Media** ("Audio output"):
+
+- **"Raspberry Pi HDMI"** (from image-2026-10-24e; the `bcm2711_hdmi_audio` driver): the monitor's or
+  TV's speakers, 48 kHz stereo, through the first HDMI port (the one next to the power socket). It
+  is there when a monitor that takes audio is connected at boot, and then it is the default output,
+  as on Raspberry Pi OS. Checked on the bench by recording the HDMI signal: a test tone comes back at
+  the right pitch and level, 0 underruns.
+- **"Raspberry Pi headphones"**: the 3.5 mm jack, driven by the Pi's PWM audio (`bcm2711_pwm`),
+  44.1 kHz stereo; the default when there is no HDMI audio. Monitor without speakers? Choose this one.
 
 - Measured (2026-10-19): the hardware streams at 44117.66 Hz (it is clocked at 44117.647 Hz and
   advertises 44100), **0 underruns** over 128 periods; a test tone and MediaPlayer playing a system
   sound both streamed through it.
-- **Nobody has listened to it yet**: it was measured, not heard.
-- **No HDMI audio.**
+- **Nobody has listened to the jack yet**: it was measured, not heard.
+- HDMI audio: 48 kHz stereo only; a monitor plugged in after boot gets no audio until the next boot
+  (KNOWN-ISSUES P3).
 
 ## 8. The web
 

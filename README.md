@@ -8,7 +8,7 @@ every other source into `sources/`.
 
 The image boots from an SD card, or over the network from the build host, to the full Haiku desktop on HDMI. It
 has GPU-accelerated OpenGL, OpenGL ES and Vulkan on the V3D, all four CPU cores, gigabit Ethernet, WiFi, Bluetooth,
-USB 3, audio on the headphone jack and hardware HEVC decoding. The image has two web browsers, WebPositive and Firefox 157
+USB 3, audio over HDMI and on the headphone jack, and hardware HEVC decoding. The image has two web browsers, WebPositive and Firefox 157
 (Firefox is an optional build step), and a package repository built for arm64 works with `pkgman` out of the box.
 
 ![Haiku on a Raspberry Pi 4: WebPositive, GLTeapot on the V3D, ActivityMonitor, About Haiku, a Terminal with the hardware, Quake II](docs/screenshots/02-desktop-quake2.png)
@@ -71,7 +71,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows |
 | Games | QuakeSpasm 56–70 fps at 1280×720 · Yamagi Quake II 81–89 fps · vkQuake (Vulkan) 52 fps · OpenArena 46 fps · SuperTuxKart 1.5 28–38 fps |
 | Video | ffmpeg 6.1 codecs in the media kit. **HEVC is decoded by the SoC's decoder block**: 1080p at about 115 fps (bit-exact), 4K at about 38 fps |
-| Audio | 3.5 mm headphone jack, 44.1 kHz stereo, through the media kit. There is no HDMI audio |
+| Audio | HDMI (48 kHz stereo, from image-2026-10-24e) and the 3.5 mm headphone jack (44.1 kHz stereo), through the media kit |
 | Storage | SD card at UHS-I DDR50 (about 43 MB/s read); USB 3 storage through the VL805 (80–90 MB/s) |
 | Network | Gigabit Ethernet (GENET), TCP about 915 Mbit/s each way; WiFi (BCM43455, WPA2); NFSv4 client |
 | Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching and inquiry. Pairing is untested |
@@ -79,7 +79,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Windows programs | **Wine 11.20** with x86 translation: 32-bit x86 programs through Box64, x86-64 programs through FEX (`pkgman install wine wine_x86 wine_x86_64`). Heroes III, StarCraft, SimCity 3000, Half-Life (also full screen; a game's display mode becomes the screen's, scaled by the display hardware), Chocolate Doom and OpenTTD (x86-64) play; Direct3D 9 on the V3D |
 | Software | Python 3.14, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
 
-Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: no HDMI audio, video in Firefox
+Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a monitor connected at boot, video in Firefox
 drops frames for the first seconds after the browser starts, and the USB keyboard and mouse enumerate but have
 not yet been tried by hand. Firefox and the games are in the public package repository (`pkgman install firefox`,
 `pkgman install openarena`, `pkgman install supertuxkart`).
