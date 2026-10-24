@@ -11,7 +11,7 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-
 20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
 weekend; see [log/](log/).
 
-On top of that base the fork carries **156 commits of its own** (2026-10-18 to 2026-10-24). To list
+On top of that base the fork carries **157 commits of its own** (2026-10-18 to 2026-10-24). To list
 them, in `sources/haiku`:
 
 ```
@@ -33,7 +33,7 @@ not written here:
 | `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
 The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
-directories. Of the 156 commits, 25 are changes to the list of binary packages the arm64 build uses
+directories. Of the 157 commits, 25 are changes to the list of binary packages the arm64 build uses
 (`build/jam/repositories/HaikuPorts/arm64`), 24 of them changing nothing else; they are collected in
 one table at the end.
 
@@ -227,6 +227,7 @@ These are in kernel code that every architecture uses. Most were found by runnin
 | `5180e96119` ★ | No profiling timer left behind on a CPU | When a team's debugger goes away, `THREAD_FLAGS_DEBUGGER_INSTALLED` is cleared on all its threads, including one running on another CPU with its profiling timer armed. `switch_thread()` then skipped `user_debug_thread_unscheduled()` for it, and the CPU's timer stayed scheduled after the thread was gone. Adding it again linked it to itself in the timer list, and the next walk spun with interrupts off; or it fired and `profiling_event()` dereferenced the current thread's NULL `installed_timer`. A thread is now unscheduled through the debugger code whenever it has a profiling timer, whatever its flags say. The timer is also cancelled before it is added and when a profiled thread exits. `profile -i 1000 -f -k wineboot -i` 3 times in a row (was a hang or a panic on the first run). |
 | `127fb34239` ★ | `poll()` leaves the caller's `events` alone | It ORed `POLLNVAL \| POLLERR \| POLLHUP` into each pollfd's `events` and copied the array back. `events` is input only (POSIX), and libevent's poll backend drops a descriptor once its `events` is 0 — which never happened, so a descriptor closed while still listed made every `poll()` return at once with `POLLNVAL`. Firefox's IPC thread spun like that at every quit (~2000 calls per second for two seconds) and while child processes came and went. `tools/haiku-tests/polltest.c` in haiku-rpi checks it. |
 | `67b8a53cbe` ★ | Prefetch at most 1 MB of a mapped file | Mapping a file started an asynchronous read of up to 10 MB of it. The first program of a boot that uses libbe maps ICU's data library (a 30 MB segment of data nobody touches at start-up); reading and decompressing 10 MB of it delayed the page faults the program needed: the launch_daemon reached `main()` 1.2 s after being loaded, now 0.6 s. |
+| `b23e7264c0` | The loader loads fewer modules on arm64; the network ones on network boots only | It loaded 139 images at every boot (~18 ms each): all boot module links, every file system and the partitioning systems. Boot module links can now go into a subdirectory; the remote disk driver, genet and the network stack are in `boot/network`, read only on network boots. On arm64 the SATA/IDE/UFS/OHCI/UHCI/EHCI/CD drivers are no boot modules and the file systems are not preloaded (BFS and packagefs are boot modules). 57 loads, the loader 2.0 → 1.2-1.4 s. |
 | `13a39894c2` ★ | app_server precaches its default fonts in a thread | The font manager read the plain and bold font files in full in its constructor, before the screens were set up; a low-priority thread does it now. |
 
 ---
