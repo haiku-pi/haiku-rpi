@@ -11,7 +11,7 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-
 20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
 weekend; see [log/](log/).
 
-On top of that base the fork carries **153 commits of its own** (2026-10-18 to 2026-10-24). To list
+On top of that base the fork carries **156 commits of its own** (2026-10-18 to 2026-10-24). To list
 them, in `sources/haiku`:
 
 ```
@@ -33,7 +33,7 @@ not written here:
 | `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
 The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
-directories. Of the 153 commits, 25 are changes to the list of binary packages the arm64 build uses
+directories. Of the 156 commits, 25 are changes to the list of binary packages the arm64 build uses
 (`build/jam/repositories/HaikuPorts/arm64`), 24 of them changing nothing else; they are collected in
 one table at the end.
 
@@ -226,6 +226,8 @@ These are in kernel code that every architecture uses. Most were found by runnin
 | `6f810ed2d7` ★ | `lock_memory_etc()`: unwire what was wired when a page fails | When a page in the middle of an area could not be wired, the area's wired range stayed registered at its full size, and the revert for the part before that page looked for a range of the shorter size: "PANIC: VMArea::Unwire(...): no such range". A `read()` into a buffer that runs into a `PROT_NONE` page of the same area did it (`cache_io()` wires the buffer). The range is now shrunk to the wired pages first. `read()` and `write()` with buffers ending in a `PROT_NONE` page, at 64 offsets: an error return, no panic. |
 | `5180e96119` ★ | No profiling timer left behind on a CPU | When a team's debugger goes away, `THREAD_FLAGS_DEBUGGER_INSTALLED` is cleared on all its threads, including one running on another CPU with its profiling timer armed. `switch_thread()` then skipped `user_debug_thread_unscheduled()` for it, and the CPU's timer stayed scheduled after the thread was gone. Adding it again linked it to itself in the timer list, and the next walk spun with interrupts off; or it fired and `profiling_event()` dereferenced the current thread's NULL `installed_timer`. A thread is now unscheduled through the debugger code whenever it has a profiling timer, whatever its flags say. The timer is also cancelled before it is added and when a profiled thread exits. `profile -i 1000 -f -k wineboot -i` 3 times in a row (was a hang or a panic on the first run). |
 | `127fb34239` ★ | `poll()` leaves the caller's `events` alone | It ORed `POLLNVAL \| POLLERR \| POLLHUP` into each pollfd's `events` and copied the array back. `events` is input only (POSIX), and libevent's poll backend drops a descriptor once its `events` is 0 — which never happened, so a descriptor closed while still listed made every `poll()` return at once with `POLLNVAL`. Firefox's IPC thread spun like that at every quit (~2000 calls per second for two seconds) and while child processes came and went. `tools/haiku-tests/polltest.c` in haiku-rpi checks it. |
+| `67b8a53cbe` ★ | Prefetch at most 1 MB of a mapped file | Mapping a file started an asynchronous read of up to 10 MB of it. The first program of a boot that uses libbe maps ICU's data library (a 30 MB segment of data nobody touches at start-up); reading and decompressing 10 MB of it delayed the page faults the program needed: the launch_daemon reached `main()` 1.2 s after being loaded, now 0.6 s. |
+| `13a39894c2` ★ | app_server precaches its default fonts in a thread | The font manager read the plain and bold font files in full in its constructor, before the screens were set up; a low-priority thread does it now. |
 
 ---
 
@@ -326,6 +328,7 @@ change. The Mesa side lives in the haiku-pi/mesa fork, outside this repository. 
 
 | commit | change | what and why |
 |---|---|---|
+| `6706fcf5b0` | The vertical-blank probe stops at the third interrupt | It slept a fixed 100 ms before counting the SMI interrupts; three arrive within ~50 ms at 60 Hz, so the mode is set sooner at boot. |
 | `c9b4bfe234` | Display driver and accelerant | The display as the VideoCore firmware drives it: the boot loader's frame buffer (write-combining), the monitor's EDID from the firmware, and a retrace semaphore released at each vertical blank. The vblank comes from the SMI interrupt (with the firmware KMS node enabled) or from a thread waiting on the firmware's `SET_VSYNC`. app_server prefers it over the generic framebuffer driver. Retrace 60.00 Hz (gaps 16 655–16 677 µs). |
 | `716633f51b` | Modes up to the native one, scaled by a firmware plane | The HDMI link stays in the firmware's mode. A smaller mode gets its own contiguous frame buffer below 1 GiB (the only range the firmware scans out from), which the primary plane (`SET_PLANE`) scales up, aspect kept and centred. The KDL console follows the frame buffer. Tested at 1280×720 and 1024×768 (pillarboxed). |
 | `7a37185fe7` | Hardware cursor on a firmware plane | A 64×64 ARGB8888 buffer on the top plane (7). B_RGBA32 or converted BeOS monochrome shapes. A move is one `SET_PLANE` call, scaled with the mode and clipped at the edges. |
