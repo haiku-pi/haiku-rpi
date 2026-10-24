@@ -1,7 +1,7 @@
 # The owner's prompts
 
-Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. Nine
-messages in three and a half days. The automatic ones are left out: the cron heartbeat that resumes autonomous work
+Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. 27
+messages in six days. The automatic ones are left out: the cron heartbeat that resumes autonomous work
 ("Haiku-Pi heartbeat …"), the weekly upstream-sync cron, task notifications, the context summaries the
 session writes for itself, and two messages from the parallel Phoenix-RTOS session about sharing the bench.
 
@@ -143,3 +143,136 @@ hardware matrix, the known issues, the list of the fork's changes, the bench des
 > under Wine). Figure out yourself - and make sure we have something attention catching and nice.
 
 Recorded in the Wine plan's test-program section ([design/wine-x86.md](design/wine-x86.md)).
+
+## 10. 2026-10-20 22:23:02 UTC (00:23 CEST, 10-21): Firefox branding, big packages
+
+> My pending decisions: use Firefox branding - we assume, we can use it. If we learn it not to be true, we
+> will revert. So you can publish Firefox. For big packages - let's try to split them to smaller archives or
+> compress them more (if this is possible / supported). I don't want to maintain another web archiver for
+> ports / packages at least for now. If there is no option for some packages - we just write in docs, that if
+> user wants it he/she needs to build from source and package (and we should provide a script or instructions
+> on how-to do it)
+
+Firefox was published with its branding on 10-21; big packages were zstd-compressed or split to fit GitHub's file limit.
+
+## 11. 2026-10-21 17:43:48 UTC (19:43 CEST)
+
+> Why H0 and H5+ on the tasks list are still open?
+
+Both were finished tasks left open in the task list; they were closed.
+
+## 12. 2026-10-21 17:47:31 UTC (19:47 CEST): the newest Wine release
+
+> When it comes to Wine porting, I was not able to give feedback, but for me the better choice would be to use
+> Wine 11.19 release as our base. I know it is considered less stable, but as we are near year-end the Wine
+> tends to stabilize... and who knows - maybe the most recent developments this year would actually help us.
+> By saying "stable wine tag" I meant sticking to a released version - not a main / master git branch that is
+> constantly moving. So any recent "numbered" release is good for me and I don't see a reason to pick
+> something older than the newest one. So - don't stop current tests and work, but whenever feasible retarget
+> your work towards most modern Wine.
+
+Wine 11.20, the newest release, became the base (with Box64 v0.4.4); published 10-22.
+
+## 13. 2026-10-21 19:00:41 UTC (21:00 CEST): host disk space
+
+> Warning - low disk space on host
+
+## 14. 2026-10-21 19:01:43 UTC (21:01 CEST)
+
+> Look also for old / stale / unneded Docker caches and other caches in var/run
+
+## 15. 2026-10-21 19:11:39 UTC (21:11 CEST): drop Wine 11.0
+
+> When done with porting and testing wine-11.20 - you are free to get rid of the sources and local artifacts
+> of wine-11.0. If the newer version works (when it works), we can ditch the older one. Nobody will want the
+> older release if the new one works.
+
+Wine 11.0 and its artifacts were removed on 10-22.
+
+## 16. 2026-10-21 19:20:56 UTC (21:20 CEST)
+
+> Review you tmp and working files and decide if you could either remove, compress or archive some files to
+> save disk space. Don't remove any imporant stuff - but some cache, working tmps, older image versions etc...
+
+## 17. 2026-10-21 20:12:55 UTC (22:12 CEST)
+
+> continue
+
+## 18. 2026-10-21 20:13:28 UTC (22:13 CEST)
+
+> But Pi is not running now
+
+## 19. 2026-10-21 20:36:35 UTC (22:36 CEST): a debugging setup for Wine
+
+> I guess there should be a way to debug Wine and Wine running apps. I do understand there are no debug
+> symbols for compiled games like Half-life. But I'm sure you can produce a fully debugguble Wine version
+> (down to Box64 / Box layer) to understand exactly what is failing. I guess there are also some ways to
+> introduce addtional debug logging in Wine and Box - to trace the execution step-by-step - see WinAPI calls,
+> syscall and all the stuff around - calls to D3D/GL. As the games and programs become more complex it is
+> likely we will have more issues like this - so we need to have a proper instrumentation and observation
+> mechanisms. So to meit makes sense to invest a bit a create a debug oriented setup that would allow us to
+> pin-point specific bugs instead of guessing or long waiting.
+
+[design/wine-debugging.md](design/wine-debugging.md): symbols, crash capture, tracing, an interactive Pi session.
+
+## 20. 2026-10-21 20:39:32 UTC (22:39 CEST): no reboot per change
+
+> Also note that if we are not chaning kernel we don't need to constantly reboot Pi. We can provide new
+> binaries over NFS or SSH (scp) and retry. We can publish new packages online and reinstall etc. We don't
+> need to pay the tax of constant rebooting the Pi. We can keep it up for a longer session and just remote
+> control it to progress with next steps.
+
+Since then, user-space changes are tested in long ssh sessions on a running Pi (`scripts/pi-session.sh`).
+
+## 21. 2026-10-21 20:40:17 UTC (22:40 CEST): Phoenix on hold
+
+> Phoenix project is on hold now btw. So the other agent should not run at all - and will not use Pi
+
+## 22. 2026-10-22 04:56:17 UTC (06:56 CEST): never ask, just work
+
+> can you make sure you don't ask interactive Yes/No questions to me? I'm not here most of the time. The agent
+> went silent during the night as you were waiting for a question answered. This is not autonomous work. This
+> host is fully dedicated to your needs. Pi is exclusivley avaliable for this project. There is nothing to ask
+> for. Just work. As long as the actions are local to our testing rig and our github org managed by you it
+> should all be fine.
+
+No questions since; decisions are logged with their reasons in the weekly log.
+
+## 23. 2026-10-22 21:52:11 UTC (23:52 CEST): after Wine: known issues, tasks, docs, performance
+
+> When done with Wine (assuming that we are nearing "done" state) - continue working autonomously: review
+> @docs/KNOWN-ISSUES.md and try to fix them, look over the open tasks, make sure project docs are up-to-date,
+> investigate if there are any obvious performance fixes possible etc. Prioritize the work yourself and do not
+> cancel any open tasks - just suffle the order in way that you maximize the expected output. Keep up the good
+> work! Keep workin autonomously. I'll be hand-testing during the weekend.
+
+The known-issue fixes, the boot and runtime performance work and the docs of 10-23 and 10-24 (W43 log).
+
+## 24. 2026-10-22 21:54:57 UTC (23:54 CEST)
+
+> Also notice there is one subagent "general-purpose" in a state "Wiating for diagnostic ntdll.so results".
+> Don't know what is this waiting for and if this is still needed. Please check and either continue with this
+> subagent thread or close it.
+
+## 25. 2026-10-23 15:10:04 UTC (17:10 CEST)
+
+> Flash 10-23c onto my weekend card instead
+
+Done the same afternoon; later replaced on the card by newer releases at the owner's 10-23 22:36 message.
+
+## 26. 2026-10-23 22:36:50 UTC (00:36 CEST, 10-24): the bench is ours overnight
+
+> I haven't tested yet and I won't be testing during the night. I will let you know when I need the Pi. so for
+> now you can keep using Pi and interating. I'll test the latest version that you have when I'll have time for
+> tests. So for now continue making progress full speed
+
+## 27. 2026-10-23 22:40:05 UTC (00:40 CEST, 10-24): system-wide performance
+
+> Also, whenever there is a chance please try to work on increasing the runtime performance of the entire
+> system (not only Wine). Both boot-up time and then runtime times matter. You still do a lot of changes in
+> various areas of the system - so whenever you have chance to observe the performane, profile specific code
+> paths, analyze logs, measure times - please do so and thinkon how to speed things up without loosing
+> capabilities and features and without sacrifcing security or completness.
+
+The boot made 3 s faster, the profiler fixed so that it can be used on Wine, thread-local variables twice as fast (release image-2026-10-24).
+

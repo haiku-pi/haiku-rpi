@@ -382,6 +382,6 @@ Next on the plan: Windows programs through Wine with x86 translation ([PLAN.md](
 - **Generic bugs surface on new hardware.** Much of the work was in upstream Haiku code that had
   only run on QEMU: EL2 handling, the GIC, SDHCI, the FDT bus, the toolchain, `ASSERT()` side effects,
   time accounting, kernel stacks. A real board and a lowered debug level found them.
-- **One prompt is enough to start; a person is still needed to finish.** The owner's nine prompts set
+- **One prompt is enough to start; a person is still needed to finish.** The owner's 27 prompts (in six days) set
   direction. What remains open is what only a person can check — a keyboard, a speaker, a monitor —
   and decisions that are theirs to make.
