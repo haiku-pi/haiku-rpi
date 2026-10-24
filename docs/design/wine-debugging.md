@@ -75,8 +75,9 @@ the same program for comparison: a fault there too is Wine's or the program's, n
 
 ## 5. A hang or a busy loop: where the threads are
 
-Haiku's Debugger cannot attach to an arm64 team ("Operation not supported"), and winedbg cannot attach on
-Haiku. `threadpcs.exe` (`tools/wine-tests/threadpcs.c`; `scripts/build-wine.sh` builds it into the install
+Haiku's Debugger attaches to arm64 teams since its arm64 back end (10-23, image-2026-10-23d): stacks with
+source lines for the native (ELF) side, but it knows nothing of PE modules or emulated code. winedbg cannot
+attach on Haiku. `threadpcs.exe` (`tools/wine-tests/threadpcs.c`; `scripts/build-wine.sh` builds it into the install
 tree's `data/wine-tests`, not into the packages: copy it to the Pi) asks Wine
 itself: it suspends each thread of a process and prints its native pc, lr and sp as module+offset, a few
 samples apart, through `GetThreadContext` (no ptrace). The pid is Wine's (`wine cmd /c tasklist`).
@@ -89,6 +90,12 @@ Before that, `ps -a` shows each thread's state and user/kernel time: a thread `r
 of user time is spinning, one in `wait` is blocked. FEX's own log (`FEX_SILENTLOG=0`) prints each exception
 it handles with its thread id. And the kernel's low-resource state is on the serial line and in syslog
 ("low resource memory: critical"): when memory commitment runs out, allocations fail far from the cause.
+
+Haiku's `profile` does sample Wine, with one trap: when a sample's pc is in no image Haiku knows (FEX's
+translated code, the PE DLLs), `profile` charges it to the first known frame up the stack. For an emulated
+thread that frame is the commpage's signal trampoline (the emulator runs below a signal frame), so x86-64
+cpubench showed 63 % "commpage" (10-24) — read that as "emulated code or PE DLLs", not as a commpage cost.
+The native (ELF) part is accurate: `profile -k -S -o FILE wine prog.exe`.
 
 ## What it found first (2026-10-21)
 
