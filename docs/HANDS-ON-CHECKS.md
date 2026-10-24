@@ -4,17 +4,14 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds the release `image-2026-10-23c` (`haiku-pi4-2026-10-23c.img`,
-hrev60262+153: the Bluetooth fixes — pairing by PIN, `bt_discovery`, no kernel panic when a paired device
-unpairs — and the faster network-boot disk, on top of the 2026-10-23 images' kernel fixes).
-Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the Ethernet cable;
-power on. The desktop comes up in about 75 s.
-
-**Before switching the Pi off, shut down** (Deskbar → Shut down) **or run `sync`** in a Terminal: on this
-image the kernel keeps the last ~1 MB of file data written in memory until a sync, so pulling the power can
-lose a screenshot or a note saved even minutes earlier ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C7; fixed in
-`image-2026-10-23d`). `pkgman update` brings the newer mesa and openarena packages (the OpenGL and
-OpenArena SIGTERM fixes) to this card.
+**The image:** the SD card of the bench Pi holds the newest tested build (10-24 night, hrev60280+139,
+`haiku-pi4-cand1024a.img`): everything of `image-2026-10-23d` (file data written to the card within
+seconds, the arm64 Debugger, the OpenGL and OpenArena fixes) plus a kernel stack overflow in file I/O on
+network boots fixed, PCI I/O BARs fixed (QEMU), and **a 3 s faster boot** (U-Boot to the desktop 11.3 s,
+was 14.3 s). Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
+Ethernet cable; power on. The desktop comes up in about 70 s, most of it the bench Pi's firmware trying the
+network first. Wine: `pkgman install wine wine_x86 wine_x86_64 wine_mono` (wine 11.20-19, Wine Mono: .NET
+programs run, no Mono question).
 
 **When something is wrong**, the most useful things to send back are:
 - the system log: `/var/log/syslog` (Terminal: `cp /var/log/syslog ~/Desktop/` and copy it off on a USB
