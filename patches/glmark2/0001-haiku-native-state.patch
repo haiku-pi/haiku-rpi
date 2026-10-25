@@ -1,0 +1,482 @@
+glmark2: a Haiku native state (haiku-gl / haiku-glesv2 flavors: glmark2, glmark2-es2)
+
+A BWindow whose view shows the frames Mesa's EGL "haiku" platform presents: its native
+window is a BitmapHook (GetSize/SetBitmap), as libglvnd's BGLView passes it. Also: libdl is
+optional on Haiku (dlopen() is in libroot).
+
+diff --git a/meson.build b/meson.build
+index abc92a1..85a9a9d 100644
+--- a/meson.build
++++ b/meson.build
+@@ -23,7 +23,8 @@ if extras_path != ''
+ endif
+ 
+ m_dep = cpp.find_library('m', required : false)
+-dl_dep = cpp.find_library('dl')
++# (Haiku: dlopen() is in libroot, there is no libdl)
++dl_dep = cpp.find_library('dl', required : host_machine.system() != 'haiku')
+ libjpeg_dep = dependency('libjpeg')
+ libpng_dep = dependency('libpng')
+ 
+@@ -38,9 +39,10 @@ need_x11 = flavors_str.contains('x11-')
+ need_drm = flavors_str.contains('drm-')
+ need_gbm = flavors_str.contains('gbm-')
+ need_wayland = flavors_str.contains('wayland-')
++need_haiku = flavors_str.contains('haiku-')
+ need_gl = flavors_str.contains('-gl')
+ need_glesv2 = flavors_str.contains('-glesv2')
+-need_egl = need_drm or need_wayland or need_glesv2 or flavors_str.contains('-egl')
++need_egl = need_drm or need_wayland or need_haiku or need_glesv2 or flavors_str.contains('-egl')
+ need_glx = flavors.contains('x11-gl')
+ 
+ if need_x11
+@@ -62,6 +64,10 @@ if need_gbm
+     gbm_dep = dependency('gbm')
+ endif
+ 
++if need_haiku
++    be_dep = cpp.find_library('be')
++endif
++
+ if need_wayland
+     wayland_client_dep = dependency('wayland-client')
+     wayland_cursor_dep = dependency('wayland-cursor')
+diff --git a/meson_options.txt b/meson_options.txt
+index 1a7ba8f..a891b5f 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -4,6 +4,8 @@ option('flavors', type : 'array',
+            'drm-glesv2',
+            'gbm-gl',
+            'gbm-glesv2',
++           'haiku-gl',
++           'haiku-glesv2',
+            'wayland-gl',
+            'wayland-glesv2',
+            'x11-gl',
+diff --git a/src/main.cpp b/src/main.cpp
+index d1077fe..8000404 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -47,6 +47,8 @@
+ #include "native-state-dispmanx.h"
+ #elif GLMARK2_USE_WIN32
+ #include "native-state-win32.h"
++#elif GLMARK2_USE_HAIKU
++#include "native-state-haiku.h"
+ #endif
+ 
+ #if GLMARK2_USE_EGL
+@@ -170,6 +172,8 @@ main(int argc, char *argv[])
+     NativeStateDispmanx native_state;
+ #elif GLMARK2_USE_WIN32
+     NativeStateWin32 native_state;
++#elif GLMARK2_USE_HAIKU
++    NativeStateHaiku native_state;
+ #endif
+ 
+     if (!Options::parse_args(argc, argv))
+diff --git a/src/meson.build b/src/meson.build
+index bbb08b7..2b0867f 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -141,6 +141,22 @@ else
+     native_wayland_dep = declare_dependency()
+ endif
+ 
++if need_haiku
++    native_haiku_lib = static_library(
++        'native-haiku',
++        'native-state-haiku.cpp',
++        dependencies: [be_dep, libmatrix_headers_dep],
++        )
++
++    native_haiku_dep = declare_dependency(
++        link_with: native_haiku_lib,
++        dependencies: be_dep,
++        compile_args: ['-DGLMARK2_USE_HAIKU'],
++        )
++else
++    native_haiku_dep = declare_dependency()
++endif
++
+ if need_x11
+     native_x11_lib = static_library(
+         'native-x11',
+@@ -255,6 +271,8 @@ flavor_info = {
+   'drm-glesv2' : ['glmark2-es2-drm', native_drm_dep, gl_glesv2_dep, wsi_egl_dep],
+   'gbm-gl' : ['glmark2-gbm', native_gbm_dep, gl_gl_dep, wsi_egl_dep],
+   'gbm-glesv2' : ['glmark2-es2-gbm', native_gbm_dep, gl_glesv2_dep, wsi_egl_dep],
++  'haiku-gl' : ['glmark2', native_haiku_dep, gl_gl_dep, wsi_egl_dep],
++  'haiku-glesv2' : ['glmark2-es2', native_haiku_dep, gl_glesv2_dep, wsi_egl_dep],
+   'wayland-gl' : ['glmark2-wayland', native_wayland_dep, gl_gl_dep, wsi_egl_dep],
+   'wayland-glesv2' : ['glmark2-es2-wayland', native_wayland_dep, gl_glesv2_dep, wsi_egl_dep],
+   'x11-gl' : ['glmark2', native_x11_dep, gl_gl_dep, wsi_glx_dep],
+diff --git a/src/native-state-haiku.cpp b/src/native-state-haiku.cpp
+new file mode 100644
+index 0000000..22ac763
+--- /dev/null
++++ b/src/native-state-haiku.cpp
+@@ -0,0 +1,301 @@
++/*
++ * Copyright © 2026 haiku-pi contributors
++ *
++ * This file is part of the glmark2 OpenGL (ES) 2.0 benchmark.
++ *
++ * glmark2 is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * glmark2 is distributed in the hope that it will be useful, but WITHOUT ANY
++ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
++ * details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * glmark2.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include "native-state-haiku.h"
++#include "log.h"
++
++#include <Application.h>
++#include <Bitmap.h>
++#include <Messenger.h>
++#include <Region.h>
++#include <Screen.h>
++#include <View.h>
++#include <Window.h>
++
++#include <atomic>
++#include <csignal>
++#include <mutex>
++#include <stdint.h>
++
++/*
++ * The native window of Mesa's EGL "haiku" platform, as Mesa declares it
++ * (src/gallium/winsys/sw/hgl/hgl_sw_winsys.h; libglvnd's BGLView implements
++ * the same, src/HGL/BitmapHook.h). It is not in Haiku's public headers: the
++ * order of the virtual functions is the interface.
++ */
++class BitmapHook {
++public:
++    virtual ~BitmapHook() {};
++    virtual void GetSize(uint32_t &width, uint32_t &height) = 0;
++    virtual BBitmap *SetBitmap(BBitmap *bmp) = 0;
++};
++
++static std::atomic<bool> quit_requested(false);
++
++static void
++quit_handler(int /*signum*/)
++{
++    quit_requested = true;
++}
++
++/*
++ * Shows the frames: Mesa renders into a BBitmap and hands it over with
++ * SetBitmap() (from its presenter thread), the view draws it.
++ */
++class HaikuView : public BView, public BitmapHook
++{
++public:
++    HaikuView(BRect frame)
++        : BView(frame, "glmark2", B_FOLLOW_ALL_SIDES,
++                B_WILL_DRAW | B_FRAME_EVENTS),
++          bitmap_(nullptr),
++          width_(frame.IntegerWidth() + 1),
++          height_(frame.IntegerHeight() + 1)
++    {
++        // the frames cover the view: no erasing to the view colour first
++        SetViewColor(B_TRANSPARENT_COLOR);
++        SetLowColor(0, 0, 0);
++    }
++
++    ~HaikuView()
++    {
++        delete bitmap_;
++    }
++
++    void GetSize(uint32_t &width, uint32_t &height) override
++    {
++        std::lock_guard<std::mutex> lock(lock_);
++        width = width_;
++        height = height_;
++    }
++
++    BBitmap *SetBitmap(BBitmap *bitmap) override
++    {
++        BBitmap *old;
++        {
++            std::lock_guard<std::mutex> lock(lock_);
++            old = bitmap_;
++            bitmap_ = bitmap;
++        }
++        // Without waiting (timeout 0), as BGLView: a full port already holds
++        // an update for the view, and blocking here would stall the GPU's
++        // presenter while the window's thread is busy.
++        BMessage invalidate(B_INVALIDATE);
++        BMessenger(this).SendMessage(&invalidate, (BHandler *)nullptr, 0);
++        return old;
++    }
++
++    void Draw(BRect update) override
++    {
++        BRegion region(update);
++        std::lock_guard<std::mutex> lock(lock_);
++        if (bitmap_ != nullptr) {
++            DrawBitmap(bitmap_, B_ORIGIN);
++            region.Exclude(bitmap_->Bounds());
++        }
++        FillRegion(&region, B_SOLID_LOW);
++    }
++
++    void FrameResized(float width, float height) override
++    {
++        BView::FrameResized(width, height);
++        std::lock_guard<std::mutex> lock(lock_);
++        width_ = (uint32_t)width + 1;
++        height_ = (uint32_t)height + 1;
++    }
++
++    void KeyDown(const char *bytes, int32 numBytes) override
++    {
++        if (numBytes == 1 && (bytes[0] == B_ESCAPE || bytes[0] == 'q'))
++            quit_requested = true;
++        else
++            BView::KeyDown(bytes, numBytes);
++    }
++
++private:
++    std::mutex lock_;
++    BBitmap *bitmap_;
++    uint32_t width_;
++    uint32_t height_;
++};
++
++class HaikuWindow : public BWindow
++{
++public:
++    HaikuWindow(BRect frame, bool fullscreen)
++        : BWindow(frame, "glmark2 " GLMARK_VERSION,
++                  fullscreen ? B_NO_BORDER_WINDOW_LOOK : B_TITLED_WINDOW_LOOK,
++                  B_NORMAL_WINDOW_FEEL,
++                  B_NOT_RESIZABLE | B_NOT_ZOOMABLE | B_ASYNCHRONOUS_CONTROLS
++                  | (fullscreen ? B_NOT_MOVABLE : 0)),
++          shown(false)
++    {
++        // (a new window is locked by the thread that created it until Show())
++        view = new HaikuView(Bounds());
++        AddChild(view);
++        view->MakeFocus();
++    }
++
++    bool QuitRequested() override
++    {
++        // glmark2 ends the run and destroys the window itself
++        quit_requested = true;
++        return false;
++    }
++
++    HaikuView *view;
++    bool shown;
++};
++
++/******************
++ * Public methods *
++ ******************/
++
++NativeStateHaiku::NativeStateHaiku()
++    : app_(nullptr), window_(nullptr)
++{
++}
++
++NativeStateHaiku::~NativeStateHaiku()
++{
++    destroy_window();
++    delete app_;
++}
++
++bool
++NativeStateHaiku::init_display()
++{
++    // a connection to the app_server; its looper need not run (the window's does)
++    if (be_app == nullptr) {
++        app_ = new BApplication("application/x-vnd.glmark2");
++        if (app_->InitCheck() != B_OK) {
++            Log::error("Haiku: no connection to the app_server\n");
++            return false;
++        }
++    }
++
++    struct sigaction sa = {};
++    sa.sa_handler = quit_handler;
++    sigaction(SIGINT, &sa, nullptr);
++    sigaction(SIGTERM, &sa, nullptr);
++
++    return true;
++}
++
++void*
++NativeStateHaiku::display()
++{
++    // EGL_DEFAULT_DISPLAY: Mesa's only display on Haiku
++    return nullptr;
++}
++
++bool
++NativeStateHaiku::create_window(WindowProperties const& properties)
++{
++    BRect screen = BScreen(B_MAIN_SCREEN_ID).Frame();
++    const bool was_fullscreen = properties_.fullscreen;
++    properties_ = properties;
++    if (properties.fullscreen) {
++        properties_.width = screen.IntegerWidth() + 1;
++        properties_.height = screen.IntegerHeight() + 1;
++    }
++
++    if (window_ != nullptr) {
++        // keep the window (EGL's surface holds its view): resize it
++        if (was_fullscreen != properties.fullscreen)
++            Log::info("Haiku: cannot switch a window to or from full screen\n");
++        if (window_->Lock()) {
++            window_->ResizeTo(properties_.width - 1, properties_.height - 1);
++            window_->Unlock();
++        }
++        return true;
++    }
++
++    BRect frame(0, 0, properties_.width - 1, properties_.height - 1);
++    if (properties.fullscreen) {
++        frame.OffsetTo(screen.LeftTop());
++    } else {
++        // centred, the title tab on the screen
++        float left = screen.left + (screen.Width() - frame.Width()) / 2;
++        float top = screen.top + (screen.Height() - frame.Height()) / 2;
++        frame.OffsetTo(left > 5 ? left : 5, top > 30 ? top : 30);
++    }
++    window_ = new HaikuWindow(frame, properties.fullscreen);
++    return true;
++}
++
++void*
++NativeStateHaiku::window(WindowProperties& properties)
++{
++    properties = properties_;
++    if (window_ == nullptr)
++        return nullptr;
++    return static_cast<BitmapHook *>(window_->view);
++}
++
++void
++NativeStateHaiku::visible(bool v)
++{
++    if (window_ == nullptr)
++        return;
++
++    if (!window_->shown) {
++        // the first Show() starts the window's thread and gives up the lock
++        // the window was created with
++        if (v) {
++            window_->shown = true;
++            window_->Show();
++        }
++        return;
++    }
++
++    if (window_->Lock()) {
++        if (v && window_->IsHidden())
++            window_->Show();
++        else if (!v && !window_->IsHidden())
++            window_->Hide();
++        window_->Unlock();
++    }
++}
++
++bool
++NativeStateHaiku::should_quit()
++{
++    return quit_requested;
++}
++
++void
++NativeStateHaiku::flip()
++{
++}
++
++/*******************
++ * Private methods *
++ *******************/
++
++void
++NativeStateHaiku::destroy_window()
++{
++    if (window_ == nullptr)
++        return;
++
++    // Quit() deletes the window, also one that never ran
++    if (window_->Lock())
++        window_->Quit();
++    window_ = nullptr;
++}
+diff --git a/src/native-state-haiku.h b/src/native-state-haiku.h
+new file mode 100644
+index 0000000..34bde8e
+--- /dev/null
++++ b/src/native-state-haiku.h
+@@ -0,0 +1,55 @@
++/*
++ * Copyright © 2026 haiku-pi contributors
++ *
++ * This file is part of the glmark2 OpenGL (ES) 2.0 benchmark.
++ *
++ * glmark2 is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * glmark2 is distributed in the hope that it will be useful, but WITHOUT ANY
++ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
++ * details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * glmark2.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#ifndef GLMARK2_NATIVE_STATE_HAIKU_H_
++#define GLMARK2_NATIVE_STATE_HAIKU_H_
++
++#include "native-state.h"
++
++class BApplication;
++class HaikuWindow;
++
++/*
++ * Haiku: a BWindow with one view that shows the frames. Mesa's EGL "haiku"
++ * platform takes as the native window not a BWindow or BView but a BitmapHook
++ * (see native-state-haiku.cpp): it hands each presented frame to the hook as a
++ * BBitmap, and the view draws it.
++ */
++class NativeStateHaiku : public NativeState
++{
++public:
++    NativeStateHaiku();
++    ~NativeStateHaiku();
++
++    bool init_display();
++    void* display();
++    bool create_window(WindowProperties const& properties);
++    void* window(WindowProperties& properties);
++    void visible(bool v);
++    bool should_quit();
++    void flip();
++
++private:
++    void destroy_window();
++
++    BApplication* app_;
++    HaikuWindow* window_;
++    WindowProperties properties_;
++};
++
++#endif /* GLMARK2_NATIVE_STATE_HAIKU_H_ */

@@ -1,0 +1,32 @@
+glmark2: open EGL and GL by their sonames first
+
+The unversioned names are development symlinks, absent from a system without the _devel
+packages; trying them first only made the runtime loader print an error for each (Haiku).
+
+diff --git a/src/gl-state-egl.cpp b/src/gl-state-egl.cpp
+index 967883c..a87281d 100644
+--- a/src/gl-state-egl.cpp
++++ b/src/gl-state-egl.cpp
+@@ -326,7 +326,7 @@ GLStateEGL::init_display(void* native_display, GLVisualConfig& visual_config)
+ #if defined(WIN32)
+     if (!egl_lib_.open("libEGL.dll")) {
+ #else
+-    if (!egl_lib_.open_from_alternatives({"libEGL.so", "libEGL.so.1" })) {
++    if (!egl_lib_.open_from_alternatives({"libEGL.so.1", "libEGL.so" })) {
+ #endif
+         Log::error("Error loading EGL library\n");
+         return false;
+@@ -583,11 +583,11 @@ GLStateEGL::gotValidDisplay()
+ #if defined(WIN32)
+     std::initializer_list<const char *> libNames = { "libGLESv2.dll" };
+ #else
+-    std::initializer_list<const char *> libNames = { "libGLESv2.so", "libGLESv2.so.2" };
++    std::initializer_list<const char *> libNames = { "libGLESv2.so.2", "libGLESv2.so" };
+ #endif
+ #elif GLMARK2_USE_GL
+     EGLenum apiType(EGL_OPENGL_API);
+-    std::initializer_list<const char *> libNames = { "libGL.so", "libGL.so.1" };
++    std::initializer_list<const char *> libNames = { "libGL.so.1", "libGL.so" };
+     if (!GLAD_EGL_VERSION_1_4) {
+         Log::error("EGL version %d.%d does not support the OpenGL API\n",
+                    egl_major, egl_minor);

@@ -1,0 +1,30 @@
+glmark2: dlopen() without RTLD_NODELETE where there is none (Haiku)
+
+Without the flag, close() leaves the library loaded, as the flag would.
+
+diff --git a/src/shared-library.cpp b/src/shared-library.cpp
+index 8fd6292..e6433a1 100644
+--- a/src/shared-library.cpp
++++ b/src/shared-library.cpp
+@@ -43,8 +43,11 @@ bool SharedLibrary::open(const char *libName)
+ {
+ #if defined(WIN32)
+     handle_ = LoadLibraryA(libName);
+-#else
++#elif defined(RTLD_NODELETE)
+     handle_ = dlopen(libName, RTLD_NOW | RTLD_NODELETE);
++#else
++    // no RTLD_NODELETE (Haiku): close() leaves the library loaded instead
++    handle_ = dlopen(libName, RTLD_NOW);
+ #endif
+     return (handle_ != nullptr);
+ }
+@@ -65,7 +68,7 @@ void SharedLibrary::close()
+     {
+ #if defined(WIN32)
+         FreeLibrary(reinterpret_cast<HMODULE>(handle_));
+-#else
++#elif defined(RTLD_NODELETE)
+         dlclose(handle_);
+ #endif
+     }

@@ -1,0 +1,31 @@
+glmark2: release the EGL context and surface before eglTerminate()
+
+Mesa's haiku EGL platform frees the display in eglTerminate() although the context is still
+current; the eglReleaseThread() that follows then crashed every run at exit (QEMU, softpipe).
+
+diff --git a/src/gl-state-egl.cpp b/src/gl-state-egl.cpp
+index 0d73859..967883c 100644
+--- a/src/gl-state-egl.cpp
++++ b/src/gl-state-egl.cpp
+@@ -296,6 +296,21 @@ EglConfig::print() const
+ 
+ GLStateEGL::~GLStateEGL()
+ {
++    if(egl_display_ != nullptr && eglMakeCurrent){
++        /*
++         * Unbind and destroy the context and surface before terminating: a
++         * driver may free the display in eglTerminate() although a context is
++         * still current (Mesa's haiku platform does), and then crash in
++         * eglReleaseThread() below.
++         */
++        eglMakeCurrent(egl_display_, EGL_NO_SURFACE, EGL_NO_SURFACE,
++                       EGL_NO_CONTEXT);
++        if (egl_surface_)
++            eglDestroySurface(egl_display_, egl_surface_);
++        if (egl_context_)
++            eglDestroyContext(egl_display_, egl_context_);
++    }
++
+     if(egl_display_ != nullptr){
+         if(!eglTerminate(egl_display_))
+             Log::error("eglTerminate failed\n");
