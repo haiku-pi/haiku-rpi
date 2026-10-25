@@ -1,16 +1,14 @@
 /*
  * PhotoCraft's resources on Haiku (scripts/build-photocraft.sh, step package): compiled with the host rc
- * and attached to the executable with xres, as Haiku's own applications carry them.
- *
- * B_ARGV_ONLY: documents opened from the Tracker ("Open with", a double click, a drop on the icon) arrive as
- * paths in argv, as Photocraft takes them — the program has no BApplication of its own to receive
- * B_REFS_RECEIVED (the Wayland server makes one later, for the windows). B_MULTIPLE_LAUNCH: Photocraft
- * hands a second launch's documents to the running instance itself.
+ * and attached with xres, as Haiku's own applications carry them. This file: the launcher
+ * (apps/PhotoCraft/PhotoCraft, launcher.cpp), what the Deskbar and the Tracker start — the signature the
+ * image types are registered for ("Open with"); it hands the documents to bin/PhotoCraft as arguments.
+ * photocraft-bin.rdef.in: the program itself.
  */
 
 resource app_signature "application/x-vnd.storyteller-photocraft";
 
-resource app_flags B_MULTIPLE_LAUNCH | B_ARGV_ONLY;
+resource app_flags B_MULTIPLE_LAUNCH;
 
 resource app_version {
 	major  = @MAJOR@,

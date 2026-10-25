@@ -398,3 +398,76 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   --add-tree artifacts/wayland-stage --add-tree artifacts/photocraft/gui-non-packaged --bootscript
   tools/pi-tests/wayland-exit.sh`, `scripts/netboot-cycle.sh --image artifacts/images/wayland-exit.img --secs 900
   --label wayland-exit --until 'PEX end'` (expect "0 stuck" five times and no "PEX syslog:" line).
+
+### P5 — package + performance (10-25: package built, not published; the V3D compile 3.5× faster, Pi-checked)
+- **The `photocraft` package**: `scripts/build-photocraft.sh --only package` (after `--only gui`; `--revision N`)
+  → `artifacts/packages/photocraft-0.15.1-1-arm64.hpkg` (29.5 MB). Layout: `apps/PhotoCraft/PhotoCraft` — a small
+  launcher (`tools/photocraft-package/launcher.cpp`), what the Deskbar (`data/deskbar/menu/Applications/PhotoCraft`)
+  and the Tracker start; `apps/PhotoCraft/bin/PhotoCraft` — the program; `bin/photocraft` → the program (Terminal);
+  `documentation/packages/photocraft/` (README, both licences). Requires haiku, lib:libgcc_s, lib:libstdc++,
+  `mesa >= 26.2.5-6`, `libxkbcommon >= 1.13.2-2`, `wayland_server >= 0.1.20251004-10`, lib:libwayland_client,
+  lib:libwayland_cursor, xkeyboard_config. Runs without environment variables (no WGPU_BACKEND: the only backend
+  built in on Haiku is Vulkan; the XKB and X11 locale data at the packages' own paths). Settings in
+  `~/.config/photocraft` (Photocraft's Linux rule, `$XDG_CONFIG_HOME` or `~/.config`; not patched).
+  - **Why a launcher**: the Tracker hands documents to an application as a B_REFS_RECEIVED message — "Open with", a
+    double click, a drop — never as arguments (`BRoster::Launch` drops the messages for a B_ARGV_ONLY application,
+    found on the Pi: the window opened, no document). Photocraft takes documents as arguments and has no
+    BApplication of its own (the Wayland server makes one later). The launcher collects refs and arguments,
+    starts `bin/PhotoCraft` with the paths, quits (B_MULTIPLE_LAUNCH).
+  - **Resources and attributes** (`tools/photocraft-package/PhotoCraft.rdef.in`, `photocraft-bin.rdef.in`, host rc +
+    xres): launcher `application/x-vnd.storyteller-photocraft` with the image types it opens (the Linux desktop
+    entry's list plus Haiku's image/x-bmp, image/x-targa) and the icon; the program
+    `application/x-vnd.storyteller-photocraft-app` (no types; the Deskbar shows it by name and icon). The registrar
+    makes an application's MIME entry from its *attributes* (`create_app_meta_mime` reads BEOS:APP_SIG as an
+    attribute), so the host `mimeset` copies the resources to attributes before `package create` — with jam's MIME
+    database (`objects/common/data/mime_db/mime_db`; another path sniffs the ELF as octet-stream and copies
+    nothing); this host keeps attributes per inode in `generated.arm64/attributes`, cleared first and removed with
+    `rm_attrs`.
+  - **Icon**: HVIF from the Linux 256 px icon by `tools/haiku-icon/png2hvif.py` (blurred so the engraving's hatching
+    becomes tone, 4 colours, pixel-edge outlines simplified: 996 bytes, 39 paths). The SVG (329 kB of engraving
+    paths) is far beyond HVIF's limits.
+  - QEMU (release image 25e + the packages in /boot/system/packages, `tools/pi-tests/photocraft-package.sh`):
+    activated; launcher, program, command, Deskbar entry in place; `env -i` start reaches its Wayland surface and the
+    adapter (no GPU there); "Open with" (`tools/haiku-tests/mimeapps --launch`, BRoster::Launch with refs as the
+    Tracker) → `bin/PhotoCraft /boot/home/pck.jpg`; the launcher's MIME entry (META:FILE_TYPES) is made at its
+    first start, after which image/jpeg, png, tiff, x-targa list it among their supporting applications. On the Pi
+    (session, 10-25 13:05-13:20): the packages activated live, "Open with" on a JPEG opened the document.
+    Not tested by hand: the Deskbar menu entry with a mouse.
+  - Known gaps: the app's MIME entry (so "Open with") exists only after its first start (the registrar does not
+    run mimeset on package activation); `.pcraft` has no Haiku MIME type; Photocraft's single-instance lock needs
+    `File::try_lock`, unsupported in Rust's std on Haiku ("starting a separate PhotoCraft" — each launch its own
+    window).
+- **The ~43 s first-start compile** — measured on the Pi (session on image-2026-10-25e, mesa 26.2.5-6, shader cache
+  off: MESA_SHADER_CACHE_DISABLE=true), new tool `photocraft-pipeline-time` (tools/photocraft-gpu-test, built by
+  `--only gpu`: each compositor pipeline built alone, timed; `--threads N`):
+  - all 33 pipelines one after the other **56.5 s**, of which **fs_layerbatch 33.5 s** (13k VIR instructions,
+    10.5k temps, 667 blocks: an unrolled loop; register allocation fails at 4 threads and ends at 2) and fs_atop,
+    fs_fxmerge, fs_adjust, fs_fxpaint 3.4-4.5 s each; the probe's parallel build (rayon, 4 CPUs) **41-43 s** —
+    fs_layerbatch is the critical path.
+  - Haiku `profile` on it: 63 % `vir_calculate_live_intervals` + 13 % memset + 7 % `vir_opt_copy_propagate`.
+    Liveness is recomputed after every spill (81 times for this shader); per call 225 ms of it was
+    `vir_live_variables_defin_defout_dataflow` — a forward problem iterated in reverse block order, so one block per
+    pass (upstream Mesa has the same code).
+  - **Fix (haiku-pi/mesa rpi4, 3 commits on dee7e96cb04, upstream-quality, pushed)**: f55f89ccad9 defin/defout
+    in program order; baaaeaef308 liveness without per-block passes over all temps (no per-block clear of the
+    partial-update states, start/end from set bits only, one bitset allocation kept across calls); 76543fafdfc copy
+    propagation keeps a list of the available MOVs (kills and clears no longer scan every temp).
+  - **Result (Pi)**: fs_layerbatch **33.5 → 6.6 s**, all pipelines sequential **56.5 → 17.5 s**, the probe's build
+    **43.1 → 11.8 s**; Photocraft itself (from the package, Open with on a 2400×1500 JPEG, cache off): document on
+    screen after **30 s → 10 s**. Same output: V3D_DEBUG=qpu,fs,vs,cs dumps of all 105 shaders identical (931k
+    lines, same MD5), shader-db identical, the probe's 4 GPU results bit-identical (4/4 within tolerance),
+    photocraft-gpu-it **79 passed, 0 failed** (device_loss skipped) with the new driver.
+  - Left: register allocation (~1.5 s), NIR (~2.5 s) of fs_layerbatch; compiling in the background so the UI is not
+    frozen would be a Photocraft change (its tree stays untouched here). The warm cache still gives 0.26 s.
+  - **For the mesa package** (not built here): `scripts/build-gl-stack.sh --only mesa`, `--only stage`,
+    `scripts/package-gl-stack.sh --revision 7` (mesa 26.2.5-7; the three-part bump), then Photocraft's
+    `requires` can name `mesa >= 26.2.5-7`.
+- Pi steps prepared (bench needed): (1) the package on a fresh image: `scripts/image-add.sh
+  artifacts/images/haiku-pi4-2026-10-25e.img artifacts/images/photocraft-pkg.img` with the five packages
+  (photocraft, wayland, wayland_server, libxkbcommon, xkeyboard_config from artifacts/packages) as
+  `…:/boot/system/packages/<name>`, mimeapps (`aarch64-unknown-haiku-g++ … tools/haiku-tests/mimeapps.cpp -lbe`)
+  as `…:/boot/home/mimeapps`, a JPEG as `…:/boot/home/pck.jpg`, `tools/pi-tests/photocraft-package.sh` as
+  `…:/boot/home/config/settings/boot/UserBootscript`; `scripts/sd-cycle.sh --flash artifacts/images/photocraft-pkg.img
+  --secs 240 --label photocraft-pkg --until 'PCK end'`. (2) After mesa -7: the same with the new mesa package,
+  `PCK open with: program: … pck.jpg` and the document in `photocraft-package-open.png`.
+

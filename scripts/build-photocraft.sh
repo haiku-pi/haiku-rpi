@@ -23,7 +23,8 @@
 #   hosttest  tools/pi-tests/photocraft-cli.sh run on the host build, into
 #             artifacts/photocraft/host-results.txt (the Pi's "PCC " serial lines should match)
 #   gpu       the GPU compositor, headless (phase P2): tools/photocraft-gpu-test (photocraft-gpu-probe,
-#             photocraft-shader-repro (one compositor pass on a few pixels, #75) and
+#             photocraft-shader-repro (one compositor pass on a few pixels, #75), photocraft-pipeline-time
+#             (the driver's time for each compositor pipeline, P5) and
 #             crates/gpu's integration tests as photocraft-gpu-it) and crates/gpu's unit tests
 #             (photocraft-gpu-unit), release/test builds for both targets; staged stripped into
 #             artifacts/photocraft/gpu-non-packaged/bin/ (arm64) and artifacts/photocraft/host-gpu/
@@ -47,11 +48,13 @@
 #             tools/pi-tests/wayland-keys.sh) and bin/wlexit (tools/haiku-tests/wlexit.cpp: a client exiting while
 #             it still sends requests, tools/pi-tests/wayland-exit.sh)
 #   package   the photocraft package (phase P5), from the gui stage: artifacts/packages/
-#             photocraft-<version>-<N>-arm64.hpkg (N: --revision, default 1). apps/PhotoCraft/PhotoCraft with
-#             Haiku resources (tools/photocraft-package/PhotoCraft.rdef.in: signature, version, B_ARGV_ONLY so the
-#             Tracker's documents arrive in argv, the image types it opens for "Open with", a vector icon made
-#             from the Linux icon by tools/haiku-icon/png2hvif.py), bin/photocraft, the Deskbar's Applications
-#             entry, the licenses. Requires the stack it was checked with: wayland_server >= 0.1.20251004-10,
+#             photocraft-<version>-<N>-arm64.hpkg (N: --revision, default 1). apps/PhotoCraft/PhotoCraft, a small
+#             launcher (tools/photocraft-package/launcher.cpp: the Tracker hands documents over as a message,
+#             which the program has no BApplication to receive; the launcher passes them as arguments) with
+#             the resources the Deskbar and Tracker use (PhotoCraft.rdef.in: signature, version, the image types
+#             it opens for "Open with", a vector icon made from the Linux icon by tools/haiku-icon/png2hvif.py),
+#             apps/PhotoCraft/bin/PhotoCraft (the program, photocraft-bin.rdef.in), bin/photocraft, the
+#             Deskbar's Applications entry, the licenses. Requires the stack it was checked with: wayland_server >= 0.1.20251004-10,
 #             libxkbcommon >= 1.13.2-2 (Compose data), mesa >= 26.2.5-6 (V3DV, Haiku WSI, the V3D compiler fix)
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
@@ -221,7 +224,7 @@ for line in open(sys.argv[1]):
 
 gpu() {
 	toolchain
-	local t start json probe repro it unit dir
+	local t start json probe repro ppt it unit dir
 	rm -rf "$gpuStage" "$work/host-gpu"
 	mkdir -p "$gpuStage/bin" "$work/host-gpu"
 	for t in "$target" "$host"; do
@@ -237,20 +240,23 @@ gpu() {
 			--config "$work/vendor-config.toml" --message-format json-render-diagnostics) >> "$json"
 		probe="$(executable "$json" photocraft-gpu-probe false)"
 		repro="$(executable "$json" photocraft-shader-repro false)"
+		ppt="$(executable "$json" photocraft-pipeline-time false)"
 		it="$(executable "$json" photocraft-gpu-it true)"
 		unit="$(executable "$json" photocraft_gpu true)"
-		[ -n "$probe" ] && [ -n "$repro" ] && [ -n "$it" ] && [ -n "$unit" ] \
+		[ -n "$probe" ] && [ -n "$repro" ] && [ -n "$ppt" ] && [ -n "$it" ] && [ -n "$unit" ] \
 			|| { echo "build-photocraft: $t: no executable in $json" >&2; exit 1; }
 		if [ "$t" = "$target" ]; then
 			dir="$gpuStage/bin"
 			"$crossBin/$target-strip" -o "$dir/photocraft-gpu-probe" "$probe"
 			"$crossBin/$target-strip" -o "$dir/photocraft-shader-repro" "$repro"
+			"$crossBin/$target-strip" -o "$dir/photocraft-pipeline-time" "$ppt"
 			"$crossBin/$target-strip" -o "$dir/photocraft-gpu-it" "$it"
 			"$crossBin/$target-strip" -o "$dir/photocraft-gpu-unit" "$unit"
 			for f in "$dir"/*; do checkElf "$f"; done
 		else
 			cp "$probe" "$work/host-gpu/photocraft-gpu-probe"
 			cp "$repro" "$work/host-gpu/photocraft-shader-repro"
+			cp "$ppt" "$work/host-gpu/photocraft-pipeline-time"
 			cp "$it" "$work/host-gpu/photocraft-gpu-it"
 			cp "$unit" "$work/host-gpu/photocraft-gpu-unit"
 		fi
@@ -363,7 +369,7 @@ desktop() {
 }
 
 package() {
-	local pkg="$work/package" version app tmp file icon attrs="$root/sources/haiku/generated.arm64/attributes"
+	local pkg="$work/package" version app tmp icon attrs="$root/sources/haiku/generated.arm64/attributes"
 	export LD_LIBRARY_PATH="$root/sources/haiku/generated.arm64/objects/linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 	"$hostTools/rm_attrs" -rf "$pkg"
 	version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' "$src/Cargo.toml")"
@@ -376,24 +382,34 @@ package() {
 	icon="$src/assets/app-icon/hicolor/256x256/apps/ai.storyteller.photocraft.png"
 	python3 "$root/tools/haiku-icon/png2hvif.py" "$icon" "$tmp/PhotoCraft.hvif" --size 64 --blur 2 \
 		--epsilon 1.1 --min-area 4 --color 2f7bf5 --color efe9dc --color a29d92 --color 3a3836
-	sed -e "s|@MAJOR@|${version%%.*}|" -e "s|@MIDDLE@|$(echo "$version" | cut -d. -f2)|" \
-		-e "s|@MINOR@|${version##*.}|" -e "s|@REVISION@|$packageRevision|" -e "s|@VERSION@|$version|" \
-		-e "s|@ICON@|PhotoCraft.hvif|" "$root/tools/photocraft-package/PhotoCraft.rdef.in" > "$tmp/PhotoCraft.rdef"
-	"$hostTools/rc/rc" -I "$tmp" -o "$tmp/PhotoCraft.rsrc" "$tmp/PhotoCraft.rdef"
-	cp "$guiStage/bin/photocraft" "$app/PhotoCraft"
-	"$hostTools/xres" -o "$app/PhotoCraft" "$tmp/PhotoCraft.rsrc"
-	# the attributes the registrar reads (create_app_meta_mime needs BEOS:APP_SIG as an attribute, not only a
-	# resource: without it the app gets no MIME entry, so no "Open with"), set by the host settype + mimeset
-	# from the resources, as jam does for Haiku's applications. This host keeps attributes in a directory per inode
-	# (generated.arm64/attributes): a stale one of a reused inode is removed first, and rm_attrs removes them
-	# with the files at the end
-	rm -rf "$attrs/$(stat -c %i "$app/PhotoCraft")"
-	# (with the MIME database jam made, whose sniffer rules give the executable's type: mimeset copies the
-	# resources to attributes only for that type)
-	"$hostTools/mimeset" -f --mimedb "$root/sources/haiku/generated.arm64/objects/common/data/mime_db/mime_db" \
-		"$app/PhotoCraft"
-	echo "build-photocraft: attributes: $(ls "$attrs/$(stat -c %i "$app/PhotoCraft")" | sed -n 's/^_//p' | sed 's/__/_/g' | tr '\n' ' ')"
-	ln -s ../apps/PhotoCraft/PhotoCraft "$pkg/bin/photocraft"
+	# the launcher (what the Deskbar and the Tracker start: it turns the Tracker's documents into arguments)
+	# and the program, each with its resources (tools/photocraft-package/*.rdef.in)
+	"$crossBin/$target-g++" --sysroot="$root/artifacts/sysroot-arm64" -O2 -Wall -Werror -o "$app/PhotoCraft" \
+		"$root/tools/photocraft-package/launcher.cpp" -lbe
+	"$crossBin/$target-strip" "$app/PhotoCraft"
+	mkdir -p "$app/bin"
+	# (named PhotoCraft too: the Deskbar shows a running application by its file's name)
+	cp "$guiStage/bin/photocraft" "$app/bin/PhotoCraft"
+	local file rdef
+	for file in PhotoCraft:PhotoCraft bin/PhotoCraft:photocraft-bin; do
+		rdef="${file#*:}" file="$app/${file%%:*}"
+		sed -e "s|@MAJOR@|${version%%.*}|" -e "s|@MIDDLE@|$(echo "$version" | cut -d. -f2)|" \
+			-e "s|@MINOR@|${version##*.}|" -e "s|@REVISION@|$packageRevision|" -e "s|@VERSION@|$version|" \
+			-e "s|@ICON@|PhotoCraft.hvif|" "$root/tools/photocraft-package/$rdef.rdef.in" > "$tmp/$rdef.rdef"
+		"$hostTools/rc/rc" -I "$tmp" -o "$tmp/$rdef.rsrc" "$tmp/$rdef.rdef"
+		"$hostTools/xres" -o "$file" "$tmp/$rdef.rsrc"
+		# the attributes the registrar reads (create_app_meta_mime needs BEOS:APP_SIG as an attribute, not
+		# only a resource: without it the app gets no MIME entry, so no "Open with"), set by the host
+		# mimeset from the resources, as jam does for Haiku's applications, with the MIME database jam made
+		# (its sniffer rules give the executable's type; mimeset copies resources to attributes only for
+		# that type). This host keeps attributes in a directory per inode (generated.arm64/attributes): a
+		# stale one of a reused inode is removed first, and rm_attrs removes them with the files at the end
+		rm -rf "$attrs/$(stat -c %i "$file")"
+		"$hostTools/mimeset" -f --mimedb "$root/sources/haiku/generated.arm64/objects/common/data/mime_db/mime_db" \
+			"$file"
+		echo "build-photocraft: ${file#$pkg/} attributes: $(ls "$attrs/$(stat -c %i "$file")" | sed -n 's/^_//p' | sed 's/__/_/g' | tr '\n' ' ')"
+	done
+	ln -s ../apps/PhotoCraft/bin/PhotoCraft "$pkg/bin/photocraft"
 	ln -s ../../../../apps/PhotoCraft/PhotoCraft "$pkg/data/deskbar/menu/Applications/PhotoCraft"
 	cp "$src/README.md" "$pkg/documentation/packages/photocraft/"
 	cp "$src/LICENSE-MIT" "$src/LICENSE-APACHE" "$pkg/documentation/packages/photocraft/"

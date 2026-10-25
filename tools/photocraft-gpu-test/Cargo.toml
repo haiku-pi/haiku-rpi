@@ -28,6 +28,10 @@ path = "src/main.rs"
 name = "photocraft-shader-repro"
 path = "src/repro.rs"
 
+[[bin]]
+name = "photocraft-pipeline-time"
+path = "src/pipelines.rs"
+
 [[test]]
 name = "photocraft-gpu-it"
 path = "tests/it.rs"
