@@ -186,8 +186,10 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
     and stops at the adapter: `MESA: Opening /dev/dri/renderD128 failed`, `No suitable graphics adapter found`;
     the same for `--safe-gpu`. That is all QEMU can show of the app: no adapter → eframe exits before a frame.
   - Size: the swapchain is configured to winit's inner size (1024×768 on QEMU's screen; the app asks 1440×900 and
-    shrinks to the monitor) while the view is still 0×0 (no geometry committed yet): Mesa returns SUBOPTIMAL and
-    scales; the first commit gives the view that size. Resizing: a configure from the server (move/resize tracking,
+    shrinks to the monitor) while the view is still 0×0 (no geometry committed yet): the first acquire is SUBOPTIMAL
+    by design (Mesa's swapchain takes any extent and scales); egui-wgpu presents that frame anyway and reconfigures
+    before the next (`needs_reconfigure`), and the first present's commit gives the view that size. (Were the view's
+    size ever to differ from winit's for good, every frame would be SUBOPTIMAL and reconfigure the swapchain.) Resizing: a configure from the server (move/resize tracking,
     fullscreen) → winit resizes, sets the geometry, eframe reconfigures, the next present's commit resizes the view
     and window. Between them a frame is drawn scaled.
   - Limitations: frames before the first commit are dropped by the WSI (window hidden); Mesa reads the view's size
@@ -208,6 +210,6 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   result: 0 bad`, a green 800×500 window), `window` (45 s, the JPEG test image), `trace` (WAYLAND_DEBUG=client, 25 s,
   plus `trace: N wl_surface commits, M frame callbacks done`), `safe` (`--safe-gpu`, 30 s), each with a fresh
   PHOTOCRAFT_CONFIG_DIR and a screenshot in /boot/home. Expected: `Haiku Wayland surface: … view 0x…`, the adapter
-  `V3D 4.2`, `window: alive after 45 s`, commits and frame callbacks in the hundreds, the PhotoCraft window in the
-  screenshot. wayland_server 8 is in `artifacts/packages` (rev 7 removed there) but not in the image's repository
+  `V3D 4.2`, `window: alive after 45 s`, at least 2 wl_surface commits in `trace` (egui is reactive: without input it
+  may present only a handful of frames, so a low count is not a failure), the PhotoCraft window in the screenshot. wayland_server 8 is in `artifacts/packages` (rev 7 removed there) but not in the image's repository
   (`build/jam/repositories/HaikuPorts/arm64` in sources/haiku) and not published: the test stages it as a tree.
