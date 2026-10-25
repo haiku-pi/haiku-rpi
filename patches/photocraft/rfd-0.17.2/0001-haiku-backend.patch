@@ -17,6 +17,10 @@ Cargo.lock stays as it is) and links with libtracker, libbe and libstdc++.
   B_CANCEL, which the panel sends whenever it hides (after an answer too), ends the wait.
 - Sync calls block the calling thread; the async ones wait on a thread of their own and resolve
   through rfd's oneshot channel.
+- A program exiting with a dialog open: an exit handler (registered with the first dialog, so it
+  runs before libbe's static destructors) locks the open dialogs' loopers and suspends their
+  threads while they wait; else a message reaching one after exit() freed libbe's looper list
+  crashes its thread in BLooperList::FindLooperPred. A dialog closing then leaves its loopers alone.
 
 Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies with -p1 to rfd 0.17.2.
 
@@ -74,7 +78,7 @@ Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies
 +}
 --- a/src/backend/haiku/rfd_haiku.cpp
 +++ b/src/backend/haiku/rfd_haiku.cpp
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,369 @@
 +/*
 + * rfd's dialogs on Haiku: the Tracker's file panel (BFilePanel) for opening files, picking a folder and
 + * saving, and BAlert for message dialogs. Called from src/backend/haiku.rs; built by build.rs.
@@ -82,6 +86,13 @@ Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies
 + * Both need the application's BApplication (be_app), which is not made here: a winit/Wayland program gets
 + * it from the Wayland server add-on, which creates and runs one when the client connects
 + * (wl_ips_client_connected) and expects be_app to be its own. Without be_app the functions return -1.
++ *
++ * A program may exit while a panel or an alert is open (asked to quit, or another thread exits): their
++ * loopers (the panel's or alert's window, the panel's target) would keep running while exit() runs libbe's
++ * static destructors, and a message arriving then makes the thread look itself up in the freed looper list
++ * (a segment violation in BLooperList::FindLooperPred). An exit handler, registered with the first dialog
++ * (after libbe's static objects were made, so it runs before their destructors), locks those loopers and
++ * suspends their threads while they wait, as the Wayland server does with its own.
 + */
 +#include <Alert.h>
 +#include <Application.h>
@@ -99,14 +110,121 @@ Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies
 +
 +#include <compat/sys/stat.h>
 +
++#include <pthread.h>
 +#include <stdlib.h>
 +#include <string.h>
 +#include <strings.h>
 +
++#include <algorithm>
 +#include <vector>
 +
 +
 +namespace {
++
++// the open dialogs' loopers, for the exit handler (never freed: used while the team exits)
++pthread_mutex_t sOpenLock = PTHREAD_MUTEX_INITIALIZER;
++std::vector<BLooper*>* sOpen = new std::vector<BLooper*>;
++bool sExiting = false;
++
++
++// the team exits, `thread` is a looper's whose lock the caller holds: suspend it while it waits (it holds
++// no lock then; a thread that runs user code could be stopped inside malloc(), so a running one gets up to
++// 50 ms to wait again)
++void
++suspend_when_waiting(thread_id thread)
++{
++	if (thread < 0 || thread == find_thread(NULL))
++		return;
++	for (int i = 0; i < 50; i++) {
++		thread_info info;
++		if (get_thread_info(thread, &info) != B_OK)
++			return;
++		if (info.state == B_THREAD_WAITING) {
++			suspend_thread(thread);
++			return;
++		}
++		snooze(1000);
++	}
++}
++
++
++void
++stop_open_dialogs()
++{
++	pthread_mutex_lock(&sOpenLock);
++	sExiting = true;
++	for (size_t i = 0; i < sOpen->size(); i++) {
++		BLooper* looper = (*sOpen)[i];
++		if (looper->LockWithTimeout(200000) == B_OK)
++			suspend_when_waiting(looper->Thread());
++	}
++	// a dialog closing from now on sees sExiting and leaves its loopers alone (an alert's thread that held
++	// its window just now stops the window's thread itself)
++	pthread_mutex_unlock(&sOpenLock);
++}
++
++
++// `looper` (a dialog's window or the panel's target) is running: stopped if the team exits meanwhile
++void
++add_open(BLooper* looper)
++{
++	static pthread_once_t once = PTHREAD_ONCE_INIT;
++	pthread_once(&once, [] { atexit(stop_open_dialogs); });
++	pthread_mutex_lock(&sOpenLock);
++	sOpen->push_back(looper);
++	pthread_mutex_unlock(&sOpenLock);
++}
++
++
++// a dialog closes: its loopers are quit with the list locked, so the exit handler never sees one half gone.
++// Returns with the list locked (unlock with closed()), or never when the team is exiting: the exit handler
++// holds the loopers then, and the calling thread waits for the team's end.
++void
++closing(BLooper* first, BLooper* second = NULL)
++{
++	pthread_mutex_lock(&sOpenLock);
++	if (sExiting) {
++		pthread_mutex_unlock(&sOpenLock);
++		while (true)
++			snooze(1000000);
++	}
++	sOpen->erase(std::remove(sOpen->begin(), sOpen->end(), first), sOpen->end());
++	sOpen->erase(std::remove(sOpen->begin(), sOpen->end(), second), sOpen->end());
++}
++
++
++void
++closed()
++{
++	pthread_mutex_unlock(&sOpenLock);
++}
++
++
++// BAlert::Go() quits the alert (from the calling thread, the window locked) when a button was pressed
++class Alert : public BAlert {
++public:
++	Alert(const char* title, const char* text, const char* button1, const char* button2,
++		const char* button3, alert_type type)
++		:
++		BAlert(title, text, button1, button2, button3, B_WIDTH_AS_USUAL, B_EVEN_SPACING, type)
++	{
++	}
++
++	virtual void Quit()
++	{
++		pthread_mutex_lock(&sOpenLock);
++		if (sExiting) {
++			// the exit handler could not lock this window (this thread holds it): stop its thread here
++			pthread_mutex_unlock(&sOpenLock);
++			suspend_when_waiting(Thread());
++			while (true)
++				snooze(1000000);
++		}
++		sOpen->erase(std::remove(sOpen->begin(), sOpen->end(), this), sOpen->end());
++		BAlert::Quit();
++		pthread_mutex_unlock(&sOpenLock);
++	}
++};
 +
 +/* Shows the folders and the files whose extension is one of the filters' (any letter case); no filter
 + * or a "*" shows every file. */
@@ -234,6 +352,7 @@ Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies
 +
 +	PanelTarget* target = new PanelTarget();
 +	target->Run();
++	add_open(target);
 +	BMessenger messenger(target);
 +	ExtensionFilter filter(extensions, extensionCount);
 +	BFilePanel* panel = new BFilePanel(kind == 2 ? B_SAVE_PANEL : B_OPEN_PANEL, &messenger, NULL,
@@ -251,13 +370,15 @@ Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies
 +		panel->Window()->SetTitle(title);
 +		panel->Window()->Unlock();
 +	}
++	add_open(panel->Window());
 +	panel->Show();
 +	target->Wait();
-+	delete panel;
-+
 +	BMessage answer(target->Answer());
++	closing(panel->Window(), target);
++	delete panel;
 +	if (target->Lock())
 +		target->Quit();
++	closed();
 +
 +	BString list;
 +	int count = 0;
@@ -307,8 +428,8 @@ Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies
 +	message << text;
 +
 +	alert_type type = level == 2 ? B_STOP_ALERT : level == 1 ? B_WARNING_ALERT : B_INFO_ALERT;
-+	BAlert* alert = new BAlert(title, message.String(), labels[0], count > 1 ? labels[1] : NULL,
-+		count > 2 ? labels[2] : NULL, B_WIDTH_AS_USUAL, B_EVEN_SPACING, type);
++	BAlert* alert = new Alert(title, message.String(), labels[0], count > 1 ? labels[1] : NULL,
++		count > 2 ? labels[2] : NULL, type);
 +	if (titleLength > 0) {
 +		// the title in bold, as the first paragraph (an alert's window has no title bar)
 +		BFont bold(be_bold_font);
@@ -317,6 +438,7 @@ Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies
 +	}
 +	if (escape >= 0 && escape < count)
 +		alert->SetShortcut(escape, B_ESCAPE);
++	add_open(alert);
 +	return alert->Go();
 +}
 +

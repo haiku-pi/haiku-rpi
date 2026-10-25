@@ -23,12 +23,14 @@
 #      exit by itself within 15 s, without a debugger message on the serial console
 #   4. desktop (P4, needs bin/keyinject and bin/photocraft-desktop-test, built with the GUI): photocraft
 #      without a document; after 20 s Command+O (File › Open) must show the Tracker's file panel ("Open",
-#      modal: the app gives it its window as parent), screenshot photocraft-desktop-panel.png. Command is
+#      modal: the app gives it its window as parent), screenshot photocraft-desktop-panel.png. It starts in
+#      /boot/home (no document yet), where the test image is copied as pcw-open-test.jpg. Command is
 #      Haiku's shortcut key (left Alt by default), which wayland_server gives clients as Control (keyinject's
-#      "%o"); Haiku's Control key reaches them as Alt (tools/pi-tests/wayland-keys.sh). "photocraft-m" +
-#      Return opens photocraft-masks.jpg (screenshot photocraft-desktop-doc.png after 15 s); Command+A, +C
+#      "%o"); Haiku's Control key reaches them as Alt (tools/pi-tests/wayland-keys.sh). "pcw-open-test" +
+#      Return opens it (screenshot photocraft-desktop-doc.png after 15 s); Command+A, +C
 #      puts the image on Haiku's clipboard: `clipboard -d` lists image/bitmap and image/png, and
-#      photocraft-desktop-test reads it back at the JPEG's size; then asked to quit
+#      photocraft-desktop-test reads it back at the JPEG's size ("copied image WxH = the document's: ok");
+#      then asked to quit: "exit 0", and no "entered the debugger" on the serial console
 #   5. safe: photocraft --safe-gpu (CPU compositing, wgpu still draws the window), 30 s
 # Serial console lines: "PCW "; "PCW <step>: <line>" for the program's output (stdout and stderr, the
 # first 120 lines), "PCW <step>: alive after N s" or "PCW <step>: exit N", "PCW <step>: screenshot N
@@ -143,6 +145,11 @@ grep -a -E 'ERROR|panic|DEBUGGER' "$tmp/close.txt" | head -n 20 | while IFS= rea
 # desktop integration (P4): the file panel from File › Open, the system clipboard from Copy
 if [ -x "${bin%/*}/keyinject" ]; then
 	keys() { "${bin%/*}/keyinject" "$pid" "$1" "$2" 2>&1 | tail -n 1; }
+	pdt="${bin%/*}/photocraft-desktop-test"
+	# the panel starts in /boot/home (no document yet): the test image there under a name nothing else
+	# starts with (the screenshots are photocraft-*.png)
+	cp "$data/photocraft-masks.jpg" /boot/home/pcw-open-test.jpg
+	want=$("$pdt" jpeg-size /boot/home/pcw-open-test.jpg 2>&1 | sed -n 's/^PDT jpeg-size: \([0-9]*x[0-9]*\)$/\1/p')
 	rm -rf "$tmp/config-desktop"
 	mkdir -p "$tmp/config-desktop"
 	clipboard -r > /dev/null 2>&1
@@ -160,13 +167,17 @@ if [ -x "${bin%/*}/keyinject" ]; then
 	say "desktop: panel \"Open\": $found after $waited s"
 	screenshot -s /boot/home/photocraft-desktop-panel.png > /dev/null 2>&1
 	if [ $found = yes ]; then
-		say "desktop: open: $(keys Open "photocraft-m~")"
+		say "desktop: open: $(keys Open "pcw-open-test~")"
 		sleep 15
 		screenshot -s /boot/home/photocraft-desktop-doc.png > /dev/null 2>&1
 		say "desktop: select all, copy: $(keys PhotoCraft "%a%c")"
 		sleep 5
 		clipboard -d 2>&1 | grep -a -E 'image/|_frame|text/' | head -n 6 | while IFS= read -r l; do say "desktop: clipboard -d: $l"; done
-		"${bin%/*}/photocraft-desktop-test" clip-image-get 2>&1 | grep -a PDT | while IFS= read -r l; do say "desktop: $l"; done
+		"$pdt" clip-image-get > "$tmp/desktop-clip.txt" 2>&1
+		grep -a PDT "$tmp/desktop-clip.txt" | while IFS= read -r l; do say "desktop: $l"; done
+		got=$(sed -n 's/^PDT clip-image-get: \([0-9]*x[0-9]*\) .*/\1/p' "$tmp/desktop-clip.txt")
+		if [ -n "$want" ] && [ "$got" = "$want" ]; then say "desktop: copied image $got = the document's: ok"
+		else say "desktop: copied image ${got:-none}, the document ${want:-?}: BAD"; fi
 	fi
 	say "desktop: hey: $(hey "$pid" quit 2>&1 | tr '\n' ' ' | cut -c1-120)"
 	waited=0
@@ -181,6 +192,7 @@ if [ -x "${bin%/*}/keyinject" ]; then
 	fi
 	grep -a -E 'rfd|arboard|clipboard|Compose|XKB|panic|ERROR|DEBUGGER' "$tmp/desktop.txt" | head -n 20 \
 		| while IFS= read -r l; do say "desktop: $(echo "$l" | cut -c1-240)"; done
+	rm -f /boot/home/pcw-open-test.jpg
 fi
 show safe 30 "" --new-instance --safe-gpu "$data/photocraft-masks.jpg"
 sync

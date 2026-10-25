@@ -42,6 +42,9 @@
 #             (tools/photocraft-desktop-test: the same rfd and arboard without the app's window, so QEMU can run
 #             it; its own Cargo.lock, a subset of Photocraft's) and bin/keyinject (tools/haiku-tests/keyinject.cpp:
 #             keys for the file panels) for tools/pi-tests/photocraft-desktop.sh and photocraft-gui.sh
+#             Also bin/wlkeys (tools/haiku-tests/wlkeys.cpp: the keyboard as a client sees it,
+#             tools/pi-tests/wayland-keys.sh) and bin/wlexit (tools/haiku-tests/wlexit.cpp: a client exiting while
+#             it still sends requests, tools/pi-tests/wayland-exit.sh)
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
 #             diff its "PCC " lines against host-results.txt, wall times left out; exit 0 if equal
@@ -326,6 +329,10 @@ wlview() {
 	"$crossBin/$target-g++" --sysroot="$sysroot" -O2 -Wall -Werror -I"$tmp" -o "$tmp/wlkeys" \
 		"$root/tools/haiku-tests/wlkeys.cpp" "$tmp/xdg-shell.o" -lwayland-client -lxkbcommon -lbe
 	"$crossBin/$target-strip" -o "$guiStage/bin/wlkeys" "$tmp/wlkeys"
+	# tools/haiku-tests/wlexit.cpp: a client exiting while it still sends requests (the server's exit hold)
+	"$crossBin/$target-g++" --sysroot="$sysroot" -O2 -Wall -Werror -I"$tmp" -o "$tmp/wlexit" \
+		"$root/tools/haiku-tests/wlexit.cpp" "$tmp/xdg-shell.o" -lwayland-client -lbe
+	"$crossBin/$target-strip" -o "$guiStage/bin/wlexit" "$tmp/wlexit"
 	rm -rf "$tmp"
 }
 

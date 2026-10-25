@@ -184,7 +184,7 @@ PY
 
 step_wayland_server() {
 	"$cross" --patches "$root/patches/wayland_server" "$serverRecipe" meson "${paths[@]}"
-	"$package" "$serverRecipe" --system-prefix --no-devel --revision 9 --requires lib:libwayland_client \
+	"$package" "$serverRecipe" --system-prefix --no-devel --revision 10 --requires lib:libwayland_client \
 		--requires lib:libwayland_server
 	no_build_paths wayland_server
 }

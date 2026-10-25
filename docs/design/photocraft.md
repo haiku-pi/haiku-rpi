@@ -339,8 +339,8 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   `couldn't find a Compose file` anywhere in the log.
 - Publishing (after the Pi check): libxkbcommon + libxkbcommon_devel **1.13.2-2** are in `artifacts/packages` (-1
   moved to `artifacts/packages-old`); the other two parts of the bump (the copy in `generated.arm64/download/`, the
-  version in `build/jam/repositories/HaikuPorts/arm64`) are left for the publish. wayland_server is unchanged (still
-  -9): nothing in P4 needed a server change. Note for the publish: the package now carries libX11's nls files
+  version in `build/jam/repositories/HaikuPorts/arm64`) are left for the publish. wayland_server **-10** (the exit
+  fix below) is in `artifacts/packages` (-9 moved to `artifacts/packages-old`), not published. Note for the publish: the package now carries libX11's nls files
   (MIT/X11 licence, libX11's copyright holders) under libxkbcommon's; and anyone's next `publish-repo.sh` ships -2
   (the mesa #71 fix is waiting), with or without the Pi check.
 - **Pi runs (main session, 10-25 ~09:45)**: photocraft-desktop.sh passes everything on the Pi (as in QEMU; screen
@@ -361,10 +361,40 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   Wayland clients as Control too. On Haiku, Photocraft's Ctrl shortcuts are therefore on the Command key, as in any
   Haiku app. keyinject gained `%x` (Command+x, as input_server sends it); photocraft-gui.sh's desktop run uses
   `%o`, `%a%c`.
+- **Pi run photocraft-gui5** (main session, `artifacts/uart/20261025-100534-photocraft-gui5.log`): Command+O → the panel
+  at once; open + Command+A/C → image/bitmap + image/png on the clipboard. Two problems, both fixed 10-25 (11:51):
+  - **The wrong file opened**: the panel starts in /boot/home (no document yet), where the script had saved
+    photocraft-desktop-panel.png — "photocraft-m" matched the screenshot. Now the test image is copied to
+    /boot/home/pcw-open-test.jpg and typed in full, and the copied image's size is checked against the JPEG's
+    (`photocraft-desktop-test jpeg-size`): "copied image 2400x1500 = the document's: ok".
+  - **A crash at quit**: "Segment violation" in BLooperList::FindLooperPred ← IsLooperValid ← BLooper::Lock ←
+    task_looper on thread 911 — the **"wayland" looper** (in QEMU the same client's threads: wayland = app looper − 3,
+    914 − 3), not an rfd panel (the shim deletes its panel and target before the dialog returns). The exit hold
+    (wayland_server -8/-9) locks the server's loopers, but their threads still wake for every later message and
+    then look themselves up in libbe's looper list, which libbe's static destructors free right after.
+    **wayland_server 0.1.20251004-10** (`patches/wayland_server/...-wl-window-stop-at-exit.patch`): a held looper's
+    thread is suspended while it waits (a suspended thread runs no user code again; the team's exit kills it; a
+    running one gets ≤ 50 ms to wait again, so none is stopped inside malloc); requests sent once the server is
+    held are dropped (they filled the held looper's port and the sender, possibly the exiting thread, waited
+    forever); and the Wayland looper is held before the windows (stopped first, a window left the Wayland looper
+    blocked on its full port with its lock held, and the add-on's `gServerHandler` destructor then waited for that
+    lock forever — found by the first version of the fix, 5 of 40 hangs). rfd's shim also holds the loopers of a
+    dialog still open at exit (an exit handler registered with the first dialog; an alert's Quit() and a closing
+    panel coordinate with it).
+  - **QEMU A/B** (`tools/pi-tests/wayland-exit.sh`: `tools/haiku-tests/wlexit` — a toplevel as Photocraft's, a thread
+    committing every ms, exit() after 50-450 ms plus a request from a later exit handler — and
+    photocraft-desktop-test exiting right after a panel or alert closed, or with one still open): server **-9: a
+    window thread crashed in 1 of 20 wlexit runs** (`thread_hit_serious_debug_event … w>wlexit`) **and another run
+    of 30 logged `debug_server: … Segment violation`**; **-10: 40/40 for each of the five kinds (200 exits), no
+    debugger entry in the syslog**. Tools: `tools/haiku-tests/wlexit.cpp`, built into the GUI stage.
 - Not verified yet: a native application reading our `image/bitmap` (ShowImage's paste instantiates a BBitmap from
-  it; the fields are BBitmap::Archive's, one for one), and Command shortcuts end to end in Photocraft (wlkeys
-  shows Control arriving; the Pi `desktop` run with `%o` is the check). **Pi test (rerun of the GUI part)**:
+  it; the fields are BBitmap::Archive's, one for one), and Command shortcuts work end to end (gui5). **Pi test (rerun of the GUI part)**:
   `scripts/build-photocraft.sh --only gui`, `scripts/stage-packages.sh --wine-runtime`, `scripts/mkimage-pi4.sh
   --out artifacts/images/photocraft-gui.img --add-tree artifacts/wayland-stage --add-tree
   artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-gui.sh`, `scripts/netboot-cycle.sh
-  --image artifacts/images/photocraft-gui.img --secs 600 --hdmi-every 5 --label photocraft-gui5 --until 'PCW end'`.
+  --image artifacts/images/photocraft-gui.img --secs 600 --hdmi-every 5 --label photocraft-gui6 --until 'PCW end'`
+  (stage-packages takes wayland_server -10 now; expect "copied image 2400x1500 = the document's: ok", "desktop: exit 0",
+  no "entered the debugger"); optionally the exit stress `scripts/mkimage-pi4.sh --out artifacts/images/wayland-exit.img
+  --add-tree artifacts/wayland-stage --add-tree artifacts/photocraft/gui-non-packaged --bootscript
+  tools/pi-tests/wayland-exit.sh`, `scripts/netboot-cycle.sh --image artifacts/images/wayland-exit.img --secs 900
+  --label wayland-exit --until 'PEX end'` (expect "0 stuck" five times and no "PEX syslog:" line).

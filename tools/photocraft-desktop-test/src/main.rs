@@ -18,6 +18,9 @@
 //!   sync-open DIR [EXT...]                  (rfd::FileDialog, blocking)
 //!   alert TITLE TEXT ok|okcancel|yesno|yesnocancel
 //!   fonts                                   (fontdb's load_system_fonts: faces, families, a few names)
+//!   jpeg-size FILE                          (a JPEG's width x height, from its SOF header)
+//!   exit-during open|alert MS               (shows the dialog, exits with it open after MS ms: rfd's exit
+//!                                           handler must hold the dialog's loopers)
 //!
 //! Output: "PDT <command>: <result>" lines on standard output; exit 0 unless the call failed.
 
@@ -91,6 +94,27 @@ fn await_on_thread<T: Send + 'static>(future: impl Future<Output = T> + Send + '
         .expect("thread")
         .join()
         .expect("join")
+}
+
+/// The width and height in a JPEG's first SOF segment (baseline, progressive, ...).
+fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.get(..2)? != [0xff, 0xd8] {
+        return None;
+    }
+    let mut i = 2;
+    while i + 4 <= bytes.len() {
+        if bytes[i] != 0xff {
+            return None;
+        }
+        let marker = bytes[i + 1];
+        let length = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+        if matches!(marker, 0xc0..=0xcf) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+            let sof = bytes.get(i + 4..i + 9)?;
+            return Some((u16::from_be_bytes([sof[3], sof[4]]) as u32, u16::from_be_bytes([sof[1], sof[2]]) as u32));
+        }
+        i += 2 + length;
+    }
+    None
 }
 
 fn paths(list: Option<Vec<PathBuf>>) -> String {
@@ -191,6 +215,26 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             families.dedup();
             say(command, format!("{} faces, {} families", db.len(), families.len()));
             say(command, families.iter().take(12).cloned().collect::<Vec<_>>().join(", "));
+        }
+        "exit-during" => {
+            let ms: u64 = arg(1)?.parse().map_err(|_| "MS")?;
+            match arg(0)?.as_str() {
+                "open" => {
+                    let picked = rfd::AsyncFileDialog::new().set_directory("/boot/home").pick_file();
+                    std::thread::spawn(move || block_on(picked));
+                }
+                "alert" => {
+                    std::thread::spawn(|| rfd::MessageDialog::new().set_title("PDT exit").set_description("exiting").show());
+                }
+                other => return Err(format!("exit-during: no dialog {other}")),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            say(command, "exiting with the dialog open");
+            std::process::exit(0);
+        }
+        "jpeg-size" => {
+            let (w, h) = jpeg_size(&std::fs::read(arg(0)?).map_err(|e| e.to_string())?).ok_or("not a JPEG")?;
+            say(command, format!("{w}x{h}"));
         }
         _ => return Err(format!("no command {command}")),
     }
