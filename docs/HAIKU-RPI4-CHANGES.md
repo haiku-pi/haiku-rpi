@@ -202,6 +202,15 @@ spin-waits, and removed the watchdog and its diagnostics.** What survives:
 |---|---|---|
 | `a669f3070c` ★ | Measure the CPU clock with the PMU cycle counter | `arch_get_frequency()` returned 0, so About and sysinfo said "@ 0 MHz". It now counts cycles over 100 µs of the generic timer on the CPU asked about (a cross-CPU call for another CPU) and keeps the result for a second. The core's default frequency is that measurement until SMBIOS or the device tree give one. Pi 4: "ARM Cortex-A72 @ 1.50 GHz". The same commit names the board in the thermal driver (section 11). |
 
+### Hardware performance counters
+
+| commit | change | what and why |
+|---|---|---|
+| `cdb7601f17` ★ | `arm64_pmu`: a driver for the PMUv3 counters, system-wide | `/dev/misc/pmu` programs the cycle counter and the event counters (6 on the Cortex-A72) and reads them on every CPU; the 32-bit counters wrap within a second at full rate, so a kernel thread samples them every 200 ms into 64-bit totals. The cycle counter stays shared with `arch_get_frequency()`; user-mode PMU access stays off; one opener at a time. Generic arm64, not Pi-specific. |
+| `9b9b2a3bba` ★ | `pmustat`: count hardware events while a command runs | Like Linux's `perf stat -a`: cycles, instructions, L1D/L2 refills, branch mispredictions (or events by name; `-l` lists those the core implements), totals and rates with IPC, miss rates and the clock while busy; `-A` per CPU, `-u`/`-k` one mode, `-a SECONDS` without a command. |
+| `d6580d9550` ★ | `arm64_pmu`: the cycle counter's filter cleared, sampling at urgent priority | PMCCFILTR_EL0 resets to an unknown value; cleared, the cycles are counted in user mode and the kernel. The sampler runs at `B_URGENT_PRIORITY`, so real-time threads cannot hold it off while a counter wraps twice. |
+| `a6db106d27` ★ | `pmustat`: cycles counted in the measured mode for `-u` and `-k` | The cycle counter counts in every mode, so user- or kernel-only IPC was against all cycles (0.018 for `dd` in user mode). With a mode filter, `cpu_cycles` is counted on an event counter in that mode and IPC uses it. |
+
 ### Serial console and kernel debugging
 
 | commit | change | what and why |
@@ -298,6 +307,7 @@ The xHCI driver works behind the PCIe driver above with a diagnostic and one rin
 | `1d44b00380` ★ | xHCI: show the endpoint ring on a TRB error | Prints the event's TRB pointer and the ring, which identify the rejected TRB. Seen intermittently on a HID interrupt endpoint of the VL805. |
 | `afb2823bb5` ★ | USB: explore a new bus in the explore thread, not in its `Start()` | `BusManager::Start()` explored the new bus at once. On the Pi 4 the xHCI's `init_bus()` took 1.56 s of port resets and enumeration inside the device manager's initial scan, before the boot volume could be mounted. The explore thread does it now while the boot goes on; a USB boot disk published late is waited for by `get_boot_partitions()`, and other devices are hot-plugged as always. Boot volume mounted 5.8 s after the kernel starts, was 7.1 s. |
 | `c65ac5a2e6` ★ | xHCI: clear completed TDs' ring entries; pad TRBs against overfetch | In about one boot in ten (59 of 623) the board's USB hub stopped answering a few seconds after usb_hid started: every control transfer to it timed out until the next boot. At the timeout the controller's dequeue pointer had run past the stop marker, over entries of the ring's previous lap. Haiku's rings never toggle the cycle bit (a cleared TRB marks the end), so old entries still look valid, and the VL805 prefetches TRBs past where it stops and may use those copies later without reading them again (Linux's `XHCI_TRB_OVERFETCH`). It then replayed stale Link TRBs into freed TDs. Each TD's two ring entries are now cleared when its Event Data completion arrives, whatever the completion code; that part is generic. Every endpoint ring and every TD's TRBs are followed by four unused TRBs, as Linux does for the VL805. The VL805's firmware version is logged, since its other errata depend on it. 40 of 40 cold boots without a USB error. |
+| `289d8095c0` ★ | `usb_disk`: 256 DMA segments per transfer | The DMA resource defaulted to 16 segments, so a buffer of scattered pages was cut into 64 kB transfers instead of the 128 kB (256 blocks) the driver allows, each a full bulk-only command round trip. USB 3 stick, raw reads: 128 kB 62 → 69.5 MB/s, 1 MB 78 → 87.5 MB/s. Transfers above 128 kB fail on this stack (transaction/babble errors); not changed. |
 
 ---
 
