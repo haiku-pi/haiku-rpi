@@ -60,11 +60,17 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   JPEG/PNG/WebP/TIFF, invert, Gaussian blur, unsharp mask, a new document): in QEMU `virt` **all 13 MD5s equal
   the x86_64 Linux build's** (`scripts/build-photocraft.sh compare LOG`).
 
-### P2 — GPU headless (10-25: on the Pi 4 of 4 probe cases and 90 of 91 integration tests pass; two driver defects found, one fixed)
+### P2 — GPU headless (10-25: on the Pi 4 of 4 probe cases and 91 of 91 integration tests pass; two driver defects found and fixed)
 - **Pi, 10-25 (with mesa be833ed6d67)**: probe 4 of 4 (blend-f32-2048 max 0.19/255), the `--bisect` cases and
   quadrants all within tolerance (blend-u16-2048 4.9/255, the same as on the host: the probe's Hue/Luminosity at 16 bits,
-  not the GPU); photocraft-gpu-it **90 of 91**: `parity::blend_if` fails on V3D only (the GPU result is about 1 − the
-  CPU's: "U8 gray this hard adjustment, clipped"), open.
+  not the GPU); photocraft-gpu-it **90 of 91**: `parity::blend_if` failed on V3D only ("U8 gray this hard
+  adjustment, clipped") — **91 of 91 with mesa dee7e96cb04** (below).
+- **Fixed (V3D compiler, upstream bug): a vector `mov` moved only its first channel.** In the Blend If pass
+  (`fs_lerp`), `var this_px = b; if (op.p4.y < 0.5) { this_px = textureLoad(tex_c, …) }` is a vec4 phi; out of SSA
+  the other branch copies `b`'s register into the phi's with a vec4 `mov` (`nir_trivialize_registers`), and
+  `ntq_emit_alu` emitted only .x, so an adjustment layer's `this_px.yzw` were stale registers. Reduced with
+  `photocraft-shader-repro` (tools/photocraft-gpu-test, `shaders/blend-if-min.wgsl`); **mesa dee7e96cb04** moves
+  every channel. GL (v3d) shares the compiler. Upstreamable.
 - **Fixed (V3DV, upstream bug): partial supertiles stored over neighbouring pixels.** blend-f32-2048 rendered zeros in
   parts of its right half: wgpu stages each layer tile's upload as its own vkCmdCopyBufferToImage region, V3DV copies
   them with a render pass per region whose frame ends at the region's far edge (upstream d30a6f81023), and the

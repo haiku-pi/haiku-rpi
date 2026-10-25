@@ -7,6 +7,9 @@
 #                          written out for an MD5
 #   photocraft-gpu-it      the crate's own integration tests (crates/gpu/tests/it) with the device
 #                          request the app makes (build.rs)
+#   photocraft-shader-repro one compositor pass (fs_lerp's Blend If, or a WGSL file's) on four pixels,
+#                          checked against the CPU: reduces a GPU-only difference to shader code
+#                          (#75; shaders/blend-if-min.wgsl)
 [package]
 name = "photocraft-gpu-test"
 version = "0.1.0"
@@ -20,6 +23,10 @@ publish = false
 [[bin]]
 name = "photocraft-gpu-probe"
 path = "src/main.rs"
+
+[[bin]]
+name = "photocraft-shader-repro"
+path = "src/repro.rs"
 
 [[test]]
 name = "photocraft-gpu-it"

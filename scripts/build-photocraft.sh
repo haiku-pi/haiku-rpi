@@ -21,7 +21,8 @@
 #             artifacts/photocraft/host/photocraft-cli
 #   hosttest  tools/pi-tests/photocraft-cli.sh run on the host build, into
 #             artifacts/photocraft/host-results.txt (the Pi's "PCC " serial lines should match)
-#   gpu       the GPU compositor, headless (phase P2): tools/photocraft-gpu-test (photocraft-gpu-probe and
+#   gpu       the GPU compositor, headless (phase P2): tools/photocraft-gpu-test (photocraft-gpu-probe,
+#             photocraft-shader-repro (one compositor pass on a few pixels, #75) and
 #             crates/gpu's integration tests as photocraft-gpu-it) and crates/gpu's unit tests
 #             (photocraft-gpu-unit), release/test builds for both targets; staged stripped into
 #             artifacts/photocraft/gpu-non-packaged/bin/ (arm64) and artifacts/photocraft/host-gpu/
@@ -207,7 +208,7 @@ for line in open(sys.argv[1]):
 
 gpu() {
 	toolchain
-	local t start json probe it unit dir
+	local t start json probe repro it unit dir
 	rm -rf "$gpuStage" "$work/host-gpu"
 	mkdir -p "$gpuStage/bin" "$work/host-gpu"
 	for t in "$target" "$host"; do
@@ -222,18 +223,21 @@ gpu() {
 			cargo test --frozen --no-run --lib -p photocraft-gpu -j '{JOBS}' --target "$t" --target-dir "$work/target" \
 			--config "$work/vendor-config.toml" --message-format json-render-diagnostics) >> "$json"
 		probe="$(executable "$json" photocraft-gpu-probe false)"
+		repro="$(executable "$json" photocraft-shader-repro false)"
 		it="$(executable "$json" photocraft-gpu-it true)"
 		unit="$(executable "$json" photocraft_gpu true)"
-		[ -n "$probe" ] && [ -n "$it" ] && [ -n "$unit" ] \
+		[ -n "$probe" ] && [ -n "$repro" ] && [ -n "$it" ] && [ -n "$unit" ] \
 			|| { echo "build-photocraft: $t: no executable in $json" >&2; exit 1; }
 		if [ "$t" = "$target" ]; then
 			dir="$gpuStage/bin"
 			"$crossBin/$target-strip" -o "$dir/photocraft-gpu-probe" "$probe"
+			"$crossBin/$target-strip" -o "$dir/photocraft-shader-repro" "$repro"
 			"$crossBin/$target-strip" -o "$dir/photocraft-gpu-it" "$it"
 			"$crossBin/$target-strip" -o "$dir/photocraft-gpu-unit" "$unit"
 			for f in "$dir"/*; do checkElf "$f"; done
 		else
 			cp "$probe" "$work/host-gpu/photocraft-gpu-probe"
+			cp "$repro" "$work/host-gpu/photocraft-shader-repro"
 			cp "$it" "$work/host-gpu/photocraft-gpu-it"
 			cp "$unit" "$work/host-gpu/photocraft-gpu-unit"
 		fi
