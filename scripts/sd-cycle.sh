@@ -63,7 +63,11 @@ if [ -n "$flash" ]; then
 	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" up
 	pi_power on
 	flog="$uart_dir/$ts-$label-flash.log"
-	"$PYTHON" "$cap" --dev "$PI_UART" --log "$flog" --secs 900 --until '^HFL end' || true
+	# write (~25 MB/s) plus the read-back check (~35 MB/s), with margin: 900 s for a release image,
+	# ~45 min for a 16 GB test image
+	fsecs=$(( 300 + size / 10000000 ))
+	[ "$fsecs" -lt 900 ] && fsecs=900
+	"$PYTHON" "$cap" --dev "$PI_UART" --log "$flog" --secs "$fsecs" --until '^HFL end' || true
 	grep -a '^\[.*\] HFL' "$flog" || true
 	pi_power off
 	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" down
