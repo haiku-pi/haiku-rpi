@@ -1,0 +1,106 @@
+winit: build the Wayland and X11 backends on Haiku
+
+winit's free_unix alias already takes in Haiku; three gaps remain:
+- Wayland is chosen without WAYLAND_DISPLAY/WAYLAND_SOCKET on Haiku: libwayland-client's server runs
+  in process there (the wayland-client patch connects to it), so there is always one.
+- is_main_thread(): as on NetBSD (the Rust main thread's name); Haiku's main thread's id is the
+  team id, but the libc crate has no find_thread() binding.
+- AsFd/AsRawFd for EventLoop (public, x11 and wayland): left out on Haiku, where calloop has no
+  poller fd (polling's poll(2) backend; the calloop patch). Nothing in Photocraft's graph uses them.
+Applies with -p1 to winit 0.30.13.
+
+--- a/src/event_loop.rs
++++ b/src/event_loop.rs
+@@ -337,7 +337,8 @@
+     }
+ }
+ 
+-#[cfg(any(x11_platform, wayland_platform))]
++// Not on Haiku: calloop has no poller fd there (polling's poll(2) backend)
++#[cfg(all(any(x11_platform, wayland_platform), not(target_os = "haiku")))]
+ impl<T> AsFd for EventLoop<T> {
+     /// Get the underlying [EventLoop]'s `fd` which you can register
+     /// into other event loop, like [`calloop`] or [`mio`]. When doing so, the
+@@ -351,7 +352,7 @@
+     }
+ }
+ 
+-#[cfg(any(x11_platform, wayland_platform))]
++#[cfg(all(any(x11_platform, wayland_platform), not(target_os = "haiku")))]
+ impl<T> AsRawFd for EventLoop<T> {
+     /// Get the underlying [EventLoop]'s raw `fd` which you can register
+     /// into other event loop, like [`calloop`] or [`mio`]. When doing so, the
+--- a/src/platform_impl/linux/mod.rs
++++ b/src/platform_impl/linux/mod.rs
+@@ -740,7 +740,9 @@
+                 .filter(|var| !var.is_empty())
+                 .or_else(|| env::var("WAYLAND_SOCKET").ok())
+                 .filter(|var| !var.is_empty())
+-                .is_some(),
++                .is_some()
++                // Haiku: libwayland-client's server runs in process, there is always one
++                || cfg!(target_os = "haiku"),
+             env::var("DISPLAY").map(|var| !var.is_empty()).unwrap_or(false),
+         ) {
+             // User is forcing a backend.
+@@ -832,12 +834,15 @@
+     }
+ }
+ 
++// Not on Haiku: calloop has no poller fd there (polling's poll(2) backend)
++#[cfg(not(target_os = "haiku"))]
+ impl<T> AsFd for EventLoop<T> {
+     fn as_fd(&self) -> BorrowedFd<'_> {
+         x11_or_wayland!(match self; EventLoop(evlp) => evlp.as_fd())
+     }
+ }
+ 
++#[cfg(not(target_os = "haiku"))]
+ impl<T> AsRawFd for EventLoop<T> {
+     fn as_raw_fd(&self) -> RawFd {
+         x11_or_wayland!(match self; EventLoop(evlp) => evlp.as_raw_fd())
+@@ -1038,7 +1043,7 @@
+     unsafe { pthread_main_np() == 1 }
+ }
+ 
+-#[cfg(target_os = "netbsd")]
++#[cfg(any(target_os = "netbsd", target_os = "haiku"))]
+ fn is_main_thread() -> bool {
+     std::thread::current().name() == Some("main")
+ }
+--- a/src/platform_impl/linux/wayland/event_loop/mod.rs
++++ b/src/platform_impl/linux/wayland/event_loop/mod.rs
+@@ -619,12 +619,15 @@
+     }
+ }
+ 
++// Not on Haiku: calloop has no poller fd there (polling's poll(2) backend)
++#[cfg(not(target_os = "haiku"))]
+ impl<T> AsFd for EventLoop<T> {
+     fn as_fd(&self) -> BorrowedFd<'_> {
+         self.event_loop.as_fd()
+     }
+ }
+ 
++#[cfg(not(target_os = "haiku"))]
+ impl<T> AsRawFd for EventLoop<T> {
+     fn as_raw_fd(&self) -> RawFd {
+         self.event_loop.as_raw_fd()
+--- a/src/platform_impl/linux/x11/mod.rs
++++ b/src/platform_impl/linux/x11/mod.rs
+@@ -618,12 +618,15 @@
+     }
+ }
+ 
++// Not on Haiku: calloop has no poller fd there (polling's poll(2) backend)
++#[cfg(not(target_os = "haiku"))]
+ impl<T> AsFd for EventLoop<T> {
+     fn as_fd(&self) -> BorrowedFd<'_> {
+         self.event_loop.as_fd()
+     }
+ }
+ 
++#[cfg(not(target_os = "haiku"))]
+ impl<T> AsRawFd for EventLoop<T> {
+     fn as_raw_fd(&self) -> RawFd {
+         self.event_loop.as_raw_fd()

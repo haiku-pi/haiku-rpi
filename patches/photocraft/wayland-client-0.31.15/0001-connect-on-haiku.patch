@@ -1,0 +1,31 @@
+wayland-client: Connection::connect_to_env() on Haiku
+
+Haiku's libwayland-client talks to an in-process server (wayland-server-inproc.so) that
+wl_display_connect() sets up; there are no Wayland sockets, so WAYLAND_SOCKET, WAYLAND_DISPLAY and
+XDG_RUNTIME_DIR mean nothing there. On Haiku connect_to_env() uses wayland-backend's
+connect_default() (the wayland-backend patch) instead. Needs the "system" feature (winit enables
+it). Applies with -p1 to wayland-client 0.31.15.
+
+--- a/src/conn.rs
++++ b/src/conn.rs
+@@ -43,6 +43,20 @@
+     /// Try to connect to the Wayland server following the environment
+     ///
+     /// This is the standard way to initialize a Wayland connection.
++    ///
++    /// On Haiku, libwayland-client connects to its in-process server (`wl_display_connect()`):
++    /// there are no Wayland sockets, so `WAYLAND_SOCKET`, `WAYLAND_DISPLAY` and
++    /// `XDG_RUNTIME_DIR` are not used. This needs the `system` feature.
++    #[cfg(target_os = "haiku")]
++    pub fn connect_to_env() -> Result<Self, ConnectError> {
++        let backend = Backend::connect_default().map_err(|_| ConnectError::NoWaylandLib)?;
++        Ok(Self { backend })
++    }
++
++    /// Try to connect to the Wayland server following the environment
++    ///
++    /// This is the standard way to initialize a Wayland connection.
++    #[cfg(not(target_os = "haiku"))]
+     pub fn connect_to_env() -> Result<Self, ConnectError> {
+         let stream = if let Ok(txt) = env::var("WAYLAND_SOCKET") {
+             // We should connect to the provided WAYLAND_SOCKET

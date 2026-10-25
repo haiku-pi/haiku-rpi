@@ -3,7 +3,8 @@
 # https://github.com/storytold/photocraft) for arm64 Haiku, and the same commit for this x86_64 Linux
 # host, so their outputs can be compared (docs/design/photocraft.md, phase P1).
 #
-#   scripts/build-photocraft.sh [STEP]     (start at STEP; the earlier ones must have run)
+#   scripts/build-photocraft.sh [STEP]        (start at STEP; the earlier ones must have run)
+#   scripts/build-photocraft.sh --only STEP   (just that step)
 #
 # Steps:
 #   source    clone the pinned commit into sources/photocraft (only if missing; an existing tree must
@@ -26,6 +27,13 @@
 #             artifacts/photocraft/gpu-non-packaged/bin/ (arm64) and artifacts/photocraft/host-gpu/
 #   gpuhost   tools/pi-tests/photocraft-gpu.sh run on the host build (this machine's default Vulkan
 #             adapter), into artifacts/photocraft/host-gpu-results.txt
+#   gui       the GUI app (phase P3: apps/photocraft, eframe on winit's Wayland backend + wgpu), release,
+#             for arm64 Haiku only. Staged stripped into artifacts/photocraft/gui-non-packaged/{bin/photocraft,
+#             data/photocraft-test/*}; checked PIE and free of the relocations Haiku lacks. libwayland-client,
+#             -cursor, libxkbcommon and libvulkan are dlopened at run time (wayland-sys's dlopen feature,
+#             which wgpu-hal turns on), not linked — so no pkg-config for the target (were dlopen ever off,
+#             wayland-sys would need PKG_CONFIG_{ALLOW_CROSS,SYSROOT_DIR_*,LIBDIR_*} at the sysroot's
+#             develop/lib/pkgconfig); the check is that the binary names libwayland-client.so.0
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
 #             diff its "PCC " lines against host-results.txt, wall times left out; exit 0 if equal
@@ -36,10 +44,12 @@
 #             compared with the CPU compositor on the machine itself (their MD5s differ per driver)
 #
 # Toolchain: scripts/build-rust.sh --version 1.99.1 (Photocraft needs rust-version 1.95, edition 2024).
-# Features: the defaults (no heif: libheif is C). The GUI app (apps/photocraft) is not built here.
+# Features: the defaults (no heif: libheif is C).
 # Pi test: scripts/mkimage-pi4.sh --add-tree artifacts/photocraft/non-packaged
 #          --bootscript tools/pi-tests/photocraft-cli.sh
 #          (GPU: --add-tree artifacts/photocraft/gpu-non-packaged --bootscript tools/pi-tests/photocraft-gpu.sh)
+#          (GUI: scripts/stage-packages.sh --wine-runtime, then --add-tree artifacts/wayland-stage
+#          --add-tree artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-gui.sh)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 commit=486afd82cce99255e999224bcfe28de00fd766aa	# main of 2026-10-24, version 0.15.1
@@ -57,6 +67,7 @@ rustEnv="$root/artifacts/rust-$rustVersion/env.sh"
 testImages=(docs/images/photocraft-masks.jpg assets/app-icon/photocraft-1024.png)
 gpuTest="$root/tools/photocraft-gpu-test"
 gpuStage="$work/gpu-non-packaged"
+guiStage="$work/gui-non-packaged"
 
 toolchain() {
 	[ -f "$rustEnv" ] || { echo "build-photocraft: run scripts/build-rust.sh --version $rustVersion" >&2; exit 1; }
@@ -103,6 +114,39 @@ vendor() {
 		clearChecksums "$vendor/${dir##*/}"
 	done
 	echo "build-photocraft: $(find "$vendor" -mindepth 1 -maxdepth 1 | wc -l) crates in $vendor"
+	cleanPatched "$root"/patches/rust-libc "$root"/patches/photocraft/*/
+}
+
+# Cargo never rebuilds a registry (here: vendored) crate because its files changed, so after a crate's
+# patches change, its old Haiku artifacts would still be linked. $work/patches.md5 records each patched
+# crate's patches; for every crate whose patches differ from the previous vendor step's (or are new),
+# remove its artifacts for the Haiku target (all versions of the name: cargo clean ignores the version)
+# in each target directory whose workspace has it.
+cleanPatched() {	# PATCH_DIR...
+	local list="$work/patches.md5" new dir crate sum changed=() tdir specs c profile
+	new="$(mktemp)"
+	for dir in "$@"; do
+		dir="${dir%/}" crate="${dir##*/}"
+		[ "$crate" != rust-libc ] || crate=libc-any	# patches/rust-libc: the libc crate
+		sum="$(cat "$dir"/*.patch | md5sum | cut -c1-32)"
+		echo "$crate $sum" >> "$new"
+		grep -qxF "$crate $sum" "$list" 2> /dev/null || changed+=("${crate%-*}")
+	done
+	for dir in "$src:$work/target" "$gpuTest:$work/target-gpu"; do
+		tdir="${dir#*:}" dir="${dir%%:*}"
+		[ -d "$tdir/$target" ] || continue
+		specs=()
+		for c in "${changed[@]}"; do
+			if grep -q "^name = \"$c\"\$" "$dir/Cargo.lock"; then specs+=(-p "$c"); fi
+		done
+		[ ${#specs[@]} -gt 0 ] || continue
+		echo "build-photocraft: patches changed: cleaning ${specs[*]} in $tdir/$target"
+		for profile in dev release; do	# (cargo clean -p cleans one profile, dev by default)
+			(cd "$dir" && cargo clean --frozen "${specs[@]}" --profile "$profile" --target "$target" \
+				--target-dir "$tdir" --config "$work/vendor-config.toml")
+		done
+	done
+	mv "$new" "$list"
 }
 
 build() {
@@ -226,6 +270,25 @@ gpucompare() {	# LOG
 	return "$bad"
 }
 
+gui() {
+	toolchain
+	local start=$SECONDS bin="$work/target/$target/release/photocraft" f
+	(cd "$src" && "$root/scripts/heavy-build.sh" -j 8 --mem-per-job 2 -- \
+		cargo build --frozen --release -j '{JOBS}' -p photocraft --bin photocraft --target "$target" \
+		--target-dir "$work/target" --config "$work/vendor-config.toml")
+	echo "build-photocraft: gui $target built in $(( (SECONDS - start) / 60 )) min"
+	rm -rf "$guiStage"
+	mkdir -p "$guiStage/bin" "$guiStage/data/photocraft-test"
+	"$crossBin/$target-strip" -o "$guiStage/bin/photocraft" "$bin"
+	for f in "${testImages[@]}"; do
+		cp "$src/$f" "$guiStage/data/photocraft-test/"
+	done
+	checkElf "$guiStage/bin/photocraft"
+	grep -q -a 'libwayland-client\.so\.0' "$guiStage/bin/photocraft" \
+		|| { echo "build-photocraft: photocraft does not load libwayland-client.so.0" >&2; exit 1; }
+	find "$guiStage" -type f -printf 'build-photocraft: %p %s\n' | sed "s|$work/||" | sort
+}
+
 hosttest() {
 	local tmp
 	tmp="$(mktemp -d)"
@@ -248,8 +311,10 @@ compare() {	# LOG
 
 case "${1:-}" in
 compare|gpucompare) "$1" "$2"; exit ;;
+--only) case "${2:-}" in source) source_ ;; vendor|build|stage|hosttest|gpu|gpuhost|gui) "$2" ;;
+	*) echo "build-photocraft: no step ${2:-}" >&2; exit 2 ;; esac; exit ;;
 esac
-steps=(source vendor build stage hosttest gpu gpuhost)
+steps=(source vendor build stage hosttest gpu gpuhost gui)
 first="${1:-source}"
 run=0
 for s in "${steps[@]}"; do

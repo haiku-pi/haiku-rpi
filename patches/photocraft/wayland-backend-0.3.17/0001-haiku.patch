@@ -1,0 +1,129 @@
+wayland-backend: Haiku (libwayland's in-process server)
+
+- Backend::connect_default() (Haiku): wl_display_connect(NULL). Haiku's libwayland-client (X547's
+  fork, the wayland package) has no socket: wl_display_connect() sets up a pipe and loads the
+  in-process server wayland-server-inproc.so (windows on app_server); wl_display_connect_to_fd(),
+  what Backend::connect() calls, does not set the pipe's write end. The sys backend only; the Rust
+  backend's version fails with NoWaylandLib.
+- The Rust server backend needs epoll or kqueue (rustix has neither on Haiku): left out there
+  (no wayland-server in Photocraft's graph; the system server backend is unaffected).
+- The Rust socket code: no MSG_CMSG_CLOEXEC on Haiku, set FD_CLOEXEC on received fds as on macOS.
+Applies with -p1 to wayland-backend 0.3.17.
+
+--- a/src/client_api.rs
++++ b/src/client_api.rs
+@@ -169,6 +169,16 @@
+         client_impl::InnerBackend::connect(stream).map(|backend| Self { backend })
+     }
+ 
++    /// Connect to the default Wayland display through libwayland's `wl_display_connect(NULL)`
++    ///
++    /// On Haiku, libwayland-client talks to an in-process server (`wayland-server-inproc.so`,
++    /// windows on the native app_server) set up by `wl_display_connect()`: there is no socket to
++    /// pass to [`Backend::connect()`]. Only the `sys` backend can do this; the `rust` one fails.
++    #[cfg(target_os = "haiku")]
++    pub fn connect_default() -> Result<Self, NoWaylandLib> {
++        client_impl::InnerBackend::connect_default().map(|backend| Self { backend })
++    }
++
+     /// Get a [`WeakBackend`] from this backend
+     pub fn downgrade(&self) -> WeakBackend {
+         WeakBackend { inner: self.backend.downgrade() }
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -86,7 +86,7 @@
+ #[cfg(feature = "client_system")]
+ pub use sys::client;
+ 
+-#[cfg(not(feature = "server_system"))]
++#[cfg(all(not(feature = "server_system"), not(target_os = "haiku")))]
+ pub use rs::server;
+ #[cfg(feature = "server_system")]
+ pub use sys::server;
+--- a/src/rs/client_impl/mod.rs
++++ b/src/rs/client_impl/mod.rs
+@@ -149,6 +149,12 @@
+         WeakInnerBackend { state: Arc::downgrade(&self.state) }
+     }
+ 
++    /// Haiku's Wayland server runs in process behind libwayland-client: the `sys` backend only
++    #[cfg(target_os = "haiku")]
++    pub fn connect_default() -> Result<Self, NoWaylandLib> {
++        Err(NoWaylandLib)
++    }
++
+     pub fn connect(stream: UnixStream) -> Result<Self, NoWaylandLib> {
+         let socket = BufferedSocket::new(Socket::from(stream), None);
+         let mut map = ObjectMap::new();
+--- a/src/rs/mod.rs
++++ b/src/rs/mod.rs
+@@ -1,6 +1,8 @@
+ //! Rust implementations of the Wayland backends
+ 
+ mod client_impl;
++// The server needs epoll or kqueue (rustix has neither on Haiku)
++#[cfg(not(target_os = "haiku"))]
+ mod server_impl;
+ 
+ mod map;
+@@ -19,5 +21,6 @@
+ /// Server-side rust implementation of a Wayland protocol backend
+ ///
+ /// The main entrypoint is the [`Backend::new()`][server::Backend::new()] method.
++#[cfg(not(target_os = "haiku"))]
+ #[path = "../server_api.rs"]
+ pub mod server;
+--- a/src/rs/socket.rs
++++ b/src/rs/socket.rs
+@@ -73,9 +73,9 @@
+     /// slice `MAX_FDS_OUT` long, otherwise some data of the received message may
+     /// be lost.
+     pub fn rcv_msg(&self, buffer: &mut [u8], fds: &mut VecDeque<OwnedFd>) -> IoResult<usize> {
+-        #[cfg(not(any(target_os = "macos", target_os = "redox")))]
++        #[cfg(not(any(target_os = "macos", target_os = "redox", target_os = "haiku")))]
+         let flags = RecvFlags::DONTWAIT | RecvFlags::CMSG_CLOEXEC;
+-        #[cfg(any(target_os = "macos", target_os = "redox"))]
++        #[cfg(any(target_os = "macos", target_os = "redox", target_os = "haiku"))]
+         let flags = RecvFlags::DONTWAIT;
+ 
+         let mut cmsg_space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS_OUT))];
+@@ -91,7 +91,7 @@
+             })
+             .flatten();
+         fds.extend(received_fds);
+-        #[cfg(any(target_os = "macos", target_os = "redox"))]
++        #[cfg(any(target_os = "macos", target_os = "redox", target_os = "haiku"))]
+         for fd in fds.iter() {
+             if let Ok(flags) = rustix::io::fcntl_getfd(fd) {
+                 let _ = rustix::io::fcntl_setfd(fd, flags | rustix::io::FdFlags::CLOEXEC);
+--- a/src/sys/client_impl/mod.rs
++++ b/src/sys/client_impl/mod.rs
+@@ -268,6 +268,28 @@
+         Ok(Self::from_display(display, true))
+     }
+ 
++    #[cfg(target_os = "haiku")]
++    pub fn connect_default() -> Result<Self, NoWaylandLib> {
++        if !is_lib_available() {
++            return Err(NoWaylandLib);
++        }
++        let display =
++            unsafe { ffi_dispatch!(wayland_client_handle(), wl_display_connect, std::ptr::null()) };
++        if display.is_null() {
++            // the in-process server (wayland-server-inproc.so) could not be loaded
++            return Err(NoWaylandLib);
++        }
++        #[cfg(feature = "log")]
++        unsafe {
++            ffi_dispatch!(
++                wayland_client_handle(),
++                wl_log_set_handler_client,
++                wl_log_trampoline_to_rust_client
++            );
++        }
++        Ok(Self::from_display(display, true))
++    }
++
+     pub unsafe fn from_foreign_display(display: *mut wl_display) -> Self {
+         Self::from_display(display, false)
+     }

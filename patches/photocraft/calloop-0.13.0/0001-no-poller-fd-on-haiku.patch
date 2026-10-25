@@ -1,0 +1,28 @@
+calloop: no AsFd/AsRawFd for EventLoop on Haiku
+
+polling 3 uses its poll(2) backend on Haiku, which has no single file descriptor for the poller
+(polling implements AsFd/AsRawFd only for its epoll, kqueue and event-port backends). Leave
+EventLoop's AsFd/AsRawFd out there; nothing in Photocraft's graph uses them (winit's own impls on
+top of them are left out by the winit patch). Applies with -p1 to calloop 0.13.0.
+
+--- a/src/loop_logic.rs
++++ b/src/loop_logic.rs
+@@ -669,7 +669,8 @@
+     }
+ }
+ 
+-#[cfg(unix)]
++// Not on Haiku: polling's poll(2) backend has no single fd to expose
++#[cfg(all(unix, not(target_os = "haiku")))]
+ impl<'l, Data> AsRawFd for EventLoop<'l, Data> {
+     /// Get the underlying raw-fd of the poller.
+     ///
+@@ -683,7 +684,7 @@
+     }
+ }
+ 
+-#[cfg(unix)]
++#[cfg(all(unix, not(target_os = "haiku")))]
+ impl<'l, Data> AsFd for EventLoop<'l, Data> {
+     /// Get the underlying fd of the poller.
+     ///

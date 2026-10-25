@@ -1,0 +1,68 @@
+rustix: pipe_with() on Haiku
+
+rustix 0.38 leaves pipe_with() out on Haiku: Haiku has pipe2() (libroot), but the libc crate has
+no binding for it. calloop's ping and smithay-client-toolkit's clipboard offers (winit's Wayland
+backend) call it. Implement it with pipe() and then fcntl() for CLOEXEC and NONBLOCK, the only
+flags Haiku's PipeFlags has (not atomic: a fork() in between inherits the fds). Applies with -p1
+to rustix 0.38.44.
+
+--- a/src/backend/libc/pipe/syscalls.rs
++++ b/src/backend/libc/pipe/syscalls.rs
+@@ -6,7 +6,6 @@
+     apple,
+     target_os = "aix",
+     target_os = "espidf",
+-    target_os = "haiku",
+     target_os = "nto",
+     target_os = "wasi"
+ )))]
+@@ -32,6 +31,32 @@
+     }
+ }
+ 
++// Haiku's libc has no pipe2() binding: pipe(), then the flags with fcntl() (not atomic)
++#[cfg(target_os = "haiku")]
++pub(crate) fn pipe_with(flags: PipeFlags) -> io::Result<(OwnedFd, OwnedFd)> {
++    use crate::backend::conv::{borrowed_fd, ret_c_int};
++    use crate::fd::AsFd;
++
++    if !(PipeFlags::CLOEXEC | PipeFlags::NONBLOCK).contains(flags) {
++        return Err(io::Errno::INVAL);
++    }
++    let (reader, writer) = pipe()?;
++    for fd in [reader.as_fd(), writer.as_fd()] {
++        let fd = borrowed_fd(fd);
++        unsafe {
++            if flags.contains(PipeFlags::CLOEXEC) {
++                let fd_flags = ret_c_int(c::fcntl(fd, c::F_GETFD))?;
++                ret(c::fcntl(fd, c::F_SETFD, fd_flags | c::FD_CLOEXEC))?;
++            }
++            if flags.contains(PipeFlags::NONBLOCK) {
++                let status = ret_c_int(c::fcntl(fd, c::F_GETFL))?;
++                ret(c::fcntl(fd, c::F_SETFL, status | c::O_NONBLOCK))?;
++            }
++        }
++    }
++    Ok((reader, writer))
++}
++
+ #[cfg(not(any(
+     apple,
+     target_os = "aix",
+--- a/src/pipe.rs
++++ b/src/pipe.rs
+@@ -96,13 +96,7 @@
+ /// [OpenBSD]: https://man.openbsd.org/pipe2.2
+ /// [DragonFly BSD]: https://man.dragonflybsd.org/?command=pipe2&section=2
+ /// [illumos]: https://illumos.org/man/2/pipe2
+-#[cfg(not(any(
+-    apple,
+-    target_os = "aix",
+-    target_os = "espidf",
+-    target_os = "haiku",
+-    target_os = "nto"
+-)))]
++#[cfg(not(any(apple, target_os = "aix", target_os = "espidf", target_os = "nto")))]
+ #[inline]
+ #[doc(alias = "pipe2")]
+ pub fn pipe_with(flags: PipeFlags) -> io::Result<(OwnedFd, OwnedFd)> {

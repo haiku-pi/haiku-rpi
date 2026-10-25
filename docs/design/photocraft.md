@@ -120,14 +120,57 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   more), `compositor: Rgba32Float` (V3DV: RGBA32F renders, does not blend), probe 4 of 4, unit 41, it 79,
   device-loss 12, the 4 CPU MD5s equal the host's; the reload control crashing (exit 137) on its second test.
 
-### GUI crates on Haiku (input for P3; `cargo check -p photocraft --target aarch64-unknown-haiku`)
-- **wayland-sys**: its build script finds no `wayland-client` through pkg-config for the target (needs
-  `PKG_CONFIG_*` pointed at our wayland port's .pc files in the sysroot, or its `dlopen` feature).
-- **calloop 0.13** (winit's Wayland event loop): rustix 0.38's `pipe_with` is compiled out on Haiku (no
-  `pipe2`), and polling 3.11's `Poller` lacks `AsFd`/`AsRawFd` there (its poll(2) backend).
-- **rfd 0.17**: no backend for Haiku (its xdg-portal/GTK3 backends are cfg'd for Linux and the BSDs):
-  every dialog trait is unimplemented — needs a Haiku backend (BFilePanel) or the portal cfg widened.
-- Blocked behind those (not checked): wayland-client, smithay-client-toolkit, winit, egui-winit, eframe,
-  arboard, accesskit_unix, photocraft-ui-egui. **Check clean for Haiku:** wgpu, wgpu-core, wgpu-hal,
-  **photocraft-gpu** (so P2 can start), egui, sys-locale, rustls-platform-verifier, ureq, x11rb
-  (`artifacts/photocraft/gui-check.log`, rustc 1.99.1).
+### P3 — window (groundwork 10-25: the app builds and reaches Haiku's Wayland server in QEMU; presenting is next)
+- **`photocraft` links for arm64 Haiku**: `scripts/build-photocraft.sh --only gui` (release, ~6 min) →
+  `artifacts/photocraft/gui-non-packaged/bin/photocraft`, 63 MB stripped, PIE, NEEDED only libroot, libnetwork,
+  libbsd, libgcc_s. libwayland-client/-cursor, libxkbcommon and libvulkan.so.1 are **dlopened** (wayland-sys's
+  `dlopen` feature, which wgpu-hal turns on; xkbcommon-dl; ash), so pkg-config is not involved (the 10-25 check's
+  "wayland-sys finds no wayland-client" did not reproduce: its build script returns early with `dlopen`).
+- Six vendored-crate patches, the Photocraft tree untouched (`patches/photocraft/<crate>-<version>/`):
+  - **rustix 0.38.44**: `pipe_with()` on Haiku (pipe() + fcntl for CLOEXEC/NONBLOCK; the libc crate has no
+    `pipe2` binding though libroot has it) — calloop's ping and smithay-client-toolkit's clipboard offers.
+  - **calloop 0.13.0** and **winit 0.30.13**: no `AsFd`/`AsRawFd` for `EventLoop` on Haiku (polling 3.11 uses its
+    poll(2) backend there, which has no poller fd; nothing in the graph uses them). winit also: `is_main_thread()`
+    as on NetBSD (the Rust main thread's name), and **Wayland is chosen without `WAYLAND_DISPLAY`** on Haiku.
+    winit's `free_unix` alias already includes Haiku: its Wayland and X11 backends build as they are.
+  - **wayland-backend 0.3.17**: `Backend::connect_default()` = `wl_display_connect(NULL)`. X547's
+    libwayland-client has no socket: only `wl_display_connect()` creates its event pipe and loads
+    `wayland-server-inproc.so`, while `wl_display_connect_to_fd()` (what `Backend::connect(stream)` calls) leaves
+    the pipe's write end unset. The Rust server backend (epoll/kqueue only) is compiled out on Haiku; the Rust
+    socket code sets FD_CLOEXEC itself (no MSG_CMSG_CLOEXEC), as on macOS.
+  - **wayland-client 0.31.15**: `Connection::connect_to_env()` uses it on Haiku (WAYLAND_DISPLAY,
+    WAYLAND_SOCKET and XDG_RUNTIME_DIR mean nothing there).
+  - **rfd 0.17.2**: a stub backend — file dialogs return None (as if cancelled), message dialogs the answer that
+    changes nothing, each noted on stderr — until a native one (BFilePanel/BAlert, P4).
+  - Not needed: accesskit_unix (not in the Haiku graph: accesskit_winit gates it to Linux/BSD), x11rb/x11-dl
+    (build; X11 is only used with `DISPLAY` set), arboard + wl-clipboard-rs, sctk (beyond rustix), egui-winit,
+    eframe.
+- The vendor step now records each patched crate's patches (`artifacts/photocraft/patches.md5`) and, when they
+  change, cleans that crate's Haiku artifacts in both target directories (dev and release): cargo never rebuilds a
+  registry crate because its files changed (a winit patch was silently not picked up once).
+- **QEMU `virt`** (`tools/pi-tests/photocraft-gui.sh` on an image with `artifacts/wayland-stage` +
+  `gui-non-packaged`): the app connects to the in-process server (`wl_ips_client_connected`), binds wl_compositor,
+  wl_subcompositor, wl_output, wl_seat, wl_shm, xdg_wm_base and zwp_text_input_manager_v3, creates the toplevel
+  (`set_title("PhotoCraft")`, min 760×480), gets `xdg_surface.configure` (1024×768) and its CSD subsurfaces —
+  then **stops: `Vulkan driver does not support VK_KHR_wayland_surface`** (eframe's wgpu surface). Our Vulkan
+  loader is built without Wayland WSI and Mesa with `-Dplatforms=haiku`; the app's crash guard relaunches it with
+  `--safe-gpu`, which stops the same way (it still needs a wgpu surface for the window). A Pi run would stop at
+  the same call (the surface is made before the adapter is chosen): worth one after the bridge below.
+- **Next (decided): present through Haiku's existing Vulkan WSI**, not a Wayland one (a Mesa Wayland WSI on a
+  hardware driver needs linux-dmabuf, which wayland_server cannot offer). Haiku's WSI is
+  VK_EXT_headless_surface + `VkHaikuSurfaceCreateInfoMESA { view: BView* }` (mesa `wsi_common_haiku.cpp`,
+  `patches/vulkan-loader` keeps the struct in the chain; vkcube/SDL use it). Plan: (1) wayland_server exports
+  `wl_ips_haiku_surface_view(uint32 surfaceId)` → the wl_surface's BView (`HaikuSurface::View()`), as Wine's
+  `wl_ips_haiku_surface_no_activate` is exported; (2) a wgpu-hal patch: on Haiku, a `RawWindowHandle::Wayland`
+  surface is made by `wl_proxy_get_id(wl_surface)` → dlsym of that export → `vkCreateHeadlessSurfaceEXT` with the
+  Haiku struct chained (the instance enables VK_EXT_headless_surface). Open points: the view's size versus the
+  configure, wayland_server drawing (CSD subsurfaces) into the same view, resize.
+- Also seen: std's `File::try_lock` is unsupported on Haiku (the app's GPU-crash marker lock only warns); the
+  xkbcommon Compose table for "en.UTF-8" is missing (a warning).
+- **Pi test** (after the bridge; ~10 min, bench): `scripts/build-photocraft.sh --only gui`,
+  `scripts/stage-packages.sh --wine-runtime`, `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-gui.img
+  --add-tree artifacts/wayland-stage --add-tree artifacts/photocraft/gui-non-packaged --bootscript
+  tools/pi-tests/photocraft-gui.sh`, `scripts/netboot-cycle.sh --image artifacts/images/photocraft-gui.img --secs 420
+  --label photocraft-gui --until 'PCW end'`; read the `PCW ` lines and the HDMI capture (markers in the script's
+  header). Runs: `window` (45 s, the JPEG test image), `trace` (WAYLAND_DEBUG=client, 25 s), `safe` (`--safe-gpu`,
+  30 s), each with a fresh PHOTOCRAFT_CONFIG_DIR and a screenshot in /boot/home.
