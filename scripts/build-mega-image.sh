@@ -88,6 +88,11 @@ fetch_assets() {
 	grep -v '^#' "$list" | grep -v '^\s*$' | while IFS='|' read -r name url sha extract dest; do
 		local f="$cache/dl/$name"
 		mkdir -p "$cache/dl"
+		# a copy this tree already has (the 5th field: where it was first used): no download
+		if [ ! -f "$f" ] && [ -f "$root/$dest" ] && [ "$extract" = copy ] \
+				&& [ "$(sha256sum "$root/$dest" | cut -d' ' -f1)" = "$sha" ]; then
+			ln "$root/$dest" "$f" 2> /dev/null || cp "$root/$dest" "$f"
+		fi
 		if [ ! -f "$f" ] || [ "$(sha256sum "$f" | cut -d' ' -f1)" != "$sha" ]; then
 			say "downloading $name"
 			curl -fL --retry 3 -o "$f.part" "$url" && mv "$f.part" "$f" \
