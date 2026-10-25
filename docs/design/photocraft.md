@@ -433,10 +433,27 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
     first start, after which image/jpeg, png, tiff, x-targa list it among their supporting applications. On the Pi
     (session, 10-25 13:05-13:20): the packages activated live, "Open with" on a JPEG opened the document.
     Not tested by hand: the Deskbar menu entry with a mouse.
-  - Known gaps: the app's MIME entry (so "Open with") exists only after its first start (the registrar does not
-    run mimeset on package activation); `.pcraft` has no Haiku MIME type; Photocraft's single-instance lock needs
-    `File::try_lock`, unsupported in Rust's std on Haiku ("starting a separate PhotoCraft" — each launch its own
-    window).
+  - **photocraft 0.15.1-2** (10-25 evening, not published; host + QEMU checked) closes the three gaps of -1:
+    - *"Open with" before the first start*: the package ships `data/mime_db` — the applications' entries made at
+      build time by the host `mimeset --all --mimedb data/mime_db --mimedb <jam's mime_db> apps`, which is how
+      HaikuPorter packages applications (Package.py; the registrar itself does nothing on activation). QEMU, before
+      any start: image/jpeg lists `application/x-vnd.storyteller-photocraft`.
+    - *A MIME type for .pcraft*: `data/mime_db/application/x-photocraft` from `tools/photocraft-package/
+      x-photocraft.rdef.in` (host rc + resattr, as Haiku's src/data/mime_db): "PhotoCraft document", extension
+      pcraft, a sniffer rule (a ZIP whose first entry is manifest.json, 0.60 over application/zip's 0.40), the app
+      icon, the launcher as preferred application. QEMU: a .pcraft copy is typed application/x-photocraft by
+      mimeset; the type's preferred app is PhotoCraft.
+    - *Single instance*: Photocraft has one upstream (`apps/photocraft/src/single_instance.rs`: an exclusive
+      `File::try_lock` on `instance.lock`, then a loopback socket + token in `instance.json`; a later launch hands
+      its paths over and exits) — it failed only because Rust's std returned Unsupported for file locking on
+      Haiku. **`patches/rust/1.99.1/0002-haiku-file-locking.patch`**: std's `lock`, `lock_shared`, `try_lock`,
+      `try_lock_shared`, `unlock` use `flock()` on Haiku (the kernel's advisory locks; LOCK_NB fails with
+      B_WOULD_BLOCK = EWOULDBLOCK → `TryLockError::WouldBlock`); std rebuilt (`scripts/build-rust.sh --version
+      1.99.1 build`), the Photocraft targets rebuilt from clean (a std with a new hash). QEMU: a held lock refuses
+      a second `try_lock` ("would block") and goes with its process (kill -9 → "locked"); Photocraft no longer logs
+      "try_lock() not supported" and writes `instance.json`. The hand-off itself needs a running window: Pi.
+      (The 1.90.0 toolchain, Firefox's, does not have the patch yet.)
+    - Also fixed: `--only gui`'s symbol check (grep -q ended nm early; with pipefail the SIGPIPE failed it).
 - **The ~43 s first-start compile** — measured on the Pi (session on image-2026-10-25e, mesa 26.2.5-6, shader cache
   off: MESA_SHADER_CACHE_DISABLE=true), new tool `photocraft-pipeline-time` (tools/photocraft-gpu-test, built by
   `--only gpu`: each compositor pipeline built alone, timed; `--threads N`):
@@ -462,6 +479,22 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   - **For the mesa package** (not built here): `scripts/build-gl-stack.sh --only mesa`, `--only stage`,
     `scripts/package-gl-stack.sh --revision 7` (mesa 26.2.5-7; the three-part bump), then Photocraft's
     `requires` can name `mesa >= 26.2.5-7`.
+- **Pi test of 0.15.1-2** (bench; ~20 min): a session on image-2026-10-25e, the packages installed with pkgman (mesa
+  -7 updates -6): `scripts/pi-session.sh start --minutes 45 --image artifacts/images/haiku-pi4-2026-10-25e.img
+  --label photocraft-pkg2`; `scripts/pi-ssh.sh mkdir -p /boot/home/pck`; `scripts/pi-ssh.sh put
+  artifacts/packages/photocraft-0.15.1-2-arm64.hpkg artifacts/packages/mesa-26.2.5-7-arm64.hpkg
+  artifacts/packages/wayland-1.21.0~git-5-arm64.hpkg artifacts/packages/wayland_server-0.1.20251004-10-arm64.hpkg
+  artifacts/packages/libxkbcommon-1.13.2-2-arm64.hpkg artifacts/packages/xkeyboard_config-2.41-1-arm64.hpkg
+  /boot/home/pck/`; `scripts/pi-ssh.sh 'pkgman install -y /boot/home/pck/*.hpkg'`; the test files: `mimeapps`
+  (`aarch64-unknown-haiku-g++ --sysroot=artifacts/sysroot-arm64 -O2 -o /tmp/mimeapps
+  tools/haiku-tests/mimeapps.cpp -lbe`), `/tmp/pck.pcraft` (`python3 -c "import zipfile; z =
+  zipfile.ZipFile('/tmp/pck.pcraft', 'w'); z.writestr('manifest.json', '{}'); z.close()"`), then
+  `scripts/pi-ssh.sh put /tmp/mimeapps /tmp/pck.pcraft artifacts/photocraft/gui-non-packaged/bin/photocraft-desktop-test
+  tools/pi-tests/photocraft-package.sh /boot/home/` and `scripts/pi-ssh.sh put
+  artifacts/photocraft/gui-non-packaged/data/photocraft-test/photocraft-masks.jpg /boot/home/pck.jpg`; run
+  `scripts/pi-ssh.sh 'PCK_SLEEP=0 PCK_OUT=/dev/stdout sh /boot/home/photocraft-package.sh'`; `scripts/pi-session.sh
+  stop`. Expected: the QEMU lines above plus `single instance: 1 program(s) running` and a second tab
+  (pck-second.jpg) in `/boot/home/photocraft-package-single.png` (`scripts/pi-ssh.sh get` it).
 - Pi steps prepared (bench needed): (1) the package on a fresh image: `scripts/image-add.sh
   artifacts/images/haiku-pi4-2026-10-25e.img artifacts/images/photocraft-pkg.img` with the five packages
   (photocraft, wayland, wayland_server, libxkbcommon, xkeyboard_config from artifacts/packages) as

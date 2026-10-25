@@ -1,0 +1,51 @@
+std: file locking (File::lock, try_lock, unlock, shared) on Haiku through flock()
+
+Haiku has flock() (advisory, per open file description, released when the description is closed:
+kernel vfs _user_flock on the advisory locks fcntl uses; LOCK_NB fails with B_WOULD_BLOCK, which is
+EWOULDBLOCK, so try_lock reports WouldBlock). std left Haiku out of the targets that use it, so every
+lock call returned Unsupported — Photocraft's single-instance lock ("starting a separate PhotoCraft:
+instance.lock: try_lock() not supported") and its GPU-startup marker lock. Applies with -p1 to
+rustc-1.99.1-src.
+
+--- a/library/std/src/sys/fs/unix.rs
++++ b/library/std/src/sys/fs/unix.rs
+@@ -1331,6 +1331,7 @@
+                 target_os = "illumos",
+                 target_os = "aix",
+                 target_os = "android",
++                target_os = "haiku",
+                 target_vendor = "apple",
+             ) => {
+                 cvt(unsafe { libc::flock(self.as_raw_fd(), libc::LOCK_EX) })?;
+@@ -1355,6 +1356,7 @@
+                 target_os = "illumos",
+                 target_os = "aix",
+                 target_os = "android",
++                target_os = "haiku",
+                 target_vendor = "apple",
+             ) => {
+                 cvt(unsafe { libc::flock(self.as_raw_fd(), libc::LOCK_SH) })?;
+@@ -1379,6 +1381,7 @@
+                 target_os = "illumos",
+                 target_os = "aix",
+                 target_os = "android",
++                target_os = "haiku",
+                 target_vendor = "apple",
+             ) => {
+                 let result = cvt(unsafe { libc::flock(self.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) });
+@@ -1414,6 +1417,7 @@
+                 target_os = "illumos",
+                 target_os = "aix",
+                 target_os = "android",
++                target_os = "haiku",
+                 target_vendor = "apple",
+             ) => {
+                 let result = cvt(unsafe { libc::flock(self.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) });
+@@ -1449,6 +1453,7 @@
+                 target_os = "illumos",
+                 target_os = "aix",
+                 target_os = "android",
++                target_os = "haiku",
+                 target_vendor = "apple",
+             ) => {
+                 cvt(unsafe { libc::flock(self.as_raw_fd(), libc::LOCK_UN) })?;

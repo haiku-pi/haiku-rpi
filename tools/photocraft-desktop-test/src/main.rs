@@ -19,6 +19,8 @@
 //!   alert TITLE TEXT ok|okcancel|yesno|yesnocancel
 //!   fonts                                   (fontdb's load_system_fonts: faces, families, a few names)
 //!   jpeg-size FILE                          (a JPEG's width x height, from its SOF header)
+//!   lock-hold FILE SECS | lock-try FILE     (std's File::try_lock, as Photocraft's single-instance lock:
+//!                                           hold it, or try it: "locked", "would block", or the error)
 //!   exit-during open|alert MS               (shows the dialog, exits with it open after MS ms: rfd's exit
 //!                                           handler must hold the dialog's loopers)
 //!
@@ -231,6 +233,18 @@ fn run(command: &str, args: &[String]) -> Result<(), String> {
             std::thread::sleep(std::time::Duration::from_millis(ms));
             say(command, "exiting with the dialog open");
             std::process::exit(0);
+        }
+        "lock-hold" | "lock-try" => {
+            let file = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(arg(0)?).map_err(|e| e.to_string())?;
+            match file.try_lock() {
+                Ok(()) => say(command, "locked"),
+                Err(std::fs::TryLockError::WouldBlock) => say(command, "would block"),
+                Err(std::fs::TryLockError::Error(e)) => return Err(format!("try_lock: {e}")),
+            }
+            if command == "lock-hold" {
+                let secs: u64 = arg(1)?.parse().map_err(|_| "SECS")?;
+                std::thread::sleep(std::time::Duration::from_secs(secs));
+            }
         }
         "jpeg-size" => {
             let (w, h) = jpeg_size(&std::fs::read(arg(0)?).map_err(|e| e.to_string())?).ok_or("not a JPEG")?;

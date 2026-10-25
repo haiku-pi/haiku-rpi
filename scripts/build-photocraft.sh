@@ -5,7 +5,7 @@
 #
 #   scripts/build-photocraft.sh [STEP]        (start at STEP; the earlier ones must have run)
 #   scripts/build-photocraft.sh --only STEP   (just that step)
-#   scripts/build-photocraft.sh --revision N ... (the package's revision, default 1)
+#   scripts/build-photocraft.sh --revision N ... (the package's revision, default 2)
 #
 # Steps:
 #   source    clone the pinned commit into sources/photocraft (only if missing; an existing tree must
@@ -48,7 +48,7 @@
 #             tools/pi-tests/wayland-keys.sh) and bin/wlexit (tools/haiku-tests/wlexit.cpp: a client exiting while
 #             it still sends requests, tools/pi-tests/wayland-exit.sh)
 #   package   the photocraft package (phase P5), from the gui stage: artifacts/packages/
-#             photocraft-<version>-<N>-arm64.hpkg (N: --revision, default 1). apps/PhotoCraft/PhotoCraft, a small
+#             photocraft-<version>-<N>-arm64.hpkg (N: --revision, default 2). apps/PhotoCraft/PhotoCraft, a small
 #             launcher (tools/photocraft-package/launcher.cpp: the Tracker hands documents over as a message,
 #             which the program has no BApplication to receive; the launcher passes them as arguments) with
 #             the resources the Deskbar and Tracker use (PhotoCraft.rdef.in: signature, version, the image types
@@ -93,7 +93,7 @@ gpuTest="$root/tools/photocraft-gpu-test"
 gpuStage="$work/gpu-non-packaged"
 desktopTest="$root/tools/photocraft-desktop-test"
 guiStage="$work/gui-non-packaged"
-packageRevision=1
+packageRevision=2
 hostTools="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools"
 
 toolchain() {
@@ -320,8 +320,10 @@ gui() {
 	grep -q -a 'libwayland-client\.so\.0' "$guiStage/bin/photocraft" \
 		|| { echo "build-photocraft: photocraft does not load libwayland-client.so.0" >&2; exit 1; }
 	# the Haiku backends of rfd and arboard are linked in (not the stub, not the X11/Wayland clipboard)
-	"$crossBin/$target-nm" -D "$guiStage/bin/photocraft" | grep -q '_ZN10BFilePanel4ShowEv' \
-		&& "$crossBin/$target-nm" -D "$guiStage/bin/photocraft" | grep -q '_ZN10BClipboard6CommitEv' \
+	# (nm's output kept first: grep -q ends early, and with pipefail nm's SIGPIPE fails the pipe)
+	local symbols
+	symbols="$("$crossBin/$target-nm" -D "$guiStage/bin/photocraft")"
+	grep -q '_ZN10BFilePanel4ShowEv' <<< "$symbols" && grep -q '_ZN10BClipboard6CommitEv' <<< "$symbols" \
 		|| { echo "build-photocraft: photocraft lacks the Haiku file panel or clipboard" >&2; exit 1; }
 	wlview
 	desktop
@@ -410,6 +412,20 @@ package() {
 		echo "build-photocraft: ${file#$pkg/} attributes: $(ls "$attrs/$(stat -c %i "$file")" | sed -n 's/^_//p' | sed 's/__/_/g' | tr '\n' ' ')"
 	done
 	ln -s ../apps/PhotoCraft/bin/PhotoCraft "$pkg/bin/photocraft"
+	# data/mime_db: Haiku's MIME type for .pcraft documents (the rdef turned into the file's attributes, as
+	# Haiku's own src/data/mime_db), and the applications' entries — as HaikuPorter packages them (mimeset
+	# --all with the package's data/mime_db as the database it writes), so the system's MIME database has
+	# PhotoCraft and its supported types ("Open with") as soon as the package is active, without a first start
+	local jammime="$root/sources/haiku/generated.arm64/objects/common/data/mime_db/mime_db" type
+	mkdir -p "$pkg/data/mime_db/application"
+	type="$pkg/data/mime_db/application/x-photocraft"
+	sed -e "s|@ICON@|PhotoCraft.hvif|" "$root/tools/photocraft-package/x-photocraft.rdef.in" > "$tmp/x-photocraft.rdef"
+	"$hostTools/rc/rc" -I "$tmp" -o "$tmp/x-photocraft.rsrc" "$tmp/x-photocraft.rdef"
+	: > "$type"
+	rm -rf "$attrs/$(stat -c %i "$type")"
+	"$hostTools/resattr/resattr" -O -o "$type" "$tmp/x-photocraft.rsrc"
+	(cd "$pkg" && "$hostTools/mimeset" --all --mimedb data/mime_db --mimedb "$jammime" apps)
+	find "$pkg/data/mime_db" -type f -printf 'build-photocraft: MIME database: %P\n'
 	ln -s ../../../../apps/PhotoCraft/PhotoCraft "$pkg/data/deskbar/menu/Applications/PhotoCraft"
 	cp "$src/README.md" "$pkg/documentation/packages/photocraft/"
 	cp "$src/LICENSE-MIT" "$src/LICENSE-APACHE" "$pkg/documentation/packages/photocraft/"

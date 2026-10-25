@@ -1,16 +1,20 @@
 #!/bin/sh
 # photocraft-package.sh — a UserBootscript: the photocraft package installed (in /boot/system/packages, or
-# activated from /boot/home/config/packages) on an image that has its requirements (mesa 26.2.5-6,
+# activated from /boot/home/config/packages) on an image that has its requirements (mesa >= 26.2.5-7,
 # wayland_server 0.1.20251004-10, libxkbcommon 1.13.2-2, wayland, xkeyboard_config). Checks: activated (the
-# files are there), the Deskbar entry, the command; a start of the program without any environment
-# variables (`env -i` + the system's own boot environment); then "Open with" as the Tracker does it
-# (tools/haiku-tests/mimeapps --launch: BRoster::Launch with a B_REFS_RECEIVED message) on /boot/home/pck.jpg —
-# the launcher must start bin/PhotoCraft with the document's path as its argument — and the registrar's MIME
-# entry for the launcher (made at its first start) with image/jpeg listing it among its supporting apps.
-# Image: scripts/image-add.sh on a release image, with the packages in /boot/system/packages, this script as
-# /boot/home/config/settings/boot/UserBootscript, tools/haiku-tests/mimeapps as /boot/home/mimeapps and a JPEG
-# as /boot/home/pck.jpg. On the Pi the window opens (screenshots /boot/home/photocraft-package*.png); in QEMU
-# it stops at "No suitable graphics adapter" after its Wayland surface (no GPU).
+# files are there), the Deskbar entry, the command; before any start (the package's data/mime_db, 0.15.1-2):
+# image/jpeg lists PhotoCraft ("Open with"), application/x-photocraft exists with PhotoCraft preferred and a
+# .pcraft file is typed so; std's file locking (photocraft-desktop-test: a second try_lock is refused, the
+# lock goes with its process); a start of the program without any environment variables (`env -i` + the
+# system's own boot environment); "Open with" as the Tracker does it (tools/haiku-tests/mimeapps --launch:
+# BRoster::Launch with a B_REFS_RECEIVED message) on /boot/home/pck.jpg — the launcher must start
+# bin/PhotoCraft with the path as its argument; with a GPU (the Pi) the single-instance hand-off: a second
+# "Open with" while it runs must end in the running program (one program, a second tab).
+# Image: scripts/image-add.sh on a release image: the packages in /boot/system/packages, this script as
+# /boot/home/config/settings/boot/UserBootscript, tools/haiku-tests/mimeapps as /boot/home/mimeapps,
+# tools/photocraft-desktop-test as /boot/home/photocraft-desktop-test, a JPEG as /boot/home/pck.jpg, a .pcraft
+# as /boot/home/pck.pcraft. Screenshots /boot/home/photocraft-package*.png; in QEMU the program stops at
+# "No suitable graphics adapter" after its Wayland surface (no GPU).
 # Serial lines: "PCK ...", "PCK end".
 sleep "${PCK_SLEEP:-30}"
 out="${PCK_OUT:-/dev/dprintf}"
@@ -21,6 +25,30 @@ say "launcher: $(ls -l /boot/system/apps/PhotoCraft/PhotoCraft 2>&1 | awk '{prin
 say "program: $(ls -l /boot/system/apps/PhotoCraft/bin/PhotoCraft 2>&1 | awk '{print $5, $NF}')"
 say "command: $(ls -l /boot/system/bin/photocraft 2>&1 | sed 's/.* -> //')"
 say "deskbar: $(ls -l /boot/system/data/deskbar/menu/Applications/PhotoCraft 2>&1 | sed 's/.* -> //')"
+# before any start (photocraft >= 0.15.1-2 ships data/mime_db): "Open with" lists it, .pcraft has a type
+if [ -x /boot/home/mimeapps ]; then
+	/boot/home/mimeapps image/jpeg application/x-photocraft | while IFS= read -r l; do say "before start: $l"; done
+fi
+say "before start: .pcraft type: $(catattr META:S:DESC /boot/system/data/mime_db/application/x-photocraft 2>&1 | sed 's/.* : //') $(catattr META:PREF_APP /boot/system/data/mime_db/application/x-photocraft 2>&1 | sed 's/.* : //')"
+if [ -f /boot/home/pck.pcraft ]; then
+	cp /boot/home/pck.pcraft /boot/home/pck-copy.pcraft
+	mimeset -F /boot/home/pck-copy.pcraft
+	say "before start: pck-copy.pcraft is $(catattr BEOS:TYPE /boot/home/pck-copy.pcraft 2>&1 | sed 's/.* : //')"
+fi
+# std's file locking (Photocraft's single-instance lock): a second holder must be refused, and the lock must
+# go with its process (photocraft-desktop-test, in /boot/home)
+d=/boot/home/photocraft-desktop-test
+if [ -x $d ]; then
+	$d --no-wayland lock-hold /tmp/pck-lock 30 > /tmp/pck-hold.txt 2>&1 &
+	holder=$!
+	sleep 2
+	say "lock: holder: $(grep -a 'PDT lock' /tmp/pck-hold.txt | head -n 1)"
+	say "lock: second: $($d --no-wayland lock-try /tmp/pck-lock 2>&1 | grep -a 'PDT lock' | head -n 1)"
+	kill -9 $holder 2> /dev/null
+	wait $holder 2> /dev/null
+	sleep 1
+	say "lock: after the holder died: $($d --no-wayland lock-try /tmp/pck-lock 2>&1 | grep -a 'PDT lock' | head -n 1)"
+fi
 # a start as the Deskbar does it: no test environment (WGPU_BACKEND, RUST_LOG, XKB_CONFIG_ROOT are not set)
 mkdir -p /tmp/pck
 env -i HOME=/boot/home PATH=/bin:/boot/system/bin LIBRARY_PATH="$LIBRARY_PATH" ADDON_PATH="$ADDON_PATH" \
@@ -41,7 +69,7 @@ else
 	wait $pid
 	say "run: exit $? after $waited s"
 fi
-grep -a -v -E '^(display|client): ' /tmp/pck/run.txt | head -n 40 \
+grep -a -v -E '^(display|client): ' /tmp/pck/run.txt | grep -a -v 'DownlevelFlags\|    \|^}' | head -n 40 \
 	| while IFS= read -r l; do say "run: $(echo "$l" | cut -c1-200)"; done
 say "settings: $(ls /boot/home/.config/photocraft 2>&1 | tr '\n' ' ' | cut -c1-160)"
 # "Open with" as the Tracker launches: the launcher must pass the document on as an argument
@@ -64,6 +92,25 @@ if [ -x /boot/home/mimeapps ] && [ -f /boot/home/pck.jpg ]; then
 	for t in $(ps | awk '/apps\/PhotoCraft\/bin/ && !/awk/ {for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) {print $i; break}}'); do
 		hey $t quit > /dev/null 2>&1
 	done
+fi
+# single instance (needs a GPU: the Pi): with PhotoCraft running on pck.jpg, "Open with" on a second file must
+# hand it to the running one (Photocraft's instance.lock + loopback hand-off): one program, two tabs
+if [ -e /dev/dri/renderD128 ] && [ -x /boot/home/mimeapps ] && [ -f /boot/home/pck.jpg ]; then
+	cp /boot/home/pck.jpg /boot/home/pck-second.jpg
+	/boot/home/mimeapps --launch application/x-vnd.storyteller-photocraft /boot/home/pck.jpg \
+		> /tmp/pck/single1.txt 2>&1 < /dev/null
+	sleep 40
+	/boot/home/mimeapps --launch application/x-vnd.storyteller-photocraft /boot/home/pck-second.jpg \
+		> /tmp/pck/single2.txt 2>&1 < /dev/null
+	sleep 15
+	screenshot -s /boot/home/photocraft-package-single.png > /dev/null 2>&1
+	say "single instance: $(ps | grep -a -c 'apps/PhotoCraft/bin/PhotoCraft') program(s) running"
+	grep -a -i -E 'separate|instance|hand|primary' /tmp/pck/single1.txt /tmp/pck/single2.txt | head -n 8 \
+		| while IFS= read -r l; do say "single instance: $(echo "$l" | cut -c1-200)"; done
+	for t in $(ps | awk '/apps\/PhotoCraft\/bin/ && !/awk/ {for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) {print $i; break}}'); do
+		hey $t quit > /dev/null 2>&1
+	done
+	sleep 5
 fi
 # the launcher's MIME entry (signature, supported types: "Open with") is made when it first starts (its
 # BApplication calls create_app_meta_mime)

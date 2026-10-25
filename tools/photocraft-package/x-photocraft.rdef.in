@@ -1,0 +1,26 @@
+/*
+ * Haiku's MIME type for PhotoCraft documents (.pcraft), shipped in the photocraft package as
+ * data/mime_db/application/x-photocraft (scripts/build-photocraft.sh, step package: host rc, then resattr turns
+ * the resources into the file's attributes, as Haiku's own src/data/mime_db). Same name as Photocraft's Linux
+ * definition (packaging/linux/ai.storyteller.photocraft.mime.xml). A .pcraft file is a ZIP bundle whose first
+ * entry is manifest.json (photocraft_format::is_pcraft): the sniffer rule, above application/zip's 0.40.
+ */
+
+resource(0, "BEOS:TYPE") #'MIMS' "application/x-vnd.Be-meta-mime";
+
+resource(1, "META:TYPE") "application/x-photocraft";
+
+resource(2, "META:SNIFF_RULE") "0.60 (\"PK\\003\\004\") ([30] \"manifest.json\")";
+
+resource(3, "META:S:DESC") #'MSDC' "PhotoCraft document";
+
+resource(4, "META:L:DESC") #'MLDC' "PhotoCraft layered image document";
+
+resource(5, "META:PREF_APP") #'MSIG' "application/x-vnd.storyteller-photocraft";
+
+resource(6, "META:EXTENS") message(234) {
+	"extensions" = "pcraft",
+	"type" = "application/x-photocraft"
+};
+
+resource(7, "META:ICON") #'VICN' import "@ICON@";
