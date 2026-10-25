@@ -13,10 +13,21 @@
 # First tools/haiku-tests/wlview (when staged: the server's half of the Vulkan bridge, "PCW wlview: WLV ...",
 # "WLV result: 0 bad"). Runs, each under a time limit with a fresh settings folder (PHOTOCRAFT_CONFIG_DIR, so a crash marker
 # of one run does not move the next to a safer GPU backend), each followed by a screenshot:
-#   1. window: photocraft --new-instance on the JPEG test image, 45 s, then killed
-#   2. trace: the same with WAYLAND_DEBUG=client for 25 s: the protocol requests (globals bound,
-#      xdg_toplevel, buffers) — only the interesting lines, the first 80
-#   3. safe: photocraft --safe-gpu (CPU compositing, wgpu still draws the window), 30 s
+#   1. window: photocraft --new-instance on the JPEG test image, 60 s, then killed (the first GPU run of
+#      the boot: Mesa's shader cache cold for its shaders)
+#   2. window2: the same, 45 s (the shader cache warm)
+#   3. noimport: the same with HAIKU_VK_NO_IMPORT=1 (Mesa's WSI copies each frame into the bitmap on the
+#      CPU instead of the GPU writing the bitmap's own memory), 45 s
+#   4. early: the same with HAIWAY_SHOW_AT_VIEW=1 (wayland_server shows the window when wgpu asks for its
+#      view, not at the first commit after a frame) and MESA_SHADER_CACHE_DISABLE=true (cold shaders), 45 s
+#   5. trace: the same with WAYLAND_DEBUG=client for 25 s: the protocol requests (globals bound,
+#      xdg_toplevel, buffers) — only the interesting lines, the first 80; then the attach/commit counts per
+#      wl_surface
+#   6. safe: photocraft --safe-gpu (CPU compositing, wgpu still draws the window), 30 s
+# Diagnostics in every run (10-25, the white window of the first Pi run): WGPU_HAIKU_TRACE=1 (wgpu-hal: each
+# swapchain with the view's size as Mesa sees it, the first 60 acquires/presents), HAIKU_VK_FPS=1 (Mesa:
+# frames drawn/dropped every 5 s), HAIWAY_TRACE_PRESENT=1 (wayland_server: the view's/window's size per
+# commit, the showing, Draw() calls); the runs 1-4 report those lines (up to 200).
 # Serial console lines: "PCW "; "PCW <step>: <line>" for the program's output (stdout and stderr, the
 # first 120 lines), "PCW <step>: alive after N s" or "PCW <step>: exit N", "PCW <step>: screenshot N
 # bytes" (/boot/home/photocraft-<step>.png), "PCW end".
@@ -70,7 +81,7 @@ show() {
 		say "$step: exit $? after $waited s"
 	fi
 	say "$step: screenshot $(stat -c %s "$shot" 2> /dev/null || echo none) bytes"
-	if [ -n "$filter" ]; then grep -a -E "$filter" "$tmp/$step.txt" | head -n 80
+	if [ -n "$filter" ]; then grep -a -E "$filter" "$tmp/$step.txt" | head -n "${PCW_LINES:-80}"
 	else head -n 120 "$tmp/$step.txt"; fi | while IFS= read -r l; do say "$step: $(echo "$l" | cut -c1-240)"; done
 	say "$step: $(wc -l < "$tmp/$step.txt") lines of output"
 }
@@ -96,12 +107,23 @@ if [ -x "${bin%/*}/wlview" ]; then
 	say "wlview: exit $?"
 	grep -a -E 'WLV|wl_ips|rror' "$tmp/wlview.txt" | head -n 40 | while IFS= read -r l; do say "wlview: $l"; done
 fi
-show window 45 "" --new-instance "$data/photocraft-masks.jpg"
+export WGPU_HAIKU_TRACE=1 HAIKU_VK_FPS=1 HAIWAY_TRACE_PRESENT=1
+diag='haiku|haiway|wsi_haiku|frames/s|WARN|ERROR|panic|gpu canvas|alive|exit'
+PCW_LINES=200
+show window 60 "$diag" --new-instance "$data/photocraft-masks.jpg"
+show window2 45 "$diag" --new-instance "$data/photocraft-masks.jpg"
+HAIKU_VK_NO_IMPORT=1 show noimport 45 "$diag" --new-instance "$data/photocraft-masks.jpg"
+HAIWAY_SHOW_AT_VIEW=1 MESA_SHADER_CACHE_DISABLE=true show early 45 "$diag" --new-instance \
+	"$data/photocraft-masks.jpg"
+PCW_LINES=80
 WAYLAND_DEBUG=client show trace 25 \
 	'wl_registry@[0-9]+\.(global|bind)|xdg_wm_base|xdg_surface|xdg_toplevel|wl_compositor|wl_shm|wl_seat|wl_output|Haiku Wayland surface|error|panic|Error' \
 	--new-instance "$data/photocraft-masks.jpg"
 # the frames' commits (wgpu-hal commits the wl_surface after each present) and the frame callbacks
 say "trace: $(grep -a -c -E -- '-> wl_surface@[0-9]+\.commit\(' "$tmp/trace.txt") wl_surface commits, $(grep -a -c -E 'wl_callback@[0-9]+\.done\(' "$tmp/trace.txt") frame callbacks done"
+# per surface: which ones get buffers (the cursor, winit's hidden frame subsurfaces?) and how many commits
+grep -a -o -E -- '-> wl_surface@[0-9]+\.(attach|commit)' "$tmp/trace.txt" | sed 's/^-> //' | sort | uniq -c \
+	| while read -r n what; do say "trace: $what x$n"; done
 show safe 30 "" --new-instance --safe-gpu "$data/photocraft-masks.jpg"
 sync
 say end

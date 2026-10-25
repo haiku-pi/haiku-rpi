@@ -18,10 +18,27 @@ eframe/winit window) does.
   not invalidated on commits (nothing to draw: the view color is already
   B_TRANSPARENT_COLOR, as the WSI wants). The client commits after each frame,
   as a Wayland WSI does.
+- Diagnostics: HAIWAY_TRACE_PRESENT=1 logs such a surface's commits (the
+  geometry, the view's and window's sizes, hidden or shown), its window's
+  showing and the view's Draw() calls on stderr; HAIWAY_SHOW_AT_VIEW=1 shows a
+  toplevel's window at the export already, at the pending window geometry
+  (frames drawn into a hidden window are lost).
 
 --- a/HaikuCompositor.h
 +++ b/HaikuCompositor.h
-@@ -110,6 +110,7 @@
+@@ -18,6 +18,11 @@
+ class BView;
+ 
+ 
++// HAIWAY_TRACE_PRESENT=1: surfaces presented into by the client (wl_ips_haiku_surface_view) log their
++// commits, sizes, showing and Draw() calls on stderr
++bool HaikuTracePresent();
++
++
+ class HaikuCompositorGlobal: public WlGlocal {
+ public:
+ 	static HaikuCompositorGlobal *Create(struct wl_display *display);
+@@ -110,6 +115,7 @@
  
  	HaikuSubsurface::SurfaceList fSurfaceList;
  	bool fNoActivate = false;
@@ -29,7 +46,7 @@ eframe/winit window) does.
  
  public:
  	static HaikuSurface *Create(struct wl_client *client, uint32_t version, uint32_t id);
-@@ -127,6 +128,10 @@
+@@ -127,6 +133,10 @@
  	// shown without taking the keyboard focus (Wine: an owned popup shown with SWP_NOACTIVATE)
  	bool NoActivate() const {return fNoActivate;}
  	void SetNoActivate(bool noActivate) {fNoActivate = noActivate;}
@@ -42,7 +59,39 @@ eframe/winit window) does.
  	void AttachView(BView *view);
 --- a/HaikuCompositor.cpp
 +++ b/HaikuCompositor.cpp
-@@ -310,6 +310,9 @@
+@@ -28,6 +28,13 @@
+ static void Assert(bool cond) {if (!cond) abort();}
+ 
+ 
++bool HaikuTracePresent()
++{
++	static const bool trace = getenv("HAIWAY_TRACE_PRESENT") != NULL;
++	return trace;
++}
++
++
+ //#pragma mark - HaikuRegion
+ 
+ class HaikuRegion: public WlRegion {
+@@ -218,6 +225,17 @@
+ {
+ 	WaylandEnv wlEnv(this, &fActiveWlEnv);
+ 
++	if (fSurface->PresentedExternally() && HaikuTracePresent()) {
++		static int32 sDraws;
++		if (sDraws++ < 20) {
++			// (WaylandEnv has unlocked the window)
++			BRect bounds = AppKitPtrs::LockedPtr(this)->Bounds();
++			fprintf(stderr, "haiway: Draw() of a presented view: dirty %gx%g at %g,%g, view %gx%g\n",
++				dirty.Width() + 1, dirty.Height() + 1, dirty.left, dirty.top, bounds.Width() + 1,
++				bounds.Height() + 1);
++		}
++	}
++
+ 	BBitmap *bmp = fSurface->Bitmap();
+ 	if (bmp != NULL) {
+ 		auto viewLocked = AppKitPtrs::LockedPtr(this);
+@@ -310,6 +328,9 @@
  	if (Bitmap() != NULL) {
  		return BSize(Bitmap()->Bounds().Width(), Bitmap()->Bounds().Height());
  	}
@@ -52,39 +101,49 @@ eframe/winit window) does.
  	return BSize(-1, -1);
  }
  
-@@ -495,7 +498,9 @@
+@@ -493,9 +514,14 @@
+ 		if (fSubsurface != NULL) {
+ 			viewLocked->MoveTo(fSubsurface->GetState().x, fSubsurface->GetState().y);
  		}
- 		BSize size = Size();
- 		viewLocked->ResizeTo(size.width, size.height);
+-		BSize size = Size();
+-		viewLocked->ResizeTo(size.width, size.height);
 -		Invalidate();
-+		// a view presented into by the client has nothing to redraw
++		// a view presented into by the client: its xdg surface's commit hook sizes it (to the new
++		// geometry), and it has nothing to redraw
++		if (!fPresentedExternally || Bitmap() != NULL || fXdgSurface == NULL) {
++			BSize size = Size();
++			viewLocked->ResizeTo(size.width, size.height);
++		}
 +		if (!fPresentedExternally || Bitmap() != NULL)
 +			Invalidate();
  	}
  	if (fHook.IsSet()) {
  		fHook->HandleCommit();
+--- a/HaikuXdgSurface.h
++++ b/HaikuXdgSurface.h
+@@ -61,6 +61,8 @@
+ 	void ConvertToScreen(BPoint &pt);
+ 	void ConvertFromScreen(BRect &rect);
+ 	void ConvertToScreen(BRect &rect);
++	void FitPresentedView(BSize size);
++	void ShowPresentedNow();
+ 
+ 	void HandleGetToplevel(uint32_t id) override;
+ 	void HandleGetPopup(uint32_t id, struct wl_resource *parent, struct wl_resource *positioner) override;
 --- a/HaikuXdgSurface.cpp
 +++ b/HaikuXdgSurface.cpp
-@@ -92,11 +92,28 @@
+@@ -92,11 +92,20 @@
  		}
  	}
  	fXdgSurface->fGeometry = fXdgSurface->fPendingGeometry;
 +
 +	// a surface the client presents into itself (Vulkan, wl_ips_haiku_surface_view) has no buffer: its
-+	// view and window take the window geometry's size (the surface's resize above used the old geometry)
++	// view and window take the window geometry's size
 +	HaikuSurface *surface = fXdgSurface->Surface();
 +	bool presentedExternally = surface->PresentedExternally() && surface->Bitmap() == NULL
 +		&& fXdgSurface->fGeometry.valid;
-+	if (presentedExternally) {
-+		BSize size = surface->Size();
-+		if (surface->View() != NULL)
-+			AppKitPtrs::LockedPtr(surface->View())->ResizeTo(size.width, size.height);
-+		if (!fXdgSurface->HasServerDecoration()
-+			&& (fXdgSurface->fToplevel == NULL || !fXdgSurface->fToplevel->fState.fullscreen)
-+			&& fXdgSurface->Window()->Size() != size) {
-+			fXdgSurface->Window()->ResizeTo(size.width, size.height);
-+		}
-+	}
++	if (presentedExternally)
++		fXdgSurface->FitPresentedView(surface->Size());
  	if (fXdgSurface->fToplevel != NULL && fXdgSurface->fToplevel->fState.fullscreen)
  		fXdgSurface->fToplevel->PlaceFullscreenSurface();
  
@@ -95,6 +154,64 @@ eframe/winit window) does.
  		if (fXdgSurface->Surface()->ServerDecoration() != NULL) {
  			fXdgSurface->Window()->SetLook(fXdgSurface->Surface()->ServerDecoration()->Look());
  		}
+@@ -107,6 +116,8 @@
+ 			fXdgSurface->Window()->SetFlags(fXdgSurface->Window()->Flags() | B_AVOID_FOCUS);
+ 		fXdgSurface->Window()->Show();
+ 		fXdgSurface->fSurfaceInitalized = true;
++		if (presentedExternally && HaikuTracePresent())
++			fprintf(stderr, "haiway: presented surface: window shown at its first commit\n");
+ 	}
+ 
+ 	if (fXdgSurface->fPopup != NULL) {
+@@ -133,6 +144,48 @@
+ 
+ 
+ //#pragma mark - HaikuXdgSurface
++
++/* A surface presented into by the client: the view and (client-side decorations) the window take the
++ * size of the window geometry. */
++void HaikuXdgSurface::FitPresentedView(BSize size)
++{
++	BView *view = fSurface->View();
++	if (view != NULL)
++		AppKitPtrs::LockedPtr(view)->ResizeTo(size.width, size.height);
++	if (!HasServerDecoration() && (fToplevel == NULL || !fToplevel->fState.fullscreen)
++		&& Window()->Size() != size) {
++		Window()->ResizeTo(size.width, size.height);
++	}
++	if (HaikuTracePresent()) {
++		static int32 sFits;
++		int32 n = sFits++;
++		if (n < 60 || n % 100 == 0) {
++			AppKitPtrs::LockedPtr<BWindow> window(Window());
++			BRect bounds = view != NULL ? view->Bounds() : BRect();
++			BRect frame = window->Frame();
++			fprintf(stderr, "haiway: presented surface commit #%" B_PRId32 ": geometry %gx%g, view %gx%g, "
++				"window %gx%g at %g,%g, %s\n", n, size.width + 1, size.height + 1, bounds.Width() + 1,
++				bounds.Height() + 1, frame.Width() + 1, frame.Height() + 1, frame.left, frame.top,
++				window->IsHidden() ? "hidden" : "shown");
++		}
++	}
++}
++
++/* HAIWAY_SHOW_AT_VIEW=1 (a diagnostic variant): wl_ips_haiku_surface_view shows a toplevel's window at
++ * once, at the client's pending window geometry, instead of at the next commit, so that no frame is
++ * drawn into a hidden window. */
++void HaikuXdgSurface::ShowPresentedNow()
++{
++	if (fSurfaceInitalized || fToplevel == NULL || !fPendingGeometry.valid)
++		return;
++	FitPresentedView(BSize(fPendingGeometry.width - 1, fPendingGeometry.height - 1));
++	Window()->CenterOnScreen();
++	Window()->Show();
++	fSurfaceInitalized = true;
++	if (HaikuTracePresent())
++		fprintf(stderr, "haiway: presented surface: window shown with its view (HAIWAY_SHOW_AT_VIEW)\n");
++}
++
+ HaikuXdgSurface::~HaikuXdgSurface()
+ {
+ 	fSurface->SetHook(NULL);
 --- a/WaylandServer.h
 +++ b/WaylandServer.h
 @@ -10,6 +10,7 @@
@@ -107,7 +224,15 @@ eframe/winit window) does.
  	ServerHandler();
 --- a/WaylandServer.cpp
 +++ b/WaylandServer.cpp
-@@ -26,6 +26,8 @@
+@@ -18,6 +18,7 @@
+ #include <wayland-server-protocol.h>
+ #include <xdg-shell-protocol.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <new>
+ 
+@@ -26,6 +27,8 @@
  #include <File.h>
  #include <OS.h>
  #include <AppFileInfo.h>
@@ -116,7 +241,7 @@ eframe/winit window) does.
  #include <kernel/image.h>
  
  #include "AppKitPtrs.h"
-@@ -71,6 +73,32 @@
+@@ -71,6 +74,38 @@
  		}
  		return;
  	}
@@ -124,23 +249,29 @@ eframe/winit window) does.
 +		// as noActivateMsg (with several connections in the process, the surface of that id that has a
 +		// view); the surface is presented into by the client from now on
 +		uint32 id = (uint32)msg->GetInt32("surface", 0);
-+		BView *view = NULL;
++		HaikuSurface *surface = NULL;
 +		struct wl_client *client;
 +		wl_client_for_each(client, wl_display_get_client_list(sDisplay)) {
 +			struct wl_resource *resource = wl_client_get_object(client, id);
-+			if (view == NULL && resource != NULL
++			if (surface == NULL && resource != NULL
 +				&& strcmp(wl_resource_get_class(resource), "wl_surface") == 0
 +				&& HaikuSurface::FromResource(resource)->View() != NULL) {
-+				HaikuSurface *surface = HaikuSurface::FromResource(resource);
++				surface = HaikuSurface::FromResource(resource);
 +				surface->SetPresentedExternally(true);
-+				view = surface->View();
 +			}
 +		}
++		BView *view = surface != NULL ? surface->View() : NULL;
 +		// Until its first Show() a window is locked by the thread that made it, this one: run it (it stays
 +		// hidden), so that the client's presenting thread can lock it to read its size and to draw
 +		BWindow *window = view != NULL ? view->Window() : NULL;
 +		if (window != NULL && window->Thread() < 0 && window->IsLocked())
 +			window->Run();
++		if (HaikuTracePresent()) {
++			fprintf(stderr, "haiway: view of wl_surface@%" B_PRIu32 ": %p, window %s\n", id, (void *)view,
++				window == NULL ? "none" : window->IsHidden() ? "hidden" : "shown");
++		}
++		if (surface != NULL && surface->XdgSurface() != NULL && getenv("HAIWAY_SHOW_AT_VIEW") != NULL)
++			surface->XdgSurface()->ShowPresentedNow();
 +		BMessage reply(B_REPLY);
 +		reply.AddPointer("view", view);
 +		msg->SendReply(&reply);
@@ -149,7 +280,7 @@ eframe/winit window) does.
  	case setModeMsg: {
  		BMessage reply(B_REPLY);
  		reply.AddInt32("status", HaikuOutputSetMode(msg->GetInt32("width", 0),
-@@ -225,6 +253,26 @@
+@@ -225,6 +260,26 @@
  	gServerMessenger.SendMessage(&msg);
  }
  
