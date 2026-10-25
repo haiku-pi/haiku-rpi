@@ -1,0 +1,59 @@
+/*
+ * PhotoCraft's resources on Haiku (scripts/build-photocraft.sh, step package): compiled with the host rc
+ * and attached to the executable with xres, as Haiku's own applications carry them.
+ *
+ * B_ARGV_ONLY: documents opened from the Tracker ("Open with", a double click, a drop on the icon) arrive as
+ * paths in argv, as Photocraft takes them — the program has no BApplication of its own to receive
+ * B_REFS_RECEIVED (the Wayland server makes one later, for the windows). B_MULTIPLE_LAUNCH: Photocraft
+ * hands a second launch's documents to the running instance itself.
+ */
+
+resource app_signature "application/x-vnd.storyteller-photocraft";
+
+resource app_flags B_MULTIPLE_LAUNCH | B_ARGV_ONLY;
+
+resource app_version {
+	major  = @MAJOR@,
+	middle = @MIDDLE@,
+	minor  = @MINOR@,
+
+	variety = B_APPV_FINAL,
+	internal = @REVISION@,
+
+	short_info = "PhotoCraft",
+	long_info = "PhotoCraft @VERSION@ — photo editor (layers, PSD, raw), on Haiku's Wayland server and Vulkan"
+};
+
+// the image formats it opens: the Linux desktop entry's list (packaging/linux), plus Haiku's own names
+// for BMP and Targa
+resource file_types message {
+	"types" = "image/png",
+	"types" = "image/jpeg",
+	"types" = "image/tiff",
+	"types" = "image/webp",
+	"types" = "image/gif",
+	"types" = "image/bmp",
+	"types" = "image/x-bmp",
+	"types" = "image/x-tga",
+	"types" = "image/x-targa",
+	"types" = "image/vnd.adobe.photoshop",
+	"types" = "image/x-psd",
+	"types" = "image/x-psb",
+	"types" = "image/x-icon",
+	"types" = "image/vnd.microsoft.icon",
+	"types" = "image/x-portable-anymap",
+	"types" = "image/x-portable-bitmap",
+	"types" = "image/x-portable-graymap",
+	"types" = "image/x-portable-pixmap",
+	"types" = "image/x-exr",
+	"types" = "image/vnd.radiance",
+	"types" = "image/avif",
+	"types" = "image/qoi",
+	"types" = "image/openraster",
+	"types" = "image/x-paintnet",
+	"types" = "application/x-krita",
+	"types" = "application/x-photocraft"
+};
+
+// tools/haiku-icon/png2hvif.py from assets/app-icon/hicolor/256x256 (the Linux icon)
+resource vector_icon import "@ICON@";

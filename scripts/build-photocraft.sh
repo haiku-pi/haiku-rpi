@@ -5,6 +5,7 @@
 #
 #   scripts/build-photocraft.sh [STEP]        (start at STEP; the earlier ones must have run)
 #   scripts/build-photocraft.sh --only STEP   (just that step)
+#   scripts/build-photocraft.sh --revision N ... (the package's revision, default 1)
 #
 # Steps:
 #   source    clone the pinned commit into sources/photocraft (only if missing; an existing tree must
@@ -45,6 +46,13 @@
 #             Also bin/wlkeys (tools/haiku-tests/wlkeys.cpp: the keyboard as a client sees it,
 #             tools/pi-tests/wayland-keys.sh) and bin/wlexit (tools/haiku-tests/wlexit.cpp: a client exiting while
 #             it still sends requests, tools/pi-tests/wayland-exit.sh)
+#   package   the photocraft package (phase P5), from the gui stage: artifacts/packages/
+#             photocraft-<version>-<N>-arm64.hpkg (N: --revision, default 1). apps/PhotoCraft/PhotoCraft with
+#             Haiku resources (tools/photocraft-package/PhotoCraft.rdef.in: signature, version, B_ARGV_ONLY so the
+#             Tracker's documents arrive in argv, the image types it opens for "Open with", a vector icon made
+#             from the Linux icon by tools/haiku-icon/png2hvif.py), bin/photocraft, the Deskbar's Applications
+#             entry, the licenses. Requires the stack it was checked with: wayland_server >= 0.1.20251004-10,
+#             libxkbcommon >= 1.13.2-2 (Compose data), mesa >= 26.2.5-6 (V3DV, Haiku WSI, the V3D compiler fix)
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
 #             diff its "PCC " lines against host-results.txt, wall times left out; exit 0 if equal
@@ -82,6 +90,8 @@ gpuTest="$root/tools/photocraft-gpu-test"
 gpuStage="$work/gpu-non-packaged"
 desktopTest="$root/tools/photocraft-desktop-test"
 guiStage="$work/gui-non-packaged"
+packageRevision=1
+hostTools="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools"
 
 toolchain() {
 	[ -f "$rustEnv" ] || { echo "build-photocraft: run scripts/build-rust.sh --version $rustVersion" >&2; exit 1; }
@@ -352,6 +362,76 @@ desktop() {
 	"$crossBin/$target-strip" "$guiStage/bin/keyinject"
 }
 
+package() {
+	local pkg="$work/package" version app tmp file icon attrs="$root/sources/haiku/generated.arm64/attributes"
+	export LD_LIBRARY_PATH="$root/sources/haiku/generated.arm64/objects/linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	"$hostTools/rm_attrs" -rf "$pkg"
+	version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' "$src/Cargo.toml")"
+	[ -f "$guiStage/bin/photocraft" ] || { echo "build-photocraft: run the gui step first" >&2; exit 1; }
+	tmp="$(mktemp -d)"
+	app="$pkg/apps/PhotoCraft"
+	mkdir -p "$app" "$pkg/bin" "$pkg/data/deskbar/menu/Applications" \
+		"$pkg/documentation/packages/photocraft"
+	# the icon: the Linux 256 px icon, its hatching blurred into tone, four colors (the field, paper, shade, ink)
+	icon="$src/assets/app-icon/hicolor/256x256/apps/ai.storyteller.photocraft.png"
+	python3 "$root/tools/haiku-icon/png2hvif.py" "$icon" "$tmp/PhotoCraft.hvif" --size 64 --blur 2 \
+		--epsilon 1.1 --min-area 4 --color 2f7bf5 --color efe9dc --color a29d92 --color 3a3836
+	sed -e "s|@MAJOR@|${version%%.*}|" -e "s|@MIDDLE@|$(echo "$version" | cut -d. -f2)|" \
+		-e "s|@MINOR@|${version##*.}|" -e "s|@REVISION@|$packageRevision|" -e "s|@VERSION@|$version|" \
+		-e "s|@ICON@|PhotoCraft.hvif|" "$root/tools/photocraft-package/PhotoCraft.rdef.in" > "$tmp/PhotoCraft.rdef"
+	"$hostTools/rc/rc" -I "$tmp" -o "$tmp/PhotoCraft.rsrc" "$tmp/PhotoCraft.rdef"
+	cp "$guiStage/bin/photocraft" "$app/PhotoCraft"
+	"$hostTools/xres" -o "$app/PhotoCraft" "$tmp/PhotoCraft.rsrc"
+	# the attributes the registrar reads (create_app_meta_mime needs BEOS:APP_SIG as an attribute, not only a
+	# resource: without it the app gets no MIME entry, so no "Open with"), set by the host settype + mimeset
+	# from the resources, as jam does for Haiku's applications. This host keeps attributes in a directory per inode
+	# (generated.arm64/attributes): a stale one of a reused inode is removed first, and rm_attrs removes them
+	# with the files at the end
+	rm -rf "$attrs/$(stat -c %i "$app/PhotoCraft")"
+	# (with the MIME database jam made, whose sniffer rules give the executable's type: mimeset copies the
+	# resources to attributes only for that type)
+	"$hostTools/mimeset" -f --mimedb "$root/sources/haiku/generated.arm64/objects/common/data/mime_db/mime_db" \
+		"$app/PhotoCraft"
+	echo "build-photocraft: attributes: $(ls "$attrs/$(stat -c %i "$app/PhotoCraft")" | sed -n 's/^_//p' | sed 's/__/_/g' | tr '\n' ' ')"
+	ln -s ../apps/PhotoCraft/PhotoCraft "$pkg/bin/photocraft"
+	ln -s ../../../../apps/PhotoCraft/PhotoCraft "$pkg/data/deskbar/menu/Applications/PhotoCraft"
+	cp "$src/README.md" "$pkg/documentation/packages/photocraft/"
+	cp "$src/LICENSE-MIT" "$src/LICENSE-APACHE" "$pkg/documentation/packages/photocraft/"
+	cat > "$pkg/.PackageInfo" <<-EOF
+	name			photocraft
+	version			$version-$packageRevision
+	architecture	arm64
+	summary			"Photo editor with layers, PSD and raw support"
+	description		"PhotoCraft edits photos and layered documents: layers and masks, adjustment layers, filters, brushes, text, PSD/PSB, Krita, OpenRaster and Paint.NET documents, camera raw, and the common image formats. Its interface and compositing run on the GPU (Vulkan through Mesa's V3DV on the Raspberry Pi 4), its window on Haiku's Wayland server. Settings live in ~/.config/photocraft. Built for the Raspberry Pi 4 by the haiku-pi project from https://github.com/storytold/photocraft ($commit)."
+	packager		"haiku-pi build farm <build@haiku-pi.invalid>"
+	vendor			"Haiku Project"
+	licenses		{ "MIT" "Apache v2" }
+	copyrights		{ "2026 ArtCraft Team and the PhotoCraft contributors" }
+	provides {
+		photocraft = $version-$packageRevision
+		app:PhotoCraft = $version-$packageRevision
+		cmd:photocraft = $version-$packageRevision
+	}
+	requires {
+		haiku
+		lib:libgcc_s
+		lib:libstdc++
+		mesa >= 26.2.5-6
+		libxkbcommon >= 1.13.2-2
+		wayland_server >= 0.1.20251004-10
+		lib:libwayland_client
+		lib:libwayland_cursor
+		xkeyboard_config
+	}
+	EOF
+	file="$root/artifacts/packages/photocraft-$version-$packageRevision-arm64.hpkg"
+	rm -f "$root/artifacts/packages"/photocraft-*-arm64.hpkg
+	"$hostTools/package/package" create -q -z zstd -C "$pkg" -i "$pkg/.PackageInfo" "$file"
+	"$hostTools/rm_attrs" -rf "$pkg"
+	rm -rf "$tmp"
+	echo "build-photocraft: $file ($(stat -c %s "$file") bytes)"
+}
+
 hosttest() {
 	local tmp
 	tmp="$(mktemp -d)"
@@ -372,9 +452,13 @@ compare() {	# LOG
 	fi
 }
 
+if [ "${1:-}" = --revision ]; then
+	packageRevision=$2
+	shift 2
+fi
 case "${1:-}" in
 compare|gpucompare) "$1" "$2"; exit ;;
---only) case "${2:-}" in source) source_ ;; vendor|build|stage|hosttest|gpu|gpuhost|gui|desktop) "$2" ;;
+--only) case "${2:-}" in source) source_ ;; vendor|build|stage|hosttest|gpu|gpuhost|gui|desktop|package) "$2" ;;
 	*) echo "build-photocraft: no step ${2:-}" >&2; exit 2 ;; esac; exit ;;
 esac
 steps=(source vendor build stage hosttest gpu gpuhost gui)
