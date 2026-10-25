@@ -1,0 +1,22 @@
+From: haiku-pi
+Subject: [PATCH] Haiku: draw each frame with DrawBitmapAsync()
+
+As BGLView (libglvnd 3d7862e): app_server copies the frame to its back and front buffers in
+one pass at the end of the update (haiku app_server rpi4-present2) instead of copying it into
+the back buffer before Draw() returns. Applied on top of patches/glmark2 for the C1 test
+(docs/design/gpu-present.md); not part of the package until measured.
+---
+--- a/src/native-state-haiku.cpp	2026-10-25 11:27:26.002810790 +0100
++++ b/src/native-state-haiku.cpp	2026-10-25 11:27:34.007846611 +0100
+@@ -105,7 +105,10 @@
+         BRegion region(update);
+         std::lock_guard<std::mutex> lock(lock_);
+         if (bitmap_ != nullptr) {
+-            DrawBitmap(bitmap_, B_ORIGIN);
++            // Asynchronous, as BGLView: app_server copies the frame to its back
++            // and front buffers in one pass at the end of the update. Mesa
++            // writes a bitmap only after it handed the view a newer one.
++            DrawBitmapAsync(bitmap_, B_ORIGIN);
+             region.Exclude(bitmap_->Bounds());
+         }
+         FillRegion(&region, B_SOLID_LOW);

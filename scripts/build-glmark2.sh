@@ -4,7 +4,7 @@
 # softpipe elsewhere), each frame in a BWindow (patches/glmark2: a Haiku native state on Mesa's EGL
 # "haiku" platform).
 #
-#   scripts/build-glmark2.sh [--package] [--revision N]
+#   scripts/build-glmark2.sh [--package] [--revision N] [--work DIR] [--extra-patches DIR]
 #
 # Builds release 2023.01 (sha256-checked) with its meson build and tools/meson/haiku-arm64.cross
 # (needs the sysroot of scripts/haiku-sysroot.sh with libjpeg and libpng; glmark2 carries its own EGL/GL
@@ -18,6 +18,8 @@
 # (tools/pi-tests/glmark2.sh picks whichever exists).
 # --package also makes artifacts/packages/glmark2-2023.01-<N>-arm64.hpkg (default N = 1; the same files
 # and the SGI notice in data/licenses; not published: scripts/publish-repo.sh does that).
+# --work DIR builds and stages in DIR instead of artifacts/glmark2 (a test variant beside the regular
+# tree); --extra-patches DIR applies DIR/*.patch after patches/glmark2 (e.g. patches/glmark2-async).
 #
 # Run: glmark2-es2 [--size 800x600 | --fullscreen] [-b SCENE[:OPTION=VALUE...]]... [--data-path DIR];
 # Escape, q or closing the window stops it. HAIKU_EGL_FPS=1 has Mesa print its presented frame rate.
@@ -34,10 +36,13 @@ version=2023.01
 sha256=8fece3fc323b643644a525be163dc4931a4189971eda1de8ad4c1712c5db3d67
 package=false
 revision=1
+extra=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--package) package=true; shift ;;
 	--revision) revision="$2"; shift 2 ;;
+	--work) work="$(realpath -m "$2")"; stage="$work/non-packaged"; shift 2 ;;
+	--extra-patches) extra="$(realpath "$2")"; shift 2 ;;
 	*) echo "build-glmark2: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -56,7 +61,7 @@ echo "$sha256  $archive" | sha256sum -c --quiet - || { echo "build-glmark2: $arc
 rm -rf "$work/src" "$work/build" "$work/install" "$stage"
 mkdir -p "$work/src"
 tar -xzf "$archive" -C "$work/src" --strip-components=1
-for p in "$root"/patches/glmark2/*.patch; do
+for p in "$root"/patches/glmark2/*.patch ${extra:+"$extra"/*.patch}; do
 	echo "build-glmark2: applying $(basename "$p")"
 	patch -s -p1 -d "$work/src" < "$p"
 done

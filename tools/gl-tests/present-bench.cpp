@@ -9,7 +9,11 @@
  *
  * steps (default all): c = CPU copies (RAM->RAM, RAM->write-combining, WC->RAM, one fused pass to
  * both), s = SYNC_BO on an imported BBitmap (lines absent, clean, dirty; needs /dev/dri/renderD128),
- * d = DrawBitmap()+Sync() of a frame-sized bitmap in a borderless window at the screen's top left.
+ * d = DrawBitmap()+Sync() of a frame-sized bitmap in a borderless window at the screen's top left,
+ * u = the same bitmap drawn as BGLView and glmark2 present: Invalidate(), then DrawBitmap() in Draw()
+ * (an update session), with the default view color (app_server fills the background first, as
+ * BGLView did until libglvnd 3d7862e), with B_TRANSPARENT_COLOR (as glmark2's view), and with
+ * DrawBitmapAsync() over B_TRANSPARENT_COLOR (as BGLView since then).
  */
 
 #include <Application.h>
@@ -219,33 +223,123 @@ bench_sync()
 
 class BenchView : public BView {
 public:
-	BenchView(BRect frame)
+	BenchView(BRect frame, BBitmap* bitmap = NULL, bool transparent = true,
+			bool async = false)
 		:
-		BView(frame, "bench", B_FOLLOW_ALL, 0)
+		BView(frame, "bench", B_FOLLOW_ALL, bitmap != NULL ? B_WILL_DRAW : 0),
+		fBitmap(bitmap),
+		fAsync(async),
+		fDrawn(create_sem(0, "drawn"))
 	{
-		SetViewColor(B_TRANSPARENT_COLOR);
+		if (transparent)
+			SetViewColor(B_TRANSPARENT_COLOR);
 	}
+
+	~BenchView()
+	{
+		delete_sem(fDrawn);
+	}
+
+	virtual void Draw(BRect)
+	{
+		if (fBitmap == NULL)
+			return;
+		SetDrawingMode(B_OP_COPY);
+		if (fAsync)
+			DrawBitmapAsync(fBitmap, B_ORIGIN);
+		else
+			DrawBitmap(fBitmap, B_ORIGIN);
+		release_sem(fDrawn);
+	}
+
+	sem_id Drawn() const { return fDrawn; }
+
+private:
+	BBitmap* fBitmap;
+	bool fAsync;
+	sem_id fDrawn;
 };
 
 
 static void
-bench_draw()
+fill_bitmap(BBitmap& bitmap)
 {
-	BRect screen = BScreen().Frame();
-	BRect frame(0, 0, sWidth - 1, sHeight - 1);
-	if (frame.Width() > screen.Width() || frame.Height() > screen.Height()) {
-		printf("PRB %ux%u is larger than the screen (%.0fx%.0f)\n", sWidth, sHeight,
-			screen.Width() + 1, screen.Height() + 1);
-		return;
-	}
-
-	BBitmap bitmap(frame, B_RGB32);
 	uint32_t* bits = (uint32_t*)bitmap.Bits();
 	for (uint32_t y = 0; y < sHeight; y++) {
 		for (uint32_t x = 0; x < sWidth; x++)
 			bits[y * bitmap.BytesPerRow() / 4 + x] = 0xff000000 | (x * 255 / sWidth) << 16
 				| (y * 255 / sHeight) << 8;
 	}
+}
+
+
+static bool
+fits_screen()
+{
+	BRect screen = BScreen().Frame();
+	if (sWidth - 1 > screen.Width() || sHeight - 1 > screen.Height()) {
+		printf("PRB %ux%u is larger than the screen (%.0fx%.0f)\n", sWidth, sHeight,
+			screen.Width() + 1, screen.Height() + 1);
+		return false;
+	}
+	return true;
+}
+
+
+/*!	One update session per frame, as a GL view presents: the window thread
+	draws the bitmap in Draw(), app_server copies it to the screen at the end
+	of the session.
+*/
+static void
+bench_update(bool transparent, bool async)
+{
+	if (!fits_screen())
+		return;
+	BRect frame(0, 0, sWidth - 1, sHeight - 1);
+	BBitmap bitmap(frame, B_RGB32);
+	fill_bitmap(bitmap);
+
+	BWindow* window = new BWindow(frame, "present-bench", B_NO_BORDER_WINDOW_LOOK,
+		B_FLOATING_ALL_WINDOW_FEEL, B_NOT_MOVABLE | B_NOT_RESIZABLE | B_AVOID_FOCUS);
+	BenchView* view = new BenchView(frame.OffsetToCopy(B_ORIGIN), &bitmap, transparent,
+		async);
+	window->AddChild(view);
+	window->Show();
+	snooze(500000);
+	while (acquire_sem_etc(view->Drawn(), 1, B_RELATIVE_TIMEOUT, 0) == B_OK)
+		;
+
+	const size_t size = (size_t)sWidth * 4 * sHeight;
+	const int reps = sReps * 3;
+	bigtime_t start = 0;
+	for (int i = -1; i < reps; i++) {
+		if (i == 0)
+			start = system_time();
+		window->Lock();
+		view->Invalidate();
+		window->Unlock();
+		acquire_sem(view->Drawn());
+		window->Lock();
+		view->Sync();
+		window->Unlock();
+	}
+	report(async ? "app_server update, async, transparent"
+		: transparent ? "app_server update, transparent view"
+		: "app_server update, view color fill", system_time() - start, reps, size);
+
+	window->Lock();
+	window->Quit();
+}
+
+
+static void
+bench_draw()
+{
+	if (!fits_screen())
+		return;
+	BRect frame(0, 0, sWidth - 1, sHeight - 1);
+	BBitmap bitmap(frame, B_RGB32);
+	fill_bitmap(bitmap);
 
 	BWindow* window = new BWindow(frame, "present-bench", B_NO_BORDER_WINDOW_LOOK,
 		B_FLOATING_ALL_WINDOW_FEEL, B_NOT_MOVABLE | B_NOT_RESIZABLE | B_AVOID_FOCUS);
@@ -276,7 +370,7 @@ bench_draw()
 int
 main(int argc, char** argv)
 {
-	const char* steps = "csd";
+	const char* steps = "csdu";
 	int opt;
 	while ((opt = getopt(argc, argv, "W:H:n:s:")) != -1) {
 		switch (opt) {
@@ -293,7 +387,7 @@ main(int argc, char** argv)
 				steps = optarg;
 				break;
 			default:
-				fprintf(stderr, "usage: %s [-W width] [-H height] [-n reps] [-s csd]\n",
+				fprintf(stderr, "usage: %s [-W width] [-H height] [-n reps] [-s csdu]\n",
 					argv[0]);
 				return 2;
 		}
@@ -308,6 +402,11 @@ main(int argc, char** argv)
 		bench_sync();
 	if (strchr(steps, 'd') != NULL)
 		bench_draw();
+	if (strchr(steps, 'u') != NULL) {
+		bench_update(false, false);
+		bench_update(true, false);
+		bench_update(true, true);
+	}
 	printf("PRB done\n");
 	return 0;
 }

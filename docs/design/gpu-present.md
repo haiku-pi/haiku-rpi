@@ -1,8 +1,11 @@
 # GL/Vulkan present on the Pi 4: where a frame's time goes, and the cheaper path
 
-Status: 2026-10-25, task #73. Path mapped from the code, a prototype on branches `rpi4-present`
-(haiku-pi/mesa and haiku-pi/haiku), not yet measured on the Pi. Numbers are marked **measured**
-(with the log entry) or **estimated** (from bandwidth figures, to be replaced by the Pi test below).
+Status: 2026-10-25, task #73. §1–5: the GL path and the Mesa/v3d prototype — **measured on the Pi and
+shipped** (mesa cf4704211f9, haiku be08654c68, mesa 26.2.5-5, image-2026-10-25d: glmark2 build 1080p
+73 → 110 fps, 800×600 276 → 426; full glmark2 233 → 304 windowed, 64 → 81 at 1080p; WEEK-2026-W43
+10:04). §6: app_server's share (option C1) — prototyped on `rpi4-present2` (haiku-pi/haiku and
+haiku-pi/libglvnd), verified in QEMU, Pi test ready. Numbers are marked **measured** (with the log
+entry) or **estimated**.
 
 Why: glmark2-es2 on V3D 4.2 (WEEK-2026-W43, 10-25 07:15) runs nearly every 1920×1080 scene at
 73–75 fps (13.5 ms) and every 800×600 scene at ~270–280 fps, trivial or not — ~130–150 Mpixel/s
@@ -82,7 +85,7 @@ contention with steps 9–10 is the next suspect); the bench separates them.
    trivial 1080p scenes from ~74 fps to well above 100, bounded by the presenter's single walk and
    by DRAM contention with app_server; GPU-bound scenes ≤ ~15 %.
 2. **Next:** C1 — the cheapest cut of the copies that remain (app_server's), and the one that helps
-   every bitmap-drawing program, not only GL.
+   every bitmap-drawing program, not only GL. Done as §6.
 3. **Later, when vsynced full-screen GL matters:** E (stage 6). It removes everything but the GPU's
    own store, but needs app_server policy; D is rejected (stale back buffer, BWindow clients).
 
@@ -180,3 +183,112 @@ Read (`grep -a -E 'GPP|v3d: stats' artifacts/uart/<ts>-gpu-present-?.log`):
 
 Pass: proto ≥ 1.3× base on build/texture at 1920×1080, no FAIL, no `cannot import`, and the HDMI
 frames show the scenes.
+
+## 6. C1: app_server's copies
+
+### 6.1 What app_server does per presented frame (measured costs: present-bench on the Pi, 1920×1080)
+
+| Step | Where | Cost |
+|---|---|---|
+| F: fill the view with its view color before the update (back buffer) | `Window::BeginUpdate` → `View::Draw` | only for views without `B_TRANSPARENT_COLOR`: **BGLView** (libglvnd) had the default white; glmark2's view is transparent; ~8.3 MB written, **estimated** 1.5–2.5 ms (present-bench `u` rows measure it) |
+| C1: bitmap → back buffer (`Bgr32Copy`, memcpy per row) | `DrawingEngine::DrawBitmap` | `copy RAM->RAM` **3.81 ms** |
+| C2: back buffer → frame buffer (write-combining) | `HWInterface::_CopyToFront`, per drawing op outside an update session, at `EndUpdate` inside one | `copy RAM->WC` **3.24 ms** |
+| C1+C2 as today outside a session | `DrawBitmap()+Sync()` | **6.61 ms** |
+| C1+C2 in one pass (each row read once, written to both buffers) | — | `fused RAM->RAM+WC` **6.27 ms** |
+
+(**measured**, coordinator's Pi run of `present-bench`, 10-25.) How the clients present:
+
+- GL (BGLView, glmark2's view): Mesa's presenter posts `B_INVALIDATE`; the window thread's update
+  session (`_UPDATE_` → `AS_BEGIN_UPDATE` (a reply) → `Draw()` → `AS_END_UPDATE`); copy to front is
+  disabled inside the session, so C2 runs at `EndUpdate`. `BView::DrawBitmap()` is
+  `DrawBitmapAsync()` + `Sync()`: a second round trip, and it forces app_server to have done C1
+  before `Draw()` goes on.
+- Vulkan (Mesa's WSI): the presenter locks the window and calls `DrawBitmap()` + `Sync()` outside any
+  session: C1 and C2 back to back. FIFO is paced by this.
+- app_server runs beside the GL client (not in its chain) but takes DRAM bandwidth from the GPU and
+  the CPU; for Vulkan FIFO it is the pace.
+
+### 6.2 Options
+
+| Option | Gain (1080p, from the measured rows) | Exactness / risk | Verdict |
+|---|---|---|---|
+| **Fused copy, outside sessions**: a plain copy (unscaled B_OP_COPY of a B_RGB32/B_RGBA32 bitmap, identity transform, no alpha mask, ≥ 64×64) writes back and front buffers in one pass | 7.05 → 6.27 ms (−11 %) for every such `DrawBitmap()` with copy to front on: Vulkan's WSI, SDL's software surfaces, Wine/wayland_server bitmaps | exact: same pixels, same cursor handling as `CopyBackToFront()` | **do** |
+| **Fused copy at the end of a session**: the plain copy is deferred to `EndUpdate`'s `CopyToFront()`, which writes both buffers in one pass; resolved into the back buffer first if anything else touches or reads that area, before any reply to the client, and before the window thread lets go of the desktop's read lock (with a ≤ 2 ms wait for `AS_END_UPDATE`, which the client sends in its next flush) | same −11 % for GL, **only with `DrawBitmapAsync()`** (a `Sync()` reply resolves it) | exact within the batch: nobody else draws in or reads that part of the back buffer meanwhile | **do**, with the clients below |
+| **BGLView: `B_TRANSPARENT_COLOR`, `DrawBitmapAsync()`** (libglvnd); glmark2's view: `DrawBitmapAsync()` | −F (BGLView), −1 round trip per frame, and the session fusion above | exact for the clients: Mesa writes a bitmap only after the view has a newer one (three bitmaps, §4) | **do** (glmark2's as a test patch until measured) |
+| Skip the back buffer (front only) for presenter bitmaps | −3.8 ms | **not exact**: app_server re-reads its back buffer (window moves, exposes, cursor and drag-bitmap composition, `CopyRegion`); the front buffer is write-combining (slow to read back); needs an opt-in API | no: plane scanout (E) is the exact form |
+| NEON / non-temporal stores | small: the copies run at ~2.2 (cached) and ~2.6 GB/s (WC) — DRAM-bound already | — | no |
+| DMA engine / V3D for C2 | frees the CPU, not DRAM | app_server becomes a device client | later, if the CPU matters more than bandwidth |
+
+### 6.3 Prototype (`rpi4-present2`)
+
+- **haiku-pi/haiku `rpi4-present2` 42b2934769** (from `rpi4` cf29e72177), app_server:
+  - `Painter::IsPlainBitmapCopy()` (`BitmapPainter::IsPlainCopy()`): the same geometry
+    `DrawBitmapNoScale<Bgr32Copy>` uses (`_DetermineTransform`), so the copy region is exact;
+  - `HWInterface::CopyToBackAndFront()`: rows to both buffers (the software cursor's area to the back
+    buffer, then `_DrawCursor()`, as `CopyBackToFront()`);
+  - `DrawingEngine`: the fused path in `DrawBitmap()`; the deferred copy (`SetBitmapCopiesDeferred()`,
+    resolved by any `DrawTransaction` it meets, `CopyRegion()`, `ReadBitmap()`, a new copy (dropped if
+    fully covered), a frame buffer change) and its fused write in `CopyToFront()`;
+  - `ServerWindow`: deferral on while the desktop's read lock is held, resolved before any reply and
+    before the lock goes; `_WaitForUpdateEnd()`.
+- **haiku-pi/libglvnd `rpi4-present2`** 3d7862e: BGLView with `B_TRANSPARENT_COLOR` and
+  `DrawBitmapAsync()`.
+- **patches/glmark2-async/0005-haiku-draw-async.patch** + `scripts/build-glmark2.sh --work DIR
+  --extra-patches DIR`: a glmark2 variant for the test (the package is unchanged).
+- **tools/haiku-tests/bitmapcheck.cpp**: the screen hashes of large bitmap draws in every path (direct,
+  session, drawing over the bitmap, two bitmaps, source rectangle, B_RGBA32, `DrawBitmapAsync()`, a
+  covering window, and window moves, which copy from the back buffer); present-bench's `u` step: the
+  update-session present with fill / transparent / async.
+
+QEMU (virt, softpipe, image-2026-10-25d + the files; A = packaged app_server, B = the prototype via a
+`user_launch` override): bitmapcheck's 12 hashes **identical** on A and B (incl. the window moves, which
+copy from the back buffer); glview's screen hash identical
+(stock and new libGL); GLTeapot runs; front buffer (QEMU screendump) and in-guest screenshot identical
+except the Deskbar (clock, and B lists the non-packaged app_server as a team). An instrumented build
+(not committed) showed the paths taken: `DrawBitmap()` (sync) in a session → resolved at its `Sync()`
+(as designed: nothing gained, nothing lost); `DrawBitmapAsync()` → fused at `EndUpdate` (BGLView with the
+new libGL: one fused copy per frame); outside sessions → the direct fused path. QEMU's times mean nothing.
+
+Expected on the Pi (**estimated** from the measured rows): app_server per 1080p frame — Vulkan
+6.61 → ~5.9 ms; glmark2 (async variant) ~7 → ~6.3 ms and one round trip less; BGLView programs (glview,
+GLTeapot, SDL GL games) additionally −F. The GL clients' own rates move only through less CPU and DRAM
+load; Vulkan FIFO (paced by app_server) by the full amount.
+
+### 6.4 Pi test (C1)
+
+Two images from image-2026-10-25d, no rebuild. B starts the prototype app_server through a
+`user_launch` override (`/boot/system/settings/user_launch/app_server`: `service x-vnd.Haiku-app_server
+{ launch /boot/system/non-packaged/servers/app_server }`; launch_daemon amends the packaged job's
+arguments). Files in `artifacts/gpu-present2/` (app_server from `rpi4-present2` with jam's own compile
+and link lines; libGL.so.1 from libglvnd `rpi4-present2`; glmark2-es2-async from build-glmark2.sh
+`--extra-patches patches/glmark2-async`; present-bench, bitmapcheck, glview, vkcube).
+
+```sh
+cd /home/houp/haiku-rpi; g=artifacts/gpu-present2
+files=( $g/present-bench:/boot/home/present2/present-bench
+  $g/bitmapcheck:/boot/home/present2/bitmapcheck
+  $g/glview:/boot/home/present2/glview  $g/vkcube:/boot/home/present2/vkcube
+  $g/libGL.so.1:/boot/home/present2/libgl/libGL.so.1
+  $g/glmark2-es2-async:/boot/home/present2/glmark2-es2-async
+  artifacts/packages/glmark2-2023.01-1-arm64.hpkg:/boot/home/present2/glmark2.hpkg
+  tools/pi-tests/gpu-present2.sh:/boot/home/config/settings/boot/UserBootscript )
+scripts/image-add.sh artifacts/images/haiku-pi4-2026-10-25d.img artifacts/images/gpu-present2-a.img "${files[@]}"
+scripts/image-add.sh artifacts/images/gpu-present2-a.img artifacts/images/gpu-present2-b.img \
+  $g/app_server:/boot/system/non-packaged/servers/app_server \
+  $g/app_server.launch:/boot/system/settings/user_launch/app_server
+scripts/netboot-cycle.sh --image artifacts/images/gpu-present2-a.img --secs 600 --label gpu-present2-a \
+  --until 'GP2 end' --retry-wedge
+scripts/netboot-cycle.sh --image artifacts/images/gpu-present2-b.img --secs 600 --label gpu-present2-b \
+  --until 'GP2 end' --retry-wedge
+```
+
+Read `grep -a GP2 artifacts/uart/<ts>-gpu-present2-?.log`:
+
+- `GP2 app_server:` `/boot/system/servers/app_server` on A, `/boot/system/non-packaged/servers/app_server` on B.
+- `GP2 BMC ...`: the same 12 hashes on A and B (A = B is the check).
+- `GP2 PRB`: A vs B — `DrawBitmap+Sync` (direct fused path), the three `update` rows (fill /
+  transparent / async: the async row is where B fuses); F = fill row − transparent row.
+- glview-stock vs glview-new, gm2-*-stock vs gm2-*-async, vkcube (`wsi_haiku: N frames/s drawn`):
+  A vs B per client.
+- Pass: identical BMC hashes; B's `DrawBitmap+Sync` and async `update` rows ≤ 0.92× A's at 1920×1080;
+  no FAIL, every `exit 0` (vkcube's PASS), the HDMI frames show the windows.
