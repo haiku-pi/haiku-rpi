@@ -35,7 +35,12 @@
 #             wayland-sys would need PKG_CONFIG_{ALLOW_CROSS,SYSROOT_DIR_*,LIBDIR_*} at the sysroot's
 #             develop/lib/pkgconfig); the check is that the binary names libwayland-client.so.0. Also
 #             bin/wlview (tools/haiku-tests/wlview.cpp): the Wayland server's half of presenting with
-#             Vulkan (wl_ips_haiku_surface_view, wayland_server >= 0.1.20251004-9: shown at once), checked without a GPU
+#             Vulkan (wl_ips_haiku_surface_view, wayland_server >= 0.1.20251004-9: shown at once), checked without a GPU.
+#             Desktop integration (phase P4): the patched rfd (BFilePanel, BAlert) and arboard (BClipboard) link
+#             libtracker, libbe and libstdc++ into photocraft; bin/photocraft-desktop-test
+#             (tools/photocraft-desktop-test: the same rfd and arboard without the app's window, so QEMU can run
+#             it; its own Cargo.lock, a subset of Photocraft's) and bin/keyinject (tools/haiku-tests/keyinject.cpp:
+#             keys for the file panels) for tools/pi-tests/photocraft-desktop.sh and photocraft-gui.sh
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
 #             diff its "PCC " lines against host-results.txt, wall times left out; exit 0 if equal
@@ -51,7 +56,9 @@
 #          --bootscript tools/pi-tests/photocraft-cli.sh
 #          (GPU: --add-tree artifacts/photocraft/gpu-non-packaged --bootscript tools/pi-tests/photocraft-gpu.sh)
 #          (GUI: scripts/stage-packages.sh --wine-runtime, then --add-tree artifacts/wayland-stage
-#          --add-tree artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-gui.sh)
+#          --add-tree artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-gui.sh;
+#          desktop integration without the app's window: the same trees, --bootscript
+#          tools/pi-tests/photocraft-desktop.sh)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 commit=486afd82cce99255e999224bcfe28de00fd766aa	# main of 2026-10-24, version 0.15.1
@@ -69,6 +76,7 @@ rustEnv="$root/artifacts/rust-$rustVersion/env.sh"
 testImages=(docs/images/photocraft-masks.jpg assets/app-icon/photocraft-1024.png)
 gpuTest="$root/tools/photocraft-gpu-test"
 gpuStage="$work/gpu-non-packaged"
+desktopTest="$root/tools/photocraft-desktop-test"
 guiStage="$work/gui-non-packaged"
 
 toolchain() {
@@ -134,7 +142,7 @@ cleanPatched() {	# PATCH_DIR...
 		echo "$crate $sum" >> "$new"
 		grep -qxF "$crate $sum" "$list" 2> /dev/null || changed+=("${crate%-*}")
 	done
-	for dir in "$src:$work/target" "$gpuTest:$work/target-gpu"; do
+	for dir in "$src:$work/target" "$gpuTest:$work/target-gpu" "$desktopTest:$work/target-desktop"; do
 		tdir="${dir#*:}" dir="${dir%%:*}"
 		[ -d "$tdir/$target" ] || continue
 		specs=()
@@ -288,7 +296,12 @@ gui() {
 	checkElf "$guiStage/bin/photocraft"
 	grep -q -a 'libwayland-client\.so\.0' "$guiStage/bin/photocraft" \
 		|| { echo "build-photocraft: photocraft does not load libwayland-client.so.0" >&2; exit 1; }
+	# the Haiku backends of rfd and arboard are linked in (not the stub, not the X11/Wayland clipboard)
+	"$crossBin/$target-nm" -D "$guiStage/bin/photocraft" | grep -q '_ZN10BFilePanel4ShowEv' \
+		&& "$crossBin/$target-nm" -D "$guiStage/bin/photocraft" | grep -q '_ZN10BClipboard6CommitEv' \
+		|| { echo "build-photocraft: photocraft lacks the Haiku file panel or clipboard" >&2; exit 1; }
 	wlview
+	desktop
 	find "$guiStage" -type f -printf 'build-photocraft: %p %s\n' | sed "s|$work/||" | sort
 }
 
@@ -306,6 +319,22 @@ wlview() {
 		"$root/tools/haiku-tests/wlview.cpp" "$tmp/xdg-shell.o" -lwayland-client -lbe
 	"$crossBin/$target-strip" -o "$guiStage/bin/wlview" "$tmp/wlview"
 	rm -rf "$tmp"
+}
+
+# tools/photocraft-desktop-test (rfd + arboard as the app uses them) and tools/haiku-tests/keyinject.cpp into
+# the GUI stage
+desktop() {
+	toolchain
+	local sysroot="$root/artifacts/sysroot-arm64"
+	(cd "$desktopTest" && "$root/scripts/heavy-build.sh" -j 8 --mem-per-job 2 -- \
+		cargo build --frozen --release -j '{JOBS}' --target "$target" --target-dir "$work/target-desktop" \
+		--config "$work/vendor-config.toml")
+	"$crossBin/$target-strip" -o "$guiStage/bin/photocraft-desktop-test" \
+		"$work/target-desktop/$target/release/photocraft-desktop-test"
+	checkElf "$guiStage/bin/photocraft-desktop-test"
+	"$crossBin/$target-g++" --sysroot="$sysroot" -O2 -Wall -Werror -I "$root/sources/haiku/headers/private/app" \
+		-o "$guiStage/bin/keyinject" "$root/tools/haiku-tests/keyinject.cpp" -lbe
+	"$crossBin/$target-strip" "$guiStage/bin/keyinject"
 }
 
 hosttest() {
@@ -330,7 +359,7 @@ compare() {	# LOG
 
 case "${1:-}" in
 compare|gpucompare) "$1" "$2"; exit ;;
---only) case "${2:-}" in source) source_ ;; vendor|build|stage|hosttest|gpu|gpuhost|gui) "$2" ;;
+--only) case "${2:-}" in source) source_ ;; vendor|build|stage|hosttest|gpu|gpuhost|gui|desktop) "$2" ;;
 	*) echo "build-photocraft: no step ${2:-}" >&2; exit 2 ;; esac; exit ;;
 esac
 steps=(source vendor build stage hosttest gpu gpuhost gui)

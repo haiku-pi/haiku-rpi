@@ -1,0 +1,23 @@
+# Photocraft's desktop integration on Haiku (docs/design/photocraft.md, P4) without the app's window: the
+# same rfd (file dialogs: BFilePanel, BAlert), arboard (clipboard: BClipboard) and fontdb (system fonts) as
+# Photocraft, built
+# by scripts/build-photocraft.sh (step gui) against the vendored, patched crates of the Photocraft
+# lock, for arm64 Haiku. Driven by tools/pi-tests/photocraft-desktop.sh (keys from keyinject), so it
+# runs in QEMU, which has no GPU for Photocraft itself.
+[package]
+name = "photocraft-desktop-test"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# not a member of the Photocraft workspace (whose tree stays untouched)
+[workspace]
+
+[dependencies]
+# as apps/photocraft asks for them
+rfd = "0.17"
+arboard = { version = "3.6", features = ["wayland-data-control"] }
+libc = "0.2"
+# system fonts, as Photocraft's text tool and SVG import load them (through usvg)
+fontdb = "0.23"

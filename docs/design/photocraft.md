@@ -153,7 +153,7 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   - **wayland-client 0.31.15**: `Connection::connect_to_env()` uses it on Haiku (WAYLAND_DISPLAY,
     WAYLAND_SOCKET and XDG_RUNTIME_DIR mean nothing there).
   - **rfd 0.17.2**: a stub backend — file dialogs return None (as if cancelled), message dialogs the answer that
-    changes nothing, each noted on stderr — until a native one (BFilePanel/BAlert, P4).
+    changes nothing, each noted on stderr (replaced by the native backend in P4).
   - Not needed: accesskit_unix (not in the Haiku graph: accesskit_winit gates it to Linux/BSD), x11rb/x11-dl
     (build; X11 is only used with `DISPLAY` set), arboard + wl-clipboard-rs, sctk (beyond rustix), egui-winit,
     eframe.
@@ -248,3 +248,90 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   (`--safe-gpu`, 30 s). wayland_server 8 is in `artifacts/packages` (rev 7 removed there) but not in the image's
   repository (`build/jam/repositories/HaikuPorts/arm64` in sources/haiku) and not published: the test stages it as
   a tree.
+
+### P4 — desktop integration (10-25: built; host + QEMU checked; the Pi run pending)
+- **File dialogs: rfd's Haiku backend** (`patches/photocraft/rfd-0.17.2/0001-haiku-backend.patch`, replaces the stub):
+  the Tracker's file panel (BFilePanel) for open (one or several files), pick folder and save, BAlert for message
+  dialogs, through a C++ shim (`src/backend/haiku/rfd_haiku.cpp`) that the crate's build.rs compiles with the
+  target's g++ (`CXX_aarch64_unknown_haiku`/`AR_…` from env.sh; no `cc` crate, so the lock is unchanged) and links
+  with libtracker, libbe, libstdc++. Photocraft uses only `AsyncFileDialog` (`services.rs::show_file_dialog`:
+  `set_parent`, `set_directory`, `add_filter`, `set_file_name`; pick_file/pick_files/pick_folder/save_file,
+  awaited on a helper thread); the sync API and MessageDialog work too.
+  - **The BApplication is the Wayland server's**: wayland-server-inproc.so creates one when the client connects
+    (`wl_ips_client_connected`) and later casts `be_app` to its own class, so the shim never makes one; without
+    `be_app` (no Wayland connection yet) a dialog answers "cancelled" at once with `rfd: no BApplication …` on
+    stderr. In Photocraft the connection always comes first.
+  - The panel's answer goes to a BLooper of the shim; the panel sends B_CANCEL whenever it hides (after an answer
+    too), which ends the wait. Async: a thread per dialog, rfd's oneshot channel. With a parent window (the app
+    always gives one) the panel is app-modal.
+  - Filters: the panel has no type menu; all filters merge into one BRefFilter (extension in any case, folders
+    always shown, `*` = all). The Tracker's type-ahead also matches hidden entries (Haiku's `FindBestMatch`
+    walks the unfiltered pose list) — a Tracker quirk, not ours.
+  - The Save button: BFilePanel enables it for the name when it shows the folder, so the shim sets the name
+    first (name after folder left Save disabled until the first key press: found in QEMU, Return did nothing).
+- **Clipboard: arboard's Haiku backend** (`patches/photocraft/arboard-3.6.1/0001-haiku-backend.patch`), BClipboard
+  through a C++ shim (same build.rs scheme; libbe, libstdc++; no BApplication needed). **What the Haiku build used
+  before**: egui-winit's clipboard and Photocraft's image copy/paste both go through arboard (egui-winit's
+  smithay-clipboard is cfg'd to Linux/BSD); arboard took its Linux backend, which needs WAYLAND_DISPLAY
+  (wlr-data-control) or X11 — the Pi log of P3 shows `Failed to initialize arboard clipboard: … X11 server
+  connection timed out` at every start, so egui fell back to a clipboard inside the program and Photocraft's
+  Copy/Paste of pixels failed. **Why arboard, not the server**: wayland_server has wl_data_device (bridged to
+  BClipboard) but not the data-control protocol arboard speaks, and egui-winit would still not use
+  wl_data_device on Haiku; images would need BBitmap↔PNG conversion in the server too. One patch covers both
+  users, needs no wayland_server change and no revision bump, and reaches the system clipboard directly.
+  - Formats as Haiku's applications use them: text `text/plain` (also read `text/plain;charset=utf-8`, which the
+    server's data offers keep), HTML `text/html`; images written as `image/bitmap` (an archived B_RGBA32 BBitmap
+    as ShowImage/Screenshot copy, built as a message: no app_server needed) plus `image/png`, read from
+    `image/bitmap`/`image/x-be-bitmap` (RGBA32, RGB32, RGB24, GRAY8) or any `image/*` the image crate decodes;
+    files as the Tracker copies them (entry_ref `r<dev>_<node>` + copy mode `m<dev>_<node>`) plus
+    `text/uri-list` — Photocraft's "paste a copied file" (#338) then works with the Tracker's Copy.
+- **Compose** (libxkbcommon **1.13.2-2**, `scripts/build-wayland.sh` step libxkbcommon, `x11_locale`): Haiku's
+  `LC_CTYPE` is `locale --message` (`en.UTF-8`), libxkbcommon finds Compose files through libX11's locale
+  database (`/boot/system/data/X11/locale`: compose.dir, locale.alias), which Haiku does not have, and its
+  en_US fallback is compiled out (no `newlocale`) → `[XKB-679] couldn't find a Compose file` and no dead
+  keys/Compose in any Wayland client. The package now ships that database, generated from the HaikuPorts libX11
+  1.6.9 source as libX11's nls/Makefile does (cpp -traditional + its sed): the 16 UTF-8 Compose files (1 MB;
+  includes as `%S/…`, so XLOCALEDIR copies work), plus 106 aliases for Haiku's language-only names
+  (`en.UTF-8 → en_US.UTF-8`, `pt.UTF-8 → pt_PT.UTF-8`, …). Host check (the host's libxkbcommon on the generated
+  tree): en/de/pt/fi/C give a table, `dead_acute e → é`.
+- **Fonts** (`patches/photocraft/fontdb-0.23.0`): fontdb's `load_system_fonts()` took the Linux path on Haiku
+  (fontconfig files, /usr/share/fonts: nothing) — Photocraft's text tool and SVG text had no system font. Now
+  Haiku's folders: /boot/system/data/fonts, …/non-packaged/data/fonts, ~/config/(non-packaged/)data/fonts.
+- HiDPI: wayland_server's wl_output has scale 1 and no fractional-scale; winit's scale factor is 1 — right for
+  the Pi's 1080p, no work. Keyboard/mouse: keys reach egui through the server's xkb keymap (Wine's typing tests
+  use the same path); the Pi run checks Ctrl shortcuts (Ctrl+O, Ctrl+A, Ctrl+C) in Photocraft itself. Tablet:
+  photocraft-tablet has backends for macOS, Windows and Linux only and builds on Haiku without one (a pen is a
+  mouse, pressure 1): "stubbed" already, nothing to do.
+- photocraft now NEEDs libtracker, libbe and libstdc++ besides libroot, libnetwork, libbsd, libgcc_s (all in the
+  base system); `--only gui` checks that BFilePanel and BClipboard are linked.
+- **`tools/photocraft-desktop-test`** (own Cargo.lock, a subset of Photocraft's; built by `--only gui` or
+  `--only desktop`): rfd, arboard and fontdb as the app uses them, without the app's window (QEMU has no GPU for
+  Photocraft): connects to the Wayland server first (be_app, as the app), then one command (clip-text/html/
+  image/files set+get, clear, open/save/folder via AsyncFileDialog on a helper thread, sync-open, alert, fonts).
+  `tools/haiku-tests/keyinject.cpp` gained Escape (`^[`) and Up/Down (`^<`, `^>`) and is built into the GUI stage.
+- **QEMU virt** (`tools/pi-tests/photocraft-desktop.sh`, 10-25 09:25): all checks pass — text both ways with
+  Haiku's `clipboard` as the second tool (UTF-8 intact); HTML + alternative; a 64×48 image read back with the same
+  FNV hash, `clipboard -d` lists `image/bitmap` (`_cspace` B_RGBA32, `_frame` 63×47) and `image/png`;
+  `screenshot -c` read as 1024×768; two files as Tracker refs (`r3_262240 = entry_ref(…)`, mode 'Tcsl') and read
+  back; clear → ContentNotAvailable. Panels (screenshots in the image): open by type-ahead → photocraft-masks.jpg;
+  filter jpg / png + Down + Return → the jpg / the png (the panel lists only the filter's files); Escape →
+  cancelled; save → `<tmp>/pcd saved.png`; folder → the panel's folder; sync open; alert Return → Yes, Escape →
+  Cancel; without Wayland → cancelled at once. Fonts: 12 faces, 6 Noto families. Compose: `xkbcli-compile-compose
+  --locale en.UTF-8` 5897 sequences, `<dead_acute> <e> : "é"`. `photocraft-gui.sh` in QEMU: the XKB-679 error
+  gone (it was in every earlier run), the app unchanged up to its surface (no adapter, as before).
+- **Pi test** (bench; not run by the agent): (1) `scripts/stage-packages.sh --wine-runtime` (takes libxkbcommon
+  1.13.2-2), `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-desktop.img --add-tree artifacts/wayland-stage
+  --add-tree artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-desktop.sh`,
+  `scripts/netboot-cycle.sh --image artifacts/images/photocraft-desktop.img --secs 300 --hdmi-every 5 --label
+  photocraft-desktop --until 'PCD end'` — the same `PCD` lines as in QEMU (screen size 1920×1080 for
+  `image-screen`). (2) Photocraft itself: `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-gui.img
+  --add-tree artifacts/wayland-stage --add-tree artifacts/photocraft/gui-non-packaged --bootscript
+  tools/pi-tests/photocraft-gui.sh`, `scripts/netboot-cycle.sh --image artifacts/images/photocraft-gui.img --secs 600
+  --hdmi-every 5 --label photocraft-gui4 --until 'PCW end'`: the new `desktop` run — Ctrl+O → `panel "Open": yes`
+  (modal over the app, HDMI), type-ahead + Return opens photocraft-masks.jpg, Ctrl+A Ctrl+C → `clipboard -d` lists
+  image/bitmap + image/png and `PDT clip-image-get` gives the JPEG's size; no `Failed to initialize arboard`, no
+  `couldn't find a Compose file` anywhere in the log.
+- Publishing (after the Pi check): libxkbcommon + libxkbcommon_devel **1.13.2-2** are in `artifacts/packages` (-1
+  moved to `artifacts/packages-old`); the other two parts of the bump (the copy in `generated.arm64/download/`, the
+  version in `build/jam/repositories/HaikuPorts/arm64`) are left for the publish. wayland_server is unchanged (still
+  -9): nothing in P4 needed a server change.

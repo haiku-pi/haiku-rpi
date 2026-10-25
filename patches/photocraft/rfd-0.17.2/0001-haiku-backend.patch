@@ -1,0 +1,614 @@
+rfd: a native Haiku backend (BFilePanel, BAlert)
+
+rfd has no Haiku backend (its xdg-portal and GTK3 ones are for Linux and the BSDs). Add one: the
+Tracker's file panel for open (one or several files), pick folder and save, BAlert for message
+dialogs, through a small C++ shim (src/backend/haiku/rfd_haiku.cpp) that build.rs compiles with the
+target's C++ compiler (CXX_<target>/AR_<target>, as the cc crate reads them; no new dependency, so
+Cargo.lock stays as it is) and links with libtracker, libbe and libstdc++.
+
+- The panels and alerts are windows of the program's BApplication, which the backend never makes:
+  a winit program gets one from Haiku's in-process Wayland server (wayland-server-inproc.so creates
+  it when the client connects and casts be_app to its own class later, so a second one must not
+  exist). Without be_app a file dialog returns None and a message dialog the answer that changes
+  nothing, noted on standard error.
+- Filters: the panel has no type menu, so all filters are merged into one BRefFilter (extension in
+  any letter case; folders always shown; "*" shows everything).
+- With a parent window the panel is app-modal. The panel's answer goes to a BLooper of the shim;
+  B_CANCEL, which the panel sends whenever it hides (after an answer too), ends the wait.
+- Sync calls block the calling thread; the async ones wait on a thread of their own and resolve
+  through rfd's oneshot channel.
+
+Replaces the earlier stub (every dialog cancelled). Photocraft phase P4. Applies with -p1 to rfd 0.17.2.
+
+--- a/build.rs
++++ b/build.rs
+@@ -5,6 +5,7 @@
+     match (target_arch.as_str(), target_os.as_str()) {
+         (_, "macos") => println!("cargo:rustc-link-lib=framework=AppKit"),
+         (_, "windows") => {}
++        (_, "haiku") => haiku(),
+         ("wasm32", _) => {}
+         _ => {
+             let gtk = std::env::var_os("CARGO_FEATURE_GTK3").is_some();
+@@ -18,3 +19,41 @@
+         }
+     }
+ }
++
++/// Haiku: the BFilePanel/BAlert shim, compiled with the target's C++ compiler (the `CXX_<target>`
++/// and `AR_<target>` variables the `cc` crate reads, else `<target>-g++` and `<target>-ar`).
++fn haiku() {
++    use std::process::Command;
++    let target = std::env::var("TARGET").expect("TARGET not set");
++    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR not set"));
++    let tool = |name: &str, default: &str| {
++        let var = format!("{name}_{}", target.replace('-', "_"));
++        println!("cargo:rerun-if-env-changed={var}");
++        std::env::var(&var).unwrap_or_else(|_| format!("{target}-{default}"))
++    };
++    let source = "src/backend/haiku/rfd_haiku.cpp";
++    println!("cargo:rerun-if-changed={source}");
++    let object = out.join("rfd_haiku.o");
++    let status = Command::new(tool("CXX", "g++"))
++        .args(["-c", "-O2", "-fPIC", "-fno-exceptions", "-Wall", "-Werror", "-o"])
++        .arg(&object)
++        .arg(source)
++        .status()
++        .expect("cannot run the C++ compiler");
++    assert!(status.success(), "{source} did not compile");
++    let library = out.join("librfd_haiku.a");
++    let _ = std::fs::remove_file(&library);
++    let status = Command::new(tool("AR", "ar"))
++        .arg("crs")
++        .arg(&library)
++        .arg(&object)
++        .status()
++        .expect("cannot run ar");
++    assert!(status.success(), "ar failed");
++    println!("cargo:rustc-link-search=native={}", out.display());
++    println!("cargo:rustc-link-lib=static=rfd_haiku");
++    // BFilePanel is in libtracker; BAlert, BLooper, BPath in libbe
++    println!("cargo:rustc-link-lib=tracker");
++    println!("cargo:rustc-link-lib=be");
++    println!("cargo:rustc-link-lib=stdc++");
++}
+--- a/src/backend/haiku/rfd_haiku.cpp
++++ b/src/backend/haiku/rfd_haiku.cpp
+@@ -0,0 +1,251 @@
++/*
++ * rfd's dialogs on Haiku: the Tracker's file panel (BFilePanel) for opening files, picking a folder and
++ * saving, and BAlert for message dialogs. Called from src/backend/haiku.rs; built by build.rs.
++ *
++ * Both need the application's BApplication (be_app), which is not made here: a winit/Wayland program gets
++ * it from the Wayland server add-on, which creates and runs one when the client connects
++ * (wl_ips_client_connected) and expects be_app to be its own. Without be_app the functions return -1.
++ */
++#include <Alert.h>
++#include <Application.h>
++#include <Entry.h>
++#include <FilePanel.h>
++#include <Font.h>
++#include <Looper.h>
++#include <Message.h>
++#include <Messenger.h>
++#include <OS.h>
++#include <Path.h>
++#include <String.h>
++#include <TextView.h>
++#include <Window.h>
++
++#include <compat/sys/stat.h>
++
++#include <stdlib.h>
++#include <string.h>
++#include <strings.h>
++
++#include <vector>
++
++
++namespace {
++
++/* Shows the folders and the files whose extension is one of the filters' (any letter case); no filter
++ * or a "*" shows every file. */
++class ExtensionFilter : public BRefFilter {
++public:
++	ExtensionFilter(const char* const* extensions, int count)
++		:
++		fAll(count == 0)
++	{
++		for (int i = 0; i < count; i++) {
++			const char* extension = extensions[i];
++			while (extension[0] == '*' || extension[0] == '.') {
++				if (strcmp(extension, "*") == 0 || strcmp(extension, "*.*") == 0)
++					fAll = true;
++				extension++;
++			}
++			if (extension[0] != '\0')
++				fExtensions.push_back(BString(extension));
++		}
++	}
++
++	virtual bool Filter(const entry_ref* ref, BNode* node, struct stat_beos* stat,
++		const char* mimeType)
++	{
++		if (fAll || S_ISDIR(stat->st_mode))
++			return true;
++		if (S_ISLNK(stat->st_mode)) {
++			BEntry target(ref, true);
++			if (target.IsDirectory())
++				return true;
++		}
++		const char* dot = strrchr(ref->name, '.');
++		if (dot == NULL)
++			return false;
++		for (size_t i = 0; i < fExtensions.size(); i++) {
++			if (strcasecmp(dot + 1, fExtensions[i].String()) == 0)
++				return true;
++		}
++		return false;
++	}
++
++private:
++	bool					fAll;
++	std::vector<BString>	fExtensions;
++};
++
++
++/* The panel's target: keeps its answer (B_REFS_RECEIVED or B_SAVE_REQUESTED). The panel sends B_CANCEL
++ * whenever it is hidden, after an answer too, so B_CANCEL ends the wait. */
++class PanelTarget : public BLooper {
++public:
++	PanelTarget()
++		:
++		BLooper("rfd file panel"),
++		fDone(create_sem(0, "rfd file panel")),
++		fFinished(false)
++	{
++	}
++
++	virtual ~PanelTarget()
++	{
++		delete_sem(fDone);
++	}
++
++	virtual void MessageReceived(BMessage* message)
++	{
++		switch (message->what) {
++			case B_REFS_RECEIVED:
++			case B_SAVE_REQUESTED:
++				if (!fFinished)
++					fAnswer = *message;
++				break;
++			case B_CANCEL:
++				if (!fFinished) {
++					fFinished = true;
++					release_sem(fDone);
++				}
++				break;
++			default:
++				BLooper::MessageReceived(message);
++		}
++	}
++
++	void Wait()
++	{
++		while (acquire_sem(fDone) == B_INTERRUPTED)
++			;
++	}
++
++	// valid after Wait()
++	const BMessage& Answer() const
++	{
++		return fAnswer;
++	}
++
++private:
++	sem_id		fDone;
++	bool		fFinished;
++	BMessage	fAnswer;
++};
++
++
++void
++append_path(BString& paths, const BPath& path)
++{
++	paths.Append(path.Path());
++	paths.Append('\0', 1);
++}
++
++}	// namespace
++
++
++/* kind: 0 open files, 1 pick a folder, 2 save. NULL title/directory/fileName: none. Returns how many paths
++ * it put into *paths (NUL-terminated, one after the other, *length bytes; free with rfd_haiku_free), 0 when
++ * the panel was cancelled, -1 without a BApplication. */
++extern "C" int
++rfd_haiku_file_panel(int kind, int multiple, int modal, const char* title, const char* directory,
++	const char* fileName, const char* const* extensions, int extensionCount, char** paths,
++	size_t* length)
++{
++	*paths = NULL;
++	*length = 0;
++	if (be_app == NULL)
++		return -1;
++
++	PanelTarget* target = new PanelTarget();
++	target->Run();
++	BMessenger messenger(target);
++	ExtensionFilter filter(extensions, extensionCount);
++	BFilePanel* panel = new BFilePanel(kind == 2 ? B_SAVE_PANEL : B_OPEN_PANEL, &messenger, NULL,
++		kind == 1 ? B_DIRECTORY_NODE : B_FILE_NODE, kind == 0 && multiple != 0, NULL,
++		kind == 1 ? NULL : &filter, modal != 0, true);
++	// the name first: the panel enables its Save button for a name when it shows the folder (setting
++	// the name later would leave the button disabled until the first key press)
++	if (kind == 2 && fileName != NULL)
++		panel->SetSaveText(fileName);
++	if (directory != NULL)
++		panel->SetPanelDirectory(directory);
++	if (kind == 1)
++		panel->SetButtonLabel(B_DEFAULT_BUTTON, "Select");
++	if (title != NULL && panel->Window()->Lock()) {
++		panel->Window()->SetTitle(title);
++		panel->Window()->Unlock();
++	}
++	panel->Show();
++	target->Wait();
++	delete panel;
++
++	BMessage answer(target->Answer());
++	if (target->Lock())
++		target->Quit();
++
++	BString list;
++	int count = 0;
++	entry_ref ref;
++	if (answer.what == B_SAVE_REQUESTED) {
++		const char* name;
++		if (answer.FindRef("directory", &ref) == B_OK && answer.FindString("name", &name) == B_OK) {
++			BPath path(&ref);
++			if (path.InitCheck() == B_OK && path.Append(name) == B_OK) {
++				append_path(list, path);
++				count++;
++			}
++		}
++	} else if (answer.what == B_REFS_RECEIVED) {
++		for (int32 i = 0; answer.FindRef("refs", i, &ref) == B_OK; i++) {
++			BPath path(&ref);
++			if (path.InitCheck() == B_OK) {
++				append_path(list, path);
++				count++;
++			}
++		}
++	}
++	if (count == 0)
++		return 0;
++	*length = list.Length();
++	*paths = (char*)malloc(*length);
++	if (*paths == NULL)
++		return 0;
++	memcpy(*paths, list.String(), *length);
++	return count;
++}
++
++
++/* level: 0 information, 1 warning, 2 error. labels: 1 to 3 buttons, left to right (the last is the default);
++ * escape: the button Escape stands for, or -1. Returns the button's index, -1 without a BApplication. */
++extern "C" int
++rfd_haiku_alert(const char* title, const char* text, int level, const char* const* labels, int count,
++	int escape)
++{
++	if (be_app == NULL || count < 1 || count > 3)
++		return -1;
++
++	BString message(title);
++	int32 titleLength = message.Length();
++	if (titleLength > 0 && text[0] != '\0')
++		message << "\n\n";
++	message << text;
++
++	alert_type type = level == 2 ? B_STOP_ALERT : level == 1 ? B_WARNING_ALERT : B_INFO_ALERT;
++	BAlert* alert = new BAlert(title, message.String(), labels[0], count > 1 ? labels[1] : NULL,
++		count > 2 ? labels[2] : NULL, B_WIDTH_AS_USUAL, B_EVEN_SPACING, type);
++	if (titleLength > 0) {
++		// the title in bold, as the first paragraph (an alert's window has no title bar)
++		BFont bold(be_bold_font);
++		alert->TextView()->SetStylable(true);
++		alert->TextView()->SetFontAndColor(0, titleLength, &bold);
++	}
++	if (escape >= 0 && escape < count)
++		alert->SetShortcut(escape, B_ESCAPE);
++	return alert->Go();
++}
++
++
++extern "C" void
++rfd_haiku_free(void* pointer)
++{
++	free(pointer);
++}
+--- a/src/backend/haiku.rs
++++ b/src/backend/haiku.rs
+@@ -0,0 +1,272 @@
++//! Haiku: the Tracker's file panel (BFilePanel) and BAlert, through a small C++ shim
++//! (`haiku/rfd_haiku.cpp`, built by `build.rs`).
++//!
++//! The panels and alerts are windows of the program's BApplication, which this backend never
++//! creates: a winit program on Haiku's in-process Wayland server gets one when it connects (the
++//! server creates it and relies on it being its own). Without one, a file dialog returns `None` and
++//! a message dialog the answer that changes nothing, each noted on standard error.
++//!
++//! The panel has no list of file types to choose from: all filters are merged into one (a file is
++//! shown when its extension, in any letter case, is in some filter; folders are always shown). With a
++//! parent window the panel is modal to the application's windows. A dialog blocks the calling thread
++//! (the panel runs in its own window thread); the async variants wait on a thread of their own.
++
++use std::ffi::{c_char, c_int, c_void, CString};
++use std::os::unix::ffi::OsStrExt;
++use std::path::{Path, PathBuf};
++
++use crate::backend::{
++    AsyncFilePickerDialogImpl, AsyncFileSaveDialogImpl, AsyncFolderPickerDialogImpl,
++    AsyncMessageDialogImpl, DialogFutureType, FilePickerDialogImpl, FileSaveDialogImpl,
++    FolderPickerDialogImpl, MessageDialogImpl,
++};
++use crate::message_dialog::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
++use crate::{FileDialog, FileHandle};
++
++extern "C" {
++    fn rfd_haiku_file_panel(
++        kind: c_int,
++        multiple: c_int,
++        modal: c_int,
++        title: *const c_char,
++        directory: *const c_char,
++        file_name: *const c_char,
++        extensions: *const *const c_char,
++        extension_count: c_int,
++        paths: *mut *mut c_char,
++        length: *mut usize,
++    ) -> c_int;
++    fn rfd_haiku_alert(
++        title: *const c_char,
++        text: *const c_char,
++        level: c_int,
++        labels: *const *const c_char,
++        count: c_int,
++        escape: c_int,
++    ) -> c_int;
++    fn rfd_haiku_free(pointer: *mut c_void);
++}
++
++#[derive(Clone, Copy)]
++enum Panel {
++    Open = 0,
++    Folder = 1,
++    Save = 2,
++}
++
++/// `text` for C: an interior NUL (never in a real name) ends it.
++fn c_string(text: &[u8]) -> CString {
++    let end = text.iter().position(|&b| b == 0).unwrap_or(text.len());
++    CString::new(&text[..end]).unwrap_or_default()
++}
++
++fn no_application(what: &str) {
++    eprintln!("rfd: no BApplication in this program (no Wayland connection yet?), {what} skipped");
++}
++
++/// Shows the panel and waits for it: the chosen paths, `None` if cancelled.
++fn show_panel(dialog: &FileDialog, panel: Panel, multiple: bool) -> Option<Vec<PathBuf>> {
++    let default_title = match panel {
++        Panel::Open => "Open",
++        Panel::Folder => "Select a folder",
++        Panel::Save => "Save",
++    };
++    let title = c_string(dialog.title.as_deref().unwrap_or(default_title).as_bytes());
++    let directory = dialog
++        .starting_directory
++        .as_deref()
++        .map(|d| c_string(d.as_os_str().as_bytes()));
++    let file_name = dialog.file_name.as_deref().map(|n| c_string(n.as_bytes()));
++    let extensions: Vec<CString> = dialog
++        .filters
++        .iter()
++        .flat_map(|f| f.extensions.iter())
++        .map(|e| c_string(e.as_bytes()))
++        .collect();
++    let extension_ptrs: Vec<*const c_char> = extensions.iter().map(|e| e.as_ptr()).collect();
++    let mut paths: *mut c_char = std::ptr::null_mut();
++    let mut length = 0usize;
++    // SAFETY: every pointer is a valid NUL-terminated string (or null where allowed) that outlives
++    // the call; the shim returns a malloc'd buffer of `length` bytes, released below.
++    let count = unsafe {
++        rfd_haiku_file_panel(
++            panel as c_int,
++            multiple as c_int,
++            dialog.parent.is_some() as c_int,
++            title.as_ptr(),
++            directory.as_ref().map_or(std::ptr::null(), |d| d.as_ptr()),
++            file_name.as_ref().map_or(std::ptr::null(), |n| n.as_ptr()),
++            extension_ptrs.as_ptr(),
++            extension_ptrs.len() as c_int,
++            &mut paths,
++            &mut length,
++        )
++    };
++    if count < 0 {
++        no_application(default_title);
++        return None;
++    }
++    if count == 0 || paths.is_null() {
++        return None;
++    }
++    // SAFETY: the shim wrote `length` bytes at `paths`: NUL-terminated paths one after the other.
++    let bytes = unsafe { std::slice::from_raw_parts(paths as *const u8, length) };
++    let list = bytes
++        .split(|&b| b == 0)
++        .filter(|p| !p.is_empty())
++        .map(|p| Path::new(std::ffi::OsStr::from_bytes(p)).to_path_buf())
++        .collect::<Vec<_>>();
++    // SAFETY: allocated by the shim, freed once.
++    unsafe { rfd_haiku_free(paths as *mut c_void) };
++    (!list.is_empty()).then_some(list)
++}
++
++fn first(paths: Option<Vec<PathBuf>>) -> Option<PathBuf> {
++    paths.and_then(|p| p.into_iter().next())
++}
++
++/// Runs `show` on a thread of its own; the future resolves to its answer (the default if the
++/// thread could not be made).
++fn on_thread<T: Default + Send + 'static>(
++    show: impl FnOnce() -> T + Send + 'static,
++) -> DialogFutureType<T> {
++    let (tx, rx) = crate::oneshot::channel();
++    let spawned = std::thread::Builder::new()
++        .name("rfd dialog".into())
++        .spawn(move || {
++            let _ = tx.send(show());
++        });
++    if let Err(e) = spawned {
++        eprintln!("rfd: cannot start the dialog's thread: {e}");
++    }
++    Box::pin(async move { rx.await.unwrap_or_default() })
++}
++
++impl FilePickerDialogImpl for FileDialog {
++    fn pick_file(self) -> Option<PathBuf> {
++        first(show_panel(&self, Panel::Open, false))
++    }
++
++    fn pick_files(self) -> Option<Vec<PathBuf>> {
++        show_panel(&self, Panel::Open, true)
++    }
++}
++
++impl AsyncFilePickerDialogImpl for FileDialog {
++    fn pick_file_async(self) -> DialogFutureType<Option<FileHandle>> {
++        on_thread(move || self.pick_file().map(FileHandle::wrap))
++    }
++
++    fn pick_files_async(self) -> DialogFutureType<Option<Vec<FileHandle>>> {
++        on_thread(move || {
++            self.pick_files()
++                .map(|p| p.into_iter().map(FileHandle::wrap).collect())
++        })
++    }
++}
++
++impl FolderPickerDialogImpl for FileDialog {
++    fn pick_folder(self) -> Option<PathBuf> {
++        first(show_panel(&self, Panel::Folder, false))
++    }
++
++    /// The file panel picks one folder at a time.
++    fn pick_folders(self) -> Option<Vec<PathBuf>> {
++        self.pick_folder().map(|p| vec![p])
++    }
++}
++
++impl AsyncFolderPickerDialogImpl for FileDialog {
++    fn pick_folder_async(self) -> DialogFutureType<Option<FileHandle>> {
++        on_thread(move || self.pick_folder().map(FileHandle::wrap))
++    }
++
++    fn pick_folders_async(self) -> DialogFutureType<Option<Vec<FileHandle>>> {
++        on_thread(move || {
++            self.pick_folders()
++                .map(|p| p.into_iter().map(FileHandle::wrap).collect())
++        })
++    }
++}
++
++impl FileSaveDialogImpl for FileDialog {
++    fn save_file(self) -> Option<PathBuf> {
++        first(show_panel(&self, Panel::Save, false))
++    }
++}
++
++impl AsyncFileSaveDialogImpl for FileDialog {
++    fn save_file_async(self) -> DialogFutureType<Option<FileHandle>> {
++        on_thread(move || self.save_file().map(FileHandle::wrap))
++    }
++}
++
++/// The buttons left to right, as Haiku orders them (the affirmative one last, the default), with
++/// the answer of each, and the index of the one Escape stands for.
++fn buttons(buttons: &MessageButtons) -> (Vec<(String, MessageDialogResult)>, Option<usize>) {
++    use MessageDialogResult::{Cancel, Custom, No, Ok, Yes};
++    let custom = |label: &String| (label.clone(), Custom(label.clone()));
++    match buttons {
++        MessageButtons::Ok => (vec![("OK".into(), Ok)], Some(0)),
++        MessageButtons::OkCancel => (vec![("Cancel".into(), Cancel), ("OK".into(), Ok)], Some(0)),
++        MessageButtons::YesNo => (vec![("No".into(), No), ("Yes".into(), Yes)], Some(0)),
++        MessageButtons::YesNoCancel => (
++            vec![("Cancel".into(), Cancel), ("No".into(), No), ("Yes".into(), Yes)],
++            Some(0),
++        ),
++        MessageButtons::OkCustom(ok) => (vec![custom(ok)], Some(0)),
++        MessageButtons::OkCancelCustom(ok, cancel) => {
++            (vec![custom(cancel), custom(ok)], Some(0))
++        }
++        MessageButtons::YesNoCancelCustom(yes, no, cancel) => {
++            (vec![custom(cancel), custom(no), custom(yes)], Some(0))
++        }
++    }
++}
++
++/// The answer that changes nothing: Escape's button.
++fn no_change(dialog: &MessageDialog) -> MessageDialogResult {
++    let (list, escape) = buttons(&dialog.buttons);
++    escape
++        .and_then(|i| list.into_iter().nth(i))
++        .map_or(MessageDialogResult::Cancel, |(_, answer)| answer)
++}
++
++impl MessageDialogImpl for MessageDialog {
++    fn show(self) -> MessageDialogResult {
++        let (list, escape) = buttons(&self.buttons);
++        let labels: Vec<CString> = list.iter().map(|(l, _)| c_string(l.as_bytes())).collect();
++        let label_ptrs: Vec<*const c_char> = labels.iter().map(|l| l.as_ptr()).collect();
++        let title = c_string(self.title.as_bytes());
++        let text = c_string(self.description.as_bytes());
++        let level = match self.level {
++            MessageLevel::Info => 0,
++            MessageLevel::Warning => 1,
++            MessageLevel::Error => 2,
++        };
++        // SAFETY: valid NUL-terminated strings that outlive the call; 1 to 3 labels.
++        let pressed = unsafe {
++            rfd_haiku_alert(
++                title.as_ptr(),
++                text.as_ptr(),
++                level,
++                label_ptrs.as_ptr(),
++                label_ptrs.len() as c_int,
++                escape.map_or(-1, |i| i as c_int),
++            )
++        };
++        match usize::try_from(pressed).ok().and_then(|i| list.get(i)) {
++            Some((_, answer)) => answer.clone(),
++            None => {
++                no_application("message");
++                no_change(&self)
++            }
++        }
++    }
++}
++
++impl AsyncMessageDialogImpl for MessageDialog {
++    fn show_async(self) -> DialogFutureType<MessageDialogResult> {
++        on_thread(move || self.show())
++    }
++}
+--- a/src/backend.rs
++++ b/src/backend.rs
+@@ -28,6 +28,8 @@
+     feature = "gtk3"
+ ))]
+ mod gtk3;
++#[cfg(target_os = "haiku")]
++mod haiku;
+ #[cfg(target_os = "macos")]
+ mod macos;
+ #[cfg(target_arch = "wasm32")]

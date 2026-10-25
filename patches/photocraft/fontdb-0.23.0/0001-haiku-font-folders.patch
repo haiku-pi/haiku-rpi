@@ -1,0 +1,51 @@
+fontdb: Haiku's font folders
+
+load_system_fonts() took the Linux path on Haiku: fontconfig's files (none there), then
+/usr/share/fonts and ~/.fonts — no fonts. Load Haiku's folders instead: /boot/system/data/fonts,
+/boot/system/non-packaged/data/fonts and the user's config/data/fonts and
+config/non-packaged/data/fonts (Photocraft's text tool and SVG import). Applies with -p1 to fontdb 0.23.0.
+
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -457,8 +457,22 @@
+             self.load_fonts_dir_impl("/ui/fonts".as_ref(), &mut seen);
+         }
+ 
++        // Haiku: the system's and the user's font folders, packaged and non-packaged.
++        #[cfg(target_os = "haiku")]
++        {
++            let mut seen = Default::default();
++            self.load_fonts_dir_impl("/boot/system/data/fonts".as_ref(), &mut seen);
++            self.load_fonts_dir_impl("/boot/system/non-packaged/data/fonts".as_ref(), &mut seen);
++
++            if let Ok(ref home) = std::env::var("HOME") {
++                let home_path = std::path::Path::new(home);
++                self.load_fonts_dir_impl(&home_path.join("config/data/fonts"), &mut seen);
++                self.load_fonts_dir_impl(&home_path.join("config/non-packaged/data/fonts"), &mut seen);
++            }
++        }
++
+         // Linux.
+-        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
++        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "haiku"))))]
+         {
+             #[cfg(feature = "fontconfig")]
+             {
+@@ -480,7 +494,7 @@
+     #[cfg(all(
+         unix,
+         feature = "fs",
+-        not(any(target_os = "macos", target_os = "android"))
++        not(any(target_os = "macos", target_os = "android", target_os = "haiku"))
+     ))]
+     fn load_no_fontconfig(&mut self) {
+         let mut seen = Default::default();
+@@ -498,7 +512,7 @@
+     #[cfg(all(
+         unix,
+         feature = "fontconfig",
+-        not(any(target_os = "macos", target_os = "android"))
++        not(any(target_os = "macos", target_os = "android", target_os = "haiku"))
+     ))]
+     fn load_fontconfig(&mut self) -> bool {
+         use std::path::Path;

@@ -5,7 +5,8 @@
  * state a real keyboard gives. For unattended tests of keyboard input; no input_server involved.
  *
  *   keyinject TEAM TITLE-PART TEXT [MS]   (letters, digits, space, ".,-!"; TEXT may use upper case; "^x" is
- *                                          Ctrl+x, "~" is Return; MS: the pause after each message, default 30)
+ *                                          Ctrl+x, "^[" is Escape, "^<" and "^>" are the Up and Down arrows,
+ *                                          "~" is Return; MS: the pause after each message, default 30)
  *
  * Build (cross):
  *   g=sources/haiku/generated.arm64
@@ -27,6 +28,9 @@
 static const int32 kLeftShift = 0x4b;
 static const int32 kLeftControl = 0x5c;
 static const int32 kReturn = 0x47;
+static const int32 kEscape = 0x01;
+static const int32 kUpArrow = 0x57;
+static const int32 kDownArrow = 0x62;
 
 // the US keymap's key codes
 static int32
@@ -124,6 +128,14 @@ main(int argc, char** argv)
 		if (*c == '~') {
 			post_key(window, B_KEY_DOWN, kReturn, 0, B_ENTER);
 			post_key(window, B_KEY_UP, kReturn, 0, B_ENTER);
+			continue;
+		}
+		if (*c == '^' && (c[1] == '[' || c[1] == '<' || c[1] == '>')) {
+			c++;
+			int32 key = *c == '[' ? kEscape : *c == '<' ? kUpArrow : kDownArrow;
+			char byte = *c == '[' ? B_ESCAPE : *c == '<' ? B_UP_ARROW : B_DOWN_ARROW;
+			post_key(window, B_KEY_DOWN, key, 0, byte);
+			post_key(window, B_KEY_UP, key, 0, byte);
 			continue;
 		}
 		if (*c == '^' && c[1] != '\0') {

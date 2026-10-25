@@ -1,7 +1,7 @@
 #!/bin/sh
 # photocraft-gui.sh — a UserBootscript for Photocraft's GUI app (apps/photocraft: eframe on winit's
 # Wayland backend, wgpu on Vulkan) on Haiku's in-process Wayland server (X547's libwayland-client +
-# wayland_server, as Wine's Wayland driver uses them); docs/design/photocraft.md, P3. Image:
+# wayland_server, as Wine's Wayland driver uses them); docs/design/photocraft.md, P3 and P4. Image:
 #   scripts/build-photocraft.sh --only gui
 #   scripts/stage-packages.sh --wine-runtime          (wayland, wayland_server, libxkbcommon,
 #                                                     xkeyboard_config into artifacts/wayland-stage)
@@ -21,7 +21,13 @@
 #      wl_surface
 #   3. close: the same, 20 s, then asked to quit (hey … quit: the window's close → eframe exits); it must
 #      exit by itself within 15 s, without a debugger message on the serial console
-#   4. safe: photocraft --safe-gpu (CPU compositing, wgpu still draws the window), 30 s
+#   4. desktop (P4, needs bin/keyinject and bin/photocraft-desktop-test, built with the GUI): photocraft
+#      without a document; after 20 s Ctrl+O (File › Open) must show the Tracker's file panel ("Open", modal:
+#      the app gives it its window as parent), screenshot photocraft-desktop-panel.png; "photocraft-m" +
+#      Return opens photocraft-masks.jpg (screenshot photocraft-desktop-doc.png after 15 s); Ctrl+A, Ctrl+C
+#      puts the image on Haiku's clipboard: `clipboard -d` lists image/bitmap and image/png, and
+#      photocraft-desktop-test reads it back at the JPEG's size; then asked to quit
+#   5. safe: photocraft --safe-gpu (CPU compositing, wgpu still draws the window), 30 s
 # Serial console lines: "PCW "; "PCW <step>: <line>" for the program's output (stdout and stderr, the
 # first 120 lines), "PCW <step>: alive after N s" or "PCW <step>: exit N", "PCW <step>: screenshot N
 # bytes" (/boot/home/photocraft-<step>.png), "PCW end".
@@ -32,7 +38,9 @@
 # + wayland_server >= 0.1.20251004-8: "Haiku Wayland surface: wl_surface@N, view 0x..., SurfaceKHR(...)");
 # on the Pi: the app's log naming the wgpu adapter (V3D 4.2), wl_surface commits after the frames in the
 # trace ("trace: N wl_surface commits, M frame callbacks done"), the process alive after 45 s and the
-# window in the screenshot.
+# window in the screenshot. P4 (desktop): "desktop: panel \"Open\": yes", "PDT clip-image-get: <W>x<H>" at
+# photocraft-masks.jpg's size, no "rfd: no dialogs"/"Failed to initialize arboard" lines, and no
+# "couldn't find a Compose file" (libxkbcommon 1.13.2-2 ships the X11 locale database; XLOCALEDIR below).
 # QEMU virt (no GPU, 10-25): everything up to the surface, then no adapter (no /dev/dri: Mesa cannot open
 # renderD128), the app exits (and its crash guard starts it once more with --safe-gpu, which stops the
 # same way: "window" shows both launches). Before the bridge it stopped at the surface: "Vulkan driver
@@ -46,6 +54,7 @@ say() { echo "PCW $*" >> "$out"; }
 # the stack comes as a tree in non-packaged (scripts/stage-packages.sh): libxkbcommon's compiled-in
 # root is the package's
 export XKB_CONFIG_ROOT=/boot/system/non-packaged/data/X11/xkb
+export XLOCALEDIR=/boot/system/non-packaged/data/X11/locale
 export PATH=/boot/system/non-packaged/bin:$PATH
 export WGPU_BACKEND=vulkan
 export RUST_BACKTRACE=1
@@ -129,6 +138,48 @@ else
 	say "close: exit $? after $waited s"
 fi
 grep -a -E 'ERROR|panic|DEBUGGER' "$tmp/close.txt" | head -n 20 | while IFS= read -r l; do say "close: $l"; done
+# desktop integration (P4): the file panel from File › Open, the system clipboard from Copy
+if [ -x "${bin%/*}/keyinject" ]; then
+	keys() { "${bin%/*}/keyinject" "$pid" "$1" "$2" 2>&1 | tail -n 1; }
+	rm -rf "$tmp/config-desktop"
+	mkdir -p "$tmp/config-desktop"
+	clipboard -r > /dev/null 2>&1
+	PHOTOCRAFT_CONFIG_DIR="$tmp/config-desktop" "$bin" --new-instance > "$tmp/desktop.txt" 2>&1 &
+	pid=$!
+	sleep 20
+	say "desktop: Ctrl+O: $(keys PhotoCraft "^o")"
+	found=no
+	waited=0
+	while [ $waited -lt 15 ] && kill -0 $pid 2> /dev/null; do
+		if "${bin%/*}/keyinject" $pid Open "" > /dev/null 2>&1; then found=yes; break; fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	say "desktop: panel \"Open\": $found after $waited s"
+	screenshot -s /boot/home/photocraft-desktop-panel.png > /dev/null 2>&1
+	if [ $found = yes ]; then
+		say "desktop: open: $(keys Open "photocraft-m~")"
+		sleep 15
+		screenshot -s /boot/home/photocraft-desktop-doc.png > /dev/null 2>&1
+		say "desktop: select all, copy: $(keys PhotoCraft "^a^c")"
+		sleep 5
+		clipboard -d 2>&1 | grep -a -E 'image/|_frame|text/' | head -n 6 | while IFS= read -r l; do say "desktop: clipboard -d: $l"; done
+		"${bin%/*}/photocraft-desktop-test" clip-image-get 2>&1 | grep -a PDT | while IFS= read -r l; do say "desktop: $l"; done
+	fi
+	say "desktop: hey: $(hey "$pid" quit 2>&1 | tr '\n' ' ' | cut -c1-120)"
+	waited=0
+	while [ $waited -lt 15 ] && kill -0 $pid 2> /dev/null; do sleep 1; waited=$((waited + 1)); done
+	if kill -0 $pid 2> /dev/null; then
+		say "desktop: still running after 15 s"
+		kill -9 $pid 2> /dev/null
+		wait $pid 2> /dev/null
+	else
+		wait $pid
+		say "desktop: exit $? after $waited s"
+	fi
+	grep -a -E 'rfd|arboard|clipboard|Compose|XKB|panic|ERROR|DEBUGGER' "$tmp/desktop.txt" | head -n 20 \
+		| while IFS= read -r l; do say "desktop: $(echo "$l" | cut -c1-240)"; done
+fi
 show safe 30 "" --new-instance --safe-gpu "$data/photocraft-masks.jpg"
 sync
 say end

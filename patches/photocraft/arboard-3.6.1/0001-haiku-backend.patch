@@ -1,0 +1,714 @@
+arboard: a Haiku backend (BClipboard)
+
+On Haiku arboard took its Linux backend, which needs WAYLAND_DISPLAY (wlr-data-control) or an X
+server: neither exists there, so Clipboard::new() failed (egui fell back to a clipboard inside the
+program; Photocraft could not copy or paste images). Add a Haiku backend on the system clipboard
+(BClipboard), through a small C++ shim (src/platform/haiku/arboard_haiku.cpp) that build.rs
+compiles with the target's C++ compiler (CXX_<target>/AR_<target>; no new dependency, Cargo.lock
+unchanged) and links with libbe and libstdc++. It needs no BApplication.
+
+Formats as Haiku's own applications use them: text "text/plain" (also read: "text/plain;charset=utf-8",
+which wayland_server's data offers keep), HTML "text/html"; images written as "image/bitmap" (an
+archived B_RGBA32 BBitmap, as ShowImage and Screenshot copy; built as a message, no app_server
+needed) and "image/png", read from "image/bitmap"/"image/x-be-bitmap" (RGBA32, RGB32, RGB24, GRAY8)
+or any image/* data the image crate decodes; files the Tracker's way (entry_refs "r<dev>_<node>"
+with a copy mode "m<dev>_<node>") plus text/uri-list, read from either.
+
+The Linux extension traits (primary selection, wait) are not exported on Haiku. Photocraft phase P4.
+Applies with -p1 to arboard 3.6.1.
+
+--- a/build.rs
++++ b/build.rs
+@@ -0,0 +1,36 @@
++//! Haiku: the BClipboard shim (`src/platform/haiku/arboard_haiku.cpp`), compiled with the target's
++//! C++ compiler (the `CXX_<target>` and `AR_<target>` variables the `cc` crate reads, else
++//! `<target>-g++` and `<target>-ar`). Nothing to do for the other systems.
++use std::process::Command;
++
++fn main() {
++	if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("haiku") {
++		return;
++	}
++	let target = std::env::var("TARGET").expect("TARGET not set");
++	let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR not set"));
++	let tool = |name: &str, default: &str| {
++		let var = format!("{name}_{}", target.replace('-', "_"));
++		println!("cargo:rerun-if-env-changed={var}");
++		std::env::var(&var).unwrap_or_else(|_| format!("{target}-{default}"))
++	};
++	let source = "src/platform/haiku/arboard_haiku.cpp";
++	println!("cargo:rerun-if-changed={source}");
++	let object = out.join("arboard_haiku.o");
++	let status = Command::new(tool("CXX", "g++"))
++		.args(["-c", "-O2", "-fPIC", "-fno-exceptions", "-Wall", "-Werror", "-o"])
++		.arg(&object)
++		.arg(source)
++		.status()
++		.expect("cannot run the C++ compiler");
++	assert!(status.success(), "{source} did not compile");
++	let library = out.join("libarboard_haiku.a");
++	let _ = std::fs::remove_file(&library);
++	let status =
++		Command::new(tool("AR", "ar")).arg("crs").arg(&library).arg(&object).status().expect("cannot run ar");
++	assert!(status.success(), "ar failed");
++	println!("cargo:rustc-link-search=native={}", out.display());
++	println!("cargo:rustc-link-lib=static=arboard_haiku");
++	println!("cargo:rustc-link-lib=be");
++	println!("cargo:rustc-link-lib=stdc++");
++}
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -14,7 +14,7 @@
+ rust-version = "1.71.0"
+ name = "arboard"
+ version = "3.6.1"
+-build = false
++build = "build.rs"
+ autolib = false
+ autobins = false
+ autoexamples = false
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -23,7 +23,7 @@
+ 
+ #[cfg(all(
+ 	unix,
+-	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
++	not(any(target_os = "macos", target_os = "android", target_os = "emscripten", target_os = "haiku")),
+ ))]
+ pub use platform::{ClearExtLinux, GetExtLinux, LinuxClipboardKind, SetExtLinux};
+ 
+--- a/src/platform/haiku/arboard_haiku.cpp
++++ b/src/platform/haiku/arboard_haiku.cpp
+@@ -0,0 +1,324 @@
++/*
++ * arboard on Haiku: the system clipboard (BClipboard "system", the one be_clipboard names), for
++ * src/platform/haiku.rs; built by build.rs. No BApplication is needed: a BClipboard talks to the
++ * registrar.
++ *
++ * Formats, as Haiku's own applications use them:
++ *   - text and other data: a B_MIME_TYPE field named by its MIME type ("text/plain", "text/html", ...);
++ *   - images: "image/bitmap", an archived BBitmap (BBitmap::Archive: "class", "_frame", "_cspace",
++ *     "_bmflags", "_rowbytes", "_data"), as ShowImage and Screenshot copy them; read from "image/x-be-bitmap"
++ *     too. Written here in B_RGBA32 (B, G, R, A in memory) without making a BBitmap (no app_server needed);
++ *   - files: the Tracker's form (FSClipboard): for each file an entry_ref named "r<device>_<node>" and an
++ *     int32 "m<device>_<node>", the Tracker's copy or move mode.
++ *
++ * Return values: 0 done (data returned in malloc'd memory: free with arboard_haiku_free), 1 no such
++ * content, 2 content in a form that cannot be converted, -1 the clipboard cannot be locked.
++ */
++#include <Clipboard.h>
++#include <Entry.h>
++#include <GraphicsDefs.h>
++#include <Message.h>
++#include <Path.h>
++#include <Rect.h>
++#include <String.h>
++#include <SupportDefs.h>
++
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++
++namespace {
++
++// the Tracker's command for pasting copied (not cut) files: kCopySelectionTo in tracker/Commands.h
++const int32 kTrackerCopy = 'Tcsl';
++
++
++BClipboard*
++system_clipboard()
++{
++	static BClipboard* clipboard = new BClipboard(NULL);
++	return clipboard;
++}
++
++
++/* Locks the clipboard (its contents fetched from the registrar) for the scope. */
++class Locked {
++public:
++	Locked()
++		:
++		fClipboard(system_clipboard()),
++		fLocked(fClipboard->Lock())
++	{
++	}
++
++	~Locked()
++	{
++		if (fLocked)
++			fClipboard->Unlock();
++	}
++
++	BMessage* Data() const
++	{
++		return fLocked ? fClipboard->Data() : NULL;
++	}
++
++	BClipboard* Clipboard() const
++	{
++		return fClipboard;
++	}
++
++private:
++	BClipboard*	fClipboard;
++	bool		fLocked;
++};
++
++
++int
++copy_out(const void* data, size_t size, void** out, size_t* length)
++{
++	*out = malloc(size > 0 ? size : 1);
++	if (*out == NULL)
++		return 2;
++	memcpy(*out, data, size);
++	*length = size;
++	return 0;
++}
++
++}	// namespace
++
++
++/* The B_MIME_TYPE field `name`. */
++extern "C" int
++arboard_haiku_get_data(const char* name, void** data, size_t* length)
++{
++	*data = NULL;
++	*length = 0;
++	Locked locked;
++	BMessage* clip = locked.Data();
++	if (clip == NULL)
++		return -1;
++	const void* found;
++	ssize_t size;
++	if (clip->FindData(name, B_MIME_TYPE, &found, &size) != B_OK)
++		return 1;
++	return copy_out(found, size, data, length);
++}
++
++
++/* The names of the B_MIME_TYPE fields, each NUL-terminated, one after the other. */
++extern "C" int
++arboard_haiku_get_types(void** names, size_t* length)
++{
++	*names = NULL;
++	*length = 0;
++	Locked locked;
++	BMessage* clip = locked.Data();
++	if (clip == NULL)
++		return -1;
++	BString list;
++	char* name;
++	type_code type;
++	for (int32 i = 0; clip->GetInfo(B_MIME_TYPE, i, &name, &type) == B_OK; i++) {
++		list.Append(name);
++		list.Append('\0', 1);
++	}
++	if (list.Length() == 0)
++		return 1;
++	return copy_out(list.String(), list.Length(), names, length);
++}
++
++
++/* An archived BBitmap as straight RGBA, 4 bytes per pixel, rows without padding. */
++extern "C" int
++arboard_haiku_get_bitmap(uint32_t* width, uint32_t* height, void** rgba, size_t* length)
++{
++	*rgba = NULL;
++	*length = 0;
++	BMessage archive;
++	{
++		Locked locked;
++		BMessage* clip = locked.Data();
++		if (clip == NULL)
++			return -1;
++		if (clip->FindMessage("image/bitmap", &archive) != B_OK
++			&& clip->FindMessage("image/x-be-bitmap", &archive) != B_OK)
++			return 1;
++	}
++
++	BRect frame;
++	int32 space;
++	const void* data;
++	ssize_t size;
++	if (archive.FindRect("_frame", &frame) != B_OK || archive.FindInt32("_cspace", &space) != B_OK
++		|| archive.FindData("_data", B_RAW_TYPE, &data, &size) != B_OK || !frame.IsValid())
++		return 2;
++	uint32 w = frame.IntegerWidth() + 1;
++	uint32 h = frame.IntegerHeight() + 1;
++	uint32 pixelBytes;
++	switch (space) {
++		case B_RGBA32:
++		case B_RGB32:
++			pixelBytes = 4;
++			break;
++		case B_RGB24:
++			pixelBytes = 3;
++			break;
++		case B_GRAY8:
++			pixelBytes = 1;
++			break;
++		default:
++			return 2;
++	}
++	int32 rowBytes;
++	if (archive.FindInt32("_rowbytes", &rowBytes) != B_OK || rowBytes <= 0)
++		rowBytes = (w * pixelBytes + 3) & ~3;
++	if ((uint64)rowBytes < (uint64)w * pixelBytes || (uint64)size < (uint64)rowBytes * h)
++		return 2;
++
++	uint8* out = (uint8*)malloc((size_t)w * h * 4);
++	if (out == NULL)
++		return 2;
++	for (uint32 y = 0; y < h; y++) {
++		const uint8* in = (const uint8*)data + (size_t)y * rowBytes;
++		uint8* to = out + (size_t)y * w * 4;
++		for (uint32 x = 0; x < w; x++, to += 4) {
++			switch (space) {
++				case B_RGBA32:
++					to[0] = in[2]; to[1] = in[1]; to[2] = in[0]; to[3] = in[3];
++					in += 4;
++					break;
++				case B_RGB32:
++					to[0] = in[2]; to[1] = in[1]; to[2] = in[0]; to[3] = 255;
++					in += 4;
++					break;
++				case B_RGB24:
++					to[0] = in[2]; to[1] = in[1]; to[2] = in[0]; to[3] = 255;
++					in += 3;
++					break;
++				case B_GRAY8:
++					to[0] = to[1] = to[2] = in[0]; to[3] = 255;
++					in += 1;
++					break;
++			}
++		}
++	}
++	*width = w;
++	*height = h;
++	*rgba = out;
++	*length = (size_t)w * h * 4;
++	return 0;
++}
++
++
++/* The Tracker's copied files: their paths, each NUL-terminated, one after the other. */
++extern "C" int
++arboard_haiku_get_refs(void** paths, size_t* length)
++{
++	*paths = NULL;
++	*length = 0;
++	Locked locked;
++	BMessage* clip = locked.Data();
++	if (clip == NULL)
++		return -1;
++	BString list;
++	char* name;
++	type_code type;
++	int32 count;
++	for (int32 i = 0; clip->GetInfo(B_REF_TYPE, i, &name, &type, &count) == B_OK; i++) {
++		if (name[0] != 'r')
++			continue;
++		entry_ref ref;
++		if (clip->FindRef(name, &ref) != B_OK)
++			continue;
++		BPath path(&ref);
++		if (path.InitCheck() != B_OK)
++			continue;
++		list.Append(path.Path());
++		list.Append('\0', 1);
++	}
++	if (list.Length() == 0)
++		return 1;
++	return copy_out(list.String(), list.Length(), paths, length);
++}
++
++
++struct arboard_haiku_item {
++	const char*	name;
++	const void*	data;
++	size_t		length;
++};
++
++
++/* Replaces the clipboard's contents with `items` (B_MIME_TYPE fields), plus, when given, an image
++ * (`rgba`, straight RGBA, width * height * 4 bytes) as "image/bitmap" and files (`paths`, `pathCount`
++ * NUL-terminated paths one after the other) in the Tracker's form. */
++extern "C" int
++arboard_haiku_set(const struct arboard_haiku_item* items, size_t count, const uint8_t* rgba,
++	uint32_t width, uint32_t height, const char* paths, size_t pathCount)
++{
++	Locked locked;
++	BMessage* clip = locked.Data();
++	if (clip == NULL)
++		return -1;
++	locked.Clipboard()->Clear();
++	for (size_t i = 0; i < count; i++)
++		clip->AddData(items[i].name, B_MIME_TYPE, items[i].data, items[i].length);
++
++	if (rgba != NULL && width > 0 && height > 0) {
++		size_t size = (size_t)width * height * 4;
++		uint8* bgra = (uint8*)malloc(size);
++		if (bgra == NULL)
++			return 2;
++		for (size_t i = 0; i < size; i += 4) {
++			bgra[i] = rgba[i + 2];
++			bgra[i + 1] = rgba[i + 1];
++			bgra[i + 2] = rgba[i];
++			bgra[i + 3] = rgba[i + 3];
++		}
++		BMessage archive;
++		archive.AddString("class", "BBitmap");
++		archive.AddRect("_frame", BRect(0, 0, width - 1, height - 1));
++		archive.AddInt32("_cspace", B_RGBA32);
++		archive.AddInt32("_bmflags", 0);
++		archive.AddInt32("_rowbytes", width * 4);
++		archive.AddData("_data", B_RAW_TYPE, bgra, size);
++		free(bgra);
++		clip->AddMessage("image/bitmap", &archive);
++	}
++
++	const char* path = paths;
++	for (size_t i = 0; path != NULL && i < pathCount; i++, path += strlen(path) + 1) {
++		BEntry entry(path);
++		entry_ref ref;
++		node_ref node;
++		if (entry.GetRef(&ref) != B_OK || entry.GetNodeRef(&node) != B_OK)
++			continue;
++		char name[64];
++		snprintf(name, sizeof(name), "r%" B_PRIdDEV "_%" B_PRIdINO, node.device, node.node);
++		clip->AddRef(name, &ref);
++		name[0] = 'm';
++		clip->AddInt32(name, kTrackerCopy);
++	}
++
++	return locked.Clipboard()->Commit() == B_OK ? 0 : -1;
++}
++
++
++extern "C" int
++arboard_haiku_clear()
++{
++	Locked locked;
++	if (locked.Data() == NULL)
++		return -1;
++	locked.Clipboard()->Clear();
++	return locked.Clipboard()->Commit() == B_OK ? 0 : -1;
++}
++
++
++extern "C" void
++arboard_haiku_free(void* pointer)
++{
++	free(pointer);
++}
+--- a/src/platform/haiku.rs
++++ b/src/platform/haiku.rs
+@@ -0,0 +1,280 @@
++/*
++SPDX-License-Identifier: Apache-2.0 OR MIT
++
++The project to which this file belongs is licensed under either of
++the Apache 2.0 or the MIT license at the licensee's choice. The terms
++and conditions of the chosen license apply to this file.
++*/
++
++//! Haiku: the system clipboard (BClipboard), through a small C++ shim (`haiku/arboard_haiku.cpp`,
++//! built by `build.rs`).
++//!
++//! The clipboard is a message held by the registrar: what is copied stays there after the program
++//! exits. Text is a `text/plain` field, HTML `text/html`; an image is written as `image/bitmap` (an
++//! archived BBitmap, what Haiku's own applications paste) and `image/png`, and read from either
++//! (`image/bitmap` first, then any `image/*` data the `image` crate decodes); files are the
++//! Tracker's entry_refs (Copy in the Tracker), else `text/uri-list`.
++
++use std::borrow::Cow;
++use std::ffi::{c_char, c_int, c_void, CString, OsStr};
++use std::os::unix::ffi::OsStrExt;
++use std::path::{Path, PathBuf};
++
++#[cfg(feature = "image-data")]
++use crate::common::ImageData;
++use crate::common::Error;
++
++#[repr(C)]
++struct Item {
++	name: *const c_char,
++	data: *const c_void,
++	length: usize,
++}
++
++extern "C" {
++	fn arboard_haiku_get_data(name: *const c_char, data: *mut *mut c_void, length: *mut usize) -> c_int;
++	fn arboard_haiku_get_types(names: *mut *mut c_void, length: *mut usize) -> c_int;
++	#[cfg(feature = "image-data")]
++	fn arboard_haiku_get_bitmap(
++		width: *mut u32,
++		height: *mut u32,
++		rgba: *mut *mut c_void,
++		length: *mut usize,
++	) -> c_int;
++	fn arboard_haiku_get_refs(paths: *mut *mut c_void, length: *mut usize) -> c_int;
++	fn arboard_haiku_set(
++		items: *const Item,
++		count: usize,
++		rgba: *const u8,
++		width: u32,
++		height: u32,
++		paths: *const c_char,
++		path_count: usize,
++	) -> c_int;
++	fn arboard_haiku_clear() -> c_int;
++	fn arboard_haiku_free(pointer: *mut c_void);
++}
++
++const TEXT: &str = "text/plain";
++const HTML: &str = "text/html";
++const URI_LIST: &str = "text/uri-list";
++#[cfg(feature = "image-data")]
++const PNG: &str = "image/png";
++
++/// The shim's status as a result: 0 ok, 1 no such content, 2 not convertible, else no clipboard.
++fn status(code: c_int) -> Result<(), Error> {
++	match code {
++		0 => Ok(()),
++		1 => Err(Error::ContentNotAvailable),
++		2 => Err(Error::ConversionFailure),
++		_ => Err(Error::Unknown { description: "the Haiku clipboard cannot be locked".into() }),
++	}
++}
++
++/// Calls a shim getter that returns malloc'd bytes, and copies them out.
++fn fetch(get: impl FnOnce(*mut *mut c_void, *mut usize) -> c_int) -> Result<Vec<u8>, Error> {
++	let mut data: *mut c_void = std::ptr::null_mut();
++	let mut length = 0usize;
++	let code = get(&mut data, &mut length);
++	let bytes = if data.is_null() {
++		Vec::new()
++	} else {
++		// SAFETY: the shim wrote `length` bytes at `data` (malloc'd), freed once here.
++		let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, length) }.to_vec();
++		unsafe { arboard_haiku_free(data) };
++		bytes
++	};
++	status(code).map(|()| bytes)
++}
++
++fn c_name(name: &str) -> CString {
++	CString::new(name).expect("MIME type with a NUL")
++}
++
++fn get_data(name: &str) -> Result<Vec<u8>, Error> {
++	let name = c_name(name);
++	// SAFETY: a valid C string; out-pointers to locals.
++	fetch(|data, length| unsafe { arboard_haiku_get_data(name.as_ptr(), data, length) })
++}
++
++/// NUL-separated byte strings.
++fn split(list: &[u8]) -> impl Iterator<Item = &[u8]> {
++	list.split(|&b| b == 0).filter(|s| !s.is_empty())
++}
++
++/// Replaces the clipboard with `items`, an image and files.
++fn set(items: &[(&str, &[u8])], image: Option<(&[u8], u32, u32)>, paths: &[u8], path_count: usize) -> Result<(), Error> {
++	let names: Vec<CString> = items.iter().map(|(name, _)| c_name(name)).collect();
++	let items: Vec<Item> = items
++		.iter()
++		.zip(&names)
++		.map(|((_, data), name)| Item { name: name.as_ptr(), data: data.as_ptr() as *const c_void, length: data.len() })
++		.collect();
++	let (rgba, width, height) = image.unwrap_or((&[], 0, 0));
++	// SAFETY: the items' names and data outlive the call; `rgba` has width * height * 4 bytes (checked
++	// by the caller) or is unused (width 0); `paths` holds `path_count` NUL-terminated paths.
++	status(unsafe {
++		arboard_haiku_set(
++			items.as_ptr(),
++			items.len(),
++			if width == 0 { std::ptr::null() } else { rgba.as_ptr() },
++			width,
++			height,
++			if path_count == 0 { std::ptr::null() } else { paths.as_ptr() as *const c_char },
++			path_count,
++		)
++	})
++}
++
++#[cfg(feature = "image-data")]
++fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
++	use image::ImageEncoder as _;
++	let mut png = Vec::new();
++	image::codecs::png::PngEncoder::new(&mut png)
++		.write_image(&image.bytes, image.width as u32, image.height as u32, image::ExtendedColorType::Rgba8)
++		.map_err(|_| Error::ConversionFailure)?;
++	Ok(png)
++}
++
++pub(crate) struct Clipboard;
++
++impl Clipboard {
++	pub(crate) fn new() -> Result<Self, Error> {
++		Ok(Clipboard)
++	}
++}
++
++pub(crate) struct Get<'clipboard> {
++	_clipboard: &'clipboard mut Clipboard,
++}
++
++impl<'clipboard> Get<'clipboard> {
++	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
++		Self { _clipboard: clipboard }
++	}
++
++	pub(crate) fn text(self) -> Result<String, Error> {
++		// wayland_server's data offers keep the client's MIME type as it was
++		let bytes = match get_data(TEXT) {
++			Err(Error::ContentNotAvailable) => get_data("text/plain;charset=utf-8")?,
++			other => other?,
++		};
++		String::from_utf8(bytes).map_err(|_| Error::ConversionFailure)
++	}
++
++	pub(crate) fn html(self) -> Result<String, Error> {
++		String::from_utf8(get_data(HTML)?).map_err(|_| Error::ConversionFailure)
++	}
++
++	#[cfg(feature = "image-data")]
++	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
++		let (mut width, mut height) = (0u32, 0u32);
++		// SAFETY: out-pointers to locals.
++		let bitmap = fetch(|data, length| unsafe { arboard_haiku_get_bitmap(&mut width, &mut height, data, length) });
++		match bitmap {
++			Ok(bytes) => {
++				return Ok(ImageData { width: width as usize, height: height as usize, bytes: bytes.into() })
++			}
++			Err(Error::ContentNotAvailable) => {}
++			Err(e) => return Err(e),
++		}
++		// SAFETY: out-pointers to locals.
++		let types = fetch(|names, length| unsafe { arboard_haiku_get_types(names, length) })?;
++		let mut images: Vec<&str> =
++			split(&types).filter_map(|t| std::str::from_utf8(t).ok()).filter(|t| t.starts_with("image/")).collect();
++		images.sort_by_key(|t| *t != PNG);
++		for name in images {
++			if let Ok(image) = image::load_from_memory(&get_data(name)?) {
++				let image = image.into_rgba8();
++				return Ok(ImageData {
++					width: image.width() as usize,
++					height: image.height() as usize,
++					bytes: image.into_raw().into(),
++				});
++			}
++		}
++		Err(Error::ContentNotAvailable)
++	}
++
++	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
++		// SAFETY: out-pointers to locals.
++		match fetch(|paths, length| unsafe { arboard_haiku_get_refs(paths, length) }) {
++			Ok(list) => return Ok(split(&list).map(|p| PathBuf::from(OsStr::from_bytes(p))).collect()),
++			Err(Error::ContentNotAvailable) => {}
++			Err(e) => return Err(e),
++		}
++		let uris = get_data(URI_LIST)?;
++		let paths: Vec<PathBuf> = uris
++			.split(|&b| b == b'\n')
++			.map(|line| line.strip_suffix(b"\r").unwrap_or(line))
++			.filter_map(|line| line.strip_prefix(b"file://"))
++			.map(|path| PathBuf::from(OsStr::from_bytes(&percent_encoding::percent_decode(path).collect::<Vec<u8>>())))
++			.collect();
++		if paths.is_empty() {
++			Err(Error::ContentNotAvailable)
++		} else {
++			Ok(paths)
++		}
++	}
++}
++
++pub(crate) struct Set<'clipboard> {
++	_clipboard: &'clipboard mut Clipboard,
++}
++
++impl<'clipboard> Set<'clipboard> {
++	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
++		Self { _clipboard: clipboard }
++	}
++
++	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
++		set(&[(TEXT, data.as_bytes())], None, &[], 0)
++	}
++
++	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
++		match &alt {
++			Some(alt) => set(&[(HTML, html.as_bytes()), (TEXT, alt.as_bytes())], None, &[], 0),
++			None => set(&[(HTML, html.as_bytes())], None, &[], 0),
++		}
++	}
++
++	#[cfg(feature = "image-data")]
++	pub(crate) fn image(self, data: ImageData) -> Result<(), Error> {
++		let (width, height) = (data.width as u32, data.height as u32);
++		if width == 0 || height == 0 || data.bytes.len() != data.width * data.height * 4 {
++			return Err(Error::ConversionFailure);
++		}
++		let png = encode_as_png(&data)?;
++		set(&[(PNG, &png)], Some((&data.bytes, width, height)), &[], 0)
++	}
++
++	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
++		let mut paths = Vec::new();
++		let mut uris = String::new();
++		for path in file_list {
++			let path = std::fs::canonicalize(path.as_ref()).map_err(|_| Error::ConversionFailure)?;
++			paths.extend_from_slice(path.as_os_str().as_bytes());
++			paths.push(0);
++			let encoded = percent_encoding::percent_encode(path.as_os_str().as_bytes(), percent_encoding::NON_ALPHANUMERIC)
++				.to_string()
++				.replace("%2F", "/");
++			uris.push_str(&format!("file://{encoded}\r\n"));
++		}
++		set(&[(URI_LIST, uris.as_bytes())], None, &paths, file_list.len())
++	}
++}
++
++pub(crate) struct Clear<'clipboard> {
++	_clipboard: &'clipboard mut Clipboard,
++}
++
++impl<'clipboard> Clear<'clipboard> {
++	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
++		Self { _clipboard: clipboard }
++	}
++
++	pub(crate) fn clear(self) -> Result<(), Error> {
++		// SAFETY: no arguments.
++		status(unsafe { arboard_haiku_clear() })
++	}
++}
+--- a/src/platform/mod.rs
++++ b/src/platform/mod.rs
+@@ -1,11 +1,19 @@
+-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
++#[cfg(all(
++	unix,
++	not(any(target_os = "macos", target_os = "android", target_os = "emscripten", target_os = "haiku"))
++))]
+ mod linux;
+ #[cfg(all(
+ 	unix,
+-	not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
++	not(any(target_os = "macos", target_os = "android", target_os = "emscripten", target_os = "haiku"))
+ ))]
+ pub use linux::*;
+ 
++#[cfg(target_os = "haiku")]
++mod haiku;
++#[cfg(target_os = "haiku")]
++pub use haiku::*;
++
+ #[cfg(windows)]
+ mod windows;
+ #[cfg(windows)]
