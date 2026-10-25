@@ -20,6 +20,11 @@ executable('retrace', 'retrace.cpp', dependencies : [dep_be], install : true)
 # the mouse pointer moved from a program (the hardware cursor plane's test)
 executable('cursor-move', 'cursor-move.cpp', dependencies : [dep_be], install : true)
 
+# the cost of each step of presenting a frame: CPU copies, SYNC_BO, app_server's DrawBitmap
+# (docs/design/gpu-present.md)
+dep_drm = dependency('libdrm')
+executable('present-bench', 'present-bench.cpp', dependencies : [dep_be, dep_drm], install : true)
+
 # headless Vulkan: the Khronos loader (scripts/build-gl-stack.sh "vulkan") and V3DV
 dep_vulkan = dependency('vulkan')
 executable('vktest', 'vktest.c', dependencies : [dep_vulkan], install : true)
