@@ -68,7 +68,8 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 
 if $(HAIKU_PI_DEV) = 1 {
 	Echo "Raspberry Pi development image (HAIKU_PI_DEV)" ;
-	HAIKU_IMAGE_SIZE = 1800 ;
+	# -sHAIKU_PI_IMAGE_SIZE=MB for a larger one (a test card with room to spare)
+	HAIKU_IMAGE_SIZE = $(HAIKU_PI_IMAGE_SIZE:E=1800) ;
 	AddHaikuImageSystemPackages
 		bash binutils bison coreutils findutils flex gawk gcc gcc_syslibs_devel grep
 		haikuporter less m4 make ncurses6 ncurses6_devel python3.10 sed texinfo
@@ -82,7 +83,8 @@ if $(HAIKU_PI_GAMES) = 1 {
 	# the free games (scripts/package-games.sh; also in the published repository, their data split
 	# into parts): with the GL stack (-sHAIKU_PI_GL=1)
 	Echo "Raspberry Pi games: OpenArena, SuperTuxKart (HAIKU_PI_GAMES)" ;
-	HAIKU_IMAGE_SIZE = 1700 ;
+	# -sHAIKU_PI_IMAGE_SIZE=MB for a larger one (a test card with room to spare)
+	HAIKU_IMAGE_SIZE = $(HAIKU_PI_IMAGE_SIZE:E=1700) ;
 	AddHaikuImageSystemPackages openarena openarena_data_1 openarena_data_2 openarena_data_3
 		openarena_data_4 openarena_data_5 supertuxkart supertuxkart_data_1 supertuxkart_data_2
 		supertuxkart_data_3 ;

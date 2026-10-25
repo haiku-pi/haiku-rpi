@@ -1,0 +1,31 @@
+# The mega image's "Test Apps" (scripts/build-mega-image.sh): one double-clickable launcher each
+# (tools/mega/launcher.c), in /boot/system/non-packaged/apps/TestApps and linked into ~/Desktop/Test Apps.
+# Format: Title|log name|shell command. An entry whose first word is a path that is not in the image is
+# left out (e.g. the Wine games when their data was not provided). $NP = /boot/system/non-packaged.
+#
+# games (SDL2 + OpenGL / Vulkan), with the shareware / demo data
+Quake (QuakeSpasm, OpenGL)|quakespasm|cd $NP/apps/QuakeSpasm && exec ./quakespasm
+Quake (vkQuake, Vulkan)|vkquake|cd $NP/apps/vkQuake && exec ./vkquake
+Quake II (demo)|quake2|cd $NP/apps/quake2 && exec ./Quake2
+Quake III Arena (demo)|quake3|cd $NP/apps/Quake3 && exec ./Quake3
+# GPU tests
+glmark2 (window)|glmark2|exec /boot/system/apps/Terminal -t glmark2 glmark2-es2
+glmark2 (full screen)|glmark2-full|exec /boot/system/apps/Terminal -t glmark2 glmark2-es2 --fullscreen
+vkcube (Vulkan)|vkcube|exec $NP/bin/vkcube
+# Windows programs (Wine: x86 through Box64, x86-64 through FEX)
+Minesweeper (Wine)|winemine|exec wine winemine
+Notepad (Wine)|notepad|exec wine notepad
+PuTTY (x86)|putty32|cd $NP/data/windows-apps/putty && exec wine putty32.exe
+PuTTY (x86-64)|putty64|cd $NP/data/windows-apps/putty && exec wine putty64.exe
+Notepad++ (x86)|npp32|cd $NP/data/windows-apps/npp32 && exec wine notepad++.exe
+Notepad++ (x86-64)|npp64|cd $NP/data/windows-apps/npp64 && exec wine notepad++.exe
+SumatraPDF (x86)|sumatra32|cd $NP/data/windows-apps/sumatra && exec wine Sumatra32.exe test.pdf
+SumatraPDF (x86-64)|sumatra64|cd $NP/data/windows-apps/sumatra && exec wine Sumatra64.exe test.pdf
+7-Zip (console, x86)|7zr|exec /boot/system/apps/Terminal -t 7-Zip sh -c 'cd $NP/data/windows-apps/7z && wine 7zr.exe; echo; echo "(close this window)"; read x'
+# Windows games (demos and shareware)
+Heroes of Might and Magic III (demo)|heroes3|cd $NP/data/wine-games/H3 && exec wine h3demo.exe
+SimCity 3000 (demo)|simcity3000|cd $NP/data/wine-games/SC3 && WINE_D3D_CONFIG=renderer=gl exec wine sc3demo.exe
+StarCraft (shareware)|starcraft|cd $NP/data/wine-games/SC && exec wine Starcraft.exe
+Half-Life Uplink (demo, window)|halflife|cd $NP/data/wine-games/HL && exec wine hldemo.exe -windowed
+Half-Life Uplink (demo, full screen)|halflife-full|cd $NP/data/wine-games/HL && exec wine hldemo.exe -full
+Fallout (demo)|fallout|cd $NP/data/wine-games/falldemo && exec wine Falldemo.exe
