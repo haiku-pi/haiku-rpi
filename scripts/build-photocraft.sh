@@ -318,6 +318,10 @@ wlview() {
 	"$crossBin/$target-g++" --sysroot="$sysroot" -O2 -Wall -Werror -I"$tmp" -o "$tmp/wlview" \
 		"$root/tools/haiku-tests/wlview.cpp" "$tmp/xdg-shell.o" -lwayland-client -lbe
 	"$crossBin/$target-strip" -o "$guiStage/bin/wlview" "$tmp/wlview"
+	# tools/haiku-tests/wlkeys.cpp: the keyboard as a client of the server sees it (xkbcommon, as winit)
+	"$crossBin/$target-g++" --sysroot="$sysroot" -O2 -Wall -Werror -I"$tmp" -o "$tmp/wlkeys" \
+		"$root/tools/haiku-tests/wlkeys.cpp" "$tmp/xdg-shell.o" -lwayland-client -lxkbcommon -lbe
+	"$crossBin/$target-strip" -o "$guiStage/bin/wlkeys" "$tmp/wlkeys"
 	rm -rf "$tmp"
 }
 

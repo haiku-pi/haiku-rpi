@@ -337,7 +337,28 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   -9): nothing in P4 needed a server change. Note for the publish: the package now carries libX11's nls files
   (MIT/X11 licence, libX11's copyright holders) under libxkbcommon's; and anyone's next `publish-repo.sh` ships -2
   (the mesa #71 fix is waiting), with or without the Pi check.
+- **Pi runs (main session, 10-25 ~09:45)**: photocraft-desktop.sh passes everything on the Pi (as in QEMU; screen
+  copy 1920×1080). photocraft-gui4 (`artifacts/uart/20261025-094150-photocraft-gui4.log`): wlview, window, trace,
+  close, safe fine, no Compose or arboard errors — but the `desktop` run's Ctrl+O never opened the panel.
+- **Why Ctrl+O did nothing: wayland_server gives clients Haiku's *shortcut* key as Control.** `FromHaikuModifiers`
+  (HaikuSeat.cpp, X547's) sends B_COMMAND_KEY as xkb Control, B_CONTROL_KEY as Mod1 (Alt; plus a bit 18 the
+  keymap does not have, which xkbcommon ignores) and B_OPTION_KEY as Mod5 (AltGr). `tools/haiku-tests/wlkeys`
+  (a toplevel made as Photocraft's, the keyboard read through libxkbcommon as winit does) in QEMU, keys through
+  QEMU's USB keyboard and input_server (`tools/pi-tests/wayland-keys.sh`, host: `qmp-hmp.py SOCK "sendkey …"`):
+  physical **Ctrl+O → `Control_L` key but mods `Mod1` → ctrl 0 alt 1**; physical **Alt+O → ctrl 1 alt 0** (Haiku's
+  default keymap makes left Alt the Command key); Win+O → Mod5, "ó". keyinject's `^o` (B_CONTROL_KEY) gives the
+  same as physical Ctrl: egui saw Alt+O. So nothing was lost — the test pressed the wrong key for Haiku.
+  **Decided: keep the mapping** (no server change, wayland_server stays -9). It is Haiku's convention: every Haiku
+  application's shortcuts are on Command (Alt+C copies, Alt+O opens), Qt on Haiku maps Command to Control the same
+  way, Wine's verified keyboard behaviour (10-23/25 sweeps) rests on it, and a user who wants the Ctrl key for
+  shortcuts switches it in the Keymap preferences ("Switch shortcut keys to Windows/Linux mode"), which then reaches
+  Wayland clients as Control too. On Haiku, Photocraft's Ctrl shortcuts are therefore on the Command key, as in any
+  Haiku app. keyinject gained `%x` (Command+x, as input_server sends it); photocraft-gui.sh's desktop run uses
+  `%o`, `%a%c`.
 - Not verified yet: a native application reading our `image/bitmap` (ShowImage's paste instantiates a BBitmap from
-  it; the fields are BBitmap::Archive's, one for one), and Ctrl shortcuts through the Wayland server into egui
-  (Wine's typing used Shift only) — the Pi `desktop` run is the first; `panel "Open": no` there points at that key
-  path, not at rfd (photocraft-desktop.sh is the rfd/arboard check).
+  it; the fields are BBitmap::Archive's, one for one), and Command shortcuts end to end in Photocraft (wlkeys
+  shows Control arriving; the Pi `desktop` run with `%o` is the check). **Pi test (rerun of the GUI part)**:
+  `scripts/build-photocraft.sh --only gui`, `scripts/stage-packages.sh --wine-runtime`, `scripts/mkimage-pi4.sh
+  --out artifacts/images/photocraft-gui.img --add-tree artifacts/wayland-stage --add-tree
+  artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-gui.sh`, `scripts/netboot-cycle.sh
+  --image artifacts/images/photocraft-gui.img --secs 600 --hdmi-every 5 --label photocraft-gui5 --until 'PCW end'`.

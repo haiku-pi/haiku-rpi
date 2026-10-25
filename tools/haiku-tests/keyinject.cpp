@@ -5,8 +5,10 @@
  * state a real keyboard gives. For unattended tests of keyboard input; no input_server involved.
  *
  *   keyinject TEAM TITLE-PART TEXT [MS]   (letters, digits, space, ".,-!"; TEXT may use upper case; "^x" is
- *                                          Ctrl+x, "^[" is Escape, "^<" and "^>" are the Up and Down arrows,
- *                                          "~" is Return; MS: the pause after each message, default 30)
+ *                                          Ctrl+x, "%x" is Command+x (the shortcut key of Haiku's keymap: left
+ *                                          Alt on a PC keyboard by default), "^[" is Escape, "^<" and "^>" are
+ *                                          the Up and Down arrows, "~" is Return; MS: the pause after each
+ *                                          message, default 30)
  *
  * Build (cross):
  *   g=sources/haiku/generated.arm64
@@ -27,6 +29,7 @@
 
 static const int32 kLeftShift = 0x4b;
 static const int32 kLeftControl = 0x5c;
+static const int32 kLeftCommand = 0x5d;
 static const int32 kReturn = 0x47;
 static const int32 kEscape = 0x01;
 static const int32 kUpArrow = 0x57;
@@ -124,6 +127,7 @@ main(int argc, char** argv)
 
 	const uint32 shift = B_SHIFT_KEY | B_LEFT_SHIFT_KEY;
 	const uint32 control = B_CONTROL_KEY | B_LEFT_CONTROL_KEY;
+	const uint32 command = B_COMMAND_KEY | B_LEFT_COMMAND_KEY;
 	for (const char* c = argv[3]; *c != '\0'; c++) {
 		if (*c == '~') {
 			post_key(window, B_KEY_DOWN, kReturn, 0, B_ENTER);
@@ -149,6 +153,20 @@ main(int argc, char** argv)
 			post_key(window, B_KEY_UP, key, control, tolower(*c) & 0x1f);
 			post_key(window, B_UNMAPPED_KEY_UP, kLeftControl, 0, 0);
 			post_modifiers(window, control, 0);
+			continue;
+		}
+		if (*c == '%' && c[1] != '\0') {
+			// as input_server sends Command+key: the key's own character, the Command modifier
+			c++;
+			int32 key = key_code(*c);
+			if (key < 0)
+				continue;
+			post_key(window, B_UNMAPPED_KEY_DOWN, kLeftCommand, command, 0);
+			post_modifiers(window, 0, command);
+			post_key(window, B_KEY_DOWN, key, command, tolower(*c));
+			post_key(window, B_KEY_UP, key, command, tolower(*c));
+			post_key(window, B_UNMAPPED_KEY_UP, kLeftCommand, 0, 0);
+			post_modifiers(window, command, 0);
 			continue;
 		}
 		int32 key = key_code(*c);

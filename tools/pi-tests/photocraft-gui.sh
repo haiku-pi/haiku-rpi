@@ -22,9 +22,11 @@
 #   3. close: the same, 20 s, then asked to quit (hey … quit: the window's close → eframe exits); it must
 #      exit by itself within 15 s, without a debugger message on the serial console
 #   4. desktop (P4, needs bin/keyinject and bin/photocraft-desktop-test, built with the GUI): photocraft
-#      without a document; after 20 s Ctrl+O (File › Open) must show the Tracker's file panel ("Open", modal:
-#      the app gives it its window as parent), screenshot photocraft-desktop-panel.png; "photocraft-m" +
-#      Return opens photocraft-masks.jpg (screenshot photocraft-desktop-doc.png after 15 s); Ctrl+A, Ctrl+C
+#      without a document; after 20 s Command+O (File › Open) must show the Tracker's file panel ("Open",
+#      modal: the app gives it its window as parent), screenshot photocraft-desktop-panel.png. Command is
+#      Haiku's shortcut key (left Alt by default), which wayland_server gives clients as Control (keyinject's
+#      "%o"); Haiku's Control key reaches them as Alt (tools/pi-tests/wayland-keys.sh). "photocraft-m" +
+#      Return opens photocraft-masks.jpg (screenshot photocraft-desktop-doc.png after 15 s); Command+A, +C
 #      puts the image on Haiku's clipboard: `clipboard -d` lists image/bitmap and image/png, and
 #      photocraft-desktop-test reads it back at the JPEG's size; then asked to quit
 #   5. safe: photocraft --safe-gpu (CPU compositing, wgpu still draws the window), 30 s
@@ -147,7 +149,7 @@ if [ -x "${bin%/*}/keyinject" ]; then
 	PHOTOCRAFT_CONFIG_DIR="$tmp/config-desktop" "$bin" --new-instance > "$tmp/desktop.txt" 2>&1 &
 	pid=$!
 	sleep 20
-	say "desktop: Ctrl+O: $(keys PhotoCraft "^o")"
+	say "desktop: Command+O: $(keys PhotoCraft "%o")"
 	found=no
 	waited=0
 	while [ $waited -lt 15 ] && kill -0 $pid 2> /dev/null; do
@@ -161,7 +163,7 @@ if [ -x "${bin%/*}/keyinject" ]; then
 		say "desktop: open: $(keys Open "photocraft-m~")"
 		sleep 15
 		screenshot -s /boot/home/photocraft-desktop-doc.png > /dev/null 2>&1
-		say "desktop: select all, copy: $(keys PhotoCraft "^a^c")"
+		say "desktop: select all, copy: $(keys PhotoCraft "%a%c")"
 		sleep 5
 		clipboard -d 2>&1 | grep -a -E 'image/|_frame|text/' | head -n 6 | while IFS= read -r l; do say "desktop: clipboard -d: $l"; done
 		"${bin%/*}/photocraft-desktop-test" clip-image-get 2>&1 | grep -a PDT | while IFS= read -r l; do say "desktop: $l"; done
