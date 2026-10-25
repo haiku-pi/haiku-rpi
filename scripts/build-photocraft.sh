@@ -35,7 +35,7 @@
 #             wayland-sys would need PKG_CONFIG_{ALLOW_CROSS,SYSROOT_DIR_*,LIBDIR_*} at the sysroot's
 #             develop/lib/pkgconfig); the check is that the binary names libwayland-client.so.0. Also
 #             bin/wlview (tools/haiku-tests/wlview.cpp): the Wayland server's half of presenting with
-#             Vulkan (wl_ips_haiku_surface_view, wayland_server >= 0.1.20251004-8), checked without a GPU
+#             Vulkan (wl_ips_haiku_surface_view, wayland_server >= 0.1.20251004-9: shown at once), checked without a GPU
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
 #             diff its "PCC " lines against host-results.txt, wall times left out; exit 0 if equal
