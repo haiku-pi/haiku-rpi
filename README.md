@@ -82,7 +82,9 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a monitor connected at boot, and video in Firefox
 drops frames for the first seconds after the browser starts. The USB keyboard and mouse and everyday desktop use
 were checked by hand on 2026-10-25 (image-2026-10-25e): they work, and the system feels fast. Firefox and the games are in the public package repository (`pkgman install firefox`,
-`pkgman install openarena`, `pkgman install supertuxkart`).
+`pkgman install openarena`, `pkgman install supertuxkart`), and so is **Photocraft**, a photo editor written in Rust
+(`pkgman install photocraft`: Haiku's file dialogs and clipboard, GPU compositing on Vulkan).
+To try everything at once, build the test image: [docs/MEGA-IMAGE.md](docs/MEGA-IMAGE.md).
 
 ---
 
