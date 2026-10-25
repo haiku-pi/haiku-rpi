@@ -2,7 +2,7 @@
 # pmustat.sh — a UserBootscript for the CPU's hardware performance counters: the arm64_pmu driver
 # (/dev/misc/pmu, haiku src/add-ons/kernel/drivers/misc/arm64_pmu) and pmustat (src/bin/pmustat,
 # "perf stat -a" for Haiku), counted system-wide on all four Cortex-A72 cores. Image (any image built
-# from haiku rpi4 >= 9b9b2a3bba has both in the haiku package):
+# from haiku rpi4 >= d6580d9550 has both in the haiku package):
 #   scripts/mkimage-pi4.sh --in sources/haiku/generated.arm64/haiku-mmc.image \
 #       --bootscript tools/pi-tests/pmustat.sh --out artifacts/images/haiku-pi4-pmustat.img
 # or into an existing image without a rebuild (scripts/build.sh arm64_pmu pmustat first):
@@ -17,6 +17,8 @@
 # a CPU is idle or not, so "MHz while busy" means nothing there. 10-25: all steps ran; spin5's
 # cpu_cycles event counter, 32 bits, summed 5.0e9 per CPU = the cycle counter, so the wrap handling
 # works; -u + -k = the unfiltered count; the second opener got "Device/File/Resource busy".)
+# Read first: the syslog line's counter count. "0 event counters" means the firmware's MDCR_EL2.HPMN
+# hides them from EL1 (haiku_loader's drop_to_el1 does not set MDCR_EL2), not a driver fault.
 # Serial console lines: "PMU "; "PMU <step>: <pmustat's output line>"; "PMU end".
 # Positive markers: "arm64_pmu: PMUv3 (version 1), 6 event counters, 4 CPUs" (syslog); "list:" lines
 # saying which events the core implements; for each step a "cycles" line and the events with counts
