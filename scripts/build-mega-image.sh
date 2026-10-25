@@ -103,10 +103,33 @@ fetch_assets() {
 }
 fetch_assets
 
+dl="$cache/dl"
+# the Quakes' data from the downloads: the shareware/demo releases' installers and archives
+quake_data() {
+	local q="$cache/quake-data" x="$cache/extract"
+	if [ ! -f "$q/quake/id1/pak0.pak" ] && [ -f "$dl/quake1-shareware-pak0" ]; then
+		rm -rf "$x/q1"; mkdir -p "$x/q1" "$q/quake/id1"
+		(cd "$x/q1" && unzip -p "$dl/quake1-shareware-pak0" resource.1 > resource.1 \
+			&& 7z e -y resource.1 ID1/PAK0.PAK > /dev/null && mv PAK0.PAK "$q/quake/id1/pak0.pak")
+	fi
+	if [ ! -f "$q/quake2/baseq2/pak0.pak" ] && [ -f "$dl/quake2-demo-pak0" ]; then
+		mkdir -p "$q/quake2/baseq2"
+		unzip -p "$dl/quake2-demo-pak0" Install/Data/baseq2/pak0.pak > "$q/quake2/baseq2/pak0.pak"
+	fi
+	if [ ! -f "$q/quake3/demoq3/pak0.pk3" ] && [ -f "$dl/quake3-demo-pak0" ]; then
+		rm -rf "$x/q3"; mkdir -p "$x/q3" "$q/quake3/demoq3"
+		(cd "$x/q3" && tail -n +165 "$dl/quake3-demo-pak0" > payload.tgz \
+			&& tar xzof payload.tgz demoq3/pak0.pk3 && mv demoq3/pak0.pk3 "$q/quake3/demoq3/")
+	fi
+}
+
 # 4. the Quakes (SDL2 + OpenGL/Vulkan, with their data)
 if [ ! -d "$root/artifacts/games/non-packaged/apps" ]; then
 	say "building the Quakes (scripts/build-games.sh)"
-	"$root/scripts/build-games.sh" || echo "mega: the Quakes were not built; their launchers are left out" >&2
+	quake_data
+	QUAKE3_DATA="$cache/quake-data/quake3" "$root/scripts/build-games.sh" \
+		--quake-data "$cache/quake-data/quake" --quake2-data "$cache/quake-data/quake2" \
+		|| echo "mega: the Quakes were not built; their launchers are left out" >&2
 fi
 [ -d "$root/artifacts/games/non-packaged" ] && cp -a "$root/artifacts/games/non-packaged/." "$work/np/"
 
@@ -115,8 +138,33 @@ for t in vkcube glview; do
 	[ -x "$root/artifacts/gl-stack/non-packaged/bin/$t" ] && cp -a "$root/artifacts/gl-stack/non-packaged/bin/$t" "$work/np/bin/"
 done
 
-# 6. Windows programs and game demos (installed trees)
-[ -d "$root/artifacts/wine-apps/tree" ] && cp -a "$root/artifacts/wine-apps/tree" "$work/np/data/windows-apps"
+# 6. Windows programs (from this tree's copies, else from the downloads) and game demos (installed trees)
+if [ -d "$root/artifacts/wine-apps/tree" ]; then
+	cp -a "$root/artifacts/wine-apps/tree" "$work/np/data/windows-apps"
+else
+	w="$work/np/data/windows-apps"
+	mkdir -p "$w/putty" "$w/7z" "$w/sumatra" "$w/npp32" "$w/npp64"
+	cp "$dl/putty32" "$w/putty/putty32.exe"; cp "$dl/putty64" "$w/putty/putty64.exe"
+	cp "$dl/7zr" "$w/7z/7zr.exe"
+	cp "$dl/sumatrapdf32" "$w/sumatra/Sumatra32.exe"; cp "$dl/sumatrapdf64" "$w/sumatra/Sumatra64.exe"
+	unzip -q -o "$dl/notepadpp32" -d "$w/npp32"; unzip -q -o "$dl/notepadpp64" -d "$w/npp64"
+	# a page for SumatraPDF to open
+	python3 -I - "$w/sumatra/test.pdf" <<'PDF'
+import sys
+text = b"BT /F1 24 Tf 72 720 Td (Haiku on the Raspberry Pi 4: a test page) Tj ET"
+objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+	b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+	b"<< /Length %d >>\nstream\n" % len(text) + text + b"\nendstream",
+	b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+out, offsets = b"%PDF-1.4\n", []
+for i, o in enumerate(objs, 1):
+	offsets.append(len(out)); out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+xref = len(out)
+out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % o for o in offsets)
+out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+open(sys.argv[1], "wb").write(out)
+PDF
+fi
 [ -d "$root/artifacts/wine-games/tree/data/wine-games" ] \
 	&& cp -a "$root/artifacts/wine-games/tree/data/wine-games" "$work/np/data/wine-games"
 
