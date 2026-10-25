@@ -55,7 +55,7 @@
 #             it opens for "Open with", a vector icon made from the Linux icon by tools/haiku-icon/png2hvif.py),
 #             apps/PhotoCraft/bin/PhotoCraft (the program, photocraft-bin.rdef.in), bin/photocraft, the
 #             Deskbar's Applications entry, the licenses. Requires the stack it was checked with: wayland_server >= 0.1.20251004-10,
-#             libxkbcommon >= 1.13.2-2 (Compose data), mesa >= 26.2.5-6 (V3DV, Haiku WSI, the V3D compiler fix)
+#             libxkbcommon >= 1.13.2-2 (Compose data), mesa >= 26.2.5-7 (V3DV, Haiku WSI, the V3D compiler fixes: correct and 3.6x faster first-start compiles)
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
 #             diff its "PCC " lines against host-results.txt, wall times left out; exit 0 if equal
@@ -432,7 +432,7 @@ package() {
 		haiku
 		lib:libgcc_s
 		lib:libstdc++
-		mesa >= 26.2.5-6
+		mesa >= 26.2.5-7
 		libxkbcommon >= 1.13.2-2
 		wayland_server >= 0.1.20251004-10
 		lib:libwayland_client
