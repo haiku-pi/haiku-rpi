@@ -33,7 +33,9 @@
 #             -cursor, libxkbcommon and libvulkan are dlopened at run time (wayland-sys's dlopen feature,
 #             which wgpu-hal turns on), not linked — so no pkg-config for the target (were dlopen ever off,
 #             wayland-sys would need PKG_CONFIG_{ALLOW_CROSS,SYSROOT_DIR_*,LIBDIR_*} at the sysroot's
-#             develop/lib/pkgconfig); the check is that the binary names libwayland-client.so.0
+#             develop/lib/pkgconfig); the check is that the binary names libwayland-client.so.0. Also
+#             bin/wlview (tools/haiku-tests/wlview.cpp): the Wayland server's half of presenting with
+#             Vulkan (wl_ips_haiku_surface_view, wayland_server >= 0.1.20251004-8), checked without a GPU
 #
 #   scripts/build-photocraft.sh compare LOG   (a UART or QEMU log of tools/pi-tests/photocraft-cli.sh)
 #             diff its "PCC " lines against host-results.txt, wall times left out; exit 0 if equal
@@ -286,7 +288,24 @@ gui() {
 	checkElf "$guiStage/bin/photocraft"
 	grep -q -a 'libwayland-client\.so\.0' "$guiStage/bin/photocraft" \
 		|| { echo "build-photocraft: photocraft does not load libwayland-client.so.0" >&2; exit 1; }
+	wlview
 	find "$guiStage" -type f -printf 'build-photocraft: %p %s\n' | sed "s|$work/||" | sort
+}
+
+# tools/haiku-tests/wlview.cpp into the GUI stage: the Wayland server's half of presenting with Vulkan
+# (wl_ips_haiku_surface_view, a buffer-less surface sized by its geometry), checked without a GPU; needs
+# scripts/build-wayland.sh (the host's wayland-scanner, the sysroot's libwayland-client)
+wlview() {
+	local tmp sysroot="$root/artifacts/sysroot-arm64" xml
+	xml="$sysroot/boot/system/data/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
+	tmp="$(mktemp -d)"
+	"$root/artifacts/wayland-host/bin/wayland-scanner" client-header "$xml" "$tmp/xdg-shell.h"
+	"$root/artifacts/wayland-host/bin/wayland-scanner" private-code "$xml" "$tmp/xdg-shell.c"
+	"$crossBin/$target-gcc" --sysroot="$sysroot" -O2 -c -o "$tmp/xdg-shell.o" "$tmp/xdg-shell.c"
+	"$crossBin/$target-g++" --sysroot="$sysroot" -O2 -Wall -Werror -I"$tmp" -o "$tmp/wlview" \
+		"$root/tools/haiku-tests/wlview.cpp" "$tmp/xdg-shell.o" -lwayland-client -lbe
+	"$crossBin/$target-strip" -o "$guiStage/bin/wlview" "$tmp/wlview"
+	rm -rf "$tmp"
 }
 
 hosttest() {

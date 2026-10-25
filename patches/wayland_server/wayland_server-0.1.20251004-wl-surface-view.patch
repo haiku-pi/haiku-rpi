@@ -1,0 +1,178 @@
+wayland-server: a surface's view for a client that presents with Vulkan
+
+Haiku has no Wayland Vulkan WSI (Mesa's needs linux-dmabuf); Mesa's Haiku WSI
+presents into a BView (VK_EXT_headless_surface with a
+VkHaikuSurfaceCreateInfoMESA). A client of this in-process server can present
+its window that way if it gets the view of its wl_surface: wgpu (Photocraft's
+eframe/winit window) does.
+
+- wl_ips_haiku_surface_view(surface id), exported: the surface's BView, or
+  NULL. Synchronous (a message to the server's thread, as
+  wl_ips_haiku_set_mode): the client's earlier requests are handled first.
+- The view's window is run (still hidden) if it was not yet: until its first
+  Show() a BWindow stays locked by the thread that made it (the server's), and
+  the WSI locks the window to read the view's size and to draw a frame.
+- Such a surface never has a buffer: its size is its xdg window geometry (the
+  view and, without server-side decorations, the window take it on each
+  commit), its window is shown at the first commit with a geometry, and it is
+  not invalidated on commits (nothing to draw: the view color is already
+  B_TRANSPARENT_COLOR, as the WSI wants). The client commits after each frame,
+  as a Wayland WSI does.
+
+--- a/HaikuCompositor.h
++++ b/HaikuCompositor.h
+@@ -110,6 +110,7 @@
+ 
+ 	HaikuSubsurface::SurfaceList fSurfaceList;
+ 	bool fNoActivate = false;
++	bool fPresentedExternally = false;
+ 
+ public:
+ 	static HaikuSurface *Create(struct wl_client *client, uint32_t version, uint32_t id);
+@@ -127,6 +128,10 @@
+ 	// shown without taking the keyboard focus (Wine: an owned popup shown with SWP_NOACTIVATE)
+ 	bool NoActivate() const {return fNoActivate;}
+ 	void SetNoActivate(bool noActivate) {fNoActivate = noActivate;}
++	// the client presents into the view itself (Vulkan, wl_ips_haiku_surface_view): no buffers, the
++	// surface's size is its xdg window geometry
++	bool PresentedExternally() const {return fPresentedExternally;}
++	void SetPresentedExternally(bool external) {fPresentedExternally = external;}
+ 	HaikuSubsurface::SurfaceList &SurfaceList() {return fSurfaceList;}
+ 	void AttachWindow(BWindow *window);
+ 	void AttachView(BView *view);
+--- a/HaikuCompositor.cpp
++++ b/HaikuCompositor.cpp
+@@ -310,6 +310,9 @@
+ 	if (Bitmap() != NULL) {
+ 		return BSize(Bitmap()->Bounds().Width(), Bitmap()->Bounds().Height());
+ 	}
++	if (fPresentedExternally && fXdgSurface != NULL && fXdgSurface->Geometry().valid) {
++		return BSize(fXdgSurface->Geometry().width - 1, fXdgSurface->Geometry().height - 1);
++	}
+ 	return BSize(-1, -1);
+ }
+ 
+@@ -495,7 +498,9 @@
+ 		}
+ 		BSize size = Size();
+ 		viewLocked->ResizeTo(size.width, size.height);
+-		Invalidate();
++		// a view presented into by the client has nothing to redraw
++		if (!fPresentedExternally || Bitmap() != NULL)
++			Invalidate();
+ 	}
+ 	if (fHook.IsSet()) {
+ 		fHook->HandleCommit();
+--- a/HaikuXdgSurface.cpp
++++ b/HaikuXdgSurface.cpp
+@@ -92,11 +92,28 @@
+ 		}
+ 	}
+ 	fXdgSurface->fGeometry = fXdgSurface->fPendingGeometry;
++
++	// a surface the client presents into itself (Vulkan, wl_ips_haiku_surface_view) has no buffer: its
++	// view and window take the window geometry's size (the surface's resize above used the old geometry)
++	HaikuSurface *surface = fXdgSurface->Surface();
++	bool presentedExternally = surface->PresentedExternally() && surface->Bitmap() == NULL
++		&& fXdgSurface->fGeometry.valid;
++	if (presentedExternally) {
++		BSize size = surface->Size();
++		if (surface->View() != NULL)
++			AppKitPtrs::LockedPtr(surface->View())->ResizeTo(size.width, size.height);
++		if (!fXdgSurface->HasServerDecoration()
++			&& (fXdgSurface->fToplevel == NULL || !fXdgSurface->fToplevel->fState.fullscreen)
++			&& fXdgSurface->Window()->Size() != size) {
++			fXdgSurface->Window()->ResizeTo(size.width, size.height);
++		}
++	}
+ 	if (fXdgSurface->fToplevel != NULL && fXdgSurface->fToplevel->fState.fullscreen)
+ 		fXdgSurface->fToplevel->PlaceFullscreenSurface();
+ 
+ 	// initial window show
+-	if (!fXdgSurface->fSurfaceInitalized && fXdgSurface->Surface()->Bitmap() != NULL) {
++	if (!fXdgSurface->fSurfaceInitalized
++		&& (fXdgSurface->Surface()->Bitmap() != NULL || presentedExternally)) {
+ 		if (fXdgSurface->Surface()->ServerDecoration() != NULL) {
+ 			fXdgSurface->Window()->SetLook(fXdgSurface->Surface()->ServerDecoration()->Look());
+ 		}
+--- a/WaylandServer.h
++++ b/WaylandServer.h
+@@ -10,6 +10,7 @@
+ 		closureSendMsg = 1,
+ 		setModeMsg,
+ 		noActivateMsg,
++		surfaceViewMsg,
+ 	};
+ 
+ 	ServerHandler();
+--- a/WaylandServer.cpp
++++ b/WaylandServer.cpp
+@@ -26,6 +26,8 @@
+ #include <File.h>
+ #include <OS.h>
+ #include <AppFileInfo.h>
++#include <View.h>
++#include <Window.h>
+ #include <kernel/image.h>
+ 
+ #include "AppKitPtrs.h"
+@@ -71,6 +73,32 @@
+ 		}
+ 		return;
+ 	}
++	case surfaceViewMsg: {
++		// as noActivateMsg (with several connections in the process, the surface of that id that has a
++		// view); the surface is presented into by the client from now on
++		uint32 id = (uint32)msg->GetInt32("surface", 0);
++		BView *view = NULL;
++		struct wl_client *client;
++		wl_client_for_each(client, wl_display_get_client_list(sDisplay)) {
++			struct wl_resource *resource = wl_client_get_object(client, id);
++			if (view == NULL && resource != NULL
++				&& strcmp(wl_resource_get_class(resource), "wl_surface") == 0
++				&& HaikuSurface::FromResource(resource)->View() != NULL) {
++				HaikuSurface *surface = HaikuSurface::FromResource(resource);
++				surface->SetPresentedExternally(true);
++				view = surface->View();
++			}
++		}
++		// Until its first Show() a window is locked by the thread that made it, this one: run it (it stays
++		// hidden), so that the client's presenting thread can lock it to read its size and to draw
++		BWindow *window = view != NULL ? view->Window() : NULL;
++		if (window != NULL && window->Thread() < 0 && window->IsLocked())
++			window->Run();
++		BMessage reply(B_REPLY);
++		reply.AddPointer("view", view);
++		msg->SendReply(&reply);
++		return;
++	}
+ 	case setModeMsg: {
+ 		BMessage reply(B_REPLY);
+ 		reply.AddInt32("status", HaikuOutputSetMode(msg->GetInt32("width", 0),
+@@ -225,6 +253,26 @@
+ 	gServerMessenger.SendMessage(&msg);
+ }
+ 
++/* Not part of the in-process protocol: the BView of a wl_surface (the id of the client's object), for a
++ * client that presents into it itself — Vulkan through Mesa's Haiku WSI (VK_EXT_headless_surface with a
++ * VkHaikuSurfaceCreateInfoMESA on the view), as wgpu does for a Wayland window on Haiku. From then on the
++ * surface has no buffers: its size is its xdg window geometry, its window is shown at the first commit
++ * with one, and the client commits after each frame (frame callbacks, geometry). NULL: no such surface,
++ * or it has no view yet (no xdg_toplevel or xdg_popup, or a subsurface not yet placed). */
++extern "C" _EXPORT void *wl_ips_haiku_surface_view(uint32 surfaceId)
++{
++	if (gWaylandLooper == NULL || find_thread(NULL) == gWaylandLooper->Thread())
++		return NULL;
++
++	BMessage msg(ServerHandler::surfaceViewMsg), reply;
++	msg.AddInt32("surface", (int32)surfaceId);
++	if (gServerMessenger.SendMessage(&msg, &reply) != B_OK)
++		return NULL;
++	void *view = NULL;
++	reply.FindPointer("view", &view);
++	return view;
++}
++
+ extern "C" _EXPORT void wl_ips_client_disconnected(void *client)
+ {
+ 	// TODO: implement

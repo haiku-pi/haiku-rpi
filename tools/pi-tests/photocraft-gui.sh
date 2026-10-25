@@ -10,7 +10,8 @@
 # (QEMU virt works too, without a Vulkan device: scripts/qemu-virt.sh --image IMG --secs 300.)
 # No WAYLAND_DISPLAY or XDG_RUNTIME_DIR: on Haiku the patched wayland-client connects with
 # wl_display_connect(NULL) to the in-process server, and the patched winit picks Wayland there.
-# Runs, each under a time limit with a fresh settings folder (PHOTOCRAFT_CONFIG_DIR, so a crash marker
+# First tools/haiku-tests/wlview (when staged: the server's half of the Vulkan bridge, "PCW wlview: WLV ...",
+# "WLV result: 0 bad"). Runs, each under a time limit with a fresh settings folder (PHOTOCRAFT_CONFIG_DIR, so a crash marker
 # of one run does not move the next to a safer GPU backend), each followed by a screenshot:
 #   1. window: photocraft --new-instance on the JPEG test image, 45 s, then killed
 #   2. trace: the same with WAYLAND_DEBUG=client for 25 s: the protocol requests (globals bound,
@@ -22,13 +23,15 @@
 # Positive markers, in order: "wl_ips_client_connected" (the in-process server loaded), the trace's
 # registry globals (wl_compositor, xdg_wm_base, wl_shm, wl_seat, ...), xdg_wm_base.get_xdg_surface,
 # get_toplevel, set_title("PhotoCraft") and the server's xdg_surface.configure, no
-# "NoCompositor"/"NoWaylandLib" error; later (once presenting works) the app's log naming the wgpu
-# adapter (V3D 4.2), the process alive after 45 s and the window in the screenshot.
-# Expected stop today (QEMU virt, 10-25: everything above up to the configure): eframe's wgpu surface,
-# "Vulkan driver does not support VK_KHR_wayland_surface" — the Vulkan loader and Mesa on Haiku have no
-# Wayland WSI (Haiku's is VK_EXT_headless_surface + VkHaikuSurfaceCreateInfoMESA on a BView), so the app
-# exits 1 s after the toplevel exists (and its crash guard starts it once more with --safe-gpu, which
-# stops the same way: "window" shows both launches).
+# "NoCompositor"/"NoWaylandLib" error; then the Vulkan surface on the toplevel's BView (patched wgpu-hal
+# + wayland_server >= 0.1.20251004-8: "Haiku Wayland surface: wl_surface@N, view 0x..., SurfaceKHR(...)");
+# on the Pi: the app's log naming the wgpu adapter (V3D 4.2), wl_surface commits after the frames in the
+# trace ("trace: N wl_surface commits, M frame callbacks done"), the process alive after 45 s and the
+# window in the screenshot.
+# QEMU virt (no GPU, 10-25): everything up to the surface, then no adapter (no /dev/dri: Mesa cannot open
+# renderD128), the app exits (and its crash guard starts it once more with --safe-gpu, which stops the
+# same way: "window" shows both launches). Before the bridge it stopped at the surface: "Vulkan driver
+# does not support VK_KHR_wayland_surface".
 sleep "${PCW_SLEEP:-25}"
 out="${PCW_OUT:-/dev/dprintf}"
 bin="${PCW_BIN:-/boot/system/non-packaged/bin/photocraft}"
@@ -41,7 +44,7 @@ export XKB_CONFIG_ROOT=/boot/system/non-packaged/data/X11/xkb
 export PATH=/boot/system/non-packaged/bin:$PATH
 export WGPU_BACKEND=vulkan
 export RUST_BACKTRACE=1
-export RUST_LOG="${RUST_LOG:-info,wgpu_hal=warn,wgpu_core=warn,naga=warn}"
+export RUST_LOG="${RUST_LOG:-info,wgpu_hal=warn,wgpu_hal::vulkan::haiku=info,wgpu_core=warn,naga=warn}"
 export VK_LOADER_DEBUG="${VK_LOADER_DEBUG:-error,warn}"
 date -s "@$(stat -c %Y /boot/home/config/settings/boot/UserBootscript)" > /dev/null 2>&1
 # show STEP SECS FILTER ARGS...: run the app with ARGS for SECS seconds (then a screenshot and kill -9:
@@ -82,10 +85,23 @@ say "dri: $(ls /dev/dri 2>&1 | tr '\n' ' ')"
 rm -rf "$tmp"
 mkdir -p "$tmp"
 cd "$tmp" || exit 1
+# the server's half of Vulkan presenting, no GPU needed (tools/haiku-tests/wlview.cpp): a buffer-less
+# toplevel drawn into its view, sized by its window geometry; screenshot while it is up (green, 800x500)
+if [ -x "${bin%/*}/wlview" ]; then
+	"${bin%/*}/wlview" 6 > "$tmp/wlview.txt" 2>&1 &
+	pid=$!
+	sleep 5
+	screenshot -s /boot/home/photocraft-wlview.png > /dev/null 2>&1
+	wait $pid
+	say "wlview: exit $?"
+	grep -a -E 'WLV|wl_ips|rror' "$tmp/wlview.txt" | head -n 40 | while IFS= read -r l; do say "wlview: $l"; done
+fi
 show window 45 "" --new-instance "$data/photocraft-masks.jpg"
 WAYLAND_DEBUG=client show trace 25 \
-	'wl_registry@[0-9]+\.(global|bind)|xdg_wm_base|xdg_surface|xdg_toplevel|wl_compositor|wl_shm|wl_seat|wl_output|error|panic|Error' \
+	'wl_registry@[0-9]+\.(global|bind)|xdg_wm_base|xdg_surface|xdg_toplevel|wl_compositor|wl_shm|wl_seat|wl_output|Haiku Wayland surface|error|panic|Error' \
 	--new-instance "$data/photocraft-masks.jpg"
+# the frames' commits (wgpu-hal commits the wl_surface after each present) and the frame callbacks
+say "trace: $(grep -a -c -E -- '-> wl_surface@[0-9]+\.commit\(' "$tmp/trace.txt") wl_surface commits, $(grep -a -c -E 'wl_callback@[0-9]+\.done\(' "$tmp/trace.txt") frame callbacks done"
 show safe 30 "" --new-instance --safe-gpu "$data/photocraft-masks.jpg"
 sync
 say end

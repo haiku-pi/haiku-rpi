@@ -120,7 +120,7 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   more), `compositor: Rgba32Float` (V3DV: RGBA32F renders, does not blend), probe 4 of 4, unit 41, it 79,
   device-loss 12, the 4 CPU MD5s equal the host's; the reload control crashing (exit 137) on its second test.
 
-### P3 — window (groundwork 10-25: the app builds and reaches Haiku's Wayland server in QEMU; presenting is next)
+### P3 — window (10-25: the app builds, reaches Haiku's Wayland server and gets a Vulkan surface on its window in QEMU; the Pi run is next)
 - **`photocraft` links for arm64 Haiku**: `scripts/build-photocraft.sh --only gui` (release, ~6 min) →
   `artifacts/photocraft/gui-non-packaged/bin/photocraft`, 63 MB stripped, PIE, NEEDED only libroot, libnetwork,
   libbsd, libgcc_s. libwayland-client/-cursor, libxkbcommon and libvulkan.so.1 are **dlopened** (wayland-sys's
@@ -148,29 +148,66 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
 - The vendor step now records each patched crate's patches (`artifacts/photocraft/patches.md5`) and, when they
   change, cleans that crate's Haiku artifacts in both target directories (dev and release): cargo never rebuilds a
   registry crate because its files changed (a winit patch was silently not picked up once).
-- **QEMU `virt`** (`tools/pi-tests/photocraft-gui.sh` on an image with `artifacts/wayland-stage` +
+- **QEMU `virt`, before the bridge** (`tools/pi-tests/photocraft-gui.sh` on an image with `artifacts/wayland-stage` +
   `gui-non-packaged`): the app connects to the in-process server (`wl_ips_client_connected`), binds wl_compositor,
   wl_subcompositor, wl_output, wl_seat, wl_shm, xdg_wm_base and zwp_text_input_manager_v3, creates the toplevel
-  (`set_title("PhotoCraft")`, min 760×480), gets `xdg_surface.configure` (1024×768) and its CSD subsurfaces —
+  (`set_title("PhotoCraft")`, min 760×480), gets `xdg_surface.configure` (0×0: the client picks; winit sets the geometry 1024×768, its size fitted to the
+  screen) and creates its CSD subsurfaces (hidden: no buffers) —
   then **stops: `Vulkan driver does not support VK_KHR_wayland_surface`** (eframe's wgpu surface). Our Vulkan
   loader is built without Wayland WSI and Mesa with `-Dplatforms=haiku`; the app's crash guard relaunches it with
   `--safe-gpu`, which stops the same way (it still needs a wgpu surface for the window). A Pi run would stop at
-  the same call (the surface is made before the adapter is chosen): worth one after the bridge below.
-- **Next (decided): present through Haiku's existing Vulkan WSI**, not a Wayland one (a Mesa Wayland WSI on a
-  hardware driver needs linux-dmabuf, which wayland_server cannot offer). Haiku's WSI is
+  the same call (the surface is made before the adapter is chosen).
+- **The presenting bridge (built 10-25, host + QEMU)**: Haiku's own Vulkan WSI, not a Wayland one (a Mesa Wayland WSI
+  on a hardware driver needs linux-dmabuf, which wayland_server cannot offer). Haiku's WSI is
   VK_EXT_headless_surface + `VkHaikuSurfaceCreateInfoMESA { view: BView* }` (mesa `wsi_common_haiku.cpp`,
-  `patches/vulkan-loader` keeps the struct in the chain; vkcube/SDL use it). Plan: (1) wayland_server exports
-  `wl_ips_haiku_surface_view(uint32 surfaceId)` → the wl_surface's BView (`HaikuSurface::View()`), as Wine's
-  `wl_ips_haiku_surface_no_activate` is exported; (2) a wgpu-hal patch: on Haiku, a `RawWindowHandle::Wayland`
-  surface is made by `wl_proxy_get_id(wl_surface)` → dlsym of that export → `vkCreateHeadlessSurfaceEXT` with the
-  Haiku struct chained (the instance enables VK_EXT_headless_surface). Open points: the view's size versus the
-  configure, wayland_server drawing (CSD subsurfaces) into the same view, resize.
+  `<vulkan/vk_haiku_surface.h>`; `patches/vulkan-loader` keeps the struct in the chain; vkcube/SDL use it).
+  - **wayland_server 0.1.20251004-8** (`patches/wayland_server/...-wl-surface-view.patch`, `scripts/build-wayland.sh
+    --only wayland_server`): exports **`wl_ips_haiku_surface_view(uint32 surfaceId)`** → the wl_surface's BView (a
+    synchronous message to the server's thread, after the client's earlier requests; NULL without a view). It marks
+    the surface *presented externally*: it never gets a buffer, so its size is its xdg window geometry — on each
+    commit the view and (client-side decorations, as winit's) the window take it, the window is shown at the first
+    commit with a geometry, and commits do not invalidate the view (Draw has nothing to draw; the view colour is
+    already B_TRANSPARENT_COLOR). It also **runs the window, still hidden**: until its first Show() a BWindow stays
+    locked by the thread that made it (the server's), and the WSI must lock it to read the view's size and to draw
+    (found by wlview hanging on the lock in QEMU).
+  - **wgpu-hal 30.0.1** (`patches/photocraft/wgpu-hal-30.0.1/`, new `src/vulkan/haiku.rs`): on Haiku a Wayland window
+    handle → `wl_proxy_get_id` → `wl_ips_haiku_surface_view` (dlopen of `wayland-server-inproc.so`, as Wine) →
+    `vkCreateHeadlessSurfaceEXT` with the Haiku struct (32 bytes, asserted: the loader patch copies that size);
+    VK_EXT_headless_surface is enabled on Haiku. **Each present commits the wl_surface** (`wl_proxy_marshal_flags`,
+    opcode 6), as a Wayland WSI does: winit relies on that commit to apply its `set_window_geometry` and to deliver
+    the frame callback it waits for before the next redraw (without it: a hidden 0×0 window and a stalled app).
+    Logs `Haiku Wayland surface: wl_surface@N, view 0x…, <VkSurfaceKHR>` (target `wgpu_hal::vulkan::haiku`).
+  - **`tools/haiku-tests/wlview.cpp`** (built into the GUI stage by `--only gui`): the server's half without a GPU —
+    an xdg_toplevel drawn into its view by the client (as Mesa's presenter), checks the export, the window lockable
+    and hidden before the first commit, shown at 640×400 on the first buffer-less commit, resized to 800×500 by a new
+    geometry, 7 of 7 frame callbacks. **QEMU virt: 0 bad.**
+  - **QEMU virt** (no GPU; photocraft-gui.sh): the app now gets past the surface — `Haiku Wayland surface:
+    wl_surface@16, view 0x…` (wl_surface@16 is the toplevel's: `get_xdg_surface(…, wl_surface@16)` in the trace) —
+    and stops at the adapter: `MESA: Opening /dev/dri/renderD128 failed`, `No suitable graphics adapter found`;
+    the same for `--safe-gpu`. That is all QEMU can show of the app: no adapter → eframe exits before a frame.
+  - Size: the swapchain is configured to winit's inner size (1024×768 on QEMU's screen; the app asks 1440×900 and
+    shrinks to the monitor) while the view is still 0×0 (no geometry committed yet): Mesa returns SUBOPTIMAL and
+    scales; the first commit gives the view that size. Resizing: a configure from the server (move/resize tracking,
+    fullscreen) → winit resizes, sets the geometry, eframe reconfigures, the next present's commit resizes the view
+    and window. Between them a frame is drawn scaled.
+  - Limitations: frames before the first commit are dropped by the WSI (window hidden); Mesa reads the view's size
+    with the window locked (timeouts of 0.5 s while the window is busy); the server has no copy of a frame, so a
+    view uncovered by another window stays as it was until the app presents again (egui redraws on input or
+    animation only); frame callbacks come from the view's Pulse, at the BWindow default (~2 Hz) until the window is
+    activated (then the screen's rate); several Wayland connections in one process: the export takes the first
+    surface of that id with a view; the view pointer must not outlive the toplevel (eframe drops the surface first;
+    Mesa locks through a BMessenger, which fails safely once the view is gone).
 - Also seen: std's `File::try_lock` is unsupported on Haiku (the app's GPU-crash marker lock only warns); the
   xkbcommon Compose table for "en.UTF-8" is missing (a warning).
-- **Pi test** (after the bridge; ~10 min, bench): `scripts/build-photocraft.sh --only gui`,
-  `scripts/stage-packages.sh --wine-runtime`, `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-gui.img
-  --add-tree artifacts/wayland-stage --add-tree artifacts/photocraft/gui-non-packaged --bootscript
-  tools/pi-tests/photocraft-gui.sh`, `scripts/netboot-cycle.sh --image artifacts/images/photocraft-gui.img --secs 420
-  --label photocraft-gui --until 'PCW end'`; read the `PCW ` lines and the HDMI capture (markers in the script's
-  header). Runs: `window` (45 s, the JPEG test image), `trace` (WAYLAND_DEBUG=client, 25 s), `safe` (`--safe-gpu`,
-  30 s), each with a fresh PHOTOCRAFT_CONFIG_DIR and a screenshot in /boot/home.
+- **Pi test** (~10 min, bench; nothing Pi-specific has run yet): `scripts/build-wayland.sh --only wayland_server`
+  (revision 8, built 10-25), `scripts/build-photocraft.sh --only gui` (photocraft + wlview), `scripts/stage-packages.sh
+  --wine-runtime`, `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-gui.img --add-tree artifacts/wayland-stage
+  --add-tree artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-gui.sh`,
+  `scripts/netboot-cycle.sh --image artifacts/images/photocraft-gui.img --secs 480 --label photocraft-gui --until
+  'PCW end'`; read the `PCW ` lines and the HDMI capture (markers in the script's header). Runs: `wlview` (6 s: `WLV
+  result: 0 bad`, a green 800×500 window), `window` (45 s, the JPEG test image), `trace` (WAYLAND_DEBUG=client, 25 s,
+  plus `trace: N wl_surface commits, M frame callbacks done`), `safe` (`--safe-gpu`, 30 s), each with a fresh
+  PHOTOCRAFT_CONFIG_DIR and a screenshot in /boot/home. Expected: `Haiku Wayland surface: … view 0x…`, the adapter
+  `V3D 4.2`, `window: alive after 45 s`, commits and frame callbacks in the hundreds, the PhotoCraft window in the
+  screenshot. wayland_server 8 is in `artifacts/packages` (rev 7 removed there) but not in the image's repository
+  (`build/jam/repositories/HaikuPorts/arm64` in sources/haiku) and not published: the test stages it as a tree.

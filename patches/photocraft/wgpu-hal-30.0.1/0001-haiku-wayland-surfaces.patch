@@ -1,0 +1,277 @@
+wgpu-hal: Vulkan surfaces for Wayland windows on Haiku
+
+Haiku's Wayland server is X547's in-process wayland_server: each wl_surface is a BView of a native
+window, and Haiku's Vulkan loader and Mesa have no Wayland WSI (Mesa's linux-dmabuf based one cannot
+work there). Mesa's Haiku WSI presents into a BView instead: VK_EXT_headless_surface with a
+VkHaikuSurfaceCreateInfoMESA chained (<vulkan/vk_haiku_surface.h>).
+
+On Haiku a Wayland window handle therefore gets its surface from the server's
+wl_ips_haiku_surface_view(id) (wayland_server 0.1.20251004-8, patches/wayland_server), through the Haiku
+WSI, and each present commits the wl_surface, as a Wayland WSI does: that applies the window geometry
+(the view's and window's size, the first showing) and the frame callbacks winit waits for.
+VK_EXT_headless_surface is enabled on Haiku when the loader has it. Applies with -p1 to wgpu-hal 30.0.1.
+
+--- a/src/vulkan/mod.rs
++++ b/src/vulkan/mod.rs
+@@ -30,6 +30,8 @@
+ mod descriptor;
+ mod device;
+ mod drm;
++#[cfg(target_os = "haiku")]
++mod haiku;
+ mod instance;
+ mod sampler;
+ mod semaphore_list;
+--- a/src/vulkan/instance.rs
++++ b/src/vulkan/instance.rs
+@@ -250,6 +250,10 @@
+             // VK_KHR_wayland_surface
+             extensions.push(khr::wayland_surface::NAME);
+         }
++        if cfg!(target_os = "haiku") {
++            // Haiku's window surfaces (Mesa's Haiku WSI on a BView, see haiku.rs)
++            extensions.push(ext::headless_surface::NAME);
++        }
+         if cfg!(target_os = "android") {
+             // VK_KHR_android_surface
+             extensions.push(khr::android_surface::NAME);
+@@ -891,6 +895,11 @@
+         // TODO: Replace with ash-window, which also lazy-loads the extension based on handle type
+ 
+         match (window_handle, display_handle) {
++            #[cfg(target_os = "haiku")]
++            (Rwh::Wayland(handle), Rdh::Wayland(_)) => {
++                self.create_surface_from_haiku_wayland(handle.surface.as_ptr())
++            }
++            #[cfg(not(target_os = "haiku"))]
+             (Rwh::Wayland(handle), Rdh::Wayland(display)) => {
+                 self.create_surface_from_wayland(display.display.as_ptr(), handle.surface.as_ptr())
+             }
+--- a/src/vulkan/swapchain/native.rs
++++ b/src/vulkan/swapchain/native.rs
+@@ -23,6 +23,9 @@
+     /// query; `None` for non-Win32 surfaces.
+     #[cfg(windows)]
+     hdr_source: Option<crate::auxil::dxgi::hdr::DxgiHdrSource>,
++    /// Haiku: the `wl_surface` of a Wayland window, committed after each present.
++    #[cfg(target_os = "haiku")]
++    pub(crate) wayland: Option<Arc<crate::vulkan::haiku::WaylandSurface>>,
+ }
+ 
+ impl NativeSurface {
+@@ -40,6 +43,8 @@
+             instance: Arc::clone(&instance.shared),
+             #[cfg(windows)]
+             hdr_source: hwnd.map(|wh| crate::auxil::dxgi::hdr::DxgiHdrSource::new(wh.0)),
++            #[cfg(target_os = "haiku")]
++            wayland: None,
+         }
+     }
+ 
+@@ -299,6 +304,8 @@
+             next_acquire_index: 0,
+             present_semaphores,
+             next_present_time: None,
++            #[cfg(target_os = "haiku")]
++            wayland: self.wayland.clone(),
+         }))
+     }
+ 
+@@ -365,6 +372,10 @@
+     /// This must only be set if [`wgt::Features::VULKAN_GOOGLE_DISPLAY_TIMING`] is enabled, and
+     /// so the VK_GOOGLE_display_timing extension is present.
+     next_present_time: Option<vk::PresentTimeGOOGLE>,
++
++    /// Haiku: the surface's `wl_surface`, committed after each present.
++    #[cfg(target_os = "haiku")]
++    wayland: Option<Arc<crate::vulkan::haiku::WaylandSurface>>,
+ }
+ 
+ impl Drop for NativeSwapchain {
+@@ -630,6 +641,10 @@
+             #[cfg(not(target_os = "android"))]
+             log::debug!("Suboptimal present of frame {}", texture.index);
+         }
++        #[cfg(target_os = "haiku")]
++        if let Some(wayland) = &self.wayland {
++            wayland.commit();
++        }
+         Ok(())
+     }
+ 
+--- a/src/vulkan/haiku.rs
++++ b/src/vulkan/haiku.rs
+@@ -0,0 +1,173 @@
++//! Vulkan surfaces for the Wayland windows of Haiku's in-process Wayland server.
++//!
++//! Haiku has no Wayland Vulkan WSI. Its Wayland server (X547's `wayland_server`, an add-on that
++//! libwayland-client loads into the client's process) shows each toplevel as a native window and each
++//! `wl_surface` as a `BView` in it, and Mesa's Haiku WSI presents into a `BView`:
++//! `VK_EXT_headless_surface` with a `VkHaikuSurfaceCreateInfoMESA` chained (Mesa's
++//! `<vulkan/vk_haiku_surface.h>`). The server hands out a surface's view with
++//! `wl_ips_haiku_surface_view(id)`, which also marks the surface as presented that way: it has no
++//! buffers, its window geometry is its size.
++//!
++//! As a Wayland WSI does, each present commits the `wl_surface`: the commit applies the window geometry
++//! (the size of the view and of its window, and the window's first showing) and the frame callbacks
++//! that winit waits for before it redraws.
++//!
++//! Limitations: the frames are drawn by Mesa's presenter thread, not in step with the commit, so a resize
++//! shows a frame or two scaled to the new size; when another window uncovers the view, its content stays
++//! as it was until the next present (the server has no copy of the frame to redraw it with).
++
++use alloc::{boxed::Box, string::String, sync::Arc};
++use core::{
++    ffi::{c_void, CStr},
++    mem, ptr,
++};
++
++use ash::{ext, vk};
++
++/// Mesa's `VK_STRUCTURE_TYPE_HAIKU_SURFACE_CREATE_INFO_MESA`.
++const STRUCTURE_TYPE_HAIKU_SURFACE_CREATE_INFO_MESA: i32 = 1000256900;
++
++/// Mesa's `VkHaikuSurfaceCreateInfoMESA`.
++#[repr(C)]
++struct HaikuSurfaceCreateInfoMesa {
++    s_type: vk::StructureType,
++    p_next: *const c_void,
++    flags: vk::Flags,
++    /// The `BView` to present into.
++    view: *mut c_void,
++}
++
++// The Vulkan loader copies the create info with this size (its Haiku patch).
++const _: () = assert!(size_of::<HaikuSurfaceCreateInfoMesa>() == 32);
++
++/// `wl_surface.commit`'s opcode.
++const WL_SURFACE_COMMIT: u32 = 6;
++
++type ProxyGetId = unsafe extern "C" fn(proxy: *mut c_void) -> u32;
++type ProxyGetVersion = unsafe extern "C" fn(proxy: *mut c_void) -> u32;
++type ProxyMarshalFlags = unsafe extern "C" fn(
++    proxy: *mut c_void,
++    opcode: u32,
++    interface: *const c_void,
++    version: u32,
++    flags: u32,
++    ...
++) -> *mut c_void;
++type SurfaceView = unsafe extern "C" fn(surface_id: u32) -> *mut c_void;
++
++/// The `wl_surface` of a Vulkan surface: committed after each present.
++pub(super) struct WaylandSurface {
++    surface: *mut c_void,
++    version: u32,
++    marshal_flags: ProxyMarshalFlags,
++}
++
++// libwayland-client's requests may be sent from any thread.
++unsafe impl Send for WaylandSurface {}
++unsafe impl Sync for WaylandSurface {}
++
++impl WaylandSurface {
++    /// `wl_surface.commit`.
++    pub(super) fn commit(&self) {
++        unsafe {
++            (self.marshal_flags)(
++                self.surface,
++                WL_SURFACE_COMMIT,
++                ptr::null(),
++                self.version,
++                0,
++            )
++        };
++    }
++}
++
++/// `dlsym(dlopen(library), name)`. The libraries are loaded already (libwayland-client by the
++/// application, the server by libwayland-client); the handles are not closed.
++fn symbol(library: &CStr, name: &CStr) -> Result<*mut c_void, crate::InstanceError> {
++    let handle = unsafe { libc::dlopen(library.as_ptr(), libc::RTLD_NOW) };
++    let symbol = if handle.is_null() {
++        ptr::null_mut()
++    } else {
++        unsafe { libc::dlsym(handle, name.as_ptr()) }
++    };
++    if symbol.is_null() {
++        return Err(crate::InstanceError::new(format!(
++            "Haiku Wayland surface: no {} in {}",
++            name.to_string_lossy(),
++            library.to_string_lossy()
++        )));
++    }
++    Ok(symbol)
++}
++
++impl super::Instance {
++    /// A surface for a `wl_surface` of Haiku's in-process Wayland server: Mesa's Haiku WSI on the
++    /// surface's `BView`.
++    pub(super) fn create_surface_from_haiku_wayland(
++        &self,
++        surface: *mut c_void,
++    ) -> Result<super::Surface, crate::InstanceError> {
++        if !self
++            .shared
++            .extensions
++            .contains(&ext::headless_surface::NAME)
++        {
++            return Err(crate::InstanceError::new(String::from(
++                "Vulkan driver does not support VK_EXT_headless_surface (Haiku's window surfaces)",
++            )));
++        }
++
++        let client: &CStr = c"libwayland-client.so.0";
++        let server: &CStr = c"wayland-server-inproc.so";
++        let get_id: ProxyGetId =
++            unsafe { mem::transmute(symbol(client, c"wl_proxy_get_id")?) };
++        let get_version: ProxyGetVersion =
++            unsafe { mem::transmute(symbol(client, c"wl_proxy_get_version")?) };
++        let marshal_flags: ProxyMarshalFlags =
++            unsafe { mem::transmute(symbol(client, c"wl_proxy_marshal_flags")?) };
++        let surface_view: SurfaceView = unsafe {
++            mem::transmute(symbol(server, c"wl_ips_haiku_surface_view").map_err(|e| {
++                crate::InstanceError::new(format!(
++                    "{} (wayland_server 0.1.20251004-8 or later is needed)",
++                    e.message
++                ))
++            })?)
++        };
++
++        let id = unsafe { get_id(surface) };
++        let view = unsafe { surface_view(id) };
++        if view.is_null() {
++            return Err(crate::InstanceError::new(format!(
++                "Haiku Wayland surface: wl_surface@{id} has no view (no xdg_toplevel yet?)"
++            )));
++        }
++
++        let haiku_info = HaikuSurfaceCreateInfoMesa {
++            s_type: vk::StructureType::from_raw(STRUCTURE_TYPE_HAIKU_SURFACE_CREATE_INFO_MESA),
++            p_next: ptr::null(),
++            flags: 0,
++            view,
++        };
++        let mut info = vk::HeadlessSurfaceCreateInfoEXT::default();
++        info.p_next = (&raw const haiku_info).cast();
++        let loader = ext::headless_surface::Instance::new(&self.shared.entry, &self.shared.raw);
++        let raw = unsafe { loader.create_headless_surface(&info, None) }.map_err(|e| {
++            crate::InstanceError::with_source(
++                String::from("vkCreateHeadlessSurfaceEXT on a Haiku view failed"),
++                e,
++            )
++        })?;
++        log::info!("Haiku Wayland surface: wl_surface@{id}, view {view:?}, {raw:?}");
++
++        let mut native = super::swapchain::NativeSurface::from_vk_surface_khr(self, raw, None);
++        native.wayland = Some(Arc::new(WaylandSurface {
++            surface,
++            version: unsafe { get_version(surface) },
++            marshal_flags,
++        }));
++        Ok(super::Surface {
++            swapchain: parking_lot::RwLock::new(None),
++            inner: Box::new(native),
++        })
++    }
++}
