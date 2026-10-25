@@ -35,7 +35,7 @@ out="$root/artifacts/packages"
 version=2023.01
 sha256=8fece3fc323b643644a525be163dc4931a4189971eda1de8ad4c1712c5db3d67
 package=false
-revision=1
+revision=2
 extra=""
 while [ $# -gt 0 ]; do
 	case "$1" in
