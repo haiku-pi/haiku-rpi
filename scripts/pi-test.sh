@@ -11,8 +11,9 @@
 #   --no-preview    no HDMI window: the UART only, until Ctrl-C (a host without a display)
 #   --no-power-off  leave the Pi running at the end
 #
-# Then: boots the Pi from its SD card (no DHCP server on the Pi LAN meanwhile, or the firmware would
-# netboot) or with --netboot from the network, shows the serial console live in this terminal (and logs it to artifacts/uart/), and opens
+# Then: boots the Pi from its SD card (with a DHCP server on the Pi LAN that gives Haiku an address, the
+# host as gateway and DNS, and ignores the firmware's network boot requests: netboot-server.sh dhcp)
+# or with --netboot from the network, shows the serial console live in this terminal (and logs it to artifacts/uart/), and opens
 # a live HDMI window from the capture card (ffplay, or mpv). Type on the Pi's USB keyboard, use its
 # mouse; the window shows the screen. Close the window (or Ctrl-C) to end: the Pi is powered off and,
 # on a shared bench, the other project's netboot server is restored. The session holds the bench lock
@@ -66,7 +67,7 @@ cleanup() {
 	[ -n "$cap_pid" ] && kill "$cap_pid" 2>/dev/null
 	wait 2>/dev/null
 	[ "$poweroff" = 1 ] && pi_power off
-	[ -n "$netboot" ] && "$root/scripts/netboot-server.sh" down >/dev/null
+	"$root/scripts/netboot-server.sh" down >/dev/null
 	peer_netboot_restore
 	echo "pi-test: serial log $log"
 }
@@ -76,6 +77,7 @@ if [ -n "$netboot" ]; then
 	"$root/scripts/netboot-server.sh" up "$netboot" || exit 1
 else
 	peer_netboot_down
+	"$root/scripts/netboot-server.sh" dhcp || exit 1
 fi
 "$PYTHON" "$root/scripts/uart-capture.py" --dev "$PI_UART" --log "$log" --secs 864000 --echo &
 cap_pid=$!
