@@ -334,4 +334,10 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
 - Publishing (after the Pi check): libxkbcommon + libxkbcommon_devel **1.13.2-2** are in `artifacts/packages` (-1
   moved to `artifacts/packages-old`); the other two parts of the bump (the copy in `generated.arm64/download/`, the
   version in `build/jam/repositories/HaikuPorts/arm64`) are left for the publish. wayland_server is unchanged (still
-  -9): nothing in P4 needed a server change.
+  -9): nothing in P4 needed a server change. Note for the publish: the package now carries libX11's nls files
+  (MIT/X11 licence, libX11's copyright holders) under libxkbcommon's; and anyone's next `publish-repo.sh` ships -2
+  (the mesa #71 fix is waiting), with or without the Pi check.
+- Not verified yet: a native application reading our `image/bitmap` (ShowImage's paste instantiates a BBitmap from
+  it; the fields are BBitmap::Archive's, one for one), and Ctrl shortcuts through the Wayland server into egui
+  (Wine's typing used Shift only) — the Pi `desktop` run is the first; `panel "Open": no` there points at that key
+  path, not at rfd (photocraft-desktop.sh is the rfd/arboard check).
