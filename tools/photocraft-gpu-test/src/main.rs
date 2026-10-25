@@ -255,22 +255,37 @@ fn probe(out: Option<PathBuf>) -> i32 {
     println!("compositor: {format:?}, pipelines built in {} ms", t.elapsed().as_millis());
 
     let (w, h) = (640, 480);
-    let cases = [
+    let mut cases = vec![
         ("blend-u8", blend_doc(w, h, SampleType::U8)),
         ("adjust-u16", adjust_doc(w, h)),
         ("effects-u8", effects_doc(w, h)),
         ("blend-f32-2048", blend_doc(2048, 2048, SampleType::F32)),
     ];
+    // --bisect: which of size and sample type a failing blend-f32-2048 depends on
+    if std::env::args().any(|a| a == "--bisect") {
+        cases.extend([
+            ("blend-f32-640", blend_doc(w, h, SampleType::F32)),
+            ("blend-f32-1024", blend_doc(1024, 1024, SampleType::F32)),
+            ("blend-f32-1536", blend_doc(1536, 1536, SampleType::F32)),
+            ("blend-u8-2048", blend_doc(2048, 2048, SampleType::U8)),
+            ("blend-u16-2048", blend_doc(2048, 2048, SampleType::U16)),
+        ]);
+    }
     let mut failed = 0;
     for (name, doc) in &cases {
         let t = Instant::now();
         let cpu = photocraft_compose::flatten(doc);
         let cpu_ms = t.elapsed().as_millis();
         let t = Instant::now();
-        let first = photocraft_gpu::render_to_vec(&mut comp, &device, &queue, doc, doc.bounds());
+        let first = photocraft_gpu::render_to_vec_stats(&mut comp, &device, &queue, doc, doc.bounds());
         let cold_ms = t.elapsed().as_millis();
         let gpu = match first {
-            Ok(v) => v,
+            Ok((v, stats)) => {
+                if std::env::args().any(|a| a == "--bisect") {
+                    println!("case {name}: stats {stats:?}");
+                }
+                v
+            }
             Err(e) => {
                 println!("case {name}: FAIL render: {e}");
                 failed += 1;
@@ -301,6 +316,31 @@ fn probe(out: Option<PathBuf>) -> i32 {
         }
         write_raw(&out, &format!("{name}.gpu"), &gpu);
         write_raw(&out, &format!("{name}.cpu"), &cpu.px);
+    }
+    // --bisect: the 2048² F32 document rendered as four 1024² quadrants, each against the CPU's
+    if std::env::args().any(|a| a == "--bisect") {
+        let doc = blend_doc(2048, 2048, SampleType::F32);
+        let cpu = photocraft_compose::flatten(&doc);
+        let mut quads = Compositor::new_with_format(&device, format);
+        for (qx, qy) in [(0, 0), (1024, 0), (0, 1024), (1024, 1024)] {
+            let rect = Rect::from_xywh(qx, qy, 1024, 1024);
+            match photocraft_gpu::render_to_vec_stats(&mut quads, &device, &queue, &doc, rect) {
+                Ok((gpu, stats)) => {
+                    let sub: Vec<[f32; 4]> = (0..1024usize)
+                        .flat_map(|y| cpu.px[(qy as usize + y) * 2048 + qx as usize..][..1024].iter().copied())
+                        .collect();
+                    let (worst, at) = worst_diff(&sub, &gpu);
+                    println!(
+                        "quadrant ({qx},{qy}): {} max-diff {:.3}/255 at ({},{}) stats {stats:?}",
+                        if worst <= TOL { "ok" } else { "FAIL" },
+                        worst * 255.0,
+                        qx + at as i32 % 1024,
+                        qy + at as i32 / 1024
+                    );
+                }
+                Err(e) => println!("quadrant ({qx},{qy}): FAIL render: {e}"),
+            }
+        }
     }
     println!("result: {} of {} cases within {:.3}/255", cases.len() - failed, cases.len(), TOL * 255.0);
     i32::from(failed > 0)

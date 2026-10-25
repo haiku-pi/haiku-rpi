@@ -60,7 +60,19 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   JPEG/PNG/WebP/TIFF, invert, Gaussian blur, unsharp mask, a new document): in QEMU `virt` **all 13 MD5s equal
   the x86_64 Linux build's** (`scripts/build-photocraft.sh compare LOG`).
 
-### P2 — GPU headless (built 10-25; host and QEMU checked; the Pi run pending; one Haiku defect found)
+### P2 — GPU headless (10-25: on the Pi 4 of 4 probe cases and 90 of 91 integration tests pass; two driver defects found, one fixed)
+- **Pi, 10-25 (with mesa be833ed6d67)**: probe 4 of 4 (blend-f32-2048 max 0.19/255), the `--bisect` cases and
+  quadrants all within tolerance (blend-u16-2048 4.9/255, the same as on the host: the probe's Hue/Luminosity at 16 bits,
+  not the GPU); photocraft-gpu-it **90 of 91**: `parity::blend_if` fails on V3D only (the GPU result is about 1 − the
+  CPU's: "U8 gray this hard adjustment, clipped"), open.
+- **Fixed (V3DV, upstream bug): partial supertiles stored over neighbouring pixels.** blend-f32-2048 rendered zeros in
+  parts of its right half: wgpu stages each layer tile's upload as its own vkCmdCopyBufferToImage region, V3DV copies
+  them with a render pass per region whose frame ends at the region's far edge (upstream d30a6f81023), and the
+  supertile grid of that frame (e.g. 2×3 tiles = 64×96 px for a 2304×512 frame) need not start at the region: the
+  hardware stores every tile of a supertile, and a tile-aligned render area skips the loads, so the copy to (2048, 256)
+  overwrote rows 192–255 of the tile above. Reproduced without Photocraft by `tools/gl-tests/vkf32.c -o` (192 tiled
+  copies into a 4096² image: 2.48 M wrong RGBA32F pixels, 1.48 M RGBA8). **mesa be833ed6d67** chooses the smallest
+  supertiles whose grid is aligned to the render area: 0 wrong. Upstreamable.
 - **wgpu had no Vulkan backend on Haiku**: wgpu, wgpu-core and wgpu-core-deps-windows-linux-android enable
   it only on Windows/Linux/Android/FreeBSD (cfg aliases + a target-specific dependency that turns on
   wgpu-hal's backends). Three patches (`patches/photocraft/wgpu-30.0.1`, `wgpu-core-30.0.1`,
