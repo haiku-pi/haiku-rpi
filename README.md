@@ -26,11 +26,11 @@ work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNE
 ## Quick start
 
 **Download** the SD card image (unofficial, built from these sources):
-[releases/image-2026-10-25c](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-25c) — 340 MB,
-`haiku-pi4-2026-10-25c.img.xz`, for an 8 GB or larger card:
+[releases/image-2026-10-25d](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-25d) — 340 MB,
+`haiku-pi4-2026-10-25d.img.xz`, for an 8 GB or larger card:
 
 ```sh
-xz -dc haiku-pi4-2026-10-25c.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dc haiku-pi4-2026-10-25d.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Or build the image yourself on an x86-64 Linux host and write it to a microSD card:

@@ -4,7 +4,7 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds release **image-2026-10-25c** (hrev60295+171, Mesa 26.2.5, Firefox 157.0.1-5; sound over HDMI; the clock is kept across reboots; programs start twice as fast):
+**The image:** the SD card of the bench Pi holds release **image-2026-10-25d** (hrev60295+173, Mesa 26.2.5, Firefox 157.0.1-5; sound over HDMI; the clock is kept across reboots; programs start twice as fast):
 everything of `image-2026-10-23d` plus a 3 s faster boot, faster memory/string functions, thread-local variables
 and file reads, two kernel panics fixed (C5, C8), and the onboard USB hub no longer dropping out in ~1 boot in 10
 (C9) — relevant for the keyboard and mouse checks below. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
