@@ -1,7 +1,7 @@
 #!/bin/sh
 # relcheck.sh — a release candidate's checks on a Pi session (scripts/release-check.sh copies the test
 # programs to /boot/home and runs this over ssh): poll(), TLS of a reloaded library, host name lookups,
-# Python's asyncio, EGL terminate, the PMU counters, GLTeapot and Firefox start times, then LAUNCHES
+# Python's asyncio, Vulkan clears and tiled uploads (vkf32), EGL terminate, the PMU counters, GLTeapot and Firefox start times, then LAUNCHES
 # launch cycles of four applications (each must show its window and quit; no debugger entry).
 # Lines "REL ..."; the last one "REL result: N problems".
 cd /boot/home || exit 1
@@ -25,6 +25,10 @@ print(asyncio.run(f()))' 2>&1)
 	say "python3: $r"
 	[ "$r" = "asyncio ok" ] || bad "python3 asyncio"
 fi
+r=$(./vkf32 512 2048 2>&1 | tail -n 1); say "vkf32 clears: $r"
+[ "$r" = "VKF PASS" ] || bad "vkf32 clears"
+r=$(./vkf32 -o 192 2>&1 | tail -n 1); say "vkf32 tiled uploads: $r"
+[ "$r" = "VKF PASS" ] || bad "vkf32 tiled uploads"
 r=$(./eglterm 2>&1 | tail -n 1); say "eglterm: $r"
 [ "$r" = "EGLTERM ok" ] || bad eglterm
 r=$(pmustat -a 1 2>&1 | grep -m 1 ' cycles' | sed 's/^ *//'); say "pmustat: $r"
