@@ -117,7 +117,7 @@ if want mesa; then
 		-Dplatforms=haiku -Degl=enabled -Dglvnd=enabled -Dglx=disabled -Dgbm=disabled \
 		-Dgallium-drivers=v3d,softpipe -Dvulkan-drivers=broadcom -Dllvm=disabled \
 		-Dgallium-rusticl=false -Dgallium-va=disabled -Dvideo-codecs= \
-		-Dshader-cache=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled \
+		-Dshader-cache=enabled -Dxmlconfig=disabled -Dexpat=disabled -Dzstd=disabled \
 		-Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Dbuild-tests=false \
 		-Dtools= -Dperfetto=false -Dspirv-tools=disabled \
 		-Dvulkan-icd-dir="$prefix/add-ons/vulkan/icd.d"
