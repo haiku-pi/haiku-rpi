@@ -92,7 +92,9 @@ contention with steps 9–10 is the next suspect); the bench separates them.
   - the present is split in `haiku_present_prepare()` (take a bitmap, import it once, sync it once,
     blit) and `haiku_present_finish()` (hand to the presenter, or copy with the CPU);
   - prepare runs from `st_context_flush()`'s `before_flush_cb`, so the blit finds the unflushed render
-    job; `HAIKU_EGL_SEPARATE_BLIT=1` runs it after the flush, as before;
+    job (the `flush_resource` before it submits nothing for a UIF-tiled back buffer, which every
+    window-sized one is: `v3d_resource.c:1102-1112`); `HAIKU_EGL_SEPARATE_BLIT=1` runs it after the
+    flush, as before;
   - `HAIKU_EGL_SYNC_EACH_FRAME=1` restores the per-frame pre-blit sync;
   - up to three bitmaps (`kMaxBitmaps`), a free list owned by the render thread; the presenter hands
     back the bitmap the view returned, published by `presented_sem`;
@@ -110,7 +112,14 @@ contention with steps 9–10 is the next suspect); the bench separates them.
   QEMU virt (softpipe: the hardware present code does not run there, `haiku_create_hw_screen`
   returns NULL) — see the status line below. Not verified: anything on V3D.
 
-Status: see the weekly log entry of 2026-10-25 for the host results.
+Host results (2026-10-25): QEMU virt, image-2026-10-25c + the prototype files: glview `PASS` (pixel
+checks ok) and glmark2-es2 build/texture `exit 0` with the packaged Mesa and with the prototype (its new
+`HAIKU_EGL_FPS` line proves it was the one loaded; its version string still says `git-db2eac33c1`, the
+commit it was built on before the change was committed); present-bench's RAM→RAM and DrawBitmap steps
+run (QEMU's times mean nothing). The BlockedEntries setting hides the packaged `v3d` (only
+`virtio_gpu` left in `/boot/system/add-ons/kernel/drivers/graphics`) and the non-packaged copy is in
+place: image B's mechanism works. Whether the driver then loads it on the Pi is for the Pi run
+(positive marker: `v3d: stats: N cache syncs` lines exist only with the new driver).
 
 ## 5. Pi test
 
@@ -160,6 +169,9 @@ Read (`grep -a -E 'GPP|v3d: stats' artifacts/uart/<ts>-gpu-present-?.log`):
 - `GPP <variant> gm2-full: ... FPS:` per scene and `egl_haiku: N frames/s; per frame X ms waiting for
   the GPU, Y ms for the presenter`: base vs proto is the whole prototype; proto-sepblit isolates A2;
   proto-legacy (≈ base + A3) isolates A1+A2. Image B vs A isolates B1.
+- **A2 engaged**: in the `v3d: stats` lines, the CL jobs per 5 s per frame drawn halve from
+  proto-sepblit (render + blit list per frame) to proto (one list) at the same scene. If they do not,
+  the before-flush blit fell back to the separate job.
 - `v3d: stats: N cache syncs ..., T us each` (image B only): the walk measured in the driver;
   `GPU busy %` per 5 s.
 - `glview` lines `check ... ok` and `PASS`: the merged path keeps the frame correct (glview reads the
