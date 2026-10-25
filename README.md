@@ -79,9 +79,9 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Windows programs | **Wine 11.20** with x86 translation: 32-bit x86 programs through Box64, x86-64 programs through FEX (`pkgman install wine wine_x86 wine_x86_64`). Heroes III, StarCraft, SimCity 3000, Half-Life (also full screen; a game's display mode becomes the screen's, scaled by the display hardware), Chocolate Doom and OpenTTD (x86-64) play; Direct3D 9 on the V3D |
 | Software | Python 3.14, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
 
-Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a monitor connected at boot, video in Firefox
-drops frames for the first seconds after the browser starts, and the USB keyboard and mouse enumerate but have
-not yet been tried by hand. Firefox and the games are in the public package repository (`pkgman install firefox`,
+Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a monitor connected at boot, and video in Firefox
+drops frames for the first seconds after the browser starts. The USB keyboard and mouse and everyday desktop use
+were checked by hand on 2026-10-25 (image-2026-10-25e): they work, and the system feels fast. Firefox and the games are in the public package repository (`pkgman install firefox`,
 `pkgman install openarena`, `pkgman install supertuxkart`).
 
 ---

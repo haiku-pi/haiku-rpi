@@ -19,10 +19,14 @@ programs run, no Mono question).
   the monitor;
 - for a program that crashed: Haiku's crash dialog offers "Save report" — save it and send it too.
 
+**Done so far** (owner, 2026-10-25, image-2026-10-25e): checks 1 and 2 — keyboard and mouse work, everyday
+desktop use is fine, the system feels fast. Since then a card-booted Pi also gets an address from the bench
+(`scripts/pi-test.sh` runs a DHCP server that leaves the firmware alone), so the network checks below can be done.
+
 | # | Check | Do | Expected |
 |---|---|---|---|
-| 1 | **Keyboard** | Open Terminal (Applications → Terminal) and type `ls -l /boot/system`; try Shift, Ctrl+C, the arrow keys, Backspace | Every key appears once, no repeats or lost keys; Ctrl+C interrupts |
-| 2 | **Mouse** | Move the pointer, open the Deskbar menu, drag a window, scroll in a Terminal or in WebPositive with the wheel, right-click the desktop | The pointer follows smoothly (hardware cursor), clicks land where the pointer is, the wheel scrolls |
+| 1 | **Keyboard** ✅ 10-25 | Open Terminal (Applications → Terminal) and type `ls -l /boot/system`; try Shift, Ctrl+C, the arrow keys, Backspace | Every key appears once, no repeats or lost keys; Ctrl+C interrupts |
+| 2 | **Mouse** ✅ 10-25 | Move the pointer, open the Deskbar menu, drag a window, scroll in a Terminal or in WebPositive with the wheel, right-click the desktop | The pointer follows smoothly (hardware cursor), clicks land where the pointer is, the wheel scrolls |
 | 3 | **Audio by ear** | Image-2026-10-24e and later: sound goes to the HDMI monitor by default if it takes audio — listen there first; then choose "Raspberry Pi headphones" in Preferences → Media and plug headphones into the 3.5 mm jack. Open MediaPlayer and play `/boot/system/data/sounds/Burg's Sparkly Tones/Burg's Sparkly Tones - Startup.ogg` (drag it onto MediaPlayer); then any music file you have (MP3/OGG/FLAC on a USB stick) | Clean sound at the right pitch and speed, no crackling or gaps; the volume control in the Deskbar works |
 | 4 | **Typing in browsers** | WebPositive and Firefox (Applications menu): type a search into a web page's text field (e.g. duckduckgo.com) and in the address bar | Every character arrives; Backspace, Shift and the arrow keys work |
 | 5 | **Keys and mouse in an SDL game** | `pkgman install supertuxkart openarena`, then Applications → SuperTuxKart: steer a race with the arrow keys; Applications → OpenArena: look around with the mouse, fire with the button | Steering and mouse look respond without delay; no keys stuck |

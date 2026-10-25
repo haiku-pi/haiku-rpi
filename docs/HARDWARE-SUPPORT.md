@@ -57,7 +57,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 | Display driver (firmware planes) | `drivers/graphics/bcm2711_display` + `src/add-ons/accelerants/bcm2711_display` | ✅ | adopts the boot buffer (write-combining); EDID from the firmware; app_server prefers it over `framebuffer` (10-19) | No page flips (GPU stage 6) and no YCbCr overlays, so MediaPlayer and full-screen GL present by copy or blit ([design/gpu-v3d.md](design/gpu-v3d.md)) |
 | Modes | same | ✅ | every mode up to the native one; `screenmode -l` lists 40+; a smaller mode is scaled up by the firmware's primary plane, aspect kept (10-19). SDL full screen switches modes: OpenArena at 1280×720, 46.8 fps (10-20) | The HDMI link stays at the native mode; smaller modes are scaled, not set on the link |
 | Vertical retrace | same, `tools/overlays/haiku-fkms.dts` (image default) | ✅ | SMI interrupt (144): 60.00 Hz, gaps 16659–16668 µs (10-19) | Without the `haiku-fkms` overlay the firmware raises no SMI interrupt, and the driver falls back to a thread on the blocking `SET_VSYNC` call, which holds the mailbox ~16 ms per frame |
-| Hardware cursor | same (firmware plane 7, 64×64 ARGB) | 🟡 | scripted moves, corners (clipped), scaled modes, seen on HDMI (10-19) | Not yet checked with a real mouse by hand |
+| Hardware cursor | same (firmware plane 7, 64×64 ARGB) | ✅ | scripted moves, corners (clipped), scaled modes, seen on HDMI (10-19); used with a real mouse by hand (owner, 10-25) | — |
 | Kernel debugger on HDMI | upstream `frame_buffer_update` | ✅ | KDL draws in the current mode after a mode change (10-19) | — |
 
 ## 5. GPU (V3D 4.2)
@@ -95,7 +95,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 |---|---|---|---|---|
 | PCIe root complex | `busses/pci/brcmstb` | ✅ | full reset + link training (U-Boot tears PCIe down), link gen 2 ×1 (10-18) | DMA below 3 GiB; USB DMA memory is non-cacheable on arm64 ("usb: on arm64, allocate DMA memory below 3 GiB and non-cacheable") |
 | VL805 xHCI | upstream `busses/usb/xhci.cpp` (+ VL805 workarounds: completed ring entries cleared, TRB overfetch padding, firmware version logged — 0x0138c0 on the bench); VL805 firmware check/notify through the mailbox in `brcmstb` | ✅ | USB 3 stick 78–90 MB/s (10-18), 68–82 (10-24); 40/40 cold boots without a hub timeout (10-24; was ~1 in 10) | — |
-| USB HID (keyboard, mouse) | upstream `usb_hid` | 🟡 | a Logitech K120 keyboard and a Pixart mouse enumerate and publish `/dev/input/keyboard/usb/0`, `/dev/input/mouse/usb/0` (10-20) | Typing and pointing not yet checked by hand; also in SDL games |
+| USB HID (keyboard, mouse) | upstream `usb_hid` | 🟡 | a Logitech K120 keyboard and a Pixart mouse enumerate and publish `/dev/input/keyboard/usb/0`, `/dev/input/mouse/usb/0` (10-20); typing and pointing checked by hand on the desktop (owner, 10-25) | Not yet checked by hand in SDL games |
 | USB mass storage | upstream `usb_disk` | ✅ | published as `/dev/disk/usb/0/0/raw` (10-18) | — |
 
 ## 10. Ethernet and network services
@@ -204,7 +204,7 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
 
 From the "Next" list of [log/WEEK-2026-W43.md](log/WEEK-2026-W43.md), in its order:
 
-1. **Hands-on checks** (the owner, at the bench): audio by ear; USB keyboard and mouse; typing in Firefox
+1. **Hands-on checks** (the owner, at the bench; keyboard, mouse and desktop use done 10-25): audio by ear; typing in Firefox
    and WebPositive; keys and mouse in an SDL game; whether the "speckles" seen in HDMI captures while a
    GL program runs are on a real monitor too. (The owner's decisions on publishing Firefox and the games: taken 10-21, both published.)
 2. **Firefox**: video drops frames in the first seconds after the browser starts (a cold start: the decoder

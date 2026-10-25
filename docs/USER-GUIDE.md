@@ -45,7 +45,7 @@ desktop, built in: the **Deskbar** (the panel with the menu and the list of runn
 | **microSD card** | The regular image is about 1.1 GB, the image with the games about 1.8 GB. A UHS-I card gives the full speed (§10.2): the driver switches it to 1.8 V signalling (DDR50). A card without UHS-I runs in the older high-speed mode (19 MB/s reads were measured in that mode on 2026-10-18, before later driver speed-ups). |
 | **Power supply** | A USB-C supply adequate for the Pi 4. If it is not, the temperature device reports `under-voltage` (§12). |
 | **HDMI monitor** | One monitor on one micro-HDMI port. The bench uses a 1920×1080 monitor; the desktop runs at the monitor's native mode, read from its EDID. Other native resolutions and two monitors are untested. |
-| **USB keyboard and mouse** | On the bench a Logitech K120 keyboard and a Pixart optical mouse **enumerate** and get their input devices (2026-10-20). Typing and pointing by hand have **not** been checked yet. |
+| **USB keyboard and mouse** | On the bench a Logitech K120 keyboard and a Pixart optical mouse **enumerate** and get their input devices (2026-10-20); typing and pointing by hand on the desktop were checked on 2026-10-25 and work. |
 | **Network** (optional) | Wired Ethernet with a DHCP server, or WiFi (WPA2-PSK, §9.2). The Pi has no battery clock: the image sets the time over NTP once the network is up, and HTTPS needs that (§8.1). |
 | **Serial adapter** (optional) | A 3.3 V USB-serial adapter on GPIO 14/15, **115200 8N1**. It shows the boot log and the kernel log, and gives you the kernel debugger (§13). There is no shell on it. |
 | **Sound** (optional) | The monitor's speakers over HDMI, or headphones on the 3.5 mm jack (§7.3). |
