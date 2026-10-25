@@ -9,9 +9,7 @@ On Haiku a Wayland window handle therefore gets its surface from the server's
 wl_ips_haiku_surface_view(id) (wayland_server 0.1.20251004-8, patches/wayland_server), through the Haiku
 WSI, and each present commits the wl_surface, as a Wayland WSI does: that applies the window geometry
 (the view's and window's size, the first showing) and the frame callbacks winit waits for.
-VK_EXT_headless_surface is enabled on Haiku when the loader has it. WGPU_HAIKU_TRACE=1 logs the surface's
-swapchains (extent, the surface's current extent and how long asking took) and its first acquires and
-presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.1.
+VK_EXT_headless_surface is enabled on Haiku when the loader has it. Applies with -p1 to wgpu-hal 30.0.1.
 
 --- a/src/vulkan/mod.rs
 +++ b/src/vulkan/mod.rs
@@ -70,30 +68,7 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
          }
      }
  
-@@ -257,6 +262,22 @@
-         let images = unsafe { functor.get_swapchain_images(raw) }
-             .map_err(crate::vulkan::map_host_device_oom_err)?;
- 
-+        #[cfg(target_os = "haiku")]
-+        if let Some(wayland) = &self.wayland {
-+            let start = std::time::Instant::now();
-+            let current = unsafe {
-+                self.functor
-+                    .get_physical_device_surface_capabilities(device.shared.physical_device, self.raw)
-+            }
-+            .map(|caps| caps.current_extent);
-+            wayland.trace_configure(
-+                info.image_extent,
-+                old_swapchain != vk::SwapchainKHR::null(),
-+                current,
-+                start.elapsed(),
-+            );
-+        }
-+
-         // This fence is only used to throttle acquisition on Windows. It is very important to
-         // avoid bad frame pacing when the Vulkan driver is using a DXGI swapchain. See
-         // https://github.com/gfx-rs/wgpu/issues/8310 and
-@@ -299,6 +320,8 @@
+@@ -299,6 +304,8 @@
              next_acquire_index: 0,
              present_semaphores,
              next_present_time: None,
@@ -102,7 +77,7 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
          }))
      }
  
-@@ -365,6 +388,10 @@
+@@ -365,6 +372,10 @@
      /// This must only be set if [`wgt::Features::VULKAN_GOOGLE_DISPLAY_TIMING`] is enabled, and
      /// so the VK_GOOGLE_display_timing extension is present.
      next_present_time: Option<vk::PresentTimeGOOGLE>,
@@ -113,53 +88,7 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
  }
  
  impl Drop for NativeSwapchain {
-@@ -469,7 +496,9 @@
-         let acquire_fence = self.fence.unwrap_or_else(vk::Fence::null);
- 
-         // will block if no image is available
--        let (index, suboptimal) = match unsafe {
-+        #[cfg(target_os = "haiku")]
-+        let acquire_start = std::time::Instant::now();
-+        let acquired = unsafe {
-             profiling::scope!("vkAcquireNextImageKHR");
-             self.functor.acquire_next_image(
-                 self.raw,
-@@ -477,7 +506,12 @@
-                 acquire_semaphore_guard.acquire,
-                 acquire_fence,
-             )
--        } {
-+        };
-+        #[cfg(target_os = "haiku")]
-+        if let Some(wayland) = &self.wayland {
-+            wayland.trace_acquire(acquired, acquire_start.elapsed());
-+        }
-+        let (index, suboptimal) = match acquired {
-             // We treat `VK_SUBOPTIMAL_KHR` as `VK_SUCCESS` on Android.
-             // See the comment in `Queue::present`.
-             #[cfg(target_os = "android")]
-@@ -610,9 +644,18 @@
-             vk_info
-         };
- 
--        let suboptimal = {
-+        #[cfg(target_os = "haiku")]
-+        let present_start = std::time::Instant::now();
-+        let presented = {
-             profiling::scope!("vkQueuePresentKHR");
--            unsafe { self.functor.queue_present(queue.raw, &vk_info) }.map_err(|error| {
-+            unsafe { self.functor.queue_present(queue.raw, &vk_info) }
-+        };
-+        #[cfg(target_os = "haiku")]
-+        if let Some(wayland) = &self.wayland {
-+            wayland.trace_present(texture.index, presented, present_start.elapsed());
-+        }
-+        let suboptimal = {
-+            presented.map_err(|error| {
-                 match error {
-                     vk::Result::ERROR_OUT_OF_DATE_KHR => crate::SurfaceError::Outdated,
-                     vk::Result::ERROR_SURFACE_LOST_KHR => crate::SurfaceError::Lost,
-@@ -630,6 +673,10 @@
+@@ -630,6 +641,10 @@
              #[cfg(not(target_os = "android"))]
              log::debug!("Suboptimal present of frame {}", texture.index);
          }
@@ -172,7 +101,7 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
  
 --- a/src/vulkan/haiku.rs
 +++ b/src/vulkan/haiku.rs
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,173 @@
 +//! Vulkan surfaces for the Wayland windows of Haiku's in-process Wayland server.
 +//!
 +//! Haiku has no Wayland Vulkan WSI. Its Wayland server (X547's `wayland_server`, an add-on that
@@ -187,11 +116,6 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
 +//! (the size of the view and of its window, and the window's first showing) and the frame callbacks
 +//! that winit waits for before it redraws.
 +//!
-+//! `WGPU_HAIKU_TRACE=1` logs (target `wgpu_hal::vulkan::haiku`, level info) each swapchain made (its
-+//! extent, the surface's current extent = the view's size as Mesa last saw it, and how long asking took),
-+//! and the first 60 acquires and presents, then every 100th (time since the surface was made, image,
-+//! suboptimal, duration of the acquire).
-+//!
 +//! Limitations: the frames are drawn by Mesa's presenter thread, not in step with the commit, so a resize
 +//! shows a frame or two scaled to the new size; when another window uncovers the view, its content stays
 +//! as it was until the next present (the server has no copy of the frame to redraw it with).
@@ -200,10 +124,7 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
 +use core::{
 +    ffi::{c_void, CStr},
 +    mem, ptr,
-+    sync::atomic::{AtomicU32, Ordering},
-+    time::Duration,
 +};
-+use std::time::Instant;
 +
 +use ash::{ext, vk};
 +
@@ -240,30 +161,9 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
 +
 +/// The `wl_surface` of a Vulkan surface: committed after each present.
 +pub(super) struct WaylandSurface {
-+    id: u32,
 +    surface: *mut c_void,
 +    version: u32,
 +    marshal_flags: ProxyMarshalFlags,
-+    trace: Option<Trace>,
-+}
-+
-+/// `WGPU_HAIKU_TRACE`: the surface's swapchain events, with the time since the surface was made.
-+struct Trace {
-+    start: Instant,
-+    acquires: AtomicU32,
-+    presents: AtomicU32,
-+}
-+
-+impl Trace {
-+    /// The event's number, if it is one to log: the first 60, then every 100th.
-+    fn due(counter: &AtomicU32) -> Option<u32> {
-+        let n = counter.fetch_add(1, Ordering::Relaxed);
-+        (n < 60 || n % 100 == 0).then_some(n)
-+    }
-+
-+    fn ms(&self) -> u128 {
-+        self.start.elapsed().as_millis()
-+    }
 +}
 +
 +// libwayland-client's requests may be sent from any thread.
@@ -271,56 +171,6 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
 +unsafe impl Sync for WaylandSurface {}
 +
 +impl WaylandSurface {
-+    /// `WGPU_HAIKU_TRACE`: a swapchain was made.
-+    pub(super) fn trace_configure(
-+        &self,
-+        extent: vk::Extent2D,
-+        replaces: bool,
-+        current: Result<vk::Extent2D, vk::Result>,
-+        query: Duration,
-+    ) {
-+        if let Some(t) = &self.trace {
-+            log::info!(
-+                "trace +{} ms wl_surface@{}: swapchain {}x{}{}, surface current extent {:?} (asked in {} us)",
-+                t.ms(),
-+                self.id,
-+                extent.width,
-+                extent.height,
-+                if replaces { " (replaces one)" } else { "" },
-+                current.map(|e| (e.width, e.height)),
-+                query.as_micros()
-+            );
-+        }
-+    }
-+
-+    /// `WGPU_HAIKU_TRACE`: an image was acquired (or not).
-+    pub(super) fn trace_acquire(&self, result: Result<(u32, bool), vk::Result>, took: Duration) {
-+        if let Some(t) = &self.trace {
-+            if let Some(n) = Trace::due(&t.acquires) {
-+                log::info!(
-+                    "trace +{} ms wl_surface@{}: acquire #{n}: {result:?} (index, suboptimal) in {} us",
-+                    t.ms(),
-+                    self.id,
-+                    took.as_micros()
-+                );
-+            }
-+        }
-+    }
-+
-+    /// `WGPU_HAIKU_TRACE`: an image was presented (or not).
-+    pub(super) fn trace_present(&self, index: u32, result: Result<bool, vk::Result>, took: Duration) {
-+        if let Some(t) = &self.trace {
-+            if let Some(n) = Trace::due(&t.presents) {
-+                log::info!(
-+                    "trace +{} ms wl_surface@{}: present #{n} image {index}: {result:?} (suboptimal) in {} us",
-+                    t.ms(),
-+                    self.id,
-+                    took.as_micros()
-+                );
-+            }
-+        }
-+    }
-+
 +    /// `wl_surface.commit`.
 +    pub(super) fn commit(&self) {
 +        unsafe {
@@ -414,19 +264,10 @@ presents (time, image, suboptimal, duration). Applies with -p1 to wgpu-hal 30.0.
 +        log::info!("Haiku Wayland surface: wl_surface@{id}, view {view:?}, {raw:?}");
 +
 +        let mut native = super::swapchain::NativeSurface::from_vk_surface_khr(self, raw, None);
-+        let trace = std::env::var_os("WGPU_HAIKU_TRACE")
-+            .is_some_and(|v| v != "0")
-+            .then(|| Trace {
-+                start: Instant::now(),
-+                acquires: AtomicU32::new(0),
-+                presents: AtomicU32::new(0),
-+            });
 +        native.wayland = Some(Arc::new(WaylandSurface {
-+            id,
 +            surface,
 +            version: unsafe { get_version(surface) },
 +            marshal_flags,
-+            trace,
 +        }));
 +        Ok(super::Surface {
 +            swapchain: parking_lot::RwLock::new(None),

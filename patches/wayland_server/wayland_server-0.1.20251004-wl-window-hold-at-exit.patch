@@ -1,0 +1,177 @@
+wayland-server: let the server's loopers be when the team exits
+
+The add-on's loopers (the Wayland looper, the toplevels' windows, the
+application looper it makes) keep running on their threads while exit() runs
+libbe's static destructors (the token space, the looper list, the roster). A
+message handled then used that destroyed state: a client that exits right
+after destroying its toplevel (Photocraft's error exit; closing it) had the
+window quit and delete itself meanwhile — "bogus pointer (double free?)" in
+BTokenSpace::RemoveToken from ~BWindow, or "looper must be locked before
+proceeding". (Since wl_ips_haiku_surface_view runs a window before it is
+shown, every such window quits; a test client hit it in 4 exits of 15.)
+
+An exit handler, registered when the server starts (after libbe's static
+objects were made, so it runs before their destructors; with the add-on's
+DSO handle, so unloading it runs it too), lets the server handle the
+requests sent so far, waits (at most 1 s) for the threads of the destroyed
+toplevels' windows to end, then locks the Wayland looper, every remaining
+window and its own application looper (with timeouts) and keeps them locked:
+their threads wait until the team's exit ends them.
+
+--- a/HaikuXdgToplevel.h
++++ b/HaikuXdgToplevel.h
+@@ -52,6 +52,8 @@
+ 	void PlaceFullscreenSurface();
+ 	// the screen's display mode changed: fullscreen toplevels take its new size
+ 	static void ScreenChanged();
++	// the team exits: hold the windows' threads
++	static void HoldWindowsAtExit();
+ 
+ 	void HandleSetParent(struct wl_resource *parent) override;
+ 	void HandleSetTitle(const char *title) override;
+--- a/HaikuXdgToplevel.cpp
++++ b/HaikuXdgToplevel.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include <cmath>
+ #include <algorithm>
++#include <pthread.h>
+ 
+ static void Assert(bool cond) {if (!cond) abort();}
+ 
+@@ -31,7 +32,7 @@
+ 
+ public:
+ 	WaylandWindow(HaikuXdgToplevel *toplevel, BRect frame, const char* title, window_look look, window_feel feel, uint32 flags, uint32 workspace = B_CURRENT_WORKSPACE);
+-	virtual ~WaylandWindow() = default;
++	virtual ~WaylandWindow();
+ 
+ 	HaikuXdgToplevel *Toplevel() {return fToplevel;}
+ 
+@@ -42,10 +43,27 @@
+ 	void DispatchMessage(BMessage *msg, BHandler *target) final;
+ };
+ 
++// the toplevels' windows, and the threads of those that are quitting (HoldWindowsAtExit(); never freed:
++// the team is exiting then)
++static pthread_mutex_t sWindowsLock = PTHREAD_MUTEX_INITIALIZER;
++static std::vector<WaylandWindow*> *sWindows = new std::vector<WaylandWindow*>;
++static std::vector<thread_id> *sQuittingThreads = new std::vector<thread_id>;
++
+ WaylandWindow::WaylandWindow(HaikuXdgToplevel *toplevel, BRect frame, const char* title, window_look look, window_feel feel, uint32 flags, uint32 workspace):
+ 	BWindow(frame, title, look, feel, flags, workspace),
+ 	fToplevel(toplevel)
+ {
++	pthread_mutex_lock(&sWindowsLock);
++	sWindows->push_back(this);
++	pthread_mutex_unlock(&sWindowsLock);
++}
++
++WaylandWindow::~WaylandWindow()
++{
++	// (waits here, before BWindow's destructor, once the windows are held at exit)
++	pthread_mutex_lock(&sWindowsLock);
++	sWindows->erase(std::remove(sWindows->begin(), sWindows->end(), this), sWindows->end());
++	pthread_mutex_unlock(&sWindowsLock);
+ }
+ 
+ bool WaylandWindow::QuitRequested()
+@@ -274,6 +292,24 @@
+ 	XdgSurface()->SendConfigure(XdgSurface()->NextSerial());
+ }
+ 
++/* The team exits (see HoldLoopersAtExit()): the windows of destroyed toplevels finish quitting (their
++ * threads end, at most 1 s), then every remaining window is locked and stays locked, its thread waits. */
++void HaikuXdgToplevel::HoldWindowsAtExit()
++{
++	bigtime_t until = system_time() + 1000000;
++	pthread_mutex_lock(&sWindowsLock);
++	std::vector<thread_id> quitting(*sQuittingThreads);
++	pthread_mutex_unlock(&sWindowsLock);
++	for (thread_id thread : quitting) {
++		status_t result;
++		wait_for_thread_etc(thread, B_ABSOLUTE_TIMEOUT, until, &result);
++	}
++
++	pthread_mutex_lock(&sWindowsLock);
++	for (WaylandWindow *window : *sWindows)
++		window->LockWithTimeout(200000);
++}
++
+ void HaikuXdgToplevel::ScreenChanged()
+ {
+ 	for (HaikuXdgToplevel *toplevel : sFullscreenToplevels)
+@@ -361,6 +397,11 @@
+ 
+ 	if (fWindow != NULL) {
+ 		fWindow->fToplevel = NULL;
++		if (fWindow->Thread() >= 0) {
++			pthread_mutex_lock(&sWindowsLock);
++			sQuittingThreads->push_back(fWindow->Thread());
++			pthread_mutex_unlock(&sWindowsLock);
++		}
+ 		fWindow->PostMessage(B_QUIT_REQUESTED);
+ 		//fWindow->Lock();
+ 		//fWindow->Quit();
+--- a/WaylandServer.cpp
++++ b/WaylandServer.cpp
+@@ -46,6 +46,7 @@
+ ServerHandler gServerHandler;
+ BMessenger gServerMessenger;
+ BLooper *gWaylandLooper;
++static bool sOwnApplication;
+ 
+ 
+ ServerHandler::ServerHandler(): BHandler("server")
+@@ -159,6 +160,35 @@
+ }
+ 
+ 
++extern "C" int __cxa_atexit(void (*function)(void*), void *argument, void *dso);
++extern void *__dso_handle;
++
++/* The team exits (or the add-on is unloaded): libbe's static destructors (its token space, the looper
++ * list, the roster) run, while the server's loopers still run on their threads — the
++ * Wayland looper, the toplevels' windows, the application looper made here. A message handled then, such
++ * as a destroyed toplevel's window quitting and deleting itself, used that destroyed state: "bogus
++ * pointer (double free?)" in BTokenSpace::RemoveToken from ~BWindow, or "looper must be locked before
++ * proceeding" (a client that exits right after it destroyed its window: Photocraft's error exit, closing
++ * it). Let the windows of destroyed toplevels finish quitting, then lock the loopers and keep them
++ * locked: their threads wait, and the team's exit ends them. Registered when the server starts, after
++ * libbe's static objects were made, so exit() runs it before their destructors. */
++static void
++HoldLoopersAtExit(void *)
++{
++	if (gWaylandLooper == NULL)
++		return;
++	// the client's requests sent so far are handled first (a toplevel's destruction)
++	if (find_thread(NULL) != gWaylandLooper->Thread()) {
++		BMessage sync('wsyn'), reply;
++		gServerMessenger.SendMessage(&sync, &reply, 1000000, 1000000);
++	}
++	HaikuXdgToplevel::HoldWindowsAtExit();
++	gWaylandLooper->LockWithTimeout(1000000);
++	if (sOwnApplication && be_app != NULL)
++		be_app->LockWithTimeout(1000000);
++}
++
++
+ //#pragma mark - entry points
+ 
+ _EXPORT uint32 wl_ips_version = 2;
+@@ -170,6 +200,7 @@
+ 		gWaylandLooper->AddHandler(&gServerHandler);
+ 		gServerMessenger.SetTo(&gServerHandler);
+ 		gWaylandLooper->Run();
++		__cxa_atexit(HoldLoopersAtExit, NULL, &__dso_handle);
+ 	}
+ 
+ 	if (be_app == NULL) {
+@@ -191,6 +222,7 @@
+ 			break;
+ 		}
+ 		new Application(signature.String());
++		sOwnApplication = true;
+ 		be_app->Run();
+ 	}
+ 

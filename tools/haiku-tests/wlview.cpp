@@ -8,8 +8,9 @@
  *   - without any buffer, a commit with a window geometry sizes the view and the window to it and shows the
  *     window; a later geometry resizes both;
  *   - the frame callbacks of buffer-less commits are called;
- *   - HAIWAY_SHOW_AT_VIEW=1 (a diagnostic variant): a second toplevel whose geometry is pending (set, not
- *     committed) is shown at the export already, at that size, and keeps it at its first commit.
+ *   - a second toplevel whose geometry is pending (set, not committed: winit's order) is shown at the
+ *     export already, at that size, and keeps it at its first commit;
+ *   - a toplevel whose view was handed out but that is never shown can be destroyed.
  * Each "frame" fills the view (window locked, as the WSI's presenter) with a colour, so a screenshot shows
  * the window: red at 640x400, then green at 800x500.
  *
@@ -218,8 +219,7 @@ main(int argc, char** argv)
 	snprintf(detail, sizeof(detail), "%d of 7", sFramesDone);
 	check("frame callbacks", sFramesDone >= 6, detail);
 
-	// the variant: shown at the export, at the pending geometry
-	setenv("HAIWAY_SHOW_AT_VIEW", "1", 1);
+	// a geometry set before the export (winit's order): shown at the export, at that size
 	sConfigured = false;
 	wl_surface* surface2 = wl_compositor_create_surface(sCompositor);
 	xdg_surface* xdgSurface2 = xdg_wm_base_get_xdg_surface(sWmBase, surface2);
@@ -232,14 +232,13 @@ main(int argc, char** argv)
 		;
 	xdg_surface_set_window_geometry(xdgSurface2, 0, 0, 500, 300);
 	BView* view2 = (BView*)surfaceView(wl_proxy_get_id((wl_proxy*)surface2));
-	unsetenv("HAIWAY_SHOW_AT_VIEW");
-	check("variant: view", view2 != NULL);
+	check("pending geometry: view", view2 != NULL);
 	if (view2 != NULL) {
-		size_is(view2, 500, 300, "variant: shown at the export");
+		size_is(view2, 500, 300, "pending geometry: shown at the export");
 		present(view2, make_color(40, 60, 200));
 		wl_surface_commit(surface2);
 		wl_display_roundtrip(display);
-		size_is(view2, 500, 300, "variant: same after the first commit");
+		size_is(view2, 500, 300, "pending geometry: same after the first commit");
 	}
 
 	// a toplevel whose view was handed out (its window runs) but that is never shown, destroyed again

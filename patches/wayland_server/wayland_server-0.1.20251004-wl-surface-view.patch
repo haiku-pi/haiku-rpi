@@ -9,36 +9,24 @@ eframe/winit window) does.
 - wl_ips_haiku_surface_view(surface id), exported: the surface's BView, or
   NULL. Synchronous (a message to the server's thread, as
   wl_ips_haiku_set_mode): the client's earlier requests are handled first.
-- The view's window is run (still hidden) if it was not yet: until its first
-  Show() a BWindow stays locked by the thread that made it (the server's), and
-  the WSI locks the window to read the view's size and to draw a frame.
+- The view's window is run if it was not yet: until its first Show() a
+  BWindow stays locked by the thread that made it (the server's), and the WSI
+  locks the window to read the view's size and to draw a frame.
+- A toplevel whose window geometry is already set (winit sets it before it
+  makes its Vulkan surface) is shown at once, at that size; else at the first
+  commit with a geometry. Shown only at the commit after the first frame, the
+  window lost that frame (drawn while still hidden), and Photocraft drew its
+  next one 43 s later on the Pi (V3D compiling its shaders, a cold cache):
+  the window stayed blank that long.
 - Such a surface never has a buffer: its size is its xdg window geometry (the
-  view and, without server-side decorations, the window take it on each
-  commit), its window is shown at the first commit with a geometry, and it is
-  not invalidated on commits (nothing to draw: the view color is already
-  B_TRANSPARENT_COLOR, as the WSI wants). The client commits after each frame,
-  as a Wayland WSI does.
-- Diagnostics: HAIWAY_TRACE_PRESENT=1 logs such a surface's commits (the
-  geometry, the view's and window's sizes, hidden or shown), its window's
-  showing and the view's Draw() calls on stderr; HAIWAY_SHOW_AT_VIEW=1 shows a
-  toplevel's window at the export already, at the pending window geometry
-  (frames drawn into a hidden window are lost).
+  commit hook sizes the view and, without server-side decorations, the
+  window), and commits do not invalidate it (nothing to draw: the view color
+  is already B_TRANSPARENT_COLOR, as the WSI wants). The client commits after
+  each frame, as a Wayland WSI does.
 
 --- a/HaikuCompositor.h
 +++ b/HaikuCompositor.h
-@@ -18,6 +18,11 @@
- class BView;
- 
- 
-+// HAIWAY_TRACE_PRESENT=1: surfaces presented into by the client (wl_ips_haiku_surface_view) log their
-+// commits, sizes, showing and Draw() calls on stderr
-+bool HaikuTracePresent();
-+
-+
- class HaikuCompositorGlobal: public WlGlocal {
- public:
- 	static HaikuCompositorGlobal *Create(struct wl_display *display);
-@@ -110,6 +115,7 @@
+@@ -110,6 +110,7 @@
  
  	HaikuSubsurface::SurfaceList fSurfaceList;
  	bool fNoActivate = false;
@@ -46,7 +34,7 @@ eframe/winit window) does.
  
  public:
  	static HaikuSurface *Create(struct wl_client *client, uint32_t version, uint32_t id);
-@@ -127,6 +133,10 @@
+@@ -127,6 +128,10 @@
  	// shown without taking the keyboard focus (Wine: an owned popup shown with SWP_NOACTIVATE)
  	bool NoActivate() const {return fNoActivate;}
  	void SetNoActivate(bool noActivate) {fNoActivate = noActivate;}
@@ -59,39 +47,7 @@ eframe/winit window) does.
  	void AttachView(BView *view);
 --- a/HaikuCompositor.cpp
 +++ b/HaikuCompositor.cpp
-@@ -28,6 +28,13 @@
- static void Assert(bool cond) {if (!cond) abort();}
- 
- 
-+bool HaikuTracePresent()
-+{
-+	static const bool trace = getenv("HAIWAY_TRACE_PRESENT") != NULL;
-+	return trace;
-+}
-+
-+
- //#pragma mark - HaikuRegion
- 
- class HaikuRegion: public WlRegion {
-@@ -218,6 +225,17 @@
- {
- 	WaylandEnv wlEnv(this, &fActiveWlEnv);
- 
-+	if (fSurface->PresentedExternally() && HaikuTracePresent()) {
-+		static int32 sDraws;
-+		if (sDraws++ < 20) {
-+			// (WaylandEnv has unlocked the window)
-+			BRect bounds = AppKitPtrs::LockedPtr(this)->Bounds();
-+			fprintf(stderr, "haiway: Draw() of a presented view: dirty %gx%g at %g,%g, view %gx%g\n",
-+				dirty.Width() + 1, dirty.Height() + 1, dirty.left, dirty.top, bounds.Width() + 1,
-+				bounds.Height() + 1);
-+		}
-+	}
-+
- 	BBitmap *bmp = fSurface->Bitmap();
- 	if (bmp != NULL) {
- 		auto viewLocked = AppKitPtrs::LockedPtr(this);
-@@ -310,6 +328,9 @@
+@@ -310,6 +310,9 @@
  	if (Bitmap() != NULL) {
  		return BSize(Bitmap()->Bounds().Width(), Bitmap()->Bounds().Height());
  	}
@@ -101,7 +57,7 @@ eframe/winit window) does.
  	return BSize(-1, -1);
  }
  
-@@ -493,9 +514,14 @@
+@@ -493,9 +496,14 @@
  		if (fSubsurface != NULL) {
  			viewLocked->MoveTo(fSubsurface->GetState().x, fSubsurface->GetState().y);
  		}
@@ -126,7 +82,7 @@ eframe/winit window) does.
  	void ConvertFromScreen(BRect &rect);
  	void ConvertToScreen(BRect &rect);
 +	void FitPresentedView(BSize size);
-+	void ShowPresentedNow();
++	void ShowPresented();
  
  	void HandleGetToplevel(uint32_t id) override;
  	void HandleGetPopup(uint32_t id, struct wl_resource *parent, struct wl_resource *positioner) override;
@@ -154,16 +110,7 @@ eframe/winit window) does.
  		if (fXdgSurface->Surface()->ServerDecoration() != NULL) {
  			fXdgSurface->Window()->SetLook(fXdgSurface->Surface()->ServerDecoration()->Look());
  		}
-@@ -107,6 +116,8 @@
- 			fXdgSurface->Window()->SetFlags(fXdgSurface->Window()->Flags() | B_AVOID_FOCUS);
- 		fXdgSurface->Window()->Show();
- 		fXdgSurface->fSurfaceInitalized = true;
-+		if (presentedExternally && HaikuTracePresent())
-+			fprintf(stderr, "haiway: presented surface: window shown at its first commit\n");
- 	}
- 
- 	if (fXdgSurface->fPopup != NULL) {
-@@ -133,6 +144,48 @@
+@@ -133,6 +142,39 @@
  
  
  //#pragma mark - HaikuXdgSurface
@@ -179,34 +126,25 @@ eframe/winit window) does.
 +		&& Window()->Size() != size) {
 +		Window()->ResizeTo(size.width, size.height);
 +	}
-+	if (HaikuTracePresent()) {
-+		static int32 sFits;
-+		int32 n = sFits++;
-+		if (n < 60 || n % 100 == 0) {
-+			AppKitPtrs::LockedPtr<BWindow> window(Window());
-+			BRect bounds = view != NULL ? view->Bounds() : BRect();
-+			BRect frame = window->Frame();
-+			fprintf(stderr, "haiway: presented surface commit #%" B_PRId32 ": geometry %gx%g, view %gx%g, "
-+				"window %gx%g at %g,%g, %s\n", n, size.width + 1, size.height + 1, bounds.Width() + 1,
-+				bounds.Height() + 1, frame.Width() + 1, frame.Height() + 1, frame.left, frame.top,
-+				window->IsHidden() ? "hidden" : "shown");
-+		}
-+	}
 +}
 +
-+/* HAIWAY_SHOW_AT_VIEW=1 (a diagnostic variant): wl_ips_haiku_surface_view shows a toplevel's window at
-+ * once, at the client's pending window geometry, instead of at the next commit, so that no frame is
-+ * drawn into a hidden window. */
-+void HaikuXdgSurface::ShowPresentedNow()
++/* wl_ips_haiku_surface_view: a toplevel whose window geometry is already set (pending: winit sets it
++ * before it makes its Vulkan surface) is shown at once, at that size. Shown only at the next commit, after
++ * the client's first frame, the window would lose that frame (Mesa draws it into the still hidden window),
++ * and a client that draws only on demand may not draw again for long: Photocraft's next frame came 43 s
++ * later on the Pi, while V3D compiled its shaders (a cold shader cache), and the window stayed blank. */
++void HaikuXdgSurface::ShowPresented()
 +{
 +	if (fSurfaceInitalized || fToplevel == NULL || !fPendingGeometry.valid)
 +		return;
 +	FitPresentedView(BSize(fPendingGeometry.width - 1, fPendingGeometry.height - 1));
++	if (fSurface->ServerDecoration() != NULL)
++		Window()->SetLook(fSurface->ServerDecoration()->Look());
 +	Window()->CenterOnScreen();
++	if (fSurface->NoActivate())
++		Window()->SetFlags(Window()->Flags() | B_AVOID_FOCUS);
 +	Window()->Show();
 +	fSurfaceInitalized = true;
-+	if (HaikuTracePresent())
-+		fprintf(stderr, "haiway: presented surface: window shown with its view (HAIWAY_SHOW_AT_VIEW)\n");
 +}
 +
  HaikuXdgSurface::~HaikuXdgSurface()
@@ -224,15 +162,7 @@ eframe/winit window) does.
  	ServerHandler();
 --- a/WaylandServer.cpp
 +++ b/WaylandServer.cpp
-@@ -18,6 +18,7 @@
- #include <wayland-server-protocol.h>
- #include <xdg-shell-protocol.h>
- #include <stdio.h>
-+#include <stdlib.h>
- #include <string.h>
- #include <new>
- 
-@@ -26,6 +27,8 @@
+@@ -26,6 +26,8 @@
  #include <File.h>
  #include <OS.h>
  #include <AppFileInfo.h>
@@ -241,7 +171,7 @@ eframe/winit window) does.
  #include <kernel/image.h>
  
  #include "AppKitPtrs.h"
-@@ -71,6 +74,38 @@
+@@ -71,6 +73,34 @@
  		}
  		return;
  	}
@@ -266,12 +196,8 @@ eframe/winit window) does.
 +		BWindow *window = view != NULL ? view->Window() : NULL;
 +		if (window != NULL && window->Thread() < 0 && window->IsLocked())
 +			window->Run();
-+		if (HaikuTracePresent()) {
-+			fprintf(stderr, "haiway: view of wl_surface@%" B_PRIu32 ": %p, window %s\n", id, (void *)view,
-+				window == NULL ? "none" : window->IsHidden() ? "hidden" : "shown");
-+		}
-+		if (surface != NULL && surface->XdgSurface() != NULL && getenv("HAIWAY_SHOW_AT_VIEW") != NULL)
-+			surface->XdgSurface()->ShowPresentedNow();
++		if (surface != NULL && surface->XdgSurface() != NULL)
++			surface->XdgSurface()->ShowPresented();
 +		BMessage reply(B_REPLY);
 +		reply.AddPointer("view", view);
 +		msg->SendReply(&reply);
@@ -280,15 +206,16 @@ eframe/winit window) does.
  	case setModeMsg: {
  		BMessage reply(B_REPLY);
  		reply.AddInt32("status", HaikuOutputSetMode(msg->GetInt32("width", 0),
-@@ -225,6 +260,26 @@
+@@ -225,6 +255,27 @@
  	gServerMessenger.SendMessage(&msg);
  }
  
 +/* Not part of the in-process protocol: the BView of a wl_surface (the id of the client's object), for a
 + * client that presents into it itself — Vulkan through Mesa's Haiku WSI (VK_EXT_headless_surface with a
 + * VkHaikuSurfaceCreateInfoMESA on the view), as wgpu does for a Wayland window on Haiku. From then on the
-+ * surface has no buffers: its size is its xdg window geometry, its window is shown at the first commit
-+ * with one, and the client commits after each frame (frame callbacks, geometry). NULL: no such surface,
++ * surface has no buffers: its size is its xdg window geometry; a toplevel's window is shown at once if
++ * the client has set that geometry, else at the first commit with one; the client commits after each
++ * frame (frame callbacks, geometry). NULL: no such surface,
 + * or it has no view yet (no xdg_toplevel or xdg_popup, or a subsurface not yet placed). */
 +extern "C" _EXPORT void *wl_ips_haiku_surface_view(uint32 surfaceId)
 +{
