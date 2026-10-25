@@ -45,7 +45,7 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
 - Host checks of the `tests` step pass: libc layout vs the Haiku headers, rust-smoke, the C program with the
   staticlib/cdylib, PIE and no COPY/TLSDESC/TPREL relocations (`artifacts/rust-tests-1.99.1/`).
 
-### P1 — CLI (built, equal to the host in QEMU 10-25; the Pi run pending)
+### P1 — CLI (done 10-25: on the Pi 13/13 MD5s equal the host's)
 - `scripts/build-photocraft.sh`: commit **486afd82cce9** (main of 10-24, 0.15.1) in `sources/photocraft`;
   `cargo vendor --versioned-dirs` of the whole lock into `artifacts/photocraft/vendor`, patched in place
   (file checksums cleared, package checksums kept), so the build is `--frozen` against the untouched
@@ -59,6 +59,66 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   ~4 min (thin LTO) per target. `tools/pi-tests/photocraft-cli.sh` (13 operations: info, convert between
   JPEG/PNG/WebP/TIFF, invert, Gaussian blur, unsharp mask, a new document): in QEMU `virt` **all 13 MD5s equal
   the x86_64 Linux build's** (`scripts/build-photocraft.sh compare LOG`).
+
+### P2 — GPU headless (built 10-25; host and QEMU checked; the Pi run pending; one Haiku defect found)
+- **wgpu had no Vulkan backend on Haiku**: wgpu, wgpu-core and wgpu-core-deps-windows-linux-android enable
+  it only on Windows/Linux/Android/FreeBSD (cfg aliases + a target-specific dependency that turns on
+  wgpu-hal's backends). Three patches (`patches/photocraft/wgpu-30.0.1`, `wgpu-core-30.0.1`,
+  `wgpu-core-deps-windows-linux-android-30.0.1`) add `target_os = "haiku"` for Vulkan only (GL stays off: wgpu-hal's
+  GL code compiles,
+  unused); the lock is unchanged (target-specific dependencies are locked for every target). wgpu-hal's Vulkan code
+  itself builds as is. ash loads **`libvulkan.so.1`** (the plain-unix name), which is the mesa package's
+  Khronos loader in `/boot/system/lib`; the loader finds V3DV through
+  `/boot/system/add-ons/vulkan/icd.d/broadcom_icd.cortex-a72.json` (shipped by mesa since 26.2.0-5). Nothing
+  else is needed on the Pi: no LIBRARY_PATH, no VK_DRIVER_FILES.
+- **V3DV is below wgpu's default limits**: 4096 px textures (default 8192) and 4 colour attachments (default 8),
+  so `DeviceDescriptor::default()` — what every crates/gpu test asks for — gets no device on the Pi, and the
+  tests would all print "skipping … no device" and pass. The app itself asks for the defaults lowered to the
+  adapter's (`ui-egui` `gpu_canvas::device_limits`, which already has a V3D test case), so P3 is not affected.
+- `tools/photocraft-gpu-test/` (outside the Photocraft tree, its own Cargo.lock = a subset of Photocraft's,
+  built `--frozen` against the same vendor directory): **photocraft-gpu-probe** (adapters, limits under wgpu's
+  defaults, Rgba32Float/Rgba16Float/Rgba8 usages, the app's device; four documents — 8 blend modes U8, six
+  adjustments U16, a drop shadow U8, 8 separable modes on 2048² F32 — composited on the GPU and on the CPU
+  compositor, max premultiplied difference against parity.rs's tolerance of 1/255, a second render on a fresh
+  compositor must be bit-identical, raw results written out for an MD5; `--thread`: all on a second thread) and
+  **photocraft-gpu-it**: crates/gpu's integration tests copied by its build.rs with the device requests rewritten to the app's (6 counted rewrites;
+  anything new upstream fails the build). Plus crates/gpu's unit tests (**photocraft-gpu-unit**, CPU, built in
+  the Photocraft workspace). `scripts/build-photocraft.sh gpu` builds all three for both targets (~1 min each,
+  release; staged in `artifacts/photocraft/gpu-non-packaged/bin/`, 6.8/8.1/4.4 MB stripped, PIE, the same
+  four libraries as the CLI), then `gpuhost` runs `tools/pi-tests/photocraft-gpu.sh` on the host.
+- **Oracle** (decided): the CPU compositor on the same machine. GPU results are not bit-identical across drivers
+  (RADV and lavapipe differ in all four MD5s, both within tolerance), so GPU MD5s are only per-driver
+  fingerprints; the CPU results' MD5s must equal the host's (they are plain Rust f32 code), and every test
+  run must pass as many tests as on the host. `scripts/build-photocraft.sh gpucompare LOG` grades that and
+  lists any skip.
+- Host (x86_64, Radeon 780M RADV, Vulkan): probe 4/4 (max 0.24/255), unit 41, integration 79 + device-loss 12
+  passed; the same 4/4 on lavapipe and on wgpu's GL backend.
+- QEMU `virt` (Haiku arm64, no GPU): the chain works up to the device — wgpu loads libvulkan.so.1, the loader
+  reads the V3DV manifest, Mesa reports `Opening /dev/dri/renderD128 failed`, the probe ends "no adapter" (on the
+  main thread and with `--thread`); unit tests 41 passed.
+- **Defect (Haiku arm64, not Photocraft): a second Vulkan instance on a new thread jumps to NULL.** The first
+  instance is fine; after vkDestroyInstance (the loader unloads the driver; ash also closes libvulkan.so.1) the
+  next vkCreateInstance made **on a thread other than the one that loaded the driver first** stops at PC 0
+  (`user instruction abort, FAR 0`) in V3DV: `vk_instance_init → glsl_type_singleton_init_or_ref →
+  util_call_once_data_slow → call_once → pthread_once@plt` (tail calls: the trace cannot tell an unresolved
+  `pthread_once` slot from Mesa's thread-local once-context read back empty). The same instances on one thread
+  work; with the driver preloaded (`LD_PRELOAD=/boot/system/lib/libvulkan_broadcom.so`, never unloaded) they work.
+  Reproduced without Rust: **`tools/haiku-tests/vkloop.c`** (`vkloop`: 3 instances on the main thread PASS, `-k`
+  keeping the loader PASS; `-t`, a thread per instance: crash at the second, with or without `-k`). A TLS +
+  pthread_once library reloaded across threads (a plain C test) did not reproduce it. Suspects for the
+  runtime_loader: TLS of a reloaded image in a new thread (the 10-24 `__tls_get_addr` fast path, haiku
+  076da9813a, is the newest change there), or symbol binding on the reload. Every crates/gpu test creates its own
+  instance on its own test thread, so the Pi script preloads the driver for them and runs three tests without
+  the preload as a control (`reload`, reported only). **P3**: the app makes one Vulkan instance per process
+  (its extra DX12-only instance is Windows-only), so it should not hit this — unless device-loss recovery or
+  eframe recreates the instance on another thread.
+- Pi run (bench), ~45 min: `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-gpu.img --add-tree
+  artifacts/photocraft/gpu-non-packaged --bootscript tools/pi-tests/photocraft-gpu.sh`, then
+  `scripts/netboot-cycle.sh --image artifacts/images/photocraft-gpu.img --secs 2700 --label photocraft-gpu
+  --until 'PCG end'`, `scripts/build-photocraft.sh gpucompare <uart log>`. Expected: `chosen: Vulkan "V3D 4.2…"`,
+  limits below the defaults `max_texture_dimension_1d/2d 4096 (8192)`, `max_color_attachments 4 (8)` (maybe
+  more), `compositor: Rgba32Float` (V3DV: RGBA32F renders, does not blend), probe 4 of 4, unit 41, it 79,
+  device-loss 12, the 4 CPU MD5s equal the host's; the reload control crashing (exit 137) on its second test.
 
 ### GUI crates on Haiku (input for P3; `cargo check -p photocraft --target aarch64-unknown-haiku`)
 - **wayland-sys**: its build script finds no `wayland-client` through pkg-config for the target (needs

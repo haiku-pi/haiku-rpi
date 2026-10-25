@@ -1,0 +1,16 @@
+wgpu-core-deps-windows-linux-android: wgpu-hal on Haiku
+
+The crate forwards wgpu-core's backend features to wgpu-hal on the listed systems; add Haiku, so its
+vulkan feature reaches wgpu-hal. Applies with -p1 to wgpu-core-deps-windows-linux-android 30.0.1.
+
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -39,7 +39,7 @@
+ name = "wgpu_core_deps_windows_linux_android"
+ path = "src/lib.rs"
+ 
+-[target.'cfg(any(windows, target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "netbsd"))'.dependencies.wgpu-hal]
++[target.'cfg(any(windows, target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "netbsd", target_os = "haiku"))'.dependencies.wgpu-hal]
+ version = "30.0.0"
+ 
+ [lints.clippy]

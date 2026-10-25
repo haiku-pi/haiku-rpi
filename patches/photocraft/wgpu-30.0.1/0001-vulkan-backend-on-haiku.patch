@@ -1,0 +1,17 @@
+wgpu: the Vulkan backend on Haiku
+
+wgpu enables its Vulkan backend only on "native Vulkan" systems (Windows, Linux, Android, FreeBSD).
+Haiku has the Khronos loader (libvulkan.so.1) and Mesa's drivers (V3DV on the Raspberry Pi 4): add it
+to the alias. GL (gles) stays off on Haiku. Applies with -p1 to wgpu 30.0.1.
+
+--- a/build.rs
++++ b/build.rs
+@@ -16,7 +16,7 @@
+         metal: { all(target_vendor = "apple", feature = "metal") },
+         vulkan: { any(
+             // The `vulkan` feature enables the Vulkan backend only on "native Vulkan" platforms, i.e. Windows/Linux/Android
+-            all(any(windows, target_os = "linux", target_os = "android", target_os = "freebsd"), feature = "vulkan"),
++            all(any(windows, target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "haiku"), feature = "vulkan"),
+             // On Apple platforms, however, we require the `vulkan-portability` feature
+             // to explicitly opt-in to Vulkan since it's meant to be used with MoltenVK.
+             all(target_vendor = "apple", feature = "vulkan-portability")

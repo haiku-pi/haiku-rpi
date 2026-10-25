@@ -1,0 +1,43 @@
+# Photocraft's GPU compositor (crates/gpu: wgpu, headless) on a given machine: built by
+# scripts/build-photocraft.sh (step gpu) against the vendored, patched crates of the Photocraft
+# lock, for arm64 Haiku (Mesa V3DV on the Pi 4) and for the host. docs/design/photocraft.md, P2.
+#
+#   photocraft-gpu-probe   the adapter (info, limits under wgpu's defaults, formats), then a few
+#                          documents composited on the GPU, compared with the CPU compositor and
+#                          written out for an MD5
+#   photocraft-gpu-it      the crate's own integration tests (crates/gpu/tests/it) with the device
+#                          request the app makes (build.rs)
+[package]
+name = "photocraft-gpu-test"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# not a member of the Photocraft workspace (whose tree stays untouched)
+[workspace]
+
+[[bin]]
+name = "photocraft-gpu-probe"
+path = "src/main.rs"
+
+[[test]]
+name = "photocraft-gpu-it"
+path = "tests/it.rs"
+
+[dependencies]
+photocraft-gpu = { path = "../../sources/photocraft/crates/gpu" }
+photocraft-color = { path = "../../sources/photocraft/crates/color" }
+photocraft-compose = { path = "../../sources/photocraft/crates/compose" }
+photocraft-doc = { path = "../../sources/photocraft/crates/doc" }
+photocraft-geom = { path = "../../sources/photocraft/crates/geom" }
+photocraft-raster = { path = "../../sources/photocraft/crates/raster" }
+# the default features, as the crate's tests (Vulkan on Haiku with patches/photocraft/wgpu*)
+wgpu = "30"
+pollster = "1"
+log = "0.4"
+
+[dev-dependencies]
+# what crates/gpu's tests use besides the above
+photocraft-vector = { path = "../../sources/photocraft/crates/vector" }
+photocraft-cms = { path = "../../sources/photocraft/crates/cms" }
