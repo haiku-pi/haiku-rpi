@@ -737,7 +737,7 @@ wine 11.20-16 the update rewrites only the libraries that changed: 15 → 16 too
 (was ~3 minutes) and 141 s on a network boot (was ~7 minutes).
 Windows open as normal Haiku windows.
 
-**Everyday programs tried** (2026-10-23, wine 11.20-16 to -18, each as 32-bit x86 and as x86-64): PuTTY 0.83
+**Everyday programs tried** (2026-10-23, wine 11.20-16 to -18, each as 32-bit x86 and as x86-64): PuTTY 0.85
 (its configuration window), Notepad++ 8.7.9 (typing, capitals included, arrives exactly), SumatraPDF 3.5.2 (a
 93-page PDF, typeset), 7-Zip's console `7zr` (packs and tests an archive). None crashed. Before 11.20-17 a name typed into a Save As
 dialog that proposed one (Notepad++'s "new 1") went in front of it; before 11.20-18 (with wayland_server 7) a
