@@ -241,8 +241,9 @@ frames show the scenes.
   update-session present with fill / transparent / async.
 
 QEMU (virt, softpipe, image-2026-10-25d + the files; A = packaged app_server, B = the prototype via a
-`user_launch` override): bitmapcheck's 12 hashes **identical** on A and B (incl. the window moves, which
-copy from the back buffer); glview's screen hash identical
+`user_launch` override): bitmapcheck's 12 hashes **identical** on A and B (incl. two window moves, which app_server
+serves from its back buffer without a redraw — the moved hashes differ from the unmoved ones, most likely
+because QEMU's software cursor stays put inside the window; A = B is what counts); glview's screen hash identical
 (stock and new libGL); GLTeapot runs; front buffer (QEMU screendump) and in-guest screenshot identical
 except the Deskbar (clock, and B lists the non-packaged app_server as a team). An instrumented build
 (not committed) showed the paths taken: `DrawBitmap()` (sync) in a session → resolved at its `Sync()`
