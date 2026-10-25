@@ -1,0 +1,93 @@
+# Third-party assets for the test image.
+#
+# Format: one asset per line, fields separated by '|':
+#   name|url|sha256-of-download|extract-hint|local-path-it-replaces
+#
+#   url            official publisher host, the project's own release page, or (for freely
+#                  distributed 1990s shareware/demos whose publisher host is gone) the
+#                  Internet Archive item / a faithful mirror of the publisher's FTP.
+#   sha256         sha256 of the file exactly as downloaded from url (verify before use).
+#   extract-hint   'copy'           the download IS the file
+#                  'unzip:<member>' unzip -p <download> <member> > <target>
+#                  '7z:<member>'    7z e <download> <member>
+#                  otherwise a short shell recipe run in an empty directory holding the
+#                  download (no '|' inside); it yields the file named in the last field.
+#   local-path     the file on the reference build host that this asset reproduces
+#                  (byte-identical; every sha below was checked against it).
+#
+# Every asset is downloaded at build time by the user, on their own machine, from the URL
+# below. None of these files is stored in, or redistributed by, this repository or its
+# images. Treat downloads as untrusted data: verify the sha256, never run them on the host.
+#
+# Lines starting with '#' are comments. '# DERIVED:' lines are produced from an asset
+# listed here; '# BUILT-LOCALLY:' lines are build outputs of this project, not downloads.
+
+# --- Windows applications (wine-apps) ---
+# PuTTY: the local binaries are release 0.85 (version string "Release 0.85"), not 0.83;
+# they match https://the.earth.li/~sgtatham/putty/0.85/sha256sums.
+putty32|https://the.earth.li/~sgtatham/putty/0.85/w32/putty.exe|4c70267ca03a00ea761ec358498b990a7221decb36eace9b7dbe6a751be0fb3b|copy|artifacts/wine-apps/dl/putty32.exe
+putty64|https://the.earth.li/~sgtatham/putty/0.85/w64/putty.exe|d01fdb5aae8f112526040a39b0bfb9e27d813003178645e65f8d1cfdb2a26c87|copy|artifacts/wine-apps/dl/putty64.exe
+7zr|https://www.7-zip.org/a/7zr.exe|256feca8e274e5da655e2a284fabafd9f554365eb164862089dacd4e8276d282|copy|artifacts/wine-apps/dl/7zr.exe
+# 7zr.exe is an unversioned URL (always the current 7-Zip release); pin by sha, expect drift.
+sumatrapdf32|https://files2.sumatrapdfreader.org/software/sumatrapdf/rel/3.5.2/SumatraPDF-3.5.2.exe|bbf243bb85ce21a5c8b7a4ed2cacaaabf2ad2d281776667356a61d949e5c7e07|copy|artifacts/wine-apps/dl/SumatraPDF-3.5.2.exe
+sumatrapdf64|https://files2.sumatrapdfreader.org/software/sumatrapdf/rel/3.5.2/SumatraPDF-3.5.2-64.exe|290e4aa7ed64c728138711c011e89aab7aa48dbc1ae430371dc2be4100b92bf0|copy|artifacts/wine-apps/dl/SumatraPDF-3.5.2-64.exe
+notepadpp32|https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.9/npp.8.7.9.portable.zip|e428bdef3914bf7bc1dd197cafce3ee661853141a17662cf1657531fd5a83092|copy|artifacts/wine-apps/dl/npp.8.7.9.portable.zip
+notepadpp64|https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.9/npp.8.7.9.portable.x64.zip|c0543076abcad4b3119154cc3ee2ca88e63fc1381ee07e1e29d7321df2b7513d|copy|artifacts/wine-apps/dl/npp.8.7.9.portable.x64.zip
+
+# --- Freely distributed game demos / shareware (Internet Archive, classicpcgames et al.) ---
+heroes3-demo|https://archive.org/download/HeroesOfMightAndMagicIiiTheRestorationOfErathia/h3demo.exe|83cbb6319386d6deba65273f53a60395fda8cce74cc24177b2ac3560ded9c315|copy|artifacts/wine-games/dl/h3demo.exe
+# the archive item names it Simcity3000Demo.zip; saved as sc3demo.zip
+simcity3000-demo|https://archive.org/download/Simcity3000Demo/Simcity3000Demo.zip|3d8f1e949a171487b4827d18c723c5ab37b7084cda81cd33f886a7b1496928be|copy|artifacts/wine-games/dl/sc3demo.zip
+fallout-demo|https://archive.org/download/FalloutDemo/falldemo.zip|5e3a6af80c8e68b93ecf161bf5670b6a8aa3ca69ee5534b9ef97fbd9c403bc74|copy|artifacts/wine-games/dl/falldemo.zip
+halflife-uplink|https://archive.org/download/Half-lifeUplink/hluplink.exe|9f236e9785980c127d46870a828ba4dac756308767ebd498b85bd7edff3305a8|copy|artifacts/wine-games/dl/hl/hluplink.exe
+starcraft-sw-ccd|https://archive.org/download/cdrom-starcraft-shareware/StarcraftShareware.ccd|c6973b97c2aae79fb03ef8d69c46eb9f47c0d5438aa211963b6583986fefc066|copy|artifacts/wine-games/dl/StarcraftShareware.ccd
+starcraft-sw-img|https://archive.org/download/cdrom-starcraft-shareware/StarcraftShareware.img|619e49979b3c1b62b4758c0338e8341ef163acfdbfbbd4db7489b8394a4b229c|copy|artifacts/wine-games/dl/StarcraftShareware.img
+# DERIVED: StarcraftShareware.iso (sha256 63ffa521f8ea07c01fbf4035eda24bc667c5fe2e71bc162fdae5c8c1a48609b8)
+# is the .img (raw 2352-byte MODE2/Form1 sectors) cut to the 2048 user-data bytes at offset 24.
+# It is only an intermediate: '7z x StarcraftShareware.iso' gives dl/sccd/ (the CD tree the game
+# reads, tree/data/wine-games/SCCD). The recipe needs python3 on the host. Skip it if you populate SCCD some other way.
+starcraft-sw-iso|https://archive.org/download/cdrom-starcraft-shareware/StarcraftShareware.img|619e49979b3c1b62b4758c0338e8341ef163acfdbfbbd4db7489b8394a4b229c|python3 -I -c 'import sys;i=open(sys.argv[1],"rb");o=open(sys.argv[2],"wb");[o.write(s[24:2072]) for s in iter(lambda:i.read(2352),b"") if len(s)==2352]' StarcraftShareware.img StarcraftShareware.iso|artifacts/wine-games/dl/StarcraftShareware.iso
+# DERIVED (by running the installers under Wine on the host, not by extraction):
+#   tree/data/wine-games/SC  (StarCraft shareware installed from SCCD/INSTALL.EXE)
+#   tree/data/wine-games/HL  (hluplink.exe installed)
+#   tree/data/wine-games/H3  (h3demo.exe -> Disk1/data1.cab -> Program_Files, see dl/h3u.log)
+#   tree/data/wine-games/SC3, falldemo (from sc3demo.zip / falldemo.zip)
+
+# --- Free software games ---
+# The 'doom64' directory is a misnomer: it holds Chocolate Doom 3.1.1 (win64) + Freedoom
+# 0.13.0, both free software. No DOOM 64 data is present or needed.
+chocolate-doom-win64|https://github.com/chocolate-doom/chocolate-doom/releases/download/chocolate-doom-3.1.1/chocolate-doom-3.1.1-win64.zip|58c34c61ae954493fce5ff01fd553898240a0de25658aa97b43ac9510c49581f|copy|artifacts/wine-games/doom64/dl/chocolate-doom-3.1.1-win64.zip
+freedoom|https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip|3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59|copy|artifacts/wine-games/doom64/dl/freedoom-0.13.0.zip
+freedoom-checksum|https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0-CHECKSUM|01a627fa0c80b7446f4f435df6fffef8f354a9987b23870bc5ea5464ca82e977|copy|artifacts/wine-games/doom64/dl/freedoom-0.13.0-CHECKSUM
+freedoom1-wad|https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip|3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59|unzip:freedoom-0.13.0/freedoom1.wad|artifacts/wine-games/doom64/game/freedoom1.wad
+freedoom2-wad|https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip|3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59|unzip:freedoom-0.13.0/freedoom2.wad|artifacts/wine-games/doom64/game/freedoom2.wad
+# extracted: freedoom1.wad sha256 7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d,
+#            freedoom2.wad sha256 a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b
+openttd-win64|https://cdn.openttd.org/openttd-releases/15.3/openttd-15.3-windows-win64.zip|61c0a6a43d81008c7ff4330fb56351bbf66a980cdad041f1d0e08b51f2eeb34c|copy|artifacts/wine-games/openttd/dl/openttd-15.3-windows-win64.zip
+opengfx|https://cdn.openttd.org/opengfx-releases/8.0/opengfx-8.0-all.zip|43a0c1dabf39cb865394f3a6cc36d4da5c10ecfaaf55652043104806810903be|copy|artifacts/wine-games/openttd/dl/opengfx-8.0-all.zip
+opensfx|https://cdn.openttd.org/opensfx-releases/1.0.3/opensfx-1.0.3-all.zip|e0a218b7dd9438e701503b0f84c25a97c1c11b7c2f025323fb19d6db16ef3759|copy|artifacts/wine-games/openttd/dl/opensfx-1.0.3-all.zip
+# DERIVED: openttd/game/openttd-15.3-windows-win64 = unzip of openttd-win64 plus
+#   'unzip -p opengfx-8.0-all.zip opengfx-8.0.tar > openttd-15.3-windows-win64/baseset/opengfx-8.0.tar'
+#   (opensfx-1.0.3.tar, member of opensfx-1.0.3-all.zip, goes to the same baseset/ dir; the
+#   reference tree does not have it yet). openttd/ottd.tgz is a local repack of that tree.
+
+# --- Quake shareware / demo data (id Software; ftp.idsoftware.com is gone) ---
+# Quake shareware 1.06: same bytes at https://ftp.icm.edu.pl/pub/coast/games/idsoftware/quake/quake106.zip
+# and https://ftp.gwdg.de/pub/misc/ftp.idsoftware.com/idstuff/quake/quake106.zip (id FTP mirrors).
+quake1-shareware-pak0|https://archive.org/download/Quake_802/quake106.zip|ec6c9d34b1ae0252ac0066045b6611a7919c2a0d78a3a66d9387a8f597553239|unzip -p quake106.zip resource.1 > resource.1 && 7z e -y resource.1 ID1/PAK0.PAK && mv PAK0.PAK pak0.pak|quake-data/quake/id1/pak0.pak
+# extracted pak0.pak sha256 35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af
+# (resource.1 is an LHA archive; the member name is upper case. 'lha xf resource.1' also works.)
+# Quake II 3.14 demo, from the Yamagi Quake II project's mirror of id's idstuff; same bytes at
+# https://ftp.gwdg.de/pub/misc/ftp.idsoftware.com/idstuff/quake2/q2-314-demo-x86.exe
+# The .exe is a self-extracting zip; '7z e q2-314-demo-x86.exe Install/Data/baseq2/pak0.pak' works too.
+quake2-demo-pak0|https://deponie.yamagi.org/quake2/idstuff/q2-314-demo-x86.exe|7ace5a43983f10d6bdc9d9b6e17a1032ba6223118d389bd170df89b945a04a1e|unzip:Install/Data/baseq2/pak0.pak|quake-data/quake2/baseq2/pak0.pak
+# extracted pak0.pak sha256 cae257182f34d3913f3d663e1d7cf865d668feda6af393d4ecf3e9e408b48d09
+# Quake III Arena demo 1.11-6 for Linux (makeself shell archive, gzip'd tar from line 165).
+# The pak lands at demoq3/pak0.pk3 (read-only in the tar, hence chmod).
+# Never run the .sh. tar prints a harmless "A lone zero block" warning.
+quake3-demo-pak0|https://ftp.gwdg.de/pub/misc/ftp.idsoftware.com/idstuff/quake3/linux/linuxq3ademo-1.11-6.x86.gz.sh|64dee3f69b6e792d1da4fe0ac98fedc7eb1e37ea1027fb609a9fadd06150a4ec|tail -n +165 linuxq3ademo-1.11-6.x86.gz.sh > payload.tgz && tar xzof payload.tgz demoq3/pak0.pk3 && chmod u+w demoq3/pak0.pk3|quake-data/quake3/demoq3/pak0.pk3
+# extracted demoq3/pak0.pk3 sha256 e77abad2466f45a0a7ea018445528f9b95a0fe7789fa1abc1a7718bbf0754b08
+# BUILT-LOCALLY: demoq3/pak1.pk3 (sha256 15792387893f1f3f24d2ba1885db3166d03904ad95b7618384c1315f1f12daf0)
+#   is not in the demo installer (its payload holds only demoq3/pak0.pk3). It contains three QVMs
+#   (vm/qagame.qvm, vm/cgame.qvm, vm/ui.qvm) built 2026-08-05 from the GPL engine source; rebuild
+#   them with the engine, do not download. demoq3/autoexec.cfg and demoq3/q3key are project files.
