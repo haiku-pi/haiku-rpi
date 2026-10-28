@@ -32,7 +32,7 @@ packages=(
 	"$gen/objects/haiku/arm64/packaging/packages/haiku_devel.hpkg"
 )
 for p in gcc_syslibs gcc_syslibs_devel zlib zlib_devel ncurses6 ncurses6_devel; do
-	f=$(ls "$gen"/download/"$p"-[0-9]*-arm64.hpkg 2>/dev/null | head -n 1)
+	f=$(ls "$gen"/download/"$p"-[0-9]*-arm64.hpkg 2>/dev/null | sort -V | tail -n 1)
 	[ -n "$f" ] || { echo "haiku-sysroot: no $p arm64 package in $gen/download" >&2; exit 1; }
 	packages+=("$f")
 done
