@@ -29,8 +29,12 @@ cp "$src/u-boot.bin" "$root/artifacts/uboot/u-boot-netboot.bin"
 ls -la "$root/artifacts/uboot/u-boot-netboot.bin" | awk '{print "build-uboot: u-boot-netboot.bin " $5 " bytes"}'
 
 mk rpi_4_defconfig
-# no autoboot countdown (2 s of every SD boot; a key held at power-on still stops it)
-"$src/scripts/config" --file "$src/.config" --set-val BOOTDELAY 0
+# no autoboot countdown (2 s of every SD boot); USB only when the SD card has nothing to boot: the
+# default preboot's "usb start" scanned the bus for ~1.4 s on every boot, and Haiku resets and
+# enumerates the VL805 itself. A USB disk still boots (the second bootflow scan), a key on the
+# serial console still stops U-Boot; a USB keyboard no longer can.
+"$src/scripts/config" --file "$src/.config" --set-val BOOTDELAY 0 --set-str PREBOOT 'pci enum;' \
+	--enable USE_BOOTCOMMAND --set-str BOOTCOMMAND 'bootflow scan mmc; usb start; bootflow scan'
 mk olddefconfig
 mk -j"$(nproc)" > "$root/artifacts/uboot-build.log" 2>&1
 ls -la "$src/u-boot.bin" | awk '{print "build-uboot: u-boot.bin " $5 " bytes"}'
