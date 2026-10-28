@@ -40,7 +40,7 @@ main(int argc, char** argv)
 			return 1;
 		}
 		dlclose(handle);
-		printf("dlopentime: %s: dlopen %.0f ms, dlclose %.0f ms\n", argv[1], (loaded - start) * 1e3,
+		printf("dlopentime: %s: dlopen %.2f ms, dlclose %.2f ms\n", argv[1], (loaded - start) * 1e3,
 			(now() - loaded) * 1e3);
 	}
 	return 0;

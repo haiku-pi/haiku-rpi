@@ -59,9 +59,11 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	# picks a language)
 	# (tools/build/flatten-message.py wrote it: language "en"); and the Time preferences' defaults,
 	# so that the clock is set over NTP at boot (the Pi has no clock of its own; HTTPS needs one)
+	# (HAIKU_PI_ROOT: this repository; scripts/build.sh sets it, for a tree outside sources/)
+	HAIKU_PI_ROOT ?= $(HAIKU_TOP)/../.. ;
 	AddFilesToHaikuImage home config settings
-		: $(HAIKU_TOP)/../../tools/build/data/Locale\ settings
-		  $(HAIKU_TOP)/../../tools/build/data/networktime\ settings ;
+		: $(HAIKU_PI_ROOT)/tools/build/data/Locale\ settings
+		  $(HAIKU_PI_ROOT)/tools/build/data/networktime\ settings ;
 	# ICU (WebKit, the locale kit): scripts/build-icu.sh's, its data in libicudata
 	AddHaikuImageSystemPackages icu74 ;
 }
