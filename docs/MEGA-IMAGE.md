@@ -17,7 +17,9 @@ scripts/pi-test.sh --flash artifacts/images/haiku-pi4-mega.img
 Options: `--size MB` (default 16000: a 32 GB card or larger), `--no-build` (use the last jam build as it
 is), `--out IMG`, `--cache DIR`. It needs the trees of a full build of this repository (see
 [BUILD.md](BUILD.md)); where something is missing it builds it when a script exists, and leaves the
-launcher out when it cannot.
+launcher out when it cannot. Host tools it uses: `curl`, `unzip`, `7z`, `unshield`. Half-Life Uplink and
+the StarCraft shareware are set up by their own installers, which only run under Wine: they come from an
+installed tree of an earlier build (`artifacts/wine-games/tree`), and are left out of the image otherwise.
 
 ## What is in it
 

@@ -23,8 +23,9 @@
 #                glmark2 photocraft
 #   the Quakes   artifacts/games/non-packaged (scripts/build-games.sh; its data: tools/mega/assets.txt)
 #   GL tools     artifacts/gl-stack/non-packaged/bin (scripts/build-gl-stack.sh): vkcube, glview
-#   Windows      artifacts/wine-apps/tree, artifacts/wine-games/tree/data/wine-games (the programs and
-#                the games' installed files; assets.txt says where each comes from)
+#   Windows      artifacts/wine-apps/tree, artifacts/wine-games/tree/data/wine-games, else made from the
+#                downloads: the programs, and the SimCity 3000, Fallout and Heroes III demos (unzip, 7z,
+#                unshield); Half-Life Uplink and StarCraft only from an existing installed tree
 #
 # Then: write it to the card (scripts/pi-test.sh --flash IMG, or any SD writer) and boot. The first boot
 # makes ~/Desktop/Test Apps and sets Wine up (~2 min, a notification says when it is done):
@@ -165,8 +166,23 @@ out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(o
 open(sys.argv[1], "wb").write(out)
 PDF
 fi
-[ -d "$root/artifacts/wine-games/tree/data/wine-games" ] \
-	&& cp -a "$root/artifacts/wine-games/tree/data/wine-games" "$work/np/data/wine-games"
+if [ -d "$root/artifacts/wine-games/tree/data/wine-games" ]; then
+	cp -a "$root/artifacts/wine-games/tree/data/wine-games" "$work/np/data/wine-games"
+else
+	# the demos that unpack without running their installers (byte-identical to the tested trees);
+	# Half-Life Uplink (a Wise installer) and the StarCraft shareware (installed under Wine) need such a
+	# tree from an earlier install: their launchers are left out without one
+	g="$work/np/data/wine-games"
+	mkdir -p "$g"
+	[ -f "$dl/simcity3000-demo" ] && unzip -q -o "$dl/simcity3000-demo" -d "$g"
+	[ -f "$dl/fallout-demo" ] && unzip -q -o "$dl/fallout-demo" -d "$g"
+	if [ -f "$dl/heroes3-demo" ] && command -v unshield > /dev/null; then
+		rm -rf "$cache/extract/h3"; mkdir -p "$cache/extract/h3"
+		7z x -y -o"$cache/extract/h3" "$dl/heroes3-demo" > /dev/null \
+			&& unshield -d "$cache/extract/h3/out" x "$cache/extract/h3/Disk1/data1.cab" > /dev/null \
+			&& mv "$cache/extract/h3/out/Program_Files" "$g/H3"
+	fi
+fi
 
 # 7. the launchers of the entries whose program is in the image
 cc="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku-gcc --sysroot=$root/artifacts/sysroot-arm64"
