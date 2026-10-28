@@ -546,4 +546,16 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   `photocraft-0.17.0-1-arm64.hpkg` on image-2026-10-28 (mesa -7 already in it; `pkgman install -y` the photocraft,
   wayland, wayland_server, libxkbcommon, xkeyboard_config files); also Help › Check for Updates by hand: the
   message, no download prompt.
+- **Pi results (10-28 evening; published as 0.17.0-1, 0.15.1-2 moved out of the repository):** CLI matches the
+  host (13 operations). GPU: V3D, probe 4/4 within tolerance, unit 41, it **97**, device-loss 12 — as the host; the
+  CPU MD5s of adjust-u16 and blend-f32-2048 differ from x86_64's, as with 0.15.1 since 10-25 (open; CPU f32 maths,
+  not a GPU result). GUI: `WLV result: 0 bad`, the window alive after 60 s and drawn on HDMI, the desktop test (Open
+  panel, select all + copy = the document's 2400×1500 image), `--safe-gpu` alive. Package (as the boot script of
+  image-2026-10-28 + the packages, network boot): Open with lists PhotoCraft before the first start, `.pcraft` type,
+  file locking, a start without environment (the update check logs the Haiku message), Open with passes the file,
+  **single instance** (two later Open withs "handed 1 file(s) to the running PhotoCraft"; one window, tabs `pck.jpg`
+  and `pck-second.jpg` on HDMI). Not checked: Help › Check for Updates clicked by hand (the same code path as the
+  logged automatic check). `hey <team> quit` does not end PhotoCraft (as 0.15.1-2: not a BApplication; it quits
+  from its window). Run the package script as the boot script, not over ssh: there `LIBRARY_PATH` is empty and
+  the script's `env -i` start passes that on (libtracker.so not found).
 
