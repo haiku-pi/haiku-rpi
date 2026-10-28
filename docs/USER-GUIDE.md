@@ -844,6 +844,12 @@ Useful commands:
 | `arm64_timer` | the CPU's architectural timer registers |
 | `continue` (or `exit`, `es`) | leave the debugger; the system runs on |
 
+The kernel queues its serial output and sends it from the UART's interrupt, so printing does not slow
+the system down (the kernel debugger sends what is queued first, then writes directly). When chasing a
+hang, where the last lines must not wait in that queue, write `serial_debug_buffered false` into
+`~/config/settings/kernel/drivers/kernel` (one setting per line) and reboot: all output is then sent at
+once, as the line is printed.
+
 A program's own output can reach the serial console too: write to `/dev/dprintf`. A script saved as
 `~/config/settings/boot/UserBootscript` runs at every boot; this project's tests (`tools/pi-tests/`)
 work that way, which also lets you run things on a Pi without a keyboard.
