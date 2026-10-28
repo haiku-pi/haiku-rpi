@@ -483,6 +483,12 @@ carries in [../patches/](../patches/). Those patches are for U-Boot (GENET trans
 HaikuWebKit, CPython, Rust and the game ports. They reach the Haiku image as the binary packages in
 the table below.
 
+Mesa fixes found on the Pi that are bugs upstream too (haiku-pi/mesa `rpi4`, upstream-ready messages):
+`be833ed6d67` (V3DV: a render pass's supertiles stored over pixels outside its area — tiled texture uploads
+lost data), `dee7e96cb04` (V3D compiler: a vector `mov` copied only its first channel), `f55f89ccad9`,
+`baaaeaef308`, `76543fafdfc` (V3D compiler: liveness and copy propagation in linear passes — large shaders
+compile 3.6× faster, identical code).
+
 ---
 
 ## Appendix: arm64 package-repository changes
