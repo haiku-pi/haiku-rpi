@@ -4,9 +4,10 @@
 # linked and a dlopen()ed library's pointers), then times — the first of each right after the boot, so
 # cold — dlopen() of relrbig.c's half a million pointers with RELA entries and with DT_RELR, dlopen()
 # of system libraries (RELA or DT_RELR: whatever the image was built with), and the launches of
-# Terminal, GLTeapot and Firefox to their first window (the packaged Firefox; with the image's
-# /boot/home/ffx-rela and /boot/home/ffx-relr, the same Firefox with libxul.so linked each way, in
-# turn). Serial lines "RELR ...", the last "RELR end". RELR_LAUNCHES (default 5) launches per app.
+# Terminal, GLTeapot, Devices (71k relative relocations: the PCI ID tables) and Firefox to their first
+# window (the packaged Firefox; with the image's /boot/home/ffx-rela and /boot/home/ffx-relr, the same
+# Firefox with libxul.so linked each way, in turn). Serial lines "RELR ...", the last "RELR end".
+# RELR_LAUNCHES (default 5) launches per app; round 1 is cold, later rounds warm.
 sleep 25
 out=/dev/dprintf
 say() { echo "RELR $*" > $out; }
@@ -38,6 +39,7 @@ i=1
 while [ $i -le $n ]; do
 	launch Terminal-$i /boot/system/apps/Terminal
 	launch GLTeapot-$i /boot/system/demos/GLTeapot
+	launch Devices-$i /boot/system/apps/Devices
 	launch Firefox-$i /boot/system/apps/Firefox/Firefox
 	for v in rela relr; do
 		[ -x /boot/home/ffx-$v/Firefox ] && launch Firefox-$v-$i /boot/home/ffx-$v/Firefox
