@@ -5,11 +5,12 @@
 #
 #   scripts/build-photocraft.sh [STEP]        (start at STEP; the earlier ones must have run)
 #   scripts/build-photocraft.sh --only STEP   (just that step)
-#   scripts/build-photocraft.sh --revision N ... (the package's revision, default 2)
+#   scripts/build-photocraft.sh --revision N ... (the package's revision, default 1)
 #
 # Steps:
-#   source    clone the pinned commit into sources/photocraft (only if missing; an existing tree must
-#             be at that commit, it is never checked out here)
+#   source    the pinned commit (Photocraft $version) as sources/photocraft-$version, a worktree of
+#             sources/photocraft (cloned first if missing); only if missing: an existing tree must be at
+#             that commit, it is never checked out here
 #   vendor    cargo vendor (all of Cargo.lock: crates.io + the git dependencies) into
 #             artifacts/photocraft/vendor/ (fresh each time), then the Haiku patches: patches/rust-libc/
 #             on the vendored libc, and patches/photocraft/<crate>-<version>/*.patch on that crate. The
@@ -48,7 +49,7 @@
 #             tools/pi-tests/wayland-keys.sh) and bin/wlexit (tools/haiku-tests/wlexit.cpp: a client exiting while
 #             it still sends requests, tools/pi-tests/wayland-exit.sh)
 #   package   the photocraft package (phase P5), from the gui stage: artifacts/packages/
-#             photocraft-<version>-<N>-arm64.hpkg (N: --revision, default 2). apps/PhotoCraft/PhotoCraft, a small
+#             photocraft-<version>-<N>-arm64.hpkg (N: --revision, default 1). apps/PhotoCraft/PhotoCraft, a small
 #             launcher (tools/photocraft-package/launcher.cpp: the Tracker hands documents over as a message,
 #             which the program has no BApplication to receive; the launcher passes them as arguments) with
 #             the resources the Deskbar and Tracker use (PhotoCraft.rdef.in: signature, version, the image types
@@ -76,12 +77,14 @@
 #          tools/pi-tests/photocraft-desktop.sh)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-commit=486afd82cce99255e999224bcfe28de00fd766aa	# main of 2026-10-24, version 0.15.1
+version=0.17.0
+commit=b8c3f3aa8e2918032cadc0e042664414a03be333	# tag v0.17.0 (2026-10-28)
 repo=https://github.com/storytold/photocraft
 rustVersion=1.99.1
 target=aarch64-unknown-haiku
 host=x86_64-unknown-linux-gnu
-src="$root/sources/photocraft"
+# one tree per version: a worktree of sources/photocraft (the first clone), never switched in place
+src="$root/sources/photocraft-$version"
 work="$root/artifacts/photocraft"
 vendor="$work/vendor"
 stage="$work/non-packaged"
@@ -93,7 +96,7 @@ gpuTest="$root/tools/photocraft-gpu-test"
 gpuStage="$work/gpu-non-packaged"
 desktopTest="$root/tools/photocraft-desktop-test"
 guiStage="$work/gui-non-packaged"
-packageRevision=2
+packageRevision=1
 hostTools="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools"
 
 toolchain() {
@@ -111,8 +114,9 @@ f = sys.argv[1]; c = json.load(open(f)); c["files"] = {}; json.dump(c, open(f, "
 
 source_() {
 	if [ ! -d "$src" ]; then
-		git clone "$repo" "$src"
-		git -C "$src" -c advice.detachedHead=false switch --detach "$commit"
+		[ -d "$root/sources/photocraft" ] || git clone "$repo" "$root/sources/photocraft"
+		git -C "$root/sources/photocraft" fetch --tags origin
+		git -C "$root/sources/photocraft" worktree add --detach "$src" "$commit"
 	fi
 	local head
 	head="$(git -C "$src" rev-parse HEAD)"
@@ -126,6 +130,21 @@ vendor() {
 	rm -rf "$vendor"
 	mkdir -p "$work"
 	(cd "$src" && cargo vendor --locked --versioned-dirs "$vendor") > "$work/vendor-config.toml"
+	# [patch] entries the graph does not use (Cargo.lock's [[patch.unused]]: 0.17.0 patches all of its egui fork's
+	# crates in) are not vendored, but cargo still looks each one up in the replaced source and fails ("does not
+	# contain packages matching"): a stub package of that name and version is enough for an unused one
+	python3 - "$src/Cargo.lock" "$vendor" <<-'PY'
+	import json, os, re, sys
+	lock, vendor = sys.argv[1], sys.argv[2]
+	for name, version in re.findall(r'\[\[patch\.unused\]\]\nname = "([^"]+)"\nversion = "([^"]+)"', open(lock).read()):
+	    d = os.path.join(vendor, f'{name}-{version}')
+	    os.makedirs(os.path.join(d, 'src'), exist_ok=True)
+	    open(os.path.join(d, 'Cargo.toml'), 'w').write(
+	        f'[package]\nname = "{name}"\nversion = "{version}"\nedition = "2021"\n\n[lib]\npath = "src/lib.rs"\n')
+	    open(os.path.join(d, 'src/lib.rs'), 'w').write('// a stub of an unused [patch] entry (build-photocraft.sh)\n')
+	    json.dump({'files': {}, 'package': None}, open(os.path.join(d, '.cargo-checksum.json'), 'w'))
+	    print(f'build-photocraft: stub for the unused patch {name} {version}')
+	PY
 	local libc p dir
 	libc="libc-$(sed -n '/^name = "libc"$/{n;s/^version = "\(.*\)"$/\1/p;q}' "$src/Cargo.lock")"
 	for p in "$root"/patches/rust-libc/*.patch; do

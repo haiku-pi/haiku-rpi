@@ -37,12 +37,12 @@ name = "photocraft-gpu-it"
 path = "tests/it.rs"
 
 [dependencies]
-photocraft-gpu = { path = "../../sources/photocraft/crates/gpu" }
-photocraft-color = { path = "../../sources/photocraft/crates/color" }
-photocraft-compose = { path = "../../sources/photocraft/crates/compose" }
-photocraft-doc = { path = "../../sources/photocraft/crates/doc" }
-photocraft-geom = { path = "../../sources/photocraft/crates/geom" }
-photocraft-raster = { path = "../../sources/photocraft/crates/raster" }
+photocraft-gpu = { path = "../../sources/photocraft-0.17.0/crates/gpu" }
+photocraft-color = { path = "../../sources/photocraft-0.17.0/crates/color" }
+photocraft-compose = { path = "../../sources/photocraft-0.17.0/crates/compose" }
+photocraft-doc = { path = "../../sources/photocraft-0.17.0/crates/doc" }
+photocraft-geom = { path = "../../sources/photocraft-0.17.0/crates/geom" }
+photocraft-raster = { path = "../../sources/photocraft-0.17.0/crates/raster" }
 # the default features, as the crate's tests (Vulkan on Haiku with patches/photocraft/wgpu*)
 wgpu = "30"
 pollster = "1"
@@ -50,5 +50,7 @@ log = "0.4"
 
 [dev-dependencies]
 # what crates/gpu's tests use besides the above
-photocraft-vector = { path = "../../sources/photocraft/crates/vector" }
-photocraft-cms = { path = "../../sources/photocraft/crates/cms" }
+photocraft-vector = { path = "../../sources/photocraft-0.17.0/crates/vector" }
+photocraft-cms = { path = "../../sources/photocraft-0.17.0/crates/cms" }
+# camera_raw.rs (0.17.0): the CPU reference of the camera-raw develop pass
+photocraft-algo = { path = "../../sources/photocraft-0.17.0/crates/algo" }

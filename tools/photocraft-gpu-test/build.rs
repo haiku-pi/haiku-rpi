@@ -1,4 +1,4 @@
-//! Copies photocraft-gpu's integration tests (sources/photocraft/crates/gpu/tests/it) into OUT_DIR
+//! Copies photocraft-gpu's integration tests (sources/photocraft-<version>/crates/gpu/tests/it) into OUT_DIR
 //! with one change: every device is requested the way the app requests its own
 //! (`crate::device_descriptor`, from crates/ui-egui's `gpu_canvas::device_descriptor`) instead of
 //! with `wgpu::DeviceDescriptor::default()`. wgpu's default limits ask for 8192 px textures and 8
@@ -10,6 +10,7 @@ use std::{env, fs, path::Path};
 
 /// (file, upstream text, replacement, occurrences in that file)
 const REWRITES: &[(&str, &str, &str, usize)] = &[
+    ("camera_raw.rs", "wgpu::DeviceDescriptor::default()", "crate::device_descriptor(&adapter)", 1),
     ("device_loss.rs", "wgpu::DeviceDescriptor::default()", "crate::device_descriptor(&adapter)", 1),
     ("parity.rs", "wgpu::DeviceDescriptor::default()", "crate::device_descriptor(&adapter)", 2),
     ("pipeline_errors.rs", "wgpu::DeviceDescriptor::default()", "crate::device_descriptor(&adapter)", 1),
@@ -30,7 +31,7 @@ const REWRITES: &[(&str, &str, &str, usize)] = &[
 
 fn main() {
     let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let src = Path::new(&manifest).join("../../sources/photocraft/crates/gpu/tests/it");
+    let src = Path::new(&manifest).join("../../sources/photocraft-0.17.0/crates/gpu/tests/it");
     let out = Path::new(&env::var("OUT_DIR").unwrap()).join("it");
     fs::create_dir_all(&out).unwrap();
     println!("cargo:rerun-if-changed={}", src.display());

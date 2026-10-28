@@ -370,9 +370,9 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libloading"
@@ -465,6 +465,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -476,9 +494,9 @@ dependencies = [
 
 [[package]]
 name = "objc2"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a12a8ed07aefc768292f076dc3ac8c48f3781c8f2d5851dd3d98950e8c5a89f"
+checksum = "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
 dependencies = [
  "objc2-encode",
 ]
@@ -599,15 +617,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "photocraft-algo"
+version = "0.17.0"
+dependencies = [
+ "photocraft-color",
+ "photocraft-geom",
+ "photocraft-raster",
+ "rayon",
+ "rustfft",
+ "serde",
+]
+
+[[package]]
 name = "photocraft-cms"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
  "rayon",
 ]
 
 [[package]]
 name = "photocraft-color"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
  "photocraft-cms",
  "serde",
@@ -615,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "photocraft-compose"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
  "photocraft-color",
  "photocraft-doc",
@@ -627,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "photocraft-doc"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
  "photocraft-color",
  "photocraft-geom",
@@ -638,17 +668,19 @@ dependencies = [
 
 [[package]]
 name = "photocraft-geom"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "photocraft-gpu"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
+ "bytemuck",
  "half",
  "log",
+ "photocraft-algo",
  "photocraft-color",
  "photocraft-compose",
  "photocraft-doc",
@@ -663,6 +695,7 @@ name = "photocraft-gpu-test"
 version = "0.1.0"
 dependencies = [
  "log",
+ "photocraft-algo",
  "photocraft-cms",
  "photocraft-color",
  "photocraft-compose",
@@ -677,7 +710,7 @@ dependencies = [
 
 [[package]]
 name = "photocraft-raster"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
  "photocraft-color",
  "photocraft-geom",
@@ -687,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "photocraft-vector"
-version = "0.15.1"
+version = "0.17.0"
 dependencies = [
  "photocraft-color",
  "photocraft-doc",
@@ -734,6 +767,15 @@ name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
+
+[[package]]
+name = "primal-check"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc0d895b311e3af9902528fbb8f928688abbd95872819320517cc24ca6b2bd08"
+dependencies = [
+ "num-integer",
+]
 
 [[package]]
 name = "proc-macro2"
@@ -825,6 +867,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
+name = "rustfft"
+version = "6.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21db5f9893e91f41798c88680037dba611ca6674703c1a18601b01a72c8adb89"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "primal-check",
+ "strength_reduce",
+ "transpose",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -868,9 +924,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
@@ -914,6 +970,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "strength_reduce"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "syn"
@@ -968,11 +1030,21 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "pin-project-lite",
+]
+
+[[package]]
+name = "transpose"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
+dependencies = [
+ "num-integer",
+ "strength_reduce",
 ]
 
 [[package]]

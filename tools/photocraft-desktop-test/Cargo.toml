@@ -17,7 +17,7 @@ publish = false
 [dependencies]
 # as apps/photocraft asks for them
 rfd = "0.17"
-arboard = { version = "3.6", features = ["wayland-data-control"] }
+arboard = { version = "3.7", features = ["wayland-data-control"] }
 libc = "0.2"
 # system fonts, as Photocraft's text tool and SVG import load them (through usvg)
 fontdb = "0.23"

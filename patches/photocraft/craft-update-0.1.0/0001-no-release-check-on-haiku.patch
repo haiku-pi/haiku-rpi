@@ -1,0 +1,25 @@
+craft-update: no GitHub release check on Haiku
+
+Photocraft checks GitHub for a newer release at startup (Preferences › General › Automatically check for
+updates) and from Help › Check for Updates, and offers the release's download page or a self-update — installers
+for Windows, macOS and Linux. On Haiku Photocraft is a package (the haiku-pi repository): updates come from
+pkgman/SoftwareUpdater. check_for_update() returns an error on Haiku without a request: Photocraft keeps an
+automatic check's failure quiet, and a manual check shows the message, which says where updates come from.
+Applies with -p1 to craft-update 0.1.0 (storytold/craft-libs, Photocraft 0.17.0's lock).
+
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -48,6 +48,13 @@
+ 
+ /// Checks for an update against GitHub releases for the given app.
+ pub fn check_for_update(app: &App, http: &Http, current_version: &str) -> Result<Option<Release>, String> {
++    // Haiku: the app comes from a package (pkgman, SoftwareUpdater), and the releases on GitHub are installers for
++    // other systems. No request; the error is what a manual check shows (an automatic one stays quiet).
++    #[cfg(target_os = "haiku")]
++    {
++        let _ = (app, http, current_version);
++        return Err("On Haiku, updates come with the photocraft package: run SoftwareUpdater, or pkgman update photocraft in Terminal".into());
++    }
+     let url = format!("https://api.github.com/repos/{}/releases?per_page=30", app.repo);
+     match http.get_api(&url, None)? {
+         crate::http::Fetched::Body { text, .. } => {

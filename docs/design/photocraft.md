@@ -504,3 +504,46 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
   --secs 240 --label photocraft-pkg --until 'PCK end'`. (2) After mesa -7: the same with the new mesa package,
   `PCK open with: program: … pck.jpg` and the document in `photocraft-package-open.png`.
 
+### Photocraft 0.17.0 (10-28: built, host + QEMU checked; Pi checks pending, not published)
+- `scripts/build-photocraft.sh`: `version=0.17.0`, commit b8c3f3aa8e29 (tag v0.17.0); the tree is
+  `sources/photocraft-0.17.0`, a worktree of the first clone (the 0.15.1 tree stays as it was; never switched in
+  place). rust-version 1.95 (our 1.99.1). Lock: 882 packages (855 before).
+- 0.17.0 takes egui (0.37) and winit from storytold's git forks through `[patch.crates-io]`, with three of the
+  fork's crates unused (`[[patch.unused]]`: egui_demo_lib, egui_inspection, egui_system_font_provider). cargo
+  vendor leaves those out, and every later cargo command with the vendored source then fails ("does not contain
+  packages matching"): the vendor step writes a stub package for each unused patch.
+- Patches: all apply. Moved: **arboard 3.6.1 → 3.7.0** (rebased; only Cargo.toml's context changed; same API),
+  libc 0.2.189 → 0.2.191 (patches/rust-libc applies with an offset). The winit patch applies to the fork (offsets).
+  rfd, fontdb, cap-primitives, rustix, calloop, wayland-backend/client, wgpu* unchanged and still needed (same
+  versions as before).
+- **New: `patches/photocraft/craft-update-0.1.0`** (the release check, storytold/craft-libs): on Haiku
+  `check_for_update()` returns an error without a request — Photocraft keeps an automatic check's failure quiet
+  and a manual Help › Check for Updates shows the message (updates come with the photocraft package:
+  SoftwareUpdater or `pkgman update photocraft`); no "Open Download Page"/self-update prompt for other systems'
+  installers. (Upstream's only switch, FLATPAK_ID, would also change the clipboard, single-instance transport and
+  paths.)
+- Test tools: photocraft-gpu-test and photocraft-desktop-test locks regenerated against the new vendor; the gpu
+  tests' new `camera_raw.rs` gets the same device rewrite (+ photocraft-algo as a dev-dependency).
+- The Photocraft target directories were rebuilt from clean (the std rebuilt for file locking made the old ones
+  E0460).
+- Host: CLI 13/13 (`hosttest`); `gpuhost` (RADV): probe 4/4, unit 41, it **97** (79 before: new tests), device-loss
+  12. QEMU: `photocraft-cli.sh` **matches the host (13 operations)**; `photocraft-desktop.sh` all as before;
+  `photocraft-package.sh` on image-2026-10-28 + the packages: activated, Open with before the first start, .pcraft
+  type, file locking, `env -i` start (PhotoCraft 0.17.0), Open with → `bin/PhotoCraft …/pck.jpg`. The binary has the
+  Haiku update message and no GitHub API URL.
+- **`photocraft-0.17.0-1-arm64.hpkg`** (31.6 MB, artifacts/packages; same requirements as 0.15.1-2).
+- **Pi checks** (bench): (1) CLI: `scripts/mkimage-pi4.sh --out artifacts/images/photocraft.img --add-tree
+  artifacts/photocraft/non-packaged --bootscript tools/pi-tests/photocraft-cli.sh`, `scripts/netboot-cycle.sh --image
+  artifacts/images/photocraft.img --secs 240 --label photocraft-cli-017 --until 'PCC end'`, `scripts/build-photocraft.sh
+  compare <uart log>`. (2) GPU: `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-gpu.img --add-tree
+  artifacts/photocraft/gpu-non-packaged --bootscript tools/pi-tests/photocraft-gpu.sh`, `scripts/netboot-cycle.sh --image
+  artifacts/images/photocraft-gpu.img --secs 2700 --label photocraft-gpu-017 --until 'PCG end'`,
+  `scripts/build-photocraft.sh gpucompare <uart log>` (it: 97 on the host now). (3) GUI: `scripts/stage-packages.sh
+  --wine-runtime`, `scripts/mkimage-pi4.sh --out artifacts/images/photocraft-gui.img --add-tree artifacts/wayland-stage
+  --add-tree artifacts/photocraft/gui-non-packaged --bootscript tools/pi-tests/photocraft-gui.sh`,
+  `scripts/netboot-cycle.sh --image artifacts/images/photocraft-gui.img --secs 600 --hdmi-every 5 --label
+  photocraft-gui-017 --until 'PCW end'`. (4) The package: as "Pi test of 0.15.1-2" above with
+  `photocraft-0.17.0-1-arm64.hpkg` on image-2026-10-28 (mesa -7 already in it; `pkgman install -y` the photocraft,
+  wayland, wayland_server, libxkbcommon, xkeyboard_config files); also Help › Check for Updates by hand: the
+  message, no download prompt.
+

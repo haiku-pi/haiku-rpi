@@ -15,7 +15,7 @@ or any image/* data the image crate decodes; files the Tracker's way (entry_refs
 with a copy mode "m<dev>_<node>") plus text/uri-list, read from either.
 
 The Linux extension traits (primary selection, wait) are not exported on Haiku. Photocraft phase P4.
-Applies with -p1 to arboard 3.6.1.
+Applies with -p1 to arboard 3.7.0 (rebased from 3.6.1 for Photocraft 0.17.0).
 
 --- a/build.rs
 +++ b/build.rs
@@ -61,7 +61,7 @@ Applies with -p1 to arboard 3.6.1.
 @@ -14,7 +14,7 @@
  rust-version = "1.71.0"
  name = "arboard"
- version = "3.6.1"
+ version = "3.7.0"
 -build = false
 +build = "build.rs"
  autolib = false
