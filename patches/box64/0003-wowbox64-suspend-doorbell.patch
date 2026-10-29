@@ -1,0 +1,575 @@
+wowbox64: Wine's cooperative suspend (the CHPE suspend doorbell), as FEX's WoW64 back end
+
+GetThreadContext() of a suspended thread that was running 32-bit x86 code returned the x86 state of the
+thread's last call into Wine (its program counter inside Wine's i386 DLLs): SIGUSR1 stopped the thread
+somewhere in translated code, and the WoW64 context in the CPU area was the one saved at that call.
+
+Each thread now has a CHPE_V2_CPU_AREA_INFO (the 64-bit TEB's ChpeV2CpuAreaInfo) whose InSimulation is set
+while x86 code runs (cleared around system calls, Unix calls and exceptions passed on to the program) and whose
+SuspendDoorbell is a new x64emu_t field. Wine's SIGUSR1 handler then rings the doorbell instead of suspending
+the thread where it is. The translated code checks it at every block entry, secondary entry and loop head
+(every cycle through translated code passes one; two instructions when not rung), the interpreter between
+instructions. When it is rung, wow64_suspend_point() gets the x86 state from x64emu_t (the dynarec writes its
+cached x87/MMX/SSE registers there first and passes the x86 address and the flags still in NZCV), writes it to
+the WoW64 context, leaves simulation and calls NtContinue(): ntdll takes the pending suspend there. The
+translated code then goes on unchanged, or, when the suspender changed the context (SetThreadContext), leaves
+the block for the new state. Only the WoW64 build (_WIN32) changes; BOX64_DYNAREC_PAUSE=3 (sevl + wfe) falls
+back to yield there, as jumps back to a sevl skip the first instruction of the loop head.
+
+--- a/src/dynarec/arm64/dynarec_arm64_00.c	2026-10-29 19:28:14.405459422 +0100
++++ b/src/dynarec/arm64/dynarec_arm64_00.c	2026-10-29 20:35:19.541269227 +0100
+@@ -1786,9 +1786,14 @@
+                         case 1: YIELD; break;
+                         case 2: WFI; break;
+                         case 3:
++                            #ifndef _WIN32
+                             dyn->insts[ninst].wfe = 1;
+                             SEVL;
+                             WFE;
++                            #else
++                            // jumps back to a SEVL skip its first instruction: a doorbell check there (WoW64)
++                            YIELD;
++                            #endif
+                             break;
+                     }
+                 } else {
+--- a/src/dynarec/arm64/dynarec_arm64_consts.c	2026-10-29 19:28:14.355188570 +0100
++++ b/src/dynarec/arm64/dynarec_arm64_consts.c	2026-10-29 20:35:19.542547554 +0100
+@@ -23,6 +23,7 @@
+ #include "x64test.h"
+ #include "dynarec/dynarec_next.h"
+ #include "random.h"
++#include "emit_signals.h"
+ 
+ static const int8_t mask_shift8[] = { -7, -6, -5, -4, -3, -2, -1, 0 };
+ static const int8_t mask_string8[] = { 7, 6, 5, 4, 3, 2, 1, 0 };
+@@ -140,6 +141,9 @@
+         case const_4f_1_m1_1_m1: return (uintptr_t)&subaddps;
+         case const_2d_m1_1: return (uintptr_t)&addsubpd;
+         case const_2d_1_m1: return (uintptr_t)&subaddpd;
++        #ifdef _WIN32
++        case const_wow64_suspend_point: return (uintptr_t)wow64_suspend_point;
++        #endif
+ 
+         case const_last: dynarec_log(LOG_NONE, "Warning, const last used\n");
+             return 0;
+--- a/src/dynarec/arm64/dynarec_arm64_consts.h	2026-10-29 19:28:14.345020677 +0100
++++ b/src/dynarec/arm64/dynarec_arm64_consts.h	2026-10-29 20:35:19.543889300 +0100
+@@ -103,6 +103,9 @@
+     const_2d_m1_1,
+     const_4f_1_m1_1_m1,
+     const_2d_1_m1,
++    #ifdef _WIN32
++    const_wow64_suspend_point,
++    #endif
+ 
+     const_last
+ } arm64_consts_t;
+--- a/src/dynarec/arm64/dynarec_arm64_helper.c	2026-10-29 19:28:14.384013004 +0100
++++ b/src/dynarec/arm64/dynarec_arm64_helper.c	2026-10-29 20:35:19.544844332 +0100
+@@ -22,6 +22,7 @@
+ #include "dynarec_arm64_private.h"
+ #include "dynarec_arm64_functions.h"
+ #include "../dynarec_helper.h"
++#include "emit_signals.h"
+ 
+ /* setup r2 to address pointed by ED, also fixaddress is an optionnal delta in the range [-absmax, +absmax], with delta&mask==0 to be added to ed for LDR/STR */
+ uintptr_t geted(dynarec_arm_t* dyn, uintptr_t addr, int ninst, uint8_t nextop, uint8_t* ed, uint8_t hint, int64_t* fixaddress, int* unscaled, int absmax, uint32_t mask, rex_t rex, int *l, int s, int delta)
+@@ -2911,6 +2912,118 @@
+     MESSAGE(LOG_INFO, "-------- doLeave\n");
+ }
+ 
++#ifdef _WIN32
++// Wine's cooperative suspend under WoW64 (wine/wow64/wowbox64.c): a SuspendThread() of a thread running x86 code
++// sets emu->suspend_doorbell, and the thread must stop where its x86 state is exact. Checked at each block entry,
++// secondary entry and loop head (every cycle through translated code passes one): a load and a branch not taken,
++// the rest out of line after the block's code. When set, the x86 state goes to x64emu_t (the registers, the
++// cached x87/MMX/SSE values; the x86 address and the flags still in NZCV as arguments) and wow64_suspend_point()
++// takes the suspend. The out-of-line path changes none of the state the compiler tracks: unless the context was
++// changed while suspended, it goes back with all as before; a changed context (SetThreadContext) is in x64emu_t
++// then, and the block is left for its new address.
++#define DOORBELL_SITES 64
++typedef struct doorbell_site_s {
++    int         ninst;
++    uintptr_t   ip;
++    flagcache_t f;
++    uint16_t    ymm_zero;
++    neoncache_t n;
++} doorbell_site_t;
++// the checks of the block being built (blocks are built one at a time); more than DOORBELL_SITES: inline
++static doorbell_site_t doorbell_sites[DOORBELL_SITES];
++static int doorbell_nsites;
++
++// the check's slow path for the state of ninst's start (dyn->n, dyn->f, dyn->ymm_zero), going on at back
++static void doorbell_slowpath(dynarec_arm_t* dyn, int ninst, uintptr_t ip, uintptr_t back)
++{
++    _Static_assert(NF_EQ == SUSPEND_NZCV_ZF && NF_SF == SUSPEND_NZCV_SF && NF_VF == SUSPEND_NZCV_OF
++        && NF_CF == SUSPEND_NZCV_CF && NF_PF_V == SUSPEND_NZCV_PF, "native flags as wow64_suspend_point reads them");
++    neoncache_t cache;
++    flagcache_t f = dyn->f;
++    uint8_t nat_flags_op = dyn->insts[ninst].nat_flags_op;
++    uint32_t natflags = dyn->insts[ninst].nat_flags_in | (dyn->insts[ninst].normal_carry_in ? SUSPEND_NZCV_CF_NORMAL : 0);
++    MESSAGE(LOG_DUMP, "\tSuspend doorbell (%d) ----\n", ninst);
++    fpu_save_and_unwind(dyn, ninst, &cache);
++    MRS_nzcv(x5);
++    fpu_reflectcache(dyn, ninst, x1, x2, x3);
++    MOV64x(x1, ip);
++    MOVx_REG(x2, x5);
++    MOV32w(x3, natflags);
++    call_c(dyn, ninst, const_wow64_suspend_point, x87pc, x4, 1, x5); // x5 (NZCV) kept on the stack
++    MSR_nzcv(x5);
++    CBNZw(x4, dyn->insts[ninst].doorbell_exit - dyn->native_size);
++    fpu_unreflectcache(dyn, ninst, x1, x2, x3);
++    B(back - dyn->native_size);
++    // the context was changed while suspended: it is all in x64emu_t, leave for its address
++    dyn->insts[ninst].doorbell_exit = dyn->native_size;
++    LDRx_U12(xRIP, xEmu, offsetof(x64emu_t, ip));
++    TABLE64C(x2, const_epilog);
++    if(dyn->have_purge)
++        doLeaveBlock(dyn, ninst, x4, x5, x6);
++    BR(x2);
++    // call_c marks the instruction as clobbering the native flags and sets a pending "df none": not on this path
++    dyn->f = f;
++    dyn->insts[ninst].nat_flags_op = nat_flags_op;
++    fpu_unwind_restore(dyn, ninst, &cache);
++    MESSAGE(LOG_DUMP, "\t---- Suspend doorbell\n");
++}
++
++void doorbell_begin(dynarec_arm_t* dyn)
++{
++    doorbell_nsites = 0;
++}
++
++void doorbell_check(dynarec_arm_t* dyn, int ninst, uintptr_t ip)
++{
++    _Static_assert(offsetof(x64emu_t, suspend_doorbell) < 4096 * 4, "suspend_doorbell out of LDRw_U12 range");
++    int site = 0;
++    while(site<doorbell_nsites && doorbell_sites[site].ninst!=ninst)
++        ++site;
++    if(site==doorbell_nsites && site<DOORBELL_SITES)
++        ++doorbell_nsites;
++    MESSAGE(LOG_DUMP, "\tSuspend doorbell check\n");
++    LDRw_U12(x1, xEmu, offsetof(x64emu_t, suspend_doorbell));
++    if(site<DOORBELL_SITES) {
++        CBNZw(x1, dyn->insts[ninst].doorbell_stub - dyn->native_size);
++        dyn->insts[ninst].doorbell_back = dyn->native_size;
++        doorbell_sites[site].ninst = ninst;
++        doorbell_sites[site].ip = ip;
++        doorbell_sites[site].f = dyn->f;
++        doorbell_sites[site].ymm_zero = dyn->ymm_zero;
++        doorbell_sites[site].n = dyn->n;
++    } else {
++        CBZw(x1, dyn->insts[ninst].doorbell_back - dyn->native_size);
++        doorbell_slowpath(dyn, ninst, ip, dyn->insts[ninst].doorbell_back);
++        dyn->insts[ninst].doorbell_back = dyn->native_size;
++    }
++}
++
++// after the block's code (accounted as its end, ninst): the slow paths of the checks
++void doorbell_end(dynarec_arm_t* dyn, int ninst)
++{
++    for(int i=0; i<doorbell_nsites; ++i) {
++        doorbell_site_t* site = &doorbell_sites[i];
++        instruction_native_t* inst = &dyn->insts[site->ninst];
++        neoncache_t n = dyn->n;
++        flagcache_t f = dyn->f;
++        uint16_t ymm_zero = dyn->ymm_zero;
++        int size = inst->size, size2 = inst->size2;
++        dyn->n = site->n;
++        dyn->f = site->f;
++        dyn->ymm_zero = site->ymm_zero;
++        inst->doorbell_stub = dyn->native_size;
++        doorbell_slowpath(dyn, site->ninst, site->ip, inst->doorbell_back);
++        dyn->insts[ninst].size += inst->size - size;
++        dyn->insts[ninst].size2 += inst->size2 - size2;
++        inst->size = size;
++        inst->size2 = size2;
++        dyn->n = n;
++        dyn->f = f;
++        dyn->ymm_zero = ymm_zero;
++    }
++}
++#endif
++
+ void emit_fcomi(dynarec_arm_t* dyn, int ninst, int s1, int s2, int isfloat, int d1, int d2)
+ {
+     IFX(X_OF|X_AF|X_SF) {
+--- a/src/dynarec/arm64/dynarec_arm64_helper.h	2026-10-29 19:28:14.374949698 +0100
++++ b/src/dynarec/arm64/dynarec_arm64_helper.h	2026-10-29 20:35:19.546123961 +0100
+@@ -1326,6 +1326,11 @@
+ #define doEnterBlock      STEPNAME(doEnterBlock)
+ #define doLeaveBlock      STEPNAME(doLeaveBlock)
+ #define checkCRC          STEPNAME(checkCRC)
++#ifdef _WIN32
++#define doorbell_begin    STEPNAME(doorbell_begin)
++#define doorbell_check    STEPNAME(doorbell_check)
++#define doorbell_end      STEPNAME(doorbell_end)
++#endif
+ 
+ #define fpu_pushcache   STEPNAME(fpu_pushcache)
+ #define fpu_popcache    STEPNAME(fpu_popcache)
+@@ -1605,6 +1610,13 @@
+ void doLeaveBlock(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3);
+ // in case of allways_test, this insert a check of crc of the dynablock (and exit to ArmNext if wrong)
+ void checkCRC(dynarec_arm_t* dyn, int ninst);
++#ifdef _WIN32
++// WoW64's suspend doorbell: begin a block, check at the start of ninst (x86 address ip: a block entry, secondary
++// entry or loop head), and the checks' slow paths after the block's code (ninst: its end)
++void doorbell_begin(dynarec_arm_t* dyn);
++void doorbell_check(dynarec_arm_t* dyn, int ninst, uintptr_t ip);
++void doorbell_end(dynarec_arm_t* dyn, int ninst);
++#endif
+ 
+ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst, rex_t rex, int* ok, int* need_epilog);
+ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int ninst, rex_t rex, int* ok, int* need_epilog);
+--- a/src/dynarec/arm64/dynarec_arm64_private.h	2026-10-29 19:28:14.365732763 +0100
++++ b/src/dynarec/arm64/dynarec_arm64_private.h	2026-10-29 20:35:19.540009525 +0100
+@@ -155,6 +155,11 @@
+     int                 cacheupd;
+     uint32_t            preload_xmmymm;
+     int                 preload_from;
++    #ifdef _WIN32
++    uintptr_t           doorbell_stub;  // the suspend doorbell check's slow path (doorbell_check)
++    uintptr_t           doorbell_back;  // where it goes back to
++    uintptr_t           doorbell_exit;  // its exit to the epilog
++    #endif
+ } instruction_arm64_t;
+ 
+ typedef struct dynarec_arm_s {
+--- a/src/dynarec/dynarec_native_pass.c	2026-10-29 19:28:14.395805468 +0100
++++ b/src/dynarec/dynarec_native_pass.c	2026-10-29 20:35:19.538695060 +0100
+@@ -131,6 +131,9 @@
+     int stopblock = 2 + !dyn->is_file_mapped;                          // if block is in elf memory or file mapped memory, it can be extended with BOX64DRENV(dynarec_bigblock)==2, else it needs 3
+     // ok, go now
+     INIT;
++    #if defined(ARM64) && defined(_WIN32) && STEP > 0
++    doorbell_begin(dyn);
++    #endif
+     #if STEP == 0
+     uintptr_t cur_page = (addr)&~(box64_pagesize-1);
+     #endif
+@@ -239,6 +242,17 @@
+         if (BOX64DRENV(dynarec_dump) && (!BOX64ENV(dynarec_dump_range_end) || (ip >= BOX64ENV(dynarec_dump_range_start) && ip < BOX64ENV(dynarec_dump_range_end)))) {
+             dyn->need_dump = BOX64DRENV(dynarec_dump) == 3 && STEP != 3 ? 0 : BOX64DRENV(dynarec_dump);
+         }
++        #if defined(ARM64) && defined(_WIN32) && STEP > 0
++        {
++            // WoW64's suspend doorbell (doorbell_check) at the block entry, the secondary entries and the loop
++            // heads (the predecessors are known from pass 1 on)
++            int check = !ninst || dyn->insts[ninst].sep;
++            for(int i=0; i<dyn->insts[ninst].pred_sz && !check; ++i)
++                check = dyn->insts[ninst].pred[i]>=ninst;
++            if(check)
++                doorbell_check(dyn, ninst, ip);
++        }
++        #endif
+         if(BOX64ENV(dynarec_test) && (!BOX64ENV(dynarec_test_end) || (ip>=BOX64ENV(dynarec_test_start) && ip<BOX64ENV(dynarec_test_end)))) {
+             int need_dump = dyn->need_dump;
+             if (BOX64ENV(dynarec_test_nodump)) dyn->need_dump = 0;
+@@ -539,6 +553,9 @@
+         #endif
+         jump_to_epilog(dyn, ip, 0, ninst);  // no linker here, it's an unknown instruction
+     }
++    #if defined(ARM64) && defined(_WIN32) && STEP > 0
++    doorbell_end(dyn, ninst);
++    #endif
+     FINI;
+     MESSAGE(LOG_DUMP, "---- END OF BLOCK ---- (%d)\n", dyn->size);
+     return addr;
+--- a/src/emu/x64emu_private.h	2026-10-29 19:28:14.323579534 +0100
++++ b/src/emu/x64emu_private.h	2026-10-29 20:35:19.535867687 +0100
+@@ -129,6 +129,7 @@
+ 
+     #ifdef _WIN32
+     uint64_t    win64_teb;
++    volatile uint32_t suspend_doorbell; // non-zero: Wine wants this thread suspended (wowbox64.c, wow64_suspend_point)
+     #endif
+     // local selector handling
+     base_segment_t  segldt[16];
+--- a/src/emu/x64run.c	2026-10-29 19:28:14.416278390 +0100
++++ b/src/emu/x64run.c	2026-10-29 20:35:19.537268725 +0100
+@@ -75,6 +75,14 @@
+     while(1) 
+ #endif
+     {
++#if defined(_WIN32) && !defined(TEST_INTERPRETER)
++        if(emu->suspend_doorbell) {
++            // WoW64's cooperative suspend (wowbox64.c): the x86 state is exact between two instructions
++            R_RIP = addr;
++            wow64_suspend_point(emu, addr, 0, 0);
++            addr = R_RIP;
++        }
++#endif
+ #if defined(HAVE_TRACE)
+         __builtin_prefetch((void*)addr, 0, 0); 
+         emu->prev2_ip = emu->old_ip;
+--- a/src/include/emit_signals.h	2026-10-29 19:28:14.335258295 +0100
++++ b/src/include/emit_signals.h	2026-10-29 20:35:19.534401358 +0100
+@@ -11,4 +11,18 @@
+ void EmitDiv0(x64emu_t* emu, void* addr, int code);
+ void CheckExec(x64emu_t* emu, uintptr_t addr);
+ 
++#ifdef _WIN32
++// Wine's cooperative suspend under WoW64 (wine/wow64/wowbox64.c): called where the x86 state is exact (a block
++// entry or loop head of translated code, an instruction of the interpreter) when emu->suspend_doorbell is set.
++// ip is the x86 address, nzcv the host flags and natflags (SUSPEND_NZCV_*) the x86 flags still in them.
++// Returns non-zero when the context was changed while suspended: emu then holds it, R_RIP included.
++#define SUSPEND_NZCV_ZF         (1 << 0)    // ZF is Z (the dynarec's NF_EQ)
++#define SUSPEND_NZCV_SF         (1 << 1)    // SF is N (NF_SF)
++#define SUSPEND_NZCV_OF         (1 << 2)    // OF is V (NF_VF)
++#define SUSPEND_NZCV_CF         (1 << 3)    // CF is C, or !C (NF_CF)
++#define SUSPEND_NZCV_PF         (1 << 4)    // PF is V (NF_PF_V)
++#define SUSPEND_NZCV_CF_NORMAL  (1 << 7)    // CF is C, not inverted
++int wow64_suspend_point(x64emu_t* emu, uintptr_t ip, uint64_t nzcv, uint32_t natflags);
++#endif
++
+ #endif // __EMIT_SIGNALS_H_
+\ No newline at end of file
+--- a/wine/wow64/wowbox64.c	2026-10-29 19:28:14.426235393 +0100
++++ b/wine/wow64/wowbox64.c	2026-10-29 20:35:19.532345413 +0100
+@@ -16,6 +16,8 @@
+ #include "env.h"
+ #include "emu/x64emu_private.h"
+ #include "emu/x87emu_private.h"
++#include "emu/x64run_private.h"
++#include "emit_signals.h"
+ #include "x64trace.h"
+ #include "box64context.h"
+ #include "box64cpu.h"
+@@ -73,6 +75,56 @@
+ #define WOW64_TLS_ENTRY_CONTEXT (WOW64_TLS_MAX_NUMBER - 1)
+ #define WOW64_TLS_EMU           (WOW64_TLS_MAX_NUMBER - 2)
+ 
++/* Wine's cooperative suspend, as with FEX's WoW64 back end. While x86 code runs (InSimulation), Wine does not
++ * suspend the thread where its SIGUSR1 finds it (somewhere in translated code: the WoW64 context in the CPU area
++ * would be the one of the thread's last system call), but sets *SuspendDoorbell. The translated code checks it
++ * at every block entry and loop head (doorbell_check in the dynarec), the interpreter between instructions, and
++ * wow64_suspend_point() writes the exact x86 state to the WoW64 context, leaves simulation and calls NtContinue():
++ * ntdll takes the pending suspend there, with that context. The CPU area, Wine's CHPE_V2_CPU_AREA_INFO
++ * (winternl.h; not in mingw's headers), is the 64-bit TEB's ChpeV2CpuAreaInfo, which Wine frees with the TEB. */
++typedef struct {
++    BOOLEAN InSimulation;
++    BOOLEAN InSyscallCallback;
++    ULONG64 EmulatorStackBase;
++    ULONG64 EmulatorStackLimit;
++    void* ContextAmd64;
++    volatile ULONG* SuspendDoorbell;
++    ULONG64 LoadingModuleModflag;
++    void* EmulatorData[4];
++    ULONG64 EmulatorDataInline;
++} chpe_v2_cpu_area_info_t;
++#define TEB64_CHPE_V2_CPU_AREA_INFO 0x1788
++
++static chpe_v2_cpu_area_info_t** cpu_area_info(void)
++{
++    return (chpe_v2_cpu_area_info_t**)((char*)NtCurrentTeb() + TEB64_CHPE_V2_CPU_AREA_INFO);
++}
++
++static void enter_simulation(void)
++{
++    chpe_v2_cpu_area_info_t* area = *cpu_area_info();
++    if (area)
++        area->InSimulation = 1;
++}
++
++/* x86 code stops running: a suspend requested meanwhile is taken now, with the WoW64 context as it is */
++static void leave_simulation(void)
++{
++    chpe_v2_cpu_area_info_t* area = *cpu_area_info();
++    if (!area)
++        return;
++    area->InSimulation = 0;
++    if (*area->SuspendDoorbell) {
++        CONTEXT resume;
++        volatile int once = 0;  // on the stack: NtContinue() restores the registers, not the memory
++        RtlCaptureContext(&resume);
++        // ntdll clears the doorbell, waits while suspended, resumes here (once: a doorbell no suspend goes with
++        // would make NtContinue() return here for ever)
++        if (*area->SuspendDoorbell && !once++)
++            NtContinue(&resume, FALSE);
++    }
++}
++
+ int is_addr_unaligned(uintptr_t addr)
+ {
+     // FIXME
+@@ -152,6 +204,89 @@
+     memcpy(fpu->XmmRegisters, emu->xmm, sizeof(emu->xmm));
+ }
+ 
++static void context_to_emu(WOW64_CONTEXT* ctx, x64emu_t* emu)
++{
++    R_EAX = ctx->Eax;
++    R_EBX = ctx->Ebx;
++    R_ECX = ctx->Ecx;
++    R_EDX = ctx->Edx;
++    R_ESI = ctx->Esi;
++    R_EDI = ctx->Edi;
++    R_EBP = ctx->Ebp;
++    R_RIP = ctx->Eip;
++    R_ESP = ctx->Esp;
++    R_CS = ctx->SegCs & 0xffff;
++    R_DS = ctx->SegDs & 0xffff;
++    R_ES = ctx->SegEs & 0xffff;
++    R_FS = ctx->SegFs & 0xffff;
++    R_GS = ctx->SegGs & 0xffff;
++    R_SS = ctx->SegSs & 0xffff;
++    emu->eflags.x64 = ctx->EFlags;
++    emu->segs_offs[_FS] = calculate_fs();
++
++    fpu_to_box(ctx, emu);
++}
++
++static void emu_to_context(x64emu_t* emu, WOW64_CONTEXT* ctx)
++{
++    ctx->Eax = R_EAX;
++    ctx->Ebx = R_EBX;
++    ctx->Ecx = R_ECX;
++    ctx->Edx = R_EDX;
++    ctx->Esi = R_ESI;
++    ctx->Edi = R_EDI;
++    ctx->Ebp = R_EBP;
++    ctx->Eip = R_EIP;
++    ctx->Esp = R_ESP;
++    ctx->SegCs = R_CS;
++    ctx->SegDs = R_DS;
++    ctx->SegEs = R_ES;
++    ctx->SegFs = R_FS;
++    ctx->SegGs = R_GS;
++    ctx->SegSs = R_SS;
++    ctx->EFlags = emu->eflags.x64;
++
++    box_to_fpu(ctx, emu);
++}
++
++/* the x86 flags the translated code keeps in the host's NZCV at a suspend point (natflags: SUSPEND_NZCV_*) */
++static void nzcv_to_flags(x64emu_t* emu, uint64_t nzcv, uint32_t natflags)
++{
++    int c = !!(nzcv & (1u << 29));
++
++    if (natflags & SUSPEND_NZCV_ZF) CONDITIONAL_SET_FLAG(nzcv & (1u << 30), F_ZF);
++    if (natflags & SUSPEND_NZCV_SF) CONDITIONAL_SET_FLAG(nzcv & (1u << 31), F_SF);
++    if (natflags & SUSPEND_NZCV_OF) CONDITIONAL_SET_FLAG(nzcv & (1u << 28), F_OF);
++    if (natflags & SUSPEND_NZCV_PF) CONDITIONAL_SET_FLAG(nzcv & (1u << 28), F_PF);
++    if (natflags & SUSPEND_NZCV_CF) CONDITIONAL_SET_FLAG((natflags & SUSPEND_NZCV_CF_NORMAL) ? c : !c, F_CF);
++}
++
++int wow64_suspend_point(x64emu_t* emu, uintptr_t ip, uint64_t nzcv, uint32_t natflags)
++{
++    WOW64_CPURESERVED* cpu = NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED];
++    WOW64_CONTEXT* ctx = (WOW64_CONTEXT*)(cpu + 1);
++    WOW64_CONTEXT written;
++    // translated code goes on with emu as it is (deferred flags included): the flags are worked out on a copy
++    x64emu_t state = *emu;
++
++    state.ip.q[0] = ip;
++    CHECK_FLAGS((&state));
++    nzcv_to_flags(&state, nzcv, natflags);
++    emu_to_context(&state, ctx);
++    written = *ctx;
++
++    leave_simulation();
++    enter_simulation();
++
++    // the suspender may have changed the context (SetThreadContext): then go on from there
++    if (!memcmp(&written.Dr0, &ctx->Dr0, sizeof(written) - offsetof(WOW64_CONTEXT, Dr0)))
++        return 0;
++    printf_log(LOG_DEBUG, "context changed while suspended at %p, going on at %p\n", (void*)ip, ULongToPtr(ctx->Eip));
++    RESET_FLAGS(emu);   // the flags are the context's now (emu is not copied back from state: not its doorbell)
++    context_to_emu(ctx, emu);
++    return 1;
++}
++
+ static NTSTATUS invalidate_mapped_section(PVOID addr)
+ {
+     MEMORY_BASIC_INFORMATION mem_info;
+@@ -342,8 +477,10 @@
+                 (unsigned long long)(i + 2 < 31 ? ctx->X[i + 2] : 0), (unsigned long long)(i + 3 < 31 ? ctx->X[i + 3] : 0));
+     }
+ 
+-    if (!box64_is_addr_in_jit(ULongToPtr(ctx->Pc)))
++    if (!box64_is_addr_in_jit(ULongToPtr(ctx->Pc))) {
++        leave_simulation();
+         return STATUS_SUCCESS;
++    }
+ 
+     // the x86 state at the fault, for the exception the program gets: the address of the x86 instruction
+     // the faulting host code was translated from, and the registers the dynarec keeps in host registers
+@@ -370,6 +507,7 @@
+ 
+     /* Replace the host context with one captured before JIT entry so host code can unwind */
+     memcpy(ctx, NtCurrentTeb()->TlsSlots[WOW64_TLS_ENTRY_CONTEXT], sizeof(*ctx));
++    leave_simulation();
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -390,26 +528,9 @@
+     RtlCaptureContext(&entry_context);
+     NtCurrentTeb()->TlsSlots[WOW64_TLS_ENTRY_CONTEXT] = &entry_context;
+ 
+-    R_EAX = ctx->Eax;
+-    R_EBX = ctx->Ebx;
+-    R_ECX = ctx->Ecx;
+-    R_EDX = ctx->Edx;
+-    R_ESI = ctx->Esi;
+-    R_EDI = ctx->Edi;
+-    R_EBP = ctx->Ebp;
+-    R_RIP = ctx->Eip;
+-    R_ESP = ctx->Esp;
+-    R_CS = ctx->SegCs & 0xffff;
+-    R_DS = ctx->SegDs & 0xffff;
+-    R_ES = ctx->SegEs & 0xffff;
+-    R_FS = ctx->SegFs & 0xffff;
+-    R_GS = ctx->SegGs & 0xffff;
+-    R_SS = ctx->SegSs & 0xffff;
+-    emu->eflags.x64 = ctx->EFlags;
+-    emu->segs_offs[_FS] = calculate_fs();
++    context_to_emu(ctx, emu);
+     emu->win64_teb = (uint64_t)NtCurrentTeb();
+-
+-    fpu_to_box(ctx, emu);
++    enter_simulation();
+ 
+     if (box64env.dynarec)
+         DynaRun(emu);
+@@ -434,6 +555,14 @@
+ 
+     reset_fpu(emu);
+ 
++    // the CPU area of the cooperative suspend, with emu's doorbell (Wine frees it with the TEB)
++    chpe_v2_cpu_area_info_t* area = NULL;
++    SIZE_T size = sizeof(*area);
++    if (!NtAllocateVirtualMemory(NtCurrentProcess(), (void**)&area, 0, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)) {
++        area->SuspendDoorbell = (volatile ULONG*)&emu->suspend_doorbell;
++        *cpu_area_info() = area;
++    }
++
+     NtCurrentTeb()->TlsSlots[WOW64_TLS_EMU] = emu;
+     return STATUS_SUCCESS;
+ }
+@@ -454,6 +583,9 @@
+         R_RIP = Pop32(emu);
+         ctx->Eip = R_RIP;
+         ctx->Esp = R_ESP;
++        ctx->Eax = R_EAX;
++        ctx->Ecx = R_ECX;
++        ctx->Edx = R_EDX;
+         ctx->Ebx = R_EBX;
+         ctx->Esi = R_ESI;
+         ctx->Edi = R_EDI;
+@@ -462,6 +594,7 @@
+         cpu->Flags = 0;
+ 
+         box_to_fpu(ctx, emu);
++        leave_simulation();
+ 
+         if (is_unix_call) {
+             uintptr_t handle_low = Pop32(emu);
+@@ -475,6 +608,7 @@
+             R_EAX = Wow64SystemServiceEx(id, ULongToPtr(ctx->Esp + 4));
+         }
+ 
++        enter_simulation();
+         fpu_to_box(ctx, emu);
+ 
+         R_EBX = ctx->Ebx;

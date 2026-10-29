@@ -7,7 +7,8 @@
 #
 # Source: the newest release's tag archive (v0.4.4, pinned SHA-256; owner 2026-10-21: the newest numbered
 # release) into sources/box64/, patches/box64/*.patch on a copy (sources/box64/box64-haiku): the TEB as FS's
-# base, and exceptions that carry the x86 state (with a host-side fault log).
+# base, exceptions that carry the x86 state (with a host-side fault log), and Wine's cooperative suspend
+# (the suspend doorbell: GetThreadContext of a suspended thread gets its x86 state, KNOWN-ISSUES W9).
 # Box64's CMake project generates wowbox64's source lists, so it is configured for an aarch64 target
 # (the host's aarch64-linux-gnu-gcc, only for that) and only the wowbox64 target is built.
 # Output: artifacts/box64/wowbox64.dll; scripts/build-wine.sh install copies it next to Wine's DLLs. The
