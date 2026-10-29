@@ -17,7 +17,8 @@ for f in /boot/system/non-packaged/apps/TestApps/*; do
 done
 # the packaged applications, where they are
 for app in /boot/system/apps/PhotoCraft/PhotoCraft /boot/system/apps/Firefox/Firefox \
-		/boot/system/apps/WebPositive /boot/system/apps/OpenArena /boot/system/apps/SuperTuxKart \
+		/boot/system/apps/WebPositive /boot/system/apps/OpenArena/OpenArena \
+		/boot/system/apps/SuperTuxKart/SuperTuxKart \
 		/boot/system/demos/GLTeapot /boot/system/apps/MediaPlayer; do
 	[ -e "$app" ] && ln -sf "$app" "$desk/$(basename "$app")"
 done
