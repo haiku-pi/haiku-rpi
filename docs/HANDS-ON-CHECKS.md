@@ -9,7 +9,7 @@ everything of `image-2026-10-23d` plus a 3 s faster boot, faster memory/string f
 and file reads, two kernel panics fixed (C5, C8), and the onboard USB hub no longer dropping out in ~1 boot in 10
 (C9) — relevant for the keyboard and mouse checks below. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
 Ethernet cable; power on. The desktop comes up in about 70 s, most of it the bench Pi's firmware trying the
-network first. Wine: `pkgman install wine wine_x86 wine_x86_64 wine_mono` (wine 11.20-19, Wine Mono: .NET
+network first. Wine: `pkgman install wine wine_x86 wine_x86_64 wine_mono` (wine 11.20-22, Wine Mono: .NET
 programs run, no Mono question).
 
 **When something is wrong**, the most useful things to send back are:
