@@ -2,8 +2,11 @@
 # wine-hang-hunt.sh [--image IMG] [--sessions N] — catch KNOWN-ISSUES W8 (Wine processes that never end) on the
 # bench Pi and record what they wait on: up to N (default 12) network sessions of IMG (default the mega image), each
 # making one fresh Wine prefix (tools/pi-tests/wineboot-loop.sh, WBL_KEEP=1). On a hang the session stays up and the
-# kernel debugger is entered over the serial line: "threads <team>" for each Wine team, then "sc <thread>" for each
-# of their threads, then "continue". The serial log of that session holds the dump (its name is printed).
+# Debugger's command line stops the wineserver (on 10-29 it was the one running: a loop in user space; a debugger
+# attach ends the hang, so this comes first), prints its stack and writes a core file; then the kernel debugger is
+# entered over the serial line: "threads <team>" for each Wine team, "sc <thread>" for each of their threads,
+# "continue". The serial log of that session
+# holds the kernel's dump; artifacts/wine-hang/<ts>/ the wineserver's stack, core and the session's ps output.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 img="$root/artifacts/images/haiku-pi4-mega.img" sessions=12
@@ -26,8 +29,16 @@ for s in $(seq 1 "$sessions"); do
 		continue
 	fi
 	teams=$(echo "$r" | sed -n 's/^WBL teams: //p')
+	out="$root/artifacts/wine-hang/$(date +%Y%m%d-%H%M%S)"
+	mkdir -p "$out"
+	"$ssh" 'ps -a > /boot/home/hang-ps.txt; ws=$(ps | grep "lib/wine/../../bin/wineserver" | grep -v grep \
+		| awk "{ print \$(NF - 3) }" | head -n 1); echo "wineserver team $ws"; \
+		printf "thread $ws\nstop\nbt\nwrite-core /boot/home/wineserver.core\nquit\n" > /tmp/hang-cli; \
+		(cat /tmp/hang-cli; sleep 20) | timeout 60 Debugger --cli --team $ws > /boot/home/hang-bt.txt 2>&1; \
+		cat /boot/home/hang-bt.txt' | tee "$out/wineserver-bt.txt"
+	"$ssh" get /boot/home/hang-ps.txt /boot/home/wineserver.core "$out/" > /dev/null 2>&1 || true
 	ulog=$(ls -t "$root"/artifacts/uart/*-winehunt.log | head -n 1)
-	echo "hang: teams $teams; serial log $ulog"
+	echo "hang: teams $teams; serial log $ulog (kernel debugger dump)"
 	args=('0:\x1d\x1d\x1dd')
 	t=6
 	for team in $teams; do args+=("$t:threads $team\r"); t=$((t + 3)); done
@@ -42,7 +53,7 @@ for s in $(seq 1 "$sessions"); do
 	args+=("$t:continue\r")
 	"$root/scripts/uart-send.sh" "${args[@]}"
 	sleep $((t + 5))
-	echo "dump in $ulog (session left running: scripts/pi-session.sh stop)"
+	echo "dump in $ulog and $out (session left running: scripts/pi-session.sh stop)"
 	exit 0
 done
 echo "no hang in $sessions sessions"
