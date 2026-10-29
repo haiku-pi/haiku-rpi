@@ -753,7 +753,7 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (2026-10-29, wine 11.20-22):
+**Known limits** (2026-10-29, wine 11.20-23):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
   Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
   second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike; 2D games (Heroes III, StarCraft, SimCity 3000)
@@ -776,8 +776,8 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
 - **Wine's background processes end with the program** (from wine 11.20-21): before, `services.exe`,
   `winedevice.exe` and `explorer.exe` sometimes stayed (about one first start in fifteen), and `wineserver -w` or
   a new prefix's first start waited for minutes. From 11.20-22 Wine can also suspend, inspect and terminate a
-  busy thread and cancel its I/O (needed by .NET's garbage collector, debuggers, CancelIo); for 32-bit x86
-  programs Box64 still reports a running thread's registers as of its last call into Wine (docs/KNOWN-ISSUES.md W9).
+  busy thread and cancel its I/O (needed by .NET's garbage collector, debuggers, CancelIo); from 11.20-23
+  also with the right registers for 32-bit x86 programs (Box64 stops a suspended thread at a consistent point).
 - **Before updating or removing Wine, quit every Windows program** (and `wineserver -k`): a Wine process
   left running from the old package keeps the new one from starting programs (kill it, or restart Haiku).
 
