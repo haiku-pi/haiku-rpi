@@ -23,7 +23,27 @@ trap '"$root/scripts/pi-session.sh" stop > /dev/null 2>&1 || true' EXIT
 "$ssh" put "$root/tools/mega/first-boot.sh" "$root/tools/mega/smoke-pi.sh" /boot/home/
 # first-boot.sh waits 15 s for the desktop, then sets up the folder and Wine (~2 min)
 "$ssh" 'sh /boot/home/first-boot.sh; tail -n 5 /boot/home/mega-logs/first-boot.log' | tee "$out/first-boot.txt"
-"$ssh" "sh /boot/home/smoke-pi.sh $secs" | tee "$out/smoke.txt"
+# detached on the Pi (an ssh connection may drop while a game runs), its lines polled into smoke.txt
+"$ssh" "rm -rf /boot/home/smoke; mkdir -p /boot/home/smoke; nohup sh /boot/home/smoke-pi.sh $secs \
+	> /boot/home/smoke-out.txt 2>&1 < /dev/null &"
+lines=0 drops=0
+while :; do
+	sleep 20
+	if ! "$ssh" cat /boot/home/smoke-out.txt > "$out/smoke.txt.new" 2> /dev/null; then
+		drops=$((drops + 1))
+		echo "mega-smoke: no ssh answer ($drops)" >&2
+		[ $drops -lt 30 ] && continue
+		echo "mega-smoke: the Pi stopped answering" >&2; exit 1
+	fi
+	mv "$out/smoke.txt.new" "$out/smoke.txt"
+	n=$(grep -c '^SMOKE ' "$out/smoke.txt" || true)
+	if [ "$n" -gt "$lines" ]; then
+		grep '^SMOKE ' "$out/smoke.txt" | tail -n +$((lines + 1))
+		lines=$n
+	fi
+	grep -q '^SMOKE end' "$out/smoke.txt" && break
+done
+[ $drops -gt 0 ] && echo "mega-smoke: ssh did not answer $drops times" | tee -a "$out/smoke.txt"
 "$ssh" get /boot/home/smoke /boot/home/mega-logs "$out/" > /dev/null
 python3 - "$out" <<'EOF'
 import sys, os
