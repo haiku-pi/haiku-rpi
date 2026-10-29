@@ -1,0 +1,79 @@
+server: cancel_process_async() holds the async while it cancels it
+
+cancel_process_async() (NtCancelIoFile, NtCancelIoFileEx) cancelled an async
+and then used it -- attached the cancel object, moved it to the tracked list
+-- without a reference of its own. When no APC can be queued to the async's
+thread, async_terminate() completes the async at once: async_set_result()
+drops the queue's reference, often the last one (an overlapped read keeps no
+wait handle), and the async is destroyed inside cancel_async(). The freed
+async was then written to and linked back into process->asyncs; when its
+memory came back as a new async, the list turned into a cycle, and the next
+walk of it (cancel_terminating_thread_asyncs() at a thread's exit) spun for
+ever: the wineserver at 100 % CPU, every client waiting for its reply. The
+cancel object was also attached only after the completion that should have
+released it, so NtCancelIoFile's wait for it never ended.
+
+On Haiku the APC cannot be queued whenever the thread is not waiting: the
+server cannot signal a thread there (ntdll has no Unix thread ID, unix_tid is
+-1, so send_thread_signal() always fails). CancelIo() by the reading thread
+hits it every time; services.exe and rpcrt4's CancelIoEx from another thread
+when the reader is not yet waiting -- about one fresh prefix in 15 (wineboot -i)
+left the wineserver spinning.
+
+Found from a core of the spinning wineserver (process->asyncs a cycle of two
+freed asyncs), then with AddressSanitizer on an x86-64 Linux wineserver whose
+send_thread_signal() fails as on Haiku: tools/wine-tests/cancelio.c gives a
+heap-use-after-free in cancel_process_async() at once (freed by
+async_terminate() <- fd_cancel_async() <- cancel_async()).
+
+The async is now held across the cancel and gets its cancel object before
+it, and the function keeps a count of its own on the cancel object, so a
+completion during the loop neither signals nor frees it under us.
+
+--- a/server/async.c
++++ b/server/async.c
+@@ -667,6 +667,9 @@
+     int count = 0;
+ 
+     if (thread && !(cancel = create_async_cancel( process ))) return 0;
++    /* a count of our own: the cancel object is not signaled and released while we use it, even when the
++     * asyncs complete during their cancel_async() */
++    if (cancel) cancel->count++;
+ 
+     list_init( &tracked );
+ 
+@@ -682,15 +685,21 @@
+             (!thread || async->thread == thread) &&
+             (!iosb || async->data.iosb == iosb))
+         {
+-            if (!async->canceled) cancel_async( async );
++            /* cancel_async() may complete the async at once: when no APC can be queued to its thread,
++             * async_set_result() runs from async_terminate() and drops the queue's reference, which may be
++             * the last one. So hold a reference until the async is on the tracked list, and attach the
++             * cancel object first, for that completion to account for it. */
++            grab_object( async );
+             if (cancel)
+             {
+                 assert( !async->async_cancel );
+                 async->async_cancel = cancel;
+                 cancel->count++;
+             }
++            if (!async->canceled) cancel_async( async );
+             list_remove( &async->process_entry );
+             list_add_tail( &tracked, &async->process_entry );
++            release_object( async );
+             count++;
+             goto restart;
+         }
+@@ -703,8 +712,9 @@
+     }
+     if (cancel)
+     {
+-        if (!cancel->count) release_object( cancel );
+-        else *wait_handle = alloc_handle( process, cancel, SYNCHRONIZE, 0 );
++        /* asyncs still to complete: the caller waits for them */
++        if (cancel->count > 1) *wait_handle = alloc_handle( process, cancel, SYNCHRONIZE, 0 );
++        if (!--cancel->count) release_object( cancel );
+     }
+     return count;
+ }

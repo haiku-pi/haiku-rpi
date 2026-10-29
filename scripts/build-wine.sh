@@ -39,7 +39,7 @@
 #              <out>/install/boot/system/non-packaged:
 #              the same files (hard links; Wine finds bin/, lib/wine and data/wine relative to ntdll.so, so
 #              the packaged layout also runs from non-packaged/) plus the test programs of tools/wine-tests
-#              (hello.c, ddtest.c, tone.c, gltest.c, d3dtest.c, serverbench.c, flushwb.c, crash.c for arm64, x86 and x64; click.c, input.c,
+#              (hello.c, ddtest.c, tone.c, gltest.c, d3dtest.c, serverbench.c, flushwb.c, cancelio.c, crash.c for arm64, x86 and x64; click.c, input.c,
 #              winlist.c, gettext.c, threadpcs.c, cpubench.c) in data/wine-tests
 #              (~690 MB; a prefix takes ~1 GB more: images need -sHAIKU_IMAGE_SIZE=3500)
 #   package    from the staged tree, zstd-compressed, into <out> (and, for the default version, artifacts/packages
@@ -82,7 +82,7 @@ tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
 # the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=20
+wineRevision=21
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
@@ -242,6 +242,8 @@ step_install() {
 			"$root/tools/wine-tests/serverbench.c"
 		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/flushwb-${a#*:}.exe" \
 			"$root/tools/wine-tests/flushwb.c"
+		"$mingw/${a%%:*}-w64-mingw32-clang" -O2 -o "$prefix/data/wine-tests/cancelio-${a#*:}.exe" \
+			"$root/tools/wine-tests/cancelio.c"
 		# with DWARF: its crash report symbolizes on the build host (llvm-symbolizer --obj=...)
 		"$mingw/${a%%:*}-w64-mingw32-clang" -O1 -g -o "$prefix/data/wine-tests/crash-${a#*:}.exe" \
 			"$root/tools/wine-tests/crash.c"
