@@ -10,7 +10,7 @@
  * "pair (dmb ishst; yield)": the same with the poll loop of arm64 Windows' YieldProcessor() (MSVC and
  * llvm-mingw emit "dmb ishst; yield"), as flushwb-arm64.exe runs it.
  * "busy N": N threads (N = 1..4) each count to WORK; on 4 CPUs the wall time stays that of one thread up
- * to N = 4.
+ * to N = 4. "pair after busy 4": the pair again right after the busy threads have exited.
  *
  * Prints "SPREAD pair: <us> us/round (<n> rounds in <s> s)" and "SPREAD busy <N>: <s> s wall, <x> x one".
  *
@@ -77,31 +77,38 @@ count(void* arg)
 }
 
 
+static void
+pair(int dmb, const char* label)
+{
+	pthread_t a, b, t;
+	volatile int finished = 0;
+	sDmb = dmb;
+	sArrive = 0;
+	sTimeUp = 0;
+	bigtime_t start = system_time();
+	pthread_create(&t, NULL, timer, (void*)&finished);
+	pthread_create(&a, NULL, side, (void*)0);
+	pthread_create(&b, NULL, side, (void*)1);
+	pthread_join(a, NULL);
+	pthread_join(b, NULL);
+	bigtime_t wall = system_time() - start;
+	finished = 1;
+	pthread_join(t, NULL);
+	long rounds = sDone[0] < sDone[1] ? sDone[0] : sDone[1];
+	printf("SPREAD pair%s: %.2f us/round (%ld rounds in %.2f s)%s\n", label,
+		rounds ? (double)wall / rounds : 0.0, rounds, wall / 1e6, sTimeUp ? ", cut short" : "");
+	fflush(stdout);
+}
+
+
 int
 main(int argc, char** argv)
 {
 	sRounds = argc > 1 ? atol(argv[1]) : 200000;
 	sWork = argc > 2 ? atol(argv[2]) : 300000000;
 
-	for (sDmb = 0; sDmb <= 1; sDmb++) {
-		pthread_t a, b, t;
-		volatile int finished = 0;
-		sArrive = 0;
-		sTimeUp = 0;
-		bigtime_t start = system_time();
-		pthread_create(&t, NULL, timer, (void*)&finished);
-		pthread_create(&a, NULL, side, (void*)0);
-		pthread_create(&b, NULL, side, (void*)1);
-		pthread_join(a, NULL);
-		pthread_join(b, NULL);
-		bigtime_t wall = system_time() - start;
-		finished = 1;
-		pthread_join(t, NULL);
-		long rounds = sDone[0] < sDone[1] ? sDone[0] : sDone[1];
-		printf("SPREAD pair%s: %.2f us/round (%ld rounds in %.2f s)%s\n", sDmb ? " (dmb ishst; yield)" : "",
-			rounds ? (double)wall / rounds : 0.0, rounds, wall / 1e6, sTimeUp ? ", cut short" : "");
-		fflush(stdout);
-	}
+	pair(0, "");
+	pair(1, " (dmb ishst; yield)");
 
 	double one = 0;
 	for (int n = 1; n <= 4; n++) {
@@ -117,6 +124,9 @@ main(int argc, char** argv)
 		printf("SPREAD busy %d: %.2f s wall, %.2f x one\n", n, secs, secs / one);
 		fflush(stdout);
 	}
+	// again right after the busy threads of the last case have exited (their cores were fully loaded)
+	pair(0, " after busy 4");
+	pair(0, " after busy 4, again");
 	printf("SPREAD end\n");
 	return 0;
 }
