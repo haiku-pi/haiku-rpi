@@ -40,3 +40,9 @@ first boot creates that folder and sets Wine up (about two minutes, a notificati
 
 `scripts/pi-test.sh` boots the card with a DHCP server on the Pi LAN (the host is the gateway and DNS
 server; the firmware's network boot requests are ignored), so the network, `pkgman` and the browsers work.
+
+## Check it
+
+`scripts/mega-smoke.sh` boots the image from the network on the bench Pi (the card is not touched), sets it up
+as its first boot would, then starts every Test Apps entry for 25 s and screenshots it: one line per entry with
+whether it still runs and how much of the screen it changed (artifacts/mega-smoke/, with the programs' logs).
