@@ -46,6 +46,16 @@ done
 gen="$root/sources/haiku/generated.arm64"
 work="$root/artifacts/mega-work"
 rm -rf "$work"
+# the staging tree, the base image and the result take up to about twice the image's size at once (the old
+# result is replaced); a full disk would only show up halfway through, as a failed copy
+mkdir -p "$(dirname "$out")"
+avail=$(df -m --output=avail "$(dirname "$out")" | tail -n 1)
+old=0
+[ -f "$out" ] && old=$(du -m "$out" | cut -f1)
+if [ $((avail + old)) -lt $((size * 2)) ]; then
+	echo "mega: needs about $((size * 2)) MB free next to $out, has $((avail + old)) MB" >&2
+	exit 1
+fi
 mkdir -p "$work/np/apps/TestApps" "$work/np/bin" "$work/np/data" "$cache"
 say() { echo "mega: $*"; }
 
