@@ -37,7 +37,18 @@ if [ -d /boot/system/non-packaged/data/wine-games/SC ]; then
 	wine reg add "$key" /v StarCD /d 'D:\system\non-packaged\data\wine-games\SCCD' /f > /dev/null 2>&1
 	say "starcraft: registry keys set"
 fi
-wineserver -w
+# Wine's processes end on their own seconds after the prefix is made; one that never ends (seen
+# in 2 of 21 first starts, KNOWN-ISSUES W8) must not keep the setup from finishing
+wineserver -w &
+w=$!
+t=0
+while [ $t -lt 180 ] && kill -0 $w 2> /dev/null; do sleep 1; t=$((t + 1)); done
+if kill -0 $w 2> /dev/null; then
+	say "wine: processes left after 180 s, ended"
+	wineserver -k
+	sleep 3
+	kill $w 2> /dev/null
+fi
 notify --type information --group "Test image" --title "Ready" \
 	"Wine is set up. Everything is in the Test Apps folder on the Desktop." > /dev/null 2>&1
 mv /boot/home/config/settings/boot/UserBootscript /boot/home/config/settings/boot/UserBootscript.done
