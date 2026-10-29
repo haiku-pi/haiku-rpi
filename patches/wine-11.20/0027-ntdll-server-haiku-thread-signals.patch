@@ -1,0 +1,77 @@
+ntdll, server: Haiku: the Unix thread ID, so the server can signal a thread
+
+On Haiku get_unix_tid() returned -1 (no gettid(), no
+pthread_getthreadid_np()), so the server knew no thread of any Wine
+process and send_thread_signal() always failed: it could never interrupt
+a thread that was not waiting for it. A system APC (an asynchronous I/O
+completion, a cross-process virtual memory call) for a busy thread could
+not be queued, SuspendThread() of a running thread did not stop it,
+GetThreadContext() of it never returned, and TerminateThread() of it left
+it running. A cancelled overlapped read never filled in its OVERLAPPED
+(GetOverlappedResult() kept reporting it pending), and one such failed
+completion made cancel_process_async() use a freed async.
+
+ntdll now reports find_thread(NULL), Haiku's system-wide thread ID, as the
+thread's Unix tid, and the server signals that one thread with Haiku's
+send_signal() (kill() would deliver the signal to any thread of the
+team). Thread IDs come from a counter that is not reused until it wraps
+at 2^31, so the server needs no check that the thread is still in the
+process, as tgkill() makes. A thread that is gone yields ESRCH, so the
+server forgets its tid as on Linux; the ENOSYS fallback to kill() is never
+taken. GetThreadTimes() and the per-thread times of
+NtQuerySystemInformation() work too now (get_thread_times() had a Haiku
+path that the -1 tid never reached).
+
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -72,6 +72,13 @@
+ #endif
+ #ifdef __HAIKU__
+ #define SIGIO SIGPOLL
++#define cpu_info haiku_cpu_info
++#define exit_thread haiku_exit_thread
++#define spawn_thread haiku_spawn_thread
++#include <OS.h>
++#undef cpu_info
++#undef exit_thread
++#undef spawn_thread
+ #endif
+ 
+ #include "ntstatus.h"
+@@ -1549,6 +1556,8 @@
+     ret = lwpid;
+ #elif defined(__DragonFly__)
+     ret = lwp_gettid();
++#elif defined(__HAIKU__)
++    ret = find_thread( NULL );
+ #endif
+     return ret;
+ }
+--- a/server/ptrace.c
++++ b/server/ptrace.c
+@@ -47,6 +47,10 @@
+ # include <sys/uio.h>
+ #endif
+ #include <unistd.h>
++#ifdef __HAIKU__
++/* from OS.h, whose thread functions clash with the server's (kill_thread(), suspend_thread()...) */
++extern int send_signal( int thread, unsigned int sig );
++#endif
+ 
+ #include "ntstatus.h"
+ #include "winternl.h"
+@@ -226,6 +230,14 @@
+     return ret;
+ #elif (defined(__FreeBSD__) || defined (__FreeBSD_kernel__)) && defined(HAVE_THR_KILL2)
+     return thr_kill2( tgid, pid, sig );
++#elif defined(__HAIKU__)
++    /* send_signal() signals that thread only (kill() would pick any thread of the team). Thread IDs are
++     * system-wide and not reused until the kernel's 31-bit counter wraps, so tgid needs no check */
++    int status = send_signal( pid, sig );
++
++    if (status == B_OK) return 0;
++    errno = status == B_BAD_THREAD_ID ? ESRCH : status;
++    return -1;
+ #else
+     errno = ENOSYS;
+     return -1;
