@@ -7,9 +7,9 @@
 #
 #   scripts/armdbg-image.sh [--direct-serial] IMG OUT
 #
-#   --direct-serial  also the kernel setting "serial_debug_buffered false" (QEMU's PL011 storms with
-#                    the transmit interrupt of haiku rpi4 5ec650bbb0: the boot stops after the
-#                    scheduler's lines)
+#   --direct-serial  also the kernel setting "serial_debug_buffered false" (was needed for QEMU between
+#                    haiku rpi4 5ec650bbb0 and 7a2282df3c: QEMU's PL011 kept its receive interrupt
+#                    raised and the boot stopped after the scheduler's lines)
 #
 # The programs are built in artifacts/armdbg/.
 set -euo pipefail
