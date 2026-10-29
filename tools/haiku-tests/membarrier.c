@@ -24,7 +24,12 @@
  * CPU: only CPUs that run a thread of the caller's team get an interrupt.
  * Prints "MEMBARRIER cost <N> busy (own|other team): <us> us/call".
  *
- * Without the system call (an older Haiku) it says "MEMBARRIER unavailable" and runs only none/fence.
+ * Context switches: two threads pinned to one CPU alternate on a pair of semaphores; the barriers the
+ * system call needs in the scheduler's switch_thread() are in this number (compare with an older kernel).
+ * Prints "MEMBARRIER switch: <us> us per context switch".
+ *
+ * Without the system call (an older Haiku) it says "MEMBARRIER unavailable" and runs only the context
+ * switches and the none/fence litmus variants.
  *
  * Build (cross):
  *   g=sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-gcc
@@ -206,6 +211,47 @@ cost_other_team(int calls)
 }
 
 
+/* two threads on one CPU handing a semaphore pair back and forth: the cost of a context switch, which the
+ * barriers in the scheduler's switch_thread() add to (compare a kernel without the system call) */
+static sem_id sPing, sPong;
+
+static void*
+pong(void* arg)
+{
+	pin(0);
+	while (acquire_sem(sPing) == B_OK && !sStop)
+		release_sem(sPong);
+	return arg;
+}
+
+
+static void
+switch_cost(int roundTrips)
+{
+	sPing = create_sem(0, "ping");
+	sPong = create_sem(0, "pong");
+	sStop = 0;
+	pin(0);
+	pthread_t thread;
+	pthread_create(&thread, NULL, pong, NULL);
+	snooze(20000);
+	bigtime_t start = system_time();
+	for (int i = 0; i < roundTrips; i++) {
+		release_sem(sPing);
+		acquire_sem(sPong);
+	}
+	bigtime_t elapsed = system_time() - start;
+	sStop = 1;
+	release_sem(sPing);
+	pthread_join(thread, NULL);
+	delete_sem(sPing);
+	delete_sem(sPong);
+	printf("MEMBARRIER switch: %.2f us per context switch (%d round trips on one CPU)\n",
+		(double)elapsed / (2.0 * roundTrips), roundTrips);
+	fflush(stdout);
+}
+
+
 int
 main(int argc, char** argv)
 {
@@ -227,6 +273,8 @@ main(int argc, char** argv)
 		printf("MEMBARRIER flags 1 not rejected\n");
 	printf("MEMBARRIER %s, %d CPUs\n", sTeamBarrier != NULL ? "available" : "unavailable", sCPUs);
 	fflush(stdout);
+
+	switch_cost(calls * 5);
 
 	if (sTeamBarrier != NULL) {
 		for (int busy = 0; busy <= sCPUs; busy++)
