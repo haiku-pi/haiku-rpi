@@ -1,0 +1,50 @@
+ntdll: Haiku: NtFlushProcessWriteBuffers with the kernel's team memory barrier
+
+On Haiku NtFlushProcessWriteBuffers was a stub. On Windows it is a
+process-wide memory barrier: every CPU that runs a thread of the process
+executes a full barrier before the call returns. .NET's garbage collector
+(Wine Mono, CoreCLR) and some lock-free x86 code rely on it; Linux Wine
+uses membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED).
+
+haiku-pi's kernel has that barrier as a system call, which libroot wraps
+as __team_memory_barrier(): an inter-processor interrupt with a full
+barrier on each CPU running a thread of the team. The wrapper is looked up
+with dlsym() once, so Wine still loads on a Haiku without it, and is
+called once to check that the kernel has the system call; without either
+NtFlushProcessWriteBuffers reports that once and does nothing, as before.
+
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -6748,6 +6748,32 @@
+     return STATUS_SUCCESS;
+ }
+ 
++#elif defined(__HAIKU__)
++
++/* libroot's private wrapper of the kernel's team memory barrier (haiku-pi); looked up at run time, so
++ * that Wine still loads on a Haiku without it */
++static status_t (*p_team_memory_barrier)( uint32 flags );
++static pthread_once_t team_memory_barrier_init_once = PTHREAD_ONCE_INIT;
++
++static void team_memory_barrier_init(void)
++{
++    p_team_memory_barrier = dlsym( RTLD_DEFAULT, "__team_memory_barrier" );
++    /* a libroot that has the wrapper on a kernel that has not the system call */
++    if (p_team_memory_barrier && p_team_memory_barrier( 0 ) != B_OK) p_team_memory_barrier = NULL;
++    if (!p_team_memory_barrier)
++        FIXME( "__team_memory_barrier not supported for NtFlushProcessWriteBuffers\n" );
++}
++
++/**********************************************************************
++ *           NtFlushProcessWriteBuffers  (NTDLL.@)
++ */
++NTSTATUS WINAPI NtFlushProcessWriteBuffers(void)
++{
++    pthread_once( &team_memory_barrier_init_once, team_memory_barrier_init );
++    if (p_team_memory_barrier) p_team_memory_barrier( 0 );
++    return STATUS_SUCCESS;
++}
++
+ #else /* __linux__ */
+ 
+ /**********************************************************************
