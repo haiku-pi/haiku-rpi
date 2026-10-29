@@ -1,0 +1,16 @@
+--- a/src/client/vid/vid.c
++++ b/src/client/vid/vid.c
+@@ -591,7 +591,13 @@
+ 	// Console variables
+ 	vid_gamma = Cvar_Get("vid_gamma", "1.0", CVAR_ARCHIVE);
+ 	vid_fullscreen = Cvar_Get("vid_fullscreen", "0", CVAR_ARCHIVE);
++#ifdef __HAIKU__
++	// Haiku's OpenGL is 2.1 (and ES 3.1): gl3 cannot start, and unloading
++	// it again to fall back has crashed. Start with the OpenGL 1 renderer.
++	vid_renderer = Cvar_Get("vid_renderer", "gl1", CVAR_ARCHIVE);
++#else
+ 	vid_renderer = Cvar_Get("vid_renderer", "gl3", CVAR_ARCHIVE);
++#endif
+ 
+ 	// Commands
+ 	Cmd_AddCommand("vid_restart", VID_Restart_f);

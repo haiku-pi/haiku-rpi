@@ -14,7 +14,7 @@
 #   sdlvk          tools/gl-tests/sdlvk.c: SDL2 + Vulkan smoke test, into bin/ (tools/pi-tests/sdl-vulkan.sh)
 #   QuakeSpasm 0.96.3  HaikuPorts recipe's source, its Makefile (no MP3/Vorbis codecs: no
 #                  libmad/libvorbis yet), into apps/QuakeSpasm with the shareware id1/pak0.pak
-#   Yamagi Quake II 8.60  HaikuPorts recipe + patchset (CMake; no curl/OpenAL yet), into apps/quake2
+#   Yamagi Quake II 8.60  HaikuPorts recipe + patchset + patches/yquake2 (gl1 by default), into apps/quake2
 #                  as the recipe installs it, with the demo's baseq2/pak0.pak
 #   vkQuake 1.35.0 scripts/build-vkquake.sh, into apps/vkQuake with the shareware id1/pak0.pak
 #   ioquake3 1.36  scripts/build-q3.sh, into apps/OpenArena with OpenArena 0.8.8's free data, and into
@@ -73,7 +73,7 @@ cp -L "$root/artifacts/cross-ports/libsdl2-2.32.10/install/boot/system/non-packa
 cp "$quake/quakespasm" "$quake/quakespasm.pak" "$stage/apps/QuakeSpasm/"
 cp "$quakeData/id1/pak0.pak" "$stage/apps/QuakeSpasm/id1/"
 # Quake II: the recipe's CMake build has no install target; its INSTALL() copies the binaries
-"$root/scripts/cross-port.sh" "$ports/games-fps/yamagi-quake2/yamagi_quake2-8.60.recipe" script '
+"$root/scripts/cross-port.sh" --patches "$root/patches/yquake2" "$ports/games-fps/yamagi-quake2/yamagi_quake2-8.60.recipe" script '
 cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$SYSROOT/../../tools/cmake/haiku-arm64.cmake" \
 	-DCMAKE_BUILD_TYPE=Release -DCURL_SUPPORT=OFF -DOPENAL_SUPPORT=OFF \
 	-DSDL2_INCLUDE_DIR="$SYSROOT/boot/system/non-packaged/include/SDL2"
