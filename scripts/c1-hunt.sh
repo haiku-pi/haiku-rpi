@@ -7,6 +7,9 @@
 # interrupt handler every 2 s, past the output queue and its lock) and "serial_debug_buffered false". A boot whose
 # cursor does not appear within 150 s is a wedge: its last heartbeat line per CPU is printed (which CPUs still take
 # interrupts, and what they interrupted; addr2line the pcs against the kernel). One line per trial on stdout.
+# For another system on the same network-boot path (c1-linux-netboot.img: Raspberry Pi OS to a shell): C1_UNTIL=RE
+# (the line of a good boot, default "hardware cursor shown"), C1_SEND=SECS:TEXT (typed at SECS s, e.g. an echo
+# whose output C1_UNTIL matches; also turns off the kernel-debugger dump).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 img="$root/artifacts/images/haiku-pi4-regular.img" trials=10 off=240
@@ -23,14 +26,17 @@ settings="$(mktemp)"
 printf 'debug_heartbeat true\nserial_debug_buffered false\n' > "$settings"
 "$root/scripts/image-add.sh" "$img" "$hunt" "$settings:/boot/home/config/settings/kernel/drivers/kernel" > /dev/null
 rm -f "$settings"
+until="${C1_UNTIL:-hardware cursor shown}"
+extra=()
+[ -n "${C1_SEND:-}" ] && extra=(--send "$C1_SEND" --no-wedge-dump)
 wedges=0
 for t in $(seq 1 "$trials"); do
 	sleep "$off"
 	label="c1hunt-$t"
-	"$root/scripts/netboot-cycle.sh" --image "$hunt" --secs 150 --label "$label" --until 'hardware cursor shown' \
+	"$root/scripts/netboot-cycle.sh" --image "$hunt" --secs 150 --label "$label" --until "$until" "${extra[@]}" \
 		> /dev/null 2>&1 || true
 	log=$(ls -t "$root"/artifacts/uart/*-"$label".log | head -n 1)
-	if grep -a -q 'hardware cursor shown' "$log"; then
+	if grep -a -q "$until" "$log"; then
 		echo "trial $t: booted ($(grep -a -c '^\[.*\] HB[0-3] ' "$log") heartbeat lines) $log"
 		continue
 	fi
