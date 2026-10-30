@@ -230,7 +230,7 @@ accessed and writable from the start. At level 1: **upload 600 → 914 Mbit/s, d
 (gigabit's TCP payload ceiling is about 940), with an SD boot bench, a 15-minute application soak and
 15 network boots as the check.
 
-### The network-boot wedge (open)
+### The network-boot wedge, then the hot-boot freeze (open)
 
 About one network boot in 18 to 45 stopped about 54 s in, while network drivers loaded and the first
 boot's package processing read the remote disk. The serial line went quiet, HDMI froze, the kernel
@@ -259,8 +259,17 @@ output. The hunt so far:
   a Pi that had been **powered off for minutes**; back-to-back series (~10 s off) almost never see it
   (about 1 in 250, against about 1 in 10 cold). Cold SD first boots ran 12/12 clean.
 
-It stays open, characterised: a cold-start problem of network boots, rare enough that a cause needs a
-cheaper way to reproduce it.
+- **Heat, not cold — and a fix that wasn't** (10-29/30). With a heartbeat printed from the interrupt handler and
+  direct serial output, a wedge showed a CPU frozen in the middle of a UART line. The wedges came 1-2 s after the
+  cpufreq driver started; reordering its firmware requests gave 0 wedges in 15 boots and was released as the fix
+  — and the next night's first boot on it wedged. Every log already said the firmware's turbo was off, so the
+  theory behind the fix could not hold. Correction published the same hour. What the counts had hidden: every
+  wedge came on the **first boot after a long, heavy session**. Ten minutes of full CPU load (82-93 °C, no
+  heatsink), four minutes off, boot: 13 of 13 network boots froze, with or without cpufreq, USB, PCIe, WiFi or
+  serial output, with more voltage or a lower clock; SD boots 1 of 3; Raspberry Pi OS 4 of 4 fine. A
+  reproducer at last, and a Haiku-specific freeze with no single driver behind it.
+
+It stays open, characterised: a Pi booted again soon after running at its thermal limit freezes early in the boot; the reproducer is `scripts/c1-heat-hunt.sh`.
 
 ## Techniques that mattered
 

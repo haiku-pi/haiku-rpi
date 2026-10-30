@@ -146,10 +146,11 @@ path was broken in several places on arm64. After these commits a Pi 4 reaches t
 | `84fd3835a4` ★ | Kernel `remote_disk`: writes pipelined too | A write sent one 1 KiB block and waited for its reply, so a network-booted system wrote at 2.9 MB/s over gigabit. Writes larger than a block now keep up to 16 requests in flight, as reads do, and are resent while overdue (a write at an offset can be repeated). 200 MiB written and synced in 3 s (was ~74 s); Wine's packages installed in 42 s (94); a new Wine prefix (~1 GB) in 61 s (387). |
 | `13f5af2f89` ★ | `remote_disk` looks for its server with a 1 s reply timeout | The hello broadcast goes out as the link comes up; a lost one cost the 5 s request timeout. In about half of the Pi's network boots the boot volume came 5-9 s after the link; now within 40 ms (6 of 6). |
 
-**Open:** a network boot sometimes wedges silently (every CPU stops; SD boots do not show it): about
-1 in 10 after the Pi has been off for some minutes, and once so far in a warm session.
-`a46a16641e` and `80a6e1f2fb` (section 2) were written while hunting it. It is not fixed; see
-[log/WEEK-2026-W43.md](log/WEEK-2026-W43.md).
+**Open:** a Pi booted again within minutes of running at its thermal limit freezes early in the boot (every CPU
+stops; 13 of 13 heat-soaked network boots, 1 of 3 SD boots; Raspberry Pi OS boots fine under the same test).
+It is not any single driver (W44 10-30; reproducer `scripts/c1-heat-hunt.sh`). `a46a16641e`, `80a6e1f2fb` and
+the `debug_heartbeat` setting (`775c21f7fb`) were written while hunting it; `a8daa2c23b` (the cpufreq driver's
+request order) was taken for a fix and is not one. See [KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1.
 
 ---
 
