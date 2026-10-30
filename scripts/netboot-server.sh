@@ -20,12 +20,13 @@
 # a resolv.conf with the DNS server DHCP offers (NETBOOT_DNS, default 1.1.1.1). Only one DHCP
 # server may answer on the Pi LAN: `up` stops the peer project's netboot server; callers hold the bench
 # lock (scripts/lib/bench.sh) and restore the peer afterwards (scripts/netboot-cycle.sh does both).
+# NETBOOT_UBOOT=FILE: serve FILE as U-Boot instead of artifacts/uboot/u-boot-netboot.bin (a test build).
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
 nb="$HAIKU_RPI_ROOT/artifacts/netboot"
 st="$nb/state" tftp="$nb/tftp"
 server="$HAIKU_RPI_ROOT/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/remote_disk_server/remote_disk_server"
-uboot="$HAIKU_RPI_ROOT/artifacts/uboot/u-boot-netboot.bin"
+uboot="${NETBOOT_UBOOT:-$HAIKU_RPI_ROOT/artifacts/uboot/u-boot-netboot.bin}"
 bfs="$HAIKU_RPI_ROOT/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
 dns="${NETBOOT_DNS:-1.1.1.1}"
 mkdir -p "$st"
