@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
 	*) sed -n '2,8p' "$0" >&2; exit 2 ;;
 	esac
 done
-temp='grep -a -o "SoC: [0-9.]* C" /dev/power/bcm2835_thermal/0 2>/dev/null || cat /dev/power/bcm2835_thermal/0 | head -n 3 | tr "\n" " "'
+temp='grep -a "Current Temperature" /dev/power/bcm2835_thermal/0 | tr -s " " | cut -c1-40'
 for t in $(seq 1 "$trials"); do
 	"$root/scripts/pi-session.sh" start --minutes $((soak / 60 + 10)) --image "$session" --label c1heat > /dev/null 2>&1 \
 		|| { echo "trial $t: session did not start"; continue; }
