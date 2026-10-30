@@ -2,7 +2,7 @@
 
 The **regular Haiku image** for the Pi 4: the full desktop with Haiku's applications, preferences and
 media kit, plus this port's drivers and the ported libraries. Everything below was measured on the
-bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-10-21).
+bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-10-30).
 
 **Download:** a ready-to-flash image is on the
 [releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-10-29e)
@@ -19,7 +19,7 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 
 | Area | State |
 |---|---|
-| Boot | SD card → U-Boot → Haiku loader → desktop in about 75 s (first boot a little longer); or **from the network**, the boot volume served by the build host (below) |
+| Boot | SD card → U-Boot → Haiku loader → desktop: 5.4–5.7 s from the Haiku loader, about 70 s from power-on on the bench Pi, whose firmware tries the network first (first boot a little longer); or **from the network**, the boot volume served by the build host (below) |
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences or from a fullscreen game (SDL), scaled to the monitor by the firmware; hardware cursor; 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1, and **Vulkan 1.3** (V3DV, presenting into Haiku windows; SDL2's Vulkan windows). GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
 | Games (OpenArena + SuperTuxKart: packages, `-sHAIKU_PI_GAMES=1`; the Quakes: test images) | Timedemos in a window (10-25, `tools/pi-tests/games-bench.sh`): QuakeSpasm demo1 **200 fps at 640×480, 80 at 1280×720, 41 at 1920×1080** (a played demo stays on QuakeSpasm's 72 fps cap). Yamagi Quake II, GL1 renderer: **206 / 102 / 53 fps** at 640×480 / 1280×720 / 1920×1080. **vkQuake** (Vulkan): 53 fps at 1280×720, 31 at 1920×1080. **OpenArena** (Quake III engine, ioquake3): **53 fps at 1280×720**, 27 at 1920×1080 full screen; the Quake III demo with bots ~88 fps at 1280×720. **SuperTuxKart 1.5**: 35–38 fps at 1280×720 (its OpenGL 2.1 renderer). Under Wine: Direct3D 9 (d3dtest) ~150 fps windowed, 141–149 full screen; Half-Life Uplink (software renderer) ~99 fps. A fullscreen game at 1280×720 switches the display mode (OpenArena: 46.8 fps, against 26 at 1920×1080) |
@@ -33,13 +33,13 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 | Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver, the hardware random number generator (feeds `/dev/random`) |
 | Photo editing | **Photocraft** 0.17.0 (`pkgman install photocraft`; Applications → PhotoCraft, or Tracker's Open with on an image): a Rust photo editor on Haiku's Wayland compatibility layer, GPU compositing through Vulkan (V3DV); Haiku's file panel, alerts and clipboard (text, images, files), dead keys and Compose. First start compiles its GPU programs in ~10 s (once; Mesa's shader cache keeps them). Shortcuts use the Command key, as in every Haiku app. Known: each start opens its own window; `.pcraft` documents have no Haiku file type yet |
-| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; https://www.haiku-os.org/ in 8–10 s once started before; **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — frames drop only in the first seconds after the browser starts; `scripts/build-firefox.sh`) |
+| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; Firefox's window in ~3 s once started before (7.7 s the first time after a boot); **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — frames drop only in the first seconds after the browser starts; `scripts/build-firefox.sh`) |
 
 What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monitor, WiFi from the preferences) is
 listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 Known limits: HDMI audio only with a monitor connected at boot; video in Firefox drops frames for the first seconds after the browser starts;
-the first network boot of a Pi that was off for minutes stops at ~52 s about 1 time in 10 — power-cycle (SD boots are not affected; [KNOWN-ISSUES.md](KNOWN-ISSUES.md)).
+a Pi booted again within minutes of running at its thermal limit (85-90 °C) can freeze early in the boot — let it cool, or give it a heatsink ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
 [haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts
