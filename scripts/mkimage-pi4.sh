@@ -177,10 +177,10 @@ for tree in ${trees[@]+"${trees[@]}"}; do
 		done
 		echo sync
 	} | "$bfs" --start-offset "$p2" "$out.tmp" > "$tmp/bfs-tree.log" 2>&1 || true
-	# verify every file by its size
+	# verify every file by its size (fixed strings: Unreal Tournament has files named "dm-deck16][.itt")
 	(cd "$tree" && find . -type f -printf '%P\n') | while read -r f; do
 		echo "ls $(fssh_quote "$npDir/$f")" | "$bfs" --start-offset "$p2" "$out.tmp" 2>&1 \
-			| grep -q " $(stat -c %s "$tree/$f") .*$(basename "$f")" \
+			| grep -F " $(stat -c %s "$tree/$f") " | grep -qF "$(basename "$f")" \
 			|| { cat "$tmp/bfs-tree.log" >&2; echo "mkimage-pi4: $f of $tree not written" >&2; exit 1; }
 	done
 	echo "mkimage-pi4: added $(cd "$tree" && find . -type f | wc -l) files and $(cd "$tree" && find . -type l | wc -l) symlinks of $tree to /boot/system/non-packaged"
