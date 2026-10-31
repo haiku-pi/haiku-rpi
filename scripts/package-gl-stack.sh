@@ -4,9 +4,13 @@
 # (GLTeapot, GLInfo, Haiku3d, the GL screen savers, libglut). Package farm stage 0,
 # docs/design/package-farm-plan.md.
 #
-#   scripts/package-gl-stack.sh [--revision N]      (default 1)
+#   scripts/package-gl-stack.sh [--revision N] [--glu-revision M]
 #
-# Output: artifacts/packages/{mesa,mesa_devel,glu,glu_devel}-<version>-<N>-arm64.hpkg
+# N: mesa and mesa_devel's revision (default 1). GLU changes far less often than Mesa: it is packaged only
+# with --glu-revision M (glu and glu_devel at M; packaging it at N put a glu 9.0.3-1 next to the published -6,
+# and the repository build refused two glu packages).
+#
+# Output: artifacts/packages/{mesa,mesa_devel}-<version>-<N>-arm64.hpkg (+ {glu,glu_devel}-<version>-<M>-...)
 #   mesa        libdrm + libglvnd (libGL with BGLView, libEGL, libGLES*, libOpenGL) + Mesa's EGL vendor
 #               library (v3d, softpipe) in add-ons/opengl/egl_vendor.d, the Vulkan loader and the V3DV
 #               driver (its manifest in add-ons/vulkan/icd.d) — one package, as jam's mesa
@@ -17,10 +21,11 @@
 # extracted into the sysroot (artifacts/sysroot-arm64/boot/system), for ports built against them.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-revision=1
+revision=1 gluRevision=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--revision) revision="$2"; shift 2 ;;
+	--glu-revision) gluRevision="$2"; shift 2 ;;
 	*) echo "package-gl-stack: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -59,7 +64,7 @@ pkgconfig() {
 # create NAME VERSION DIR — DIR/.PackageInfo must exist
 create() {
 	local name="$1" version="$2" dir="$3"
-	local file="$out/$name-$version-$revision-arm64.hpkg"
+	local file="$out/$name-$version-$rev-arm64.hpkg"
 	rm -f "$file"
 	"$pkgtool" create -q -C "$dir" -i "$dir/.PackageInfo" "$file"
 	rm "$dir/.PackageInfo"
@@ -70,7 +75,7 @@ create() {
 packageInfo() {
 	cat <<-EOF
 	name			$1
-	version			$2-$revision
+	version			$2-$rev
 	architecture	arm64
 	summary			"$3"
 	description		"$3. Built for the Raspberry Pi 4 by the haiku-pi project."
@@ -88,6 +93,7 @@ packageInfo() {
 }
 
 # mesa
+rev=$revision
 d="$work/mesa"
 mkdir -p "$d/lib" "$d/add-ons/opengl" "$d/documentation/packages/mesa"
 cp "$stage"/lib/* "$d/lib/"
@@ -138,12 +144,14 @@ packageInfo mesa_devel "$mesaVersion" "Mesa 3D graphics library: development fil
 "	mesa == $mesaVersion-$revision" > "$d/.PackageInfo"
 create mesa_devel "$mesaVersion" "$d"
 
+if [ -n "$gluRevision" ]; then
+rev=$gluRevision
 # glu
 d="$work/glu"
 mkdir -p "$d/lib"
 "$tools-strip" --strip-unneeded -o "$d/lib/libGLU.so.1" "$np/lib/libGLU.so.1"
 packageInfo glu "$gluVersion" "The OpenGL Utility library" MIT \
-"	glu = $gluVersion-$revision compat >= 9
+"	glu = $gluVersion-$rev compat >= 9
 	lib:libGLU = 1.3.1 compat >= 1" \
 "	haiku
 	lib:libOpenGL
@@ -158,17 +166,18 @@ devel_link "$d" libGLU.so.1
 pkgconfig "$d" glu.pc
 packageInfo glu_devel "$gluVersion" "The OpenGL Utility library: development files" \
 	MIT \
-"	glu_devel = $gluVersion-$revision compat >= 9
+"	glu_devel = $gluVersion-$rev compat >= 9
 	devel:libGLU = 1.3.1 compat >= 1" \
-"	glu == $gluVersion-$revision" > "$d/.PackageInfo"
+"	glu == $gluVersion-$rev" > "$d/.PackageInfo"
 create glu_devel "$gluVersion" "$d"
+fi
 
 # and into the sysroot as the image has them (/boot/system): the compiler searches the system's
 # develop/headers/os/... (BGLView: <opengl/GLView.h>), not non-packaged's
 for p in mesa mesa_devel; do
 	"$pkgtool" extract -C "$root/artifacts/sysroot-arm64/boot/system" "$out/$p-$mesaVersion-$revision-arm64.hpkg"
 done
-for p in glu glu_devel; do
-	"$pkgtool" extract -C "$root/artifacts/sysroot-arm64/boot/system" "$out/$p-$gluVersion-$revision-arm64.hpkg"
+[ -z "$gluRevision" ] || for p in glu glu_devel; do
+	"$pkgtool" extract -C "$root/artifacts/sysroot-arm64/boot/system" "$out/$p-$gluVersion-$gluRevision-arm64.hpkg"
 done
 echo "package-gl-stack: extracted into the sysroot's boot/system"
