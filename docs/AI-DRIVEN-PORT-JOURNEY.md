@@ -278,7 +278,10 @@ output. The hunt so far:
   handing over, and the SD one never did. Without it: 8 of 8 heat-soaked network boots booted, against 22 of 22
   frozen with it.
 
-What remains open is rarer: SD boots of a hot Pi froze 1 of 5. The reproducer is `scripts/c1-heat-hunt.sh [--sd]`.
+That closed only the heat-plus-short-pause form. The same afternoon, network boots of a Pi that had been off long
+enough to cool to room temperature froze about 1 in 3 during heavy remote-disk reads, `usb start` or not — and the
+heartbeat showed every CPU idle when the SoC stopped, so the next suspects are DMA masters and the firmware, not code a
+CPU was running. Open. The reproducer is `scripts/c1-heat-hunt.sh [--sd]`.
 
 ## Techniques that mattered
 
