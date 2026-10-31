@@ -11,7 +11,8 @@ Test Apps (this folder): double-click to start. Each program's output goes to ~/
   Windows programs through Wine (x86 via Box64, x86-64 via FEX): Minesweeper, Notepad, PuTTY,
     Notepad++, SumatraPDF, 7-Zip (console)
   Windows games: Heroes of Might and Magic III (demo), SimCity 3000 (demo), StarCraft (shareware),
-    Half-Life Uplink (demo, in a window or full screen), Fallout (demo)
+    Half-Life Uplink (demo, in a window or full screen), Fallout (demo), Age of Empires II (demo),
+    Unreal Tournament (demo, OpenGL), Diablo II (demo, in a window), Warcraft III (demo)
 
 The first boot sets Wine up (about 2 minutes); a notification says when it is ready. Windows programs
 started before that wait for it.

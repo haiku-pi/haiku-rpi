@@ -1,0 +1,72 @@
+opengl32: wow64: copy only the flushed ranges of a write-only explicit-flush mapping
+
+When the host driver maps a buffer above 4 GiB, the wow64 thunk maps a
+copy below it: it copies the mapped range in (unless the mapping
+invalidates it) and copies it back at unmap. wined3d maps the whole
+buffer object (glMapBufferRange(0, size)) with GL_MAP_WRITE_BIT |
+GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_UNSYNCHRONIZED_BIT for every update of
+a dynamic buffer, and flushes the ranges it wrote: each such map copied
+the whole buffer twice. On the Raspberry Pi 4 (Box64, V3D) memcpy took
+53 % of a 32-bit Direct3D 8 game's time and it ran at 3 frames a second.
+
+Without GL_MAP_READ_BIT the contents of the mapping are undefined, and
+with GL_MAP_FLUSH_EXPLICIT_BIT only the flushed subranges are defined to
+reach the buffer. So such a mapping now copies nothing in, and copies
+each range back when glFlushMappedBufferRange() flushes it, nothing at
+unmap. Warcraft III's demo menu went from 3 to 12 frames a second, the
+Need for Speed: Porsche Unleashed demo's from 2.5 to 26.
+
+--- a/dlls/opengl32/unix_wgl.c
++++ b/dlls/opengl32/unix_wgl.c
+@@ -62,6 +62,8 @@
+     void *host_ptr;
+     void *map_ptr;
+     size_t copy_length;
++    size_t map_length;
++    BOOL flush_explicit;
+     void *vm_ptr;
+     SIZE_T vm_size;
+     BOOL pinned;
+@@ -1339,6 +1341,15 @@
+     };
+     VkResult vr;
+ 
++    /* a range outside the mapping is the driver's GL_INVALID_VALUE */
++    if (buffer->flush_explicit && buffer->map_ptr && offset <= buffer->map_length
++            && length <= buffer->map_length - offset)
++    {
++        TRACE( "Copying %#zx at %#zx from wow64 buffer %p to buffer %p\n", length, offset,
++               buffer->map_ptr, buffer->host_ptr );
++        memcpy( (char *)buffer->host_ptr + offset, (char *)buffer->map_ptr + offset, length );
++    }
++
+     if (!buffer->vk_memory) return;
+ 
+     vr = buffer->vk_device->p_vkFlushMappedMemoryRanges( buffer->vk_device->vk_device, 1, &memory_range );
+@@ -1556,6 +1567,18 @@
+ 
+     if (!buffer_vm_alloc( teb, buffer, length + (offset & 0xf) )) goto unmap;
+     buffer->map_ptr = (char *)buffer->vm_ptr + (offset & 0xf);
++    buffer->map_length = length;
++    if ((access & GL_MAP_FLUSH_EXPLICIT_BIT) && !(access & GL_MAP_READ_BIT))
++    {
++        /* Without GL_MAP_READ_BIT the mapping's contents are undefined, and with GL_MAP_FLUSH_EXPLICIT_BIT
++         * only the flushed subranges reach the buffer: copy those when they are flushed, instead of the
++         * whole range in here and back at unmap (wined3d maps whole buffers this way for every update). */
++        buffer->flush_explicit = TRUE;
++        buffer->copy_length = 0;
++        TRACE( "returning flush-explicit copy buffer %p\n", buffer->map_ptr );
++        return buffer->map_ptr;
++    }
++    buffer->flush_explicit = FALSE;
+     buffer->copy_length = (access & GL_MAP_WRITE_BIT) ? length : 0;
+     if (!(access & (GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT)))
+     {
+@@ -1731,6 +1754,7 @@
+         buffer->copy_length = 0;
+     }
+ 
++    buffer->flush_explicit = FALSE;
+     buffer->host_ptr = buffer->map_ptr = NULL;
+     return TRUE;
+ }

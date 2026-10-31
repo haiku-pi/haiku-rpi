@@ -37,6 +37,14 @@ if [ -d /boot/system/non-packaged/data/wine-games/SC ]; then
 	wine reg add "$key" /v StarCD /d 'D:\system\non-packaged\data\wine-games\SCCD' /f > /dev/null 2>&1
 	say "starcraft: registry keys set"
 fi
+# Unreal Tournament's OpenGL renderer crashes on the full list of extensions Wine reports (2026-10-31; KNOWN-ISSUES
+# W10): it gets only those it uses
+if [ -d /boot/system/non-packaged/data/wine-games/UT ]; then
+	wine reg add 'HKCU\Software\Wine\AppDefaults\UnrealTournament.exe\OpenGL' /v EnabledExtensions /d \
+		'GL_ARB_multitexture GL_EXT_bgra GL_EXT_texture_env_add GL_ARB_texture_env_add GL_EXT_texture_env_combine GL_ARB_texture_env_combine GL_S3_s3tc GL_EXT_texture_compression_s3tc GL_SGIS_texture_edge_clamp GL_EXT_texture_edge_clamp GL_EXT_texture_filter_anisotropic WGL_EXT_swap_control WGL_EXT_extensions_string WGL_ARB_extensions_string' \
+		/f > /dev/null 2>&1
+	say "unreal tournament: OpenGL extension list set"
+fi
 # Wine's processes end on their own seconds after the prefix is made; one that never ends (seen
 # in 2 of 21 first starts, KNOWN-ISSUES W8) must not keep the setup from finishing
 wineserver -w &

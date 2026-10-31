@@ -6,6 +6,8 @@
  *                    default is the foreground window
  *   focus:TITLE      the same, and make it the foreground window (keyboard input goes there)
  *   click:X,Y        left click at X,Y of the window's client area
+ *   press:X,Y[,MS]   the same, the button held down MS milliseconds (default 400): a game that polls the
+ *                    button state once per frame misses a short click when it runs at a few frames a second
  *   move:X,Y         move the mouse there
  *   key:VK           press and release a virtual key (decimal or 0x hex: 0x0d Return, 0x1b Escape, 0x20 Space)
  *   hold:VK,MS       press a virtual key, keep it down MS milliseconds, release it (walking in a game: 0x26 Up)
@@ -94,6 +96,14 @@ int main(int argc, char **argv)
 			Sleep(50);
 			send_mouse(MOUSEEVENTF_LEFTDOWN, p.x, p.y);
 			Sleep(80);
+			send_mouse(MOUSEEVENTF_LEFTUP, p.x, p.y);
+		} else if (strncmp(a, "press:", 6) == 0 && sscanf(v, "%d,%d", &x, &y) == 2) {
+			const char *ms = strchr(strchr(v, ',') + 1, ',');
+			POINT p = to_screen(x, y);
+			send_mouse(0, p.x, p.y);
+			Sleep(50);
+			send_mouse(MOUSEEVENTF_LEFTDOWN, p.x, p.y);
+			Sleep(ms ? atoi(ms + 1) : 400);
 			send_mouse(MOUSEEVENTF_LEFTUP, p.x, p.y);
 		} else if (strncmp(a, "move:", 5) == 0 && sscanf(v, "%d,%d", &x, &y) == 2) {
 			POINT p = to_screen(x, y);

@@ -1,0 +1,26 @@
+server: keep shared session objects 8-byte aligned
+
+alloc_shared_object() places each new object right after the last one
+in its session block, and the size of a class or window object includes
+its extra bytes (cbClsExtra, cbWndExtra), which can be any number. An
+object of a size that is not a multiple of 8 left the next one
+misaligned, and SHARED_WRITE_BEGIN's 64-bit store-release of the
+sequence number then faults on arm64 (STLR needs natural alignment):
+wineserver died with an alignment exception and took every Wine process
+with it. The Need for Speed: Porsche Unleashed demo's InstallShield setup
+did this every time on Haiku arm64 (2 of 2). Round the size up to 8.
+
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -1426,6 +1426,11 @@
+     struct session_object *object;
+     mem_size_t size = sizeof(*object) - sizeof(object_shm_t) + max(shm_size, sizeof(object_shm_t));
+ 
++    /* the next object starts where this one ends, and its sequence number is written with 64-bit
++     * atomic stores, which fault when misaligned on arm64: class and window extra bytes can make
++     * shm_size any size */
++    size = (size + sizeof(LONG64) - 1) & ~(mem_size_t)(sizeof(LONG64) - 1);
++
+     if ((object = find_free_session_object( size )))
+         list_remove( &object->entry );
+     else

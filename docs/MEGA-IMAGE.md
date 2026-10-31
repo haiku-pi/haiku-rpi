@@ -17,9 +17,10 @@ scripts/pi-test.sh --flash artifacts/images/haiku-pi4-mega.img
 Options: `--size MB` (default 16000: a 32 GB card or larger), `--no-build` (use the last jam build as it
 is), `--out IMG`, `--cache DIR`. It needs the trees of a full build of this repository (see
 [BUILD.md](BUILD.md)); where something is missing it builds it when a script exists, and leaves the
-launcher out when it cannot. Host tools it uses: `curl`, `unzip`, `7z`, `unshield`. Half-Life Uplink and
-the StarCraft shareware are set up by their own installers, which only run under Wine: they come from an
-installed tree of an earlier build (`artifacts/wine-games/tree`), and are left out of the image otherwise.
+launcher out when it cannot. Host tools it uses: `curl`, `unzip`, `7z`, `unshield`. Half-Life Uplink, the
+StarCraft shareware and the Diablo II and Warcraft III demos are set up by their own installers, which only run
+under Wine: they come from an installed tree of an earlier build (`artifacts/wine-games/tree`), and are left out
+of the image otherwise.
 
 ## What is in it
 
@@ -29,7 +30,7 @@ installed tree of an earlier build (`artifacts/wine-games/tree`), and are left o
 | Applications | Firefox, WebPositive, MediaPlayer, Photocraft (photo editor), glmark2, GLTeapot, vkcube |
 | Games | OpenArena, SuperTuxKart; QuakeSpasm and vkQuake (Quake shareware), Yamagi Quake II (demo), Quake III Arena (demo) |
 | Windows programs (Wine 11.20; x86 via Box64, x86-64 via FEX) | Minesweeper, Notepad, PuTTY, Notepad++, SumatraPDF, 7-Zip (console) — each as x86 and x86-64 where both exist |
-| Windows games | Heroes of Might and Magic III (demo), SimCity 3000 (demo), StarCraft (shareware), Half-Life Uplink (demo), Fallout (demo) |
+| Windows games | Heroes of Might and Magic III (demo), SimCity 3000 (demo), StarCraft (shareware), Half-Life Uplink (demo), Fallout (demo), Age of Empires II (demo), Unreal Tournament (demo, OpenGL renderer), Diablo II (demo, in a window), Warcraft III (demo) |
 
 Everything starts from the **Test Apps** folder on the Desktop with a double-click (small launcher
 programs, [tools/mega/apps.txt](../tools/mega/apps.txt); each program's output in `~/mega-logs/`). The

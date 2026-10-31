@@ -429,6 +429,19 @@ newest Wine version tested in that entry.
 | Need for Speed: Porsche Unleashed Demo | [`NeedForSpeedPorscheUnleashedDemo`](https://archive.org/details/NeedForSpeedPorscheUnleashedDemo) | EA free demo | No demo row; full 3.5 **Platinum** (Wine 8.1); [snapshot 2024-08-03](https://web.archive.org/web/20240803231321/https://appdb.winehq.org/objectManager.php?sClass=application&iId=2040) | Direct3D 6/7 |
 | Age of Empires Demo / Rise of Rome Demo | [`AgeofEmpires_1020`](https://archive.org/details/AgeofEmpires_1020) | Microsoft free demos | Demo Gold (Wine 1.7.22); RoR demo Gold; [snapshot 2024-09-22](https://web.archive.org/web/20240922004041/https://appdb.winehq.org/objectManager.php?sClass=application&iId=762) | DirectDraw |
 
+**Results on the Pi (2026-10-31, H15 sweep; wine 11.20-23 packages, Box64 v0.4.4, network session of the mega
+image; frame rates from `WINEDEBUG=+fps`, judged by HDMI captures).** The SHA-256s are in
+[tools/mega/assets.txt](../../tools/mega/assets.txt); "0028" is the Wine patch that removes the WoW64 buffer copies
+(not yet packaged).
+
+| Program | Result | Notes |
+|---|---|---|
+| Age of Empires II demo | **Works** (mega image) | DirectDraw, full screen 800×600: menus, a random-map game, units and buildings; ~31 fps in game. The zip's setup program is a CAB: `7z x` gives the game tree, no installer run needed. |
+| Unreal Tournament demo 338 | **Works** with the OpenGL renderer (mega image) | ~50 fps at 640×480 in DM-Morpheus. Needs two settings or it crashes at its first frame (KNOWN-ISSUES W10). Direct3D also works: 5–6 fps, 16 with 0028. |
+| Diablo II demo 1.04 | **Works in a window** (`-w`; mega image) | Installer runs under Wine; menus, character creation, walking in the Act 1 camp; animates smoothly (a new picture in the HDMI capture ~30 times a second). Full screen stops on "Error 22" (DirectDraw P8 + 3D: W12). |
+| Warcraft III demo 1.01 | **Works, slow** (mega image) | Installer needs Windows XP set for it ("Windows NT is not supported"). Direct3D 8 through wined3d: menus, prologue cinematic and map play; 3 fps (1–3 in game) with the packaged Wine, 12–18 fps with 0028. DXT textures work (Mesa's fallback). Menu buttons need the mouse button held ~0.3 s at 3 fps. |
+| Need for Speed: Porsche Unleashed demo | **Partly**: menus and garage, races crash | Direct3D 7: menus 2.5 fps (26 with 0028), car models render; starting a race faults in the game (W11). Its InstallShield setup crashed the wineserver (alignment fault, fixed by Wine 0029: W13). Not in the mega image. |
+
 Two other candidates were checked and set aside:
 
 - **Heroes of Might and Magic III demo:** the classicpcgames collection has only the **Macintosh** complete demo

@@ -24,8 +24,9 @@
 #   the Quakes   artifacts/games/non-packaged (scripts/build-games.sh; its data: tools/mega/assets.txt)
 #   GL tools     artifacts/gl-stack/non-packaged/bin (scripts/build-gl-stack.sh): vkcube, glview
 #   Windows      artifacts/wine-apps/tree, artifacts/wine-games/tree/data/wine-games, else made from the
-#                downloads: the programs, and the SimCity 3000, Fallout and Heroes III demos (unzip, 7z,
-#                unshield); Half-Life Uplink and StarCraft only from an existing installed tree
+#                downloads: the programs, and the SimCity 3000, Fallout, Heroes III, Age of Empires II and
+#                Unreal Tournament demos (unzip, 7z, unshield); Half-Life Uplink, StarCraft, Diablo II and
+#                Warcraft III only from an existing installed tree
 #
 # Then: write it to the card (scripts/pi-test.sh --flash IMG, or any SD writer) and boot. The first boot
 # makes ~/Desktop/Test Apps and sets Wine up (~2 min, a notification says when it is done):
@@ -180,8 +181,8 @@ if [ -d "$root/artifacts/wine-games/tree/data/wine-games" ]; then
 	cp -a "$root/artifacts/wine-games/tree/data/wine-games" "$work/np/data/wine-games"
 else
 	# the demos that unpack without running their installers (byte-identical to the tested trees);
-	# Half-Life Uplink (a Wise installer) and the StarCraft shareware (installed under Wine) need such a
-	# tree from an earlier install: their launchers are left out without one
+	# Half-Life Uplink (a Wise installer), the StarCraft shareware and the Diablo II and Warcraft III demos
+	# (installed under Wine) need such a tree from an earlier install: their launchers are left out without one
 	g="$work/np/data/wine-games"
 	mkdir -p "$g"
 	[ -f "$dl/simcity3000-demo" ] && unzip -q -o "$dl/simcity3000-demo" -d "$g"
@@ -191,6 +192,21 @@ else
 		7z x -y -o"$cache/extract/h3" "$dl/heroes3-demo" > /dev/null \
 			&& unshield -d "$cache/extract/h3/out" x "$cache/extract/h3/Disk1/data1.cab" > /dev/null \
 			&& mv "$cache/extract/h3/out/Program_Files" "$g/H3"
+	fi
+	# Age of Empires II: the zip holds the setup program, whose CAB resource is the game tree
+	if [ -f "$dl/aoe2-demo" ]; then
+		rm -rf "$cache/extract/aoe2"; mkdir -p "$cache/extract/aoe2"
+		unzip -p "$dl/aoe2-demo" AoE2demo.exe > "$cache/extract/aoe2/AoE2demo.exe" \
+			&& 7z x -y -o"$g/AOE2" "$cache/extract/aoe2/AoE2demo.exe" > /dev/null
+	fi
+	# Unreal Tournament: a zip archive in a setup program; set up as its first-run wizard would, with the OpenGL
+	# renderer (Direct3D through wined3d is a third as fast) and without DirectDraw (with it the OpenGL renderer
+	# crashes; first-boot.sh also trims the OpenGL extensions it sees)
+	if [ -f "$dl/ut-demo" ]; then
+		7z x -y -o"$g/UT" "$dl/ut-demo" > /dev/null 2>&1 || true	# a warning: the setup program's own bytes
+		[ -f "$g/UT/System/UnrealTournament.ini" ] && sed -i 's/^FirstRun=.*/FirstRun=338/;
+			s/^GameRenderDevice=.*/GameRenderDevice=OpenGLDrv.OpenGLRenderDevice/;
+			s/^UseDirectDraw=.*/UseDirectDraw=False/' "$g/UT/System/UnrealTournament.ini"
 	fi
 fi
 

@@ -47,11 +47,24 @@ starcraft-sw-img|https://archive.org/download/cdrom-starcraft-shareware/Starcraf
 # It is only an intermediate: '7z x StarcraftShareware.iso' gives dl/sccd/ (the CD tree the game
 # reads, tree/data/wine-games/SCCD). The recipe needs python3 on the host. Skip it if you populate SCCD some other way.
 starcraft-sw-iso|https://archive.org/download/cdrom-starcraft-shareware/StarcraftShareware.img|619e49979b3c1b62b4758c0338e8341ef163acfdbfbbd4db7489b8394a4b229c|python3 -I -c 'import sys;i=open(sys.argv[1],"rb");o=open(sys.argv[2],"wb");[o.write(s[24:2072]) for s in iter(lambda:i.read(2352),b"") if len(s)==2352]' StarcraftShareware.img StarcraftShareware.iso|artifacts/wine-games/dl/StarcraftShareware.iso
-# DERIVED (by running the installers under Wine on the host, not by extraction):
+# H15 sweep (2026-10-31): the archive items' files, also checked against the SHA-1s archive.org lists for them.
+aoe2-demo|https://archive.org/download/AgeofEmpiresIITheAgeofKings_1020/AoE2demo.zip|e4513eaa98aa63f2e95332891eca01dc850c058b93e3923b6c9c491932d94f64|copy|artifacts/wine-games/dl/aoe2/AoE2demo.zip
+ut-demo|https://archive.org/download/UnrealTournament/UTDemo338.exe|b8c1d89f487df09a9dd5f88a7a49f77d3e0480d64c2c19fbc470d6ecb5c6ca06|copy|artifacts/wine-games/dl/ut/UTDemo338.exe
+diablo2-demo|https://archive.org/download/DiabloIiDemo/DiabloIIDemo.exe|89352716523e474514553e2092a1ae9349c5c7ff9e79c7861dd65fe19be88b61|copy|artifacts/wine-games/dl/diablo2/DiabloIIDemo.exe
+warcraft3-demo|https://archive.org/download/WarcraftIiiReignOfChaosDemo/W3Demo.exe|3a1b83900c33f0ba671941905d36b9442ab05654c9d5f8d464cbdf9db14f2c6f|copy|artifacts/wine-games/dl/warcraft3/W3Demo.exe
+# Tried, not in the image (its races crash: KNOWN-ISSUES W11):
+#   https://archive.org/download/NeedForSpeedPorscheUnleashedDemo/Porsche.zip
+#   sha256 3f7b70b15d6b4825a20d9f1aaea49e16dc8926293872ad1186166dd0e231a4de
+# DERIVED (by running the installers under Wine, not by extraction):
 #   tree/data/wine-games/SC  (StarCraft shareware installed from SCCD/INSTALL.EXE)
 #   tree/data/wine-games/HL  (hluplink.exe installed)
 #   tree/data/wine-games/H3  (h3demo.exe -> Disk1/data1.cab -> Program_Files, see dl/h3u.log)
 #   tree/data/wine-games/SC3, falldemo (from sc3demo.zip / falldemo.zip)
+#   tree/data/wine-games/AOE2 (7z x of AoE2demo.exe, the zip's only member: its CAB holds the game tree)
+#   tree/data/wine-games/UT   (7z x of UTDemo338.exe; System/UnrealTournament.ini set to FirstRun=338,
+#                              the OpenGL renderer and UseDirectDraw=False: see build-mega-image.sh)
+#   tree/data/wine-games/D2, W3 (DiabloIIDemo.exe / W3Demo.exe installed under Wine on the Pi, the user's
+#                              save directories left out; W3Demo.exe's installer needs Windows XP set for it)
 
 # --- Free software games ---
 # The 'doom64' directory is a misnomer: it holds Chocolate Doom 3.1.1 (win64) + Freedoom
