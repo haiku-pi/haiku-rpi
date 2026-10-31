@@ -16,11 +16,16 @@ mk() { make -C "$src" -s CROSS_COMPILE=aarch64-linux-gnu- "$@"; }
 # "ip=" in its load options (bootargs), which makes it boot from a remote disk on the network.
 # Without an answer to DHCP it boots as the SD variant does, so one card serves both ways.
 # (no "&" in the command: scripts/config sets it with sed)
+# Preboot "pci enum;" only, as the SD variant: rpi_4_defconfig's "usb start" there (it scanned the VL805's
+# bus on every network boot) made a Pi that had been hot and then off for a few minutes freeze ~1-15 s
+# into Haiku's kernel (KNOWN-ISSUES C1: 22 of 22 heat-soaked network boots froze with it; see
+# docs/log/WEEK-2026-W44.md 2026-10-31). Haiku resets and enumerates the VL805 itself.
 # Built first: the tree is built in place, and the SD variant must be the one left there.
 mk rpi_4_defconfig
 # (PHY_BROADCOM: the BCM54213PE's driver, which sets the PHY's RGMII delays for the device tree's
 # "rgmii-rxid": receive clock delayed by the PHY, transmit clock by the MAC — patches/u-boot/0002)
-"$src/scripts/config" --file "$src/.config" --enable PHY_BROADCOM --enable USE_BOOTCOMMAND --set-str BOOTCOMMAND \
+"$src/scripts/config" --file "$src/.config" --enable PHY_BROADCOM --set-str PREBOOT 'pci enum;' \
+	--enable USE_BOOTCOMMAND --set-str BOOTCOMMAND \
 	'setenv autoload no; if dhcp; then if tftpboot ${kernel_addr_r} EFI/BOOT/BOOTAA64.EFI; then setenv bootargs ip=${ipaddr}:${serverip}:${gatewayip}:${netmask}; bootefi ${kernel_addr_r} ${fdtcontroladdr}; fi; fi; bootflow scan'
 mk olddefconfig
 mk -j"$(nproc)" > "$root/artifacts/uboot-netboot-build.log" 2>&1
