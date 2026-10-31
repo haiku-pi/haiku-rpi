@@ -4,7 +4,7 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds the **test ("mega") image** — the newest system plus every program and game we test, started from the Test Apps folder on the Desktop ([MEGA-IMAGE.md](MEGA-IMAGE.md)); the newest release is **image-2026-10-28** (hrev60295+176, Mesa 26.2.5-7, Firefox 157.0.1-5). Earlier notes on what changed:
+**The image:** the SD card of the bench Pi holds the **test ("mega") image** — the newest system plus every program and game we test, started from the Test Apps folder on the Desktop ([MEGA-IMAGE.md](MEGA-IMAGE.md)); the newest release is **image-2026-10-31** (hrev60299+224, Mesa 26.2.6, Firefox 157.0.1-5; on the card since 10-31 with Wine 11.20-23). Earlier notes on what changed:
 everything of `image-2026-10-23d` plus a 3 s faster boot, faster memory/string functions, thread-local variables
 and file reads, two kernel panics fixed (C5, C8), and the onboard USB hub no longer dropping out in ~1 boot in 10
 (C9) — relevant for the keyboard and mouse checks below. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
