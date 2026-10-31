@@ -17,6 +17,7 @@ while [ $# -gt 0 ]; do
 	--trials) trials="$2"; shift 2 ;;
 	--soak) soak="$2"; shift 2 ;;
 	--off) off="$2"; shift 2 ;;
+	--sd) sd=1; shift ;;
 	*) sed -n '2,10p' "$0" >&2; exit 2 ;;
 	esac
 done
