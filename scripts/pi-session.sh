@@ -95,7 +95,7 @@ start)
 		sleep 5
 		launch
 	fi
-	wait_up || exit 1
+	wait_up 900 || exit 1
 	;;
 wait) [ -n "$(session_pid)" ] || { echo "pi-session: none" >&2; exit 1; }; wait_up || exit 1 ;;
 status)
