@@ -269,7 +269,16 @@ output. The hunt so far:
   serial output, with more voltage or a lower clock; SD boots 1 of 3; Raspberry Pi OS 4 of 4 fine. A
   reproducer at last, and a Haiku-specific freeze with no single driver behind it.
 
-It stays open, characterised: a Pi booted again soon after running at its thermal limit freezes early in the boot; the reproducer is `scripts/c1-heat-hunt.sh`.
+- **Controls on the same path** (10-30/31). Three more conclusions in that paragraph did not survive a night of
+  controls. "Not a regression": the 10-24 build froze 3 of 3 too. "Heat": the same image booted *seconds* after
+  power-off of a warm Pi never froze — minutes off after heat was the condition. "Haiku-specific": Raspberry Pi OS
+  had only been tried from the SD card, where Haiku's rate (1 of 3) was no different; booted over the *same*
+  network path it was fine 3 of 3. So the cause was in what Haiku's network boot brings: not the firmware version,
+  not the firmware-KMS overlay (one heat trial froze each) — but the network-boot U-Boot ran `usb start` before
+  handing over, and the SD one never did. Without it: 8 of 8 heat-soaked network boots booted, against 22 of 22
+  frozen with it.
+
+What remains open is rarer: SD boots of a hot Pi froze 1 of 5. The reproducer is `scripts/c1-heat-hunt.sh [--sd]`.
 
 ## Techniques that mattered
 
