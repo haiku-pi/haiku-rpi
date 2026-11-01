@@ -6,11 +6,12 @@
 #   [WINE_VERSION=V] scripts/build-wine.sh [STEP]          (start at STEP; the earlier ones must have run)
 #   [WINE_VERSION=V] scripts/build-wine.sh --only STEP     (just that step)
 #
-# WINE_VERSION: a numbered release with a pinned archive below — the newest one (11.20) is the default and,
-# for now, the only one (owner 2026-10-21: the newest numbered release; 11.0 was removed once 11.20 ran on
-# the Pi). Each version has its own patches (patches/wine-<V>), patched tree (sources/wine/wine-haiku-<V>)
-# and output (artifacts/wine-<V>). Only the default version's packages are copied into artifacts/packages
-# and jam's download directory; another version's stay in its own output directory.
+# WINE_VERSION: a numbered release with a pinned archive below (owner 2026-10-21: the newest numbered
+# release; 11.0 was removed once 11.20 ran on the Pi). The default is 11.20; 11.21 is built for a Pi check
+# and becomes the default once it passes. Each version has its own patches (patches/wine-<V>), patched tree
+# (sources/wine/wine-haiku-<V>), output (artifacts/wine-<V>) and package revision (below). Only the default
+# version's packages are copied into artifacts/packages and jam's download directory; another version's stay
+# in its own output directory.
 #
 # Steps:
 #   source     Wine (the GitHub mirror's tag archive: winehq.org does not resolve here) and llvm-mingw
@@ -64,8 +65,17 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 # the version built by default, and the only one whose packages go to the shared package directories
 defaultVersion=11.20
 wineVersion="${WINE_VERSION:-$defaultVersion}"
+# wineRevision: the packages' revision, counted per version (scripts/publish-repo.sh publishes a rebuilt
+# package only under a new one)
 case "$wineVersion" in
-11.20) wineSha=98b21b4ebdf7d9e2baa4a3508514285cf449f455603f82d3364b014c0e79b793 ;;
+11.20)
+	wineSha=98b21b4ebdf7d9e2baa4a3508514285cf449f455603f82d3364b014c0e79b793
+	wineRevision=24	# 24: Wine 0028, 0029 (built and checked on the Pi 10-31, not yet packaged)
+	;;
+11.21)
+	wineSha=046cb0519b7d385be7912304910ccde9e3c0268ebdce7ef35a3c14446cfb8029
+	wineRevision=1	# 1: 11.20's 0001-0029 rebased (11-01)
+	;;
 *) echo "build-wine: no pinned archive for Wine $wineVersion" >&2; exit 1 ;;
 esac
 mingwRelease=20260826
@@ -81,8 +91,6 @@ sysroot="$root/artifacts/sysroot-arm64"
 tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
 mingw="$srcDir/$mingwName/bin"
 jobs="$(nproc)"
-# the packages' revision (scripts/publish-repo.sh publishes a rebuilt package only under a new one)
-wineRevision=24	# 24: Wine 0028, 0029 (built and checked on the Pi 10-31, not yet packaged)
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 
