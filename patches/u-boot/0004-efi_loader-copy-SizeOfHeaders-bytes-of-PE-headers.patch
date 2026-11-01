@@ -1,0 +1,62 @@
+From: haiku-rpi
+Subject: [PATCH] efi_loader: copy SizeOfHeaders bytes of the PE headers
+
+efi_load_pe() copied only the DOS, NT and section headers into the image,
+although the image's SizeOfHeaders may be larger (Haiku's EFI loader declares
+the whole first page, 0x1000). The rest of the headers' memory kept whatever
+was in RAM: garbage after a cold start. Copy SizeOfHeaders bytes (bounded by
+the file and the image size), as EDK2's PeCoffLoaderLoadImage() does.
+---
+diff --git a/lib/efi_loader/efi_image_loader.c b/lib/efi_loader/efi_image_loader.c
+index f9a2d2df..02f1427c 100644
+--- a/lib/efi_loader/efi_image_loader.c
++++ b/lib/efi_loader/efi_image_loader.c
+@@ -907,6 +907,7 @@ efi_status_t efi_load_pe(struct efi_loaded_image_obj *handle,
+ 	int rel_idx = IMAGE_DIRECTORY_ENTRY_BASERELOC;
+ 	uint64_t image_base;
+ 	unsigned long virt_size = 0;
++	unsigned long headers_size;
+ 	int supported = 0;
+ 	efi_status_t ret;
+ 
+@@ -961,6 +962,7 @@ efi_status_t efi_load_pe(struct efi_loaded_image_obj *handle,
+ 		image_base = opt->ImageBase;
+ 		efi_set_code_and_data_type(loaded_image_info, opt->Subsystem);
+ 		handle->image_type = opt->Subsystem;
++		headers_size = opt->SizeOfHeaders;
+ 		efi_reloc = efi_alloc_aligned_pages(virt_size,
+ 						    loaded_image_info->image_code_type,
+ 						    opt->SectionAlignment);
+@@ -977,6 +979,7 @@ efi_status_t efi_load_pe(struct efi_loaded_image_obj *handle,
+ 		image_base = opt->ImageBase;
+ 		efi_set_code_and_data_type(loaded_image_info, opt->Subsystem);
+ 		handle->image_type = opt->Subsystem;
++		headers_size = opt->SizeOfHeaders;
+ 		efi_reloc = efi_alloc_aligned_pages(virt_size,
+ 						    loaded_image_info->image_code_type,
+ 						    opt->SectionAlignment);
+@@ -1009,12 +1012,18 @@ efi_status_t efi_load_pe(struct efi_loaded_image_obj *handle,
+ 
+ #endif
+ 
+-	/* Copy PE headers */
+-	memcpy(efi_reloc, efi,
+-	       sizeof(*dos)
+-		 + sizeof(*nt)
+-		 + nt->FileHeader.SizeOfOptionalHeader
+-		 + num_sections * sizeof(IMAGE_SECTION_HEADER));
++	/*
++	 * Copy PE headers: all SizeOfHeaders bytes, as the UEFI specification's
++	 * loader (EDK2) does, so that the image's memory below its first section
++	 * holds the file's contents and not whatever was in RAM before.
++	 */
++	headers_size = max_t(unsigned long, headers_size,
++			     sizeof(*dos) + sizeof(*nt)
++			     + nt->FileHeader.SizeOfOptionalHeader
++			     + num_sections * sizeof(IMAGE_SECTION_HEADER));
++	headers_size = min_t(unsigned long, headers_size,
++			     min_t(unsigned long, efi_size, virt_size));
++	memcpy(efi_reloc, efi, headers_size);
+ 
+ 	/* Load sections into RAM */
+ 	for (i = num_sections - 1; i >= 0; i--) {
