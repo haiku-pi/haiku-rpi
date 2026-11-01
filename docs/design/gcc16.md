@@ -19,7 +19,9 @@ between the two. Against 15.3.0 that is 59 files, about 4000 lines, most of them
 | Headers | `ginclude/stddef.h`, `stdarg.h` | Haiku's `size_t`/`wchar_t`/`va_list` conventions |
 | Misc | `zlib/zutil.h`, `c++tools` (link with libnetwork), `libcody/configure` | build fixes for Haiku as a host |
 
-Generated `configure` scripts carry the matching hunks. Ours (haiku-pi fork) adds four arm64 commits on top:
+Generated `configure` scripts carry the matching hunks. (The 15.3 delta also had `zlib/zutil.h`, removing
+zlib's macOS `fdopen` define, d8207e22d2; GCC 16 bundles zlib 1.3.1, which dropped it itself, so the 16.2 delta
+is one file shorter.) Ours (haiku-pi fork) adds four arm64 commits on top:
 libgcc_s linked as needed (85273c9ba6), `REAL_LIBGCC_SPEC` for a `--disable-shared` compiler (393b4ec7a4),
 `--hash-style=both` by default (fc2ad25b8b), and in binutils `-z pack-relative-relocs` (1cad3a62fa).
 
@@ -31,7 +33,8 @@ vendor-gcc d7a7951064) plus **12071** (662fd8ac, `haiku.opt.urls`); both still u
 HaikuPorts' `sys-devel/gcc` 15.3.0 recipe (pinned haikuports c17ec5a8d2f0) carries the same change as the first
 patch of its patchset ("Modifications for GCC 15.3.0 for Haiku (from buildtools repository)") plus seven
 libsanitizer/c++tools patches for the native compiler package; it confirmed the delta but the buildtools merge
-itself was the better base (it has history). No GCC 14/16 work exists upstream.
+itself was the better base (it has history). Upstream has no GCC 16 work; a 14.1.0 import (35be7241cf, 2024)
+sits on `vendor-gcc` and was never merged.
 
 Branch **`gcc16`** of haiku-pi/buildtools (from our `master` fc2ad25b8b), three commits on the first-parent line:
 
@@ -97,7 +100,8 @@ libgcc-kernel, libsupc++) stay 13.3's in this step.
   `qsort_r.c`); `'SIZE_MAX'`/`'UINT8_MAX'` … redefined (headers/posix/stdint.h after flex's `rc` lexer); one
   `-Warray-bounds` in `headers/private/kernel/string.h`. `-Wunused-but-set-variable` became
   `-Wunused-but-set-variable=` (levels) — same findings under a new name. Several older warnings disappeared
-  (sign-compare −144, missing-prototypes −76 …), partly because the failed objects never compiled.
+  (sign-compare −144, missing-prototypes −76 …), but that run built only 6952 + 430 of 9929 targets, so the
+  warning counts are not comparable; only the error rows are.
 
 So the source work for 16.2 is small: decide C++17-vs-C++20 for Haiku (recommended: pin `-std=gnu++17` in
 `build/jam/ArchitectureRules` for GCC now, like 13/15 behaved, and move to C++20 deliberately later), name the
@@ -107,9 +111,12 @@ So the source work for 16.2 is small: decide C++17-vs-C++20 for Haiku (recommend
 
 1. **Haiku source fixes** (sources/haiku `rpi4`, small commits in Haiku style): the four items above. Upstream may
    want the same once it reaches GCC 16; keep them upstreamable.
-2. **gcc_syslibs and gcc_syslibs_devel 16.2.0** — blocking for any image meant to run: Haiku links against the
-   package's libstdc++.so/libgcc_s.so and compiles against its headers, and binaries built with 16.2's headers need
-   its newer `GLIBCXX_*`/`CXXABI_*` symbols at run time (libstdc++.so.6.0.32 → 6.0.35). Extend
+2. **gcc_syslibs and gcc_syslibs_devel 16.2.0** — required before anything is shipped or tested on the Pi.
+   Haiku links against the package's libstdc++.so/libgcc_s.so and compiles against its headers. The QEMU boot above
+   only shows that the mixed build (16.2 compiler and headers, 13.3 libstdc++.so/libgcc_s/static libs) links and
+   runs for the minimum set: the linker found no newer `GLIBCXX_*` symbol referenced there, but inline code from
+   16.2's headers against a library three versions older is an ODR hazard that larger programs (Firefox, WebKit,
+   Mesa) will hit (libstdc++.so.6.0.32 → 6.0.35). Extend
    `scripts/build-gcc-syslibs.sh` (today: a 13.3 rebuild of only two libraries) to a full Canadian cross of the
    gcc16 branch, as haikuports.cross's `gcc_bootstrap` recipe does, producing both packages including the kernel and
    boot variants of libgcc/libsupc++ (`libgcc-kernel.a`, `libsupc++-boot.a` …); version e.g. `16.2.0_2026_11_01`.
