@@ -680,7 +680,7 @@ More threads barely help stories15M: every token streams the 60 MB of weights fr
 
 ### 11.5 Windows programs (Wine)
 
-Wine 11.20 runs Windows programs on Haiku arm64. Programs built for 64-bit Arm Windows run directly;
+Wine 11.21 (from 2026-11-01; 11.20 before) runs Windows programs on Haiku arm64. Programs built for 64-bit Arm Windows run directly;
 32-bit x86 Windows programs (most older games and applications) run through WoW64 and the Box64
 emulator; 64-bit x86 (x86-64) programs run through ARM64EC and the FEX emulator. Install the packages
 from our repository:

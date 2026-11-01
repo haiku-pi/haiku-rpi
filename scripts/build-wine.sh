@@ -63,7 +63,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # the version built by default, and the only one whose packages go to the shared package directories
-defaultVersion=11.20
+defaultVersion=11.21
 wineVersion="${WINE_VERSION:-$defaultVersion}"
 # wineRevision: the packages' revision, counted per version (scripts/publish-repo.sh publishes a rebuilt
 # package only under a new one)

@@ -64,7 +64,9 @@ with sources. What it settles:
 
 ### Status (2026-10-22)
 
-- **Wine 11.20 + Box64 v0.4.4** are the build now (`scripts/build-wine.sh`, `scripts/build-box64.sh`; 11.0 and
+- **Wine 11.21** (2026-11-01: our 29 patches rebased from 11.20, 3 adapted — 0001 configure, 0003/0006 win32u
+  framebuffer code; 0028 still needed because Mesa 26.2.6 lacks GL_MESA_map_buffer_client_pointer; mega-smoke
+  33/33; `patches/wine-11.21/`). Before: **Wine 11.20 + Box64 v0.4.4** were the build (`scripts/build-wine.sh`, `scripts/build-box64.sh`; 11.0 and
   v0.4.0 removed), with crash reports and the Haiku arm64 write-fault fix
   ([wine-debugging.md](wine-debugging.md)). On the Pi: OpenGL on the V3D, sound, Heroes III, and
   **Half-Life: Uplink playing its first map** (software renderer, windowed).

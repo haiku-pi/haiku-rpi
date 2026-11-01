@@ -29,7 +29,7 @@ of the image otherwise.
 | System | the current Haiku `rpi4` branch, the current Mesa (OpenGL ES 3.1 / OpenGL 2.1, Vulkan 1.3) and libglvnd: every performance change, also those not yet in a release |
 | Applications | Firefox, WebPositive, MediaPlayer, Photocraft (photo editor), glmark2, GLTeapot, vkcube |
 | Games | OpenArena, SuperTuxKart; QuakeSpasm and vkQuake (Quake shareware), Yamagi Quake II (demo), Quake III Arena (demo) |
-| Windows programs (Wine 11.20; x86 via Box64, x86-64 via FEX) | Minesweeper, Notepad, PuTTY, Notepad++, SumatraPDF, 7-Zip (console) — each as x86 and x86-64 where both exist |
+| Windows programs (Wine 11.21; x86 via Box64, x86-64 via FEX) | Minesweeper, Notepad, PuTTY, Notepad++, SumatraPDF, 7-Zip (console) — each as x86 and x86-64 where both exist |
 | Windows games | Heroes of Might and Magic III (demo), SimCity 3000 (demo), StarCraft (shareware), Half-Life Uplink (demo), Fallout (demo), Age of Empires II (demo), Unreal Tournament (demo, OpenGL renderer), Diablo II (demo, in a window), Warcraft III (demo) |
 
 Everything starts from the **Test Apps** folder on the Desktop with a double-click (small launcher
