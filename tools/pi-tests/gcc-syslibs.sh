@@ -5,7 +5,8 @@
 # in its DT_NEEDED, so libroot's copy of libsupc++ serves the program's throws and catches):
 #   which gcc_syslibs is active and the libraries' hashes, cxxrt (exceptions, exception_ptr, a replaced
 #   operator new, threads), the runtime libraries Tracker and Deskbar have loaded, and launches of C++
-#   applications to their first window (launchtime, tools/haiku-tests/launchtime.cpp, in /boot/home).
+#   applications to their first window (launchtime, tools/haiku-tests/launchtime.cpp, in /boot/home), and on
+#   a GL image GLTeapot for 30 s.
 # Serial lines "CXXRT ...", the last "CXXRT end". CXXRT_LAUNCHES (default 3) launches per app.
 sleep 25
 out=/dev/dprintf
@@ -14,7 +15,8 @@ cd /boot/home || exit 1
 n=${CXXRT_LAUNCHES:-3}
 
 say "package $(ls /boot/system/packages | grep '^gcc_syslibs' | tr '\n' ' ')"
-say "sha256 libstdc++ $(sha256sum /boot/system/lib/libstdc++.so.6.0.32 | cut -c1-16)" \
+stdcxx=$(ls /boot/system/lib/libstdc++.so.6.0.* | head -n 1)
+say "sha256 $(basename $stdcxx) $(sha256sum $stdcxx | cut -c1-16)" \
 	"libgcc_s $(sha256sum /boot/system/lib/libgcc_s.so.1 | cut -c1-16)"
 say "cxxrt: $(./cxxrt 2>&1 | tr '\n' ' ')"
 say "cxxrt-rootfirst: $(./cxxrt-rootfirst 2>&1 | tr '\n' ' ')"
@@ -35,5 +37,17 @@ done
 /boot/system/apps/Terminal &
 sleep 6
 say "Terminal: $(listimage Terminal 2>&1 | grep -E 'libstdc|libgcc_s' | awk '{print $NF}' | tr '\n' ' ')"
+# a GL image (jam -sHAIKU_PI_GL=1): GLTeapot for 30 s
+if [ -x /boot/system/non-packaged/apps/GLTeapot ]; then
+	/boot/system/non-packaged/apps/GLTeapot > /dev/null 2>&1 &
+	pid=$!
+	sleep 30
+	if kill -0 $pid 2> /dev/null; then
+		say "GLTeapot: running after 30 s, $(listimage GLTeapot 2>&1 | grep -E 'libstdc|libGL' | awk '{print $NF}' | tr '\n' ' ')"
+		kill $pid
+	else
+		say "GLTeapot: exited early BAD"
+	fi
+fi
 say "debugger entries: $(grep -c 'debug_server\|Debugger' /var/log/syslog 2>/dev/null)"
 say end

@@ -1,0 +1,30 @@
+The gcc_bootstrap recipe's patchset (gcc-13.3.0_2026_03_29.patchset, Sam Roberts), ported to GCC 16.2.0
+(buildtools branch gcc16) for scripts/build-gcc-syslibs.sh --full.
+
+Subject: [PATCH 1/2] libstdc++: force shared libgcc
+
+--- a/libstdc++-v3/configure
++++ b/libstdc++-v3/configure
+@@ -51422,7 +51422,7 @@
+ if ac_fn_c_try_link "$LINENO"; then :
+   glibcxx_shared_libgcc=yes
+ else
+-  glibcxx_shared_libgcc=no
++  glibcxx_shared_libgcc=yes
+ fi
+ rm -f core conftest.err conftest.$ac_objext \
+     conftest$ac_exeext conftest.$ac_ext
+
+Subject: [PATCH 2/2] config: always set LIMITS_H_TEST = true
+
+--- a/gcc/config/t-haiku
++++ b/gcc/config/t-haiku
+@@ -1,7 +1,7 @@
+ # There are system headers elsewhere, but these are the ones that
+ # we are most likely to want to apply any fixes to.
+ NATIVE_SYSTEM_HEADER_DIR = /boot/system/develop/headers
+-LIMITS_H_TEST = [ -f $(SYSTEM_HEADER_DIR)/posix/limits.h ]
++LIMITS_H_TEST = true
+ 
+ # Haiku-specific attributes
+ haiku.o: $(srcdir)/config/haiku.c

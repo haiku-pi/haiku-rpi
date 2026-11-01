@@ -107,28 +107,94 @@ So the source work for 16.2 is small: decide C++17-vs-C++20 for Haiku (recommend
 `build/jam/ArchitectureRules` for GCC now, like 13/15 behaved, and move to C++20 deliberately later), name the
 `elf.h`/`USB_video.h`/`mmc_disk.h` structs, `-std=gnu17` for the loader's zlib, a static `_Frame()`.
 
+## Step 2 (11-01): Haiku fixes, gcc_syslibs 16.2.0, the regular GL image
+
+All on side branches; the main build (`sources/haiku` `rpi4`, `generated.arm64`, 13.3) is untouched.
+
+**Haiku, branch `gcc16`** of haiku-pi/haiku (pushed; from `rpi4` 7c2be9652e, a worktree, not the shared checkout):
+
+| Commit | What |
+|---|---|
+| 3c641a2b01 | build: `-std=gnu++17` for GCC C++ in `ArchitectureRules` (`HAIKU_C++FLAGS_<arch>`, so kernel and boot loader too; not Clang, not gcc2). Per-directory `-std=gnu++11` (libroot arch, libsolv) still wins where set |
+| 2d0aac976e | headers: tags for the typedef'd structs with member functions (`Elf32/64_Ehdr/Phdr/Sym/Rel`, four `USB_video.h` descriptors, `mmc_disk_driver_info`), as `Elf32_Rela` had; same linkage name, ABI unchanged |
+| f21e11d138 | kernel, boot: zlib 1.2.13 (K&R definitions) as `-std=gnu17` — the **kernel's** `kernel_libz.a` failed too, not only the boot loader's (step 1's `-Wno-error` hid it) |
+| 29a820de6e | FileTypes: the three windows' `_Frame()` static (it was called in the `BWindow` initialiser on an unconstructed object) |
+| d2fd8ddf8b | arm64 repository: `gcc_syslibs` / `gcc_syslibs_devel` `16.2.0_2026_11_01-1` |
+
+All build with GCC 13.3 as well (nothing GCC-16-specific in them). With them, strict (`-Werror` as configured)
+`@minimum-mmc` and then `-sHAIKU_PI_GL=1 @pi-mmc` build with 16.2, **no compiler wrappers**.
+
+**buildtools `gcc16`** one more commit, c2213226f9 (pushed): GCC 16's `<bitset>` lost the `_GLIBCXX_HOSTED` guard around
+the null check in `bitset(const CharT*)`, which calls `__throw_logic_error` — not declared freestanding; Haiku's
+userlandfs **kernel** add-on (`-ffreestanding`, includes `<bitset>`) failed with `-Wtemplate-body`. Guard restored as
+in 13.3's header. (The cross tools in the scratch output directory were built before it; only the package's headers,
+which jam uses, have the fix — the next cross-tools build picks it up.)
+
+**gcc_syslibs 16.2.0**: `scripts/build-gcc-syslibs.sh --full` (the 13.3 relink mode stays the default):
+`--rev c2213226f9 --version 16.2.0_2026_11_01 --buildtools <gcc16 worktree> --cross-tools <16.2 cross tools>
+--generated <16.2 output dir>`; ~15 min. The recipe's Canadian cross (its patchset ported:
+`patches/gcc_syslibs/gcc-16.2.0_2026_11_01.patchset`, the same two one-liners), building libgcc (+ `libgcc_s`),
+libstdc++, libsupc++, libatomic, libgomp, libssp, then the kernel (`-D_KERNEL_MODE`) and boot variants of
+libgcc/libgcc_eh/libsupc++ (gthr-single, no TLS: 0 TLS symbols, 0 pthread references, as 13.3's), GCC's
+`include`/`include-fixed` and the C++ headers; libstdc++ relinked with `-Bsymbolic-functions` as our 13.3 one, both
+`.hash` and `.gnu.hash`. Two GCC 16 traps in the native-compiler part it must build first: gcc's configure picked
+`-fno-PIE`/`-no-pie` for the host programs, which cannot link on Haiku (every executable is linked `-shared`) —
+`gcc_cv_c_no_fpie=no gcc_cv_no_pie=no`; and GCC 16's diagnostics code calls `socket()` (SARIF sink), which on Haiku is
+in libnetwork — `LDFLAGS=-lnetwork`. Both matter again for the native compiler package (H18).
+
+- **libstdc++.so.6.0.36** (not .35): 6085 exports, all 6003 of 13.3's 6.0.32 still there (name@version); libgcc_s
+  170 ⊇ 152; SONAME and NEEDED unchanged.
+- Packages (also in `artifacts/gcc-syslibs/16.2/` with the logs): `gcc_syslibs-16.2.0_2026_11_01-1-arm64.hpkg`
+  (6.3 MB), `gcc_syslibs_devel-16.2.0_2026_11_01-1-arm64.hpkg` (9.0 MB), the same file list and provides as
+  13.3's. Not in `artifacts/packages`, not published.
+
+**Image** (`-sHAIKU_PI_GL=1 @pi-mmc`, clean `objects/haiku`, 16.2 + the new packages): builds, rc 0; the same
+`AddHaikuImagePackages ... not available` list as a 13.3 build. Every kit/app is 16.2-compiled (`GCC: (GNU) 16.2.0`);
+none of the 510 ELF files in haiku.hpkg needs a symbol version newer than 13.3's (`GLIBCXX_3.4.32`); 13.3-built
+packages (Mesa, Firefox, …) run against 6.0.36, a superset. Warnings, unique file:line:warning on target code, against the 13.3 build
+of the same profile on 10-28: **1582 → 1865** (+450 new, −167 gone): `-Wold-style-definition` +304 (K&R C: 252 in
+libroot's POSIX layer, 31 in kernel drivers, the FreeBSD compat, ftpd, telnet, netresolv — C23 default; warnings
+only), `-Wunused-but-set-variable=` +84 / −29 (renamed, and finds more), the rest a wash (line drift between the trees); plus `-Wunused-local-typedefs` from libstdc++ 16's
+`stl_algo.h` on every includer (Haiku passes the C++ headers with `-I`, not `-isystem`).
+
+**QEMU virt** (that image + `tools/pi-tests/gcc-syslibs.sh` as UserBootscript, `cxxrt`/`launchtime` built with 16.2):
+gcc_syslibs 16.2 active; `cxxrt` and `cxxrt-rootfirst` ok; Tracker, Deskbar, Terminal load libstdc++.so.6.0.36;
+Terminal, StyledEdit, MediaPlayer, ShowImage, DeskCalc, Debugger each open 3 windows; **GLTeapot runs 30 s**
+(13.3-built Mesa/GLU against the 16.2 libstdc++); desktop on the screenshot; 3 debugger syslog lines, as the 13.3
+A run on 10-28.
+
 ## Next steps
 
-1. **Haiku source fixes** (sources/haiku `rpi4`, small commits in Haiku style): the four items above. Upstream may
-   want the same once it reaches GCC 16; keep them upstreamable.
-2. **gcc_syslibs and gcc_syslibs_devel 16.2.0** — required before anything is shipped or tested on the Pi.
-   Haiku links against the package's libstdc++.so/libgcc_s.so and compiles against its headers. The QEMU boot above
-   only shows that the mixed build (16.2 compiler and headers, 13.3 libstdc++.so/libgcc_s/static libs) links and
-   runs for the minimum set: the linker found no newer `GLIBCXX_*` symbol referenced there, but inline code from
-   16.2's headers against a library three versions older is an ODR hazard that larger programs (Firefox, WebKit,
-   Mesa) will hit (libstdc++.so.6.0.32 → 6.0.35). Extend
-   `scripts/build-gcc-syslibs.sh` (today: a 13.3 rebuild of only two libraries) to a full Canadian cross of the
-   gcc16 branch, as haikuports.cross's `gcc_bootstrap` recipe does, producing both packages including the kernel and
-   boot variants of libgcc/libsupc++ (`libgcc-kernel.a`, `libsupc++-boot.a` …); version e.g. `16.2.0_2026_11_01`.
-   Then update `build/jam/repositories/HaikuPorts/arm64` and the download directory (AGENTS.md: three-part bump).
-3. **Switch the main build**: `scripts/bootstrap.sh` builds from `sources/buildtools` — move that clone (or the fork's
-   default branch) to `gcc16` once 1-2 work; reconfigure `generated.arm64` (one-time, ~10 min). Full `@pi-mmc` /
-   mega image build; record the warning delta.
-4. **Rebuild our packages** with 16.2 (Mesa + GL stack, libdrm, libglvnd, SDL2, ffmpeg, the games, Firefox,
-   WebKit, Wine, Python, …: `scripts/build-packages.sh` and friends), each a revision bump.
-5. **Pi gates** equal to 13.3's: boot bench, gpu-it, mega-smoke (scripts/sd-cycle.sh, the bench lock).
+1. ~~Haiku source fixes~~ — done (step 2), branch `gcc16`.
+2. ~~gcc_syslibs and gcc_syslibs_devel 16.2.0~~ — done (step 2).
+3. **Switch the main build** (one session, when the bench and the main build allow; ~1 h of builds):
+   1. merge haiku `gcc16` into `rpi4` (fast-forward plus whatever `rpi4` gained; the five commits are independent of
+      the main session's work) and push;
+   2. `sources/buildtools` → branch `gcc16` (c2213226f9 or later), keep the 13.3 tools: rename
+      `sources/haiku/generated.arm64/cross-tools-arm64` → `cross-tools-arm64-gcc13` (or tag `gcc13-baseline`), then
+      `configure --build-cross-tools arm64 --cross-tools-source ../../buildtools -j12` in `generated.arm64`
+      (~10 min; the cross tools then also have the `<bitset>` fix);
+   3. the three-part bump: both 16.2 hpkgs into `generated.arm64/download/` (the repository line is already in
+      `gcc16`) and into `artifacts/packages/` (moving 13.3's `gcc_syslibs-…bootstrap-2` out: publish-repo.sh allows
+      one revision); a clean `objects/haiku`; `scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc`; grep the log for
+      `not available` (the 13.3 list only);
+   4. `scripts/haiku-sysroot.sh` — it takes the newest `gcc_syslibs*` in the download directory, so the sysroot
+      gets 16.2's libstdc++ and headers; recreate it before any port build.
+4. **Rebuild our packages** with 16.2 against that sysroot, each a revision bump (three parts): the GL stack first
+   (`scripts/build-gl-stack.sh --sysroot` + `package-gl-stack.sh`: libdrm, libglvnd, Mesa, GLU), then
+   `scripts/build-packages.sh` (SDL2, ffmpeg6, libogg/vorbis, fluidlite, zstd, base ports, NetSurf + OpenSSL/curl,
+   libedit, Python, ICU, ncurses, the pkgman ports), `build-webkit.sh` (hours), `build-firefox.sh`,
+   `build-games.sh` + `build-stk.sh` + `build-vkquake.sh` + `build-q3.sh` + `package-games.sh`, `build-wine.sh`,
+   `build-python-modules.sh`, `build-rust.sh`, `build-photocraft.sh`,
+   `build-spidermonkey.sh`, `build-llama2.sh`; then `build-mega-image.sh`. Mesa and WebKit/Firefox are where C++20/
+   GCC 16 source breakage is likely (they choose their own `-std`); fix per port in its patches/.
+5. **Pi gates** equal to 13.3's: boot bench, gpu-it, mega-smoke (scripts/sd-cycle.sh, the bench lock), plus
+   `tools/pi-tests/gcc-syslibs.sh` (now version-independent, with a GLTeapot check) on the regular image.
 6. **Native compiler package** (H18): the HaikuPorts gcc recipe ported to 16.2 (its libsanitizer patches) — so
-   the native compiler is built once, on the new version.
+   the native compiler is built once, on the new version. It needs the two host traps above
+   (`gcc_cv_*_pie=no`, `-lnetwork`) and replaces the `gcc-13.3.0…bootstrap-1` the dev images (`HAIKU_PI_DEV`)
+   carry: it requires only `haiku` and has its own 13.3 C++ headers, so on a 16.2 image it keeps working (its
+   programs link against libstdc++ 6.0.36, a superset), but the on-device compiler stays 13.3 until then.
 7. **Binutils 2.47**, its own A/B, after 5.
 8. **Performance comparison** (below).
 
