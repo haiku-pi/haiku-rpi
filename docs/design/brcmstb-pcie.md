@@ -391,3 +391,30 @@ How the other pieces map onto existing code:
 4. **FreeBSD's 960 MiB DMA cap** is unexplained ([FB]). Test xHCI with rings above 1 GiB before trusting 3 GiB.
 5. **RC header BAR0/BAR1** at bus 0. Linux also sizes them by writing all-ones, so sizing them is not a new hazard. Whether they read non-zero is unverified. If `_ReserveBARs` finds a non-zero size there, it will carve them out of the window.
 6. **Boot ordering.** Haiku's `PCI_command` enable plus BAR sizing happen after the notify. That matches Linux, where the firmware has no BAR dependency.
+
+## Linux comparison (2026-11-01, for KNOWN-ISSUES C1)
+
+What Linux's `drivers/pci/controller/pcie-brcmstb.c` (6.x) does from controller reset to the xHCI start, against
+`BrcmPCIController.cpp`. Linux order: setup → PERST# released, 100 ms, link-up polled up to 100 ms more →
+CLKREQ# mode → SSC on → CRS software visibility on (if the root port has it) → enumeration and BAR sizing → at xHCI
+probe, `reset_control_reset` sends the firmware's NOTIFY_XHCI_RESET (every time, also on resume), then 200-1000 µs.
+**Linux reads the VL805's configuration space well before the notify.**
+
+| Item | Linux | This driver |
+|---|---|---|
+| CRS software visibility (RTCTL bit 4) | set when RTCAP bit 0 (`probe.c` then polls a 0x0001 vendor ID for up to 60 s) | never set: a device answering "retry" is retried by the root complex in hardware |
+| Retry / bus timeouts (0x405c, 0x40a8) | BCM2712 only | not written (same as Linux on BCM2711) |
+| Internal bus timeout (SW_INIT_1 − 8) | 4 s in the "default" CLKREQ# mode | reset value |
+| CLKREQ# (`HARD_DEBUG`) | a mode always chosen after link-up; Raspberry Pi OS: "default" (L1SS enable) | all CLKREQ# bits cleared |
+| SSC | on (`bcm2711.dtsi`) | off |
+| ASPM | advertised; Raspberry Pi OS POWERSAVE | not advertised (the safer side) |
+| UR → all ones | set | set |
+
+Evidence against "a config read of a still-starting VL805 hangs" (the first C1 lead): in both early cold-SD
+freezes the VL805 had already given its vendor ID and firmware 0x138c0 and its BAR was assigned; the serial output
+was buffered then (16 KiB queue drained by the TX interrupt), so where it stopped is not where the CPUs were; with
+the PCIe driver blocked, cold network sessions still froze 3 of 4; a bad PCIe read on this chip ends after ~10.8 s
+with an SError (seen on the Phoenix-RTOS port), which would have entered the kernel debugger. Candidates left, each
+cheap: CRS visibility as Linux; the notify in Linux's place (at xHCI attach, then ~1 ms, then the inbound window
+again); Linux's CLKREQ# "safe"/"default" mode and SSC. First: a cold-SD series with unbuffered serial output and
+`debug_heartbeat` to see where the CPUs really stop.
