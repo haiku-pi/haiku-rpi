@@ -1,7 +1,7 @@
 # The owner's prompts
 
-Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. 27
-messages in six days. The automatic ones are left out: the cron heartbeat that resumes autonomous work
+Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. 51
+messages in sixteen days. The automatic ones are left out: the cron heartbeat that resumes autonomous work
 ("Haiku-Pi heartbeat …"), the weekly upstream-sync cron, task notifications, the context summaries the
 session writes for itself, and two messages from the parallel Phoenix-RTOS session about sharing the bench.
 
@@ -12,7 +12,8 @@ that work, step by step.
 
 How this list was made: the session transcripts were searched for messages the owner typed. That includes
 prompts typed while the agent was working, which are stored as queued commands. Times are as recorded, in UTC,
-with Central European Summer Time (CEST, the lab's local time) next to them.
+with the lab's local time next to them: Central European Summer Time (CEST) until 10-25, Central European
+Time (CET) from then on.
 
 ## 1. 2026-10-17 21:25:35 UTC (23:25 CEST): the starting point
 
@@ -276,3 +277,150 @@ Done the same afternoon; later replaced on the card by newer releases at the own
 
 The boot made 3 s faster, the profiler fixed so that it can be used on Wine, thread-local variables twice as fast (release image-2026-10-24).
 
+## 28. 2026-10-24 19:49:14 UTC (21:49 CEST)
+
+> keep going - continue working on performance topics
+
+## 29. 2026-10-24 20:04:51 UTC (22:04 CEST)
+
+> Have you tried running strace to see which syscalls are being used?
+
+## 30. 2026-10-24 20:07:21 UTC (22:07 CEST)
+
+> Side note: there is a USB stick connected to the Pi. It is OK to completley remove it contents and reformat it
+> to any FS you'd like. If this helps - you can try make it bootable and boot from it - it will likley be faster
+> than SD, and most importantly it might show if the same Firefox waiting happens there - e.g. is it related to
+> SD driver? You don't need to do this now - just consider it as one of multiple options for the future.
+
+## 31. 2026-10-24 22:22:21 UTC (00:22 CEST, 10-25): every tool, every subsystem
+
+> Make sure to use the full potential of the tools present in Haiku like kernel debugger, application debugger,
+> profiler, strace and potentially other forms of traces, Rpi4 performance ounters and all forms of system and
+> application logs. If some specific tool is not working correctly and would be helpful - fix it. If there is a
+> tool that would help but is not present in Haiku - port it or implement it. The general goal for now is to
+> have a highly performant, fast system - in all of its aspects. Obvisouly the speed should be done wisely - so
+> that we don't break other features / characteristics of the system and that we don't overoptimise for 1
+> specific benchmark or measure, potentially hurting others. Anyhow I want you to dig deep and try to optimize
+> the performance further - keep pushing for better results. This includes also (but not only) GPU performance,
+> Wifi performance, Eth performance, SD performance, USB mass performance etc etc.
+
+The PMU counters (`pmustat`), the Debugger's arm64 back end with breakpoints and disassembly, the profiler fix, and the performance work of 10-25 to 10-29 (W43/W44 logs).
+
+## 32. 2026-10-24 22:37:37 UTC (00:37 CEST, 10-25): Photocraft
+
+> On top of the current backlog (don't stop any tasks) please schedule a big porting effort - I'd like to have
+> Photocraft running on Haiku on Pi4. https://github.com/storytold/photocraft
+
+Photocraft 0.15.1 published on 10-26 and 0.17.0 on 10-28 (`pkgman install photocraft`).
+
+## 33. 2026-10-25 12:52:46 UTC (13:52 CET)
+
+> What is running on the Pi now?
+
+## 34. 2026-10-25 13:19:41 UTC (14:19 CET): hands-on tests
+
+> the board is powered-off now. can I do some manual tests? I'll let you know when I'm done
+
+## 35. 2026-10-25 13:29:12 UTC (14:29 CET)
+
+> I tested the system briefly - mouse and keyboard works OK - the general performance is very good. yet, when
+> starting it with pi-test.sh there was no network configured - not DHCP and no routing via host - so I couldn't
+> install any packages or test web browsers. I'd like to test games and network access.
+
+## 36. 2026-10-25 13:30:51 UTC (14:30 CET)
+
+> note that Pi will try to netboot first in the firmware
+
+## 37. 2026-10-25 13:32:45 UTC (14:32 CET)
+
+> You can also already update the documentation which still says the system was not hand tested. I did test it
+> and basic interactions works fully ok. In the next step I'll test network and more things.
+
+## 38. 2026-10-25 13:34:54 UTC (14:34 CET)
+
+> Can you prepare a test environment - it can be a netboot setup - with all the test apps (all the Quakes, wine
+> + demo wine apps, Photocraft, all the stuff we tested so far). So that I don't need to install or build
+> anything myself?
+
+## 39. 2026-10-25 13:36:08 UTC (14:36 CET)
+
+> Just make sure that I test the most recent version with all the performance fixes in Mesa, kernel and libs.
+
+## 40. 2026-10-25 13:36:45 UTC (14:36 CET)
+
+> The card in Pi is 64GB most likely - plenty of space
+
+## 41. 2026-10-25 13:42:13 UTC (14:42 CET): the mega image
+
+> It would be good in general to have an option to build a "mega" image with all that we support. We don't want
+> to publish or archive such images, but just give a script to the users want to test themselves. So that they
+> can get the full experience with EVERYTHING we covered so far. We don't need to host copies of copyrighted
+> assets (game data, game demos) - we can put URLs in the script and download the corresponding binaries during
+> the image build. And we don't share the final image - the user build it locally and use. So there is no legal
+> risk (assuming we donwload binaries from legit locations). Please work on this - make sure you have this full
+> image for my testing. After that please continue you work as schedule before - finalize Photocraft and other
+> things. I'll be back for testing later this afternoon and then I'll ask for an update of this full mega image.
+> In the meantime, as you tested glmark and other simple GL apps - it would be good to measure the impact of
+> recent performance changes on Quakes FPS and Wine games peformance (if we can measure).
+
+`scripts/build-mega-image.sh` and [MEGA-IMAGE.md](MEGA-IMAGE.md): game data and demos downloaded at build time from their URLs, checked by SHA-256; `scripts/mega-smoke.sh` checks every entry on the Pi (33 of 33 on 10-31).
+
+## 42. 2026-10-27 03:16:05 UTC (04:16 CET)
+
+> continue
+
+## 43. 2026-10-28 19:20:45 UTC (20:20 CET)
+
+> continue, reinit cron jobs, work on open items
+
+## 44. 2026-11-01 11:07:39 UTC (12:07 CET): the boot freeze
+
+> Let me understand what is the current status. You keep fighting boot-up freezes from couple of days (?) and it
+> seems to me that either the observed rate of freezing is getting higher or at least is not going down? Is this
+> correct? What is the current theory behind this?
+
+## 45. 2026-11-01 11:10:04 UTC (12:10 CET)
+
+> But as I understood the docs earlier - we observed netboot freezes frequently and SD boot freezes only rarely.
+> Has anything changed that makes SD boots broken as well?
+
+The answer: the earlier SD rates came from too short an observation window; the freeze is now tracked as one issue (KNOWN-ISSUES C1) and tested on cold SD boots.
+
+## 46. 2026-11-01 11:11:28 UTC (12:11 CET)
+
+> Ok. Can you review the open tasks and clear the ones which are not longer relevent. Also can you have a look
+> at stale running shells (13) and subagents that seem the be finished but are still on the list in the TUI
+> below the prompt line.
+
+## 47. 2026-11-01 11:13:40 UTC (12:13 CET)
+
+> I think this is a good moment to do a Claude Code and system restart to allow for pending fixes to come in.
+> Can you make sure eveyrthing is prepared for that - nothing is running now?
+
+## 48. 2026-11-01 11:25:36 UTC (12:25 CET): Wine 11.21, upstream sync
+
+> reinitiate cron jobs, review the pending tasks and the plan and most recent project status, continue working
+> on Haiku OS. add a backlog task on Wine - there is a new point release with some nice updates that might be
+> helpful to us - rebase our patches towards the recently released version. Also schedule pulling upstream
+> changes from the projects we have forked.
+
+The weekly upstream sync now also watches Wine, Box64, FEX, U-Boot and Photocraft releases; our Wine patches are being rebased onto 11.21 (W44 log).
+
+## 49. 2026-11-01 11:25:55 UTC (12:25 CET)
+
+> Keep working autonomously as you did in the recent days.
+
+## 50. 2026-11-01 11:31:25 UTC (12:31 CET): the VL805 and Phoenix-RTOS
+
+> For the VL805 USB issues - also inspect documentation and code of our Phoenix-RTOS Pi4 porting project. We
+> also did have issues with boot-up USB enumeration there as some boot cycles simply failed to enumerate USB
+> devices. Maybe we are facing the same issue here but instead of enumeration failure it blocks the boot-up.
+> Clearly it seems this does not affect Linux (??) so we need to investigare what Linux does differently. We do
+> have a local Linux kerenel checkout in Phoenix-RTOS project, so we can investigate it deeply and maybe fix
+> both OSes at once if we find the root-cause? Anyhow these are just my ideas - I know you analyzed this for
+> couple of days, so decied yourself on the best strategy. Keep in mind that we want a stable and performant
+> Haiku OS on Pi4.
+
+## 51. 2026-11-01 11:34:54 UTC (12:34 CET)
+
+> Also make sure the user facing docs in GitHub like readme and known issue are up-to-date.

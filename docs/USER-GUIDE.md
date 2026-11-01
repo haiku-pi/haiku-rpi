@@ -525,7 +525,7 @@ Terminal:
   (inquiry and page scan on; the port's `tools/bt-tests/btscan 3` sets that), then a "PIN Code Request"
   window opens on the Pi: enter the PIN the other side uses (the field proposes 0000) and press Pair.
   **On images before image-2026-10-23c, do not pair**: unpairing from the other side could panic the
-  kernel (KNOWN-ISSUES C6).
+  kernel (fixed in haiku b0ea06deaf).
 - Bluetooth keyboards, mice and audio are untested, and so are the Bluetooth preferences.
 
 ### 9.4 NFS client
@@ -865,8 +865,7 @@ work that way, which also lets you run things on a Pi without a keyboard.
 |---|---|
 | Nothing on the monitor | Wait: the desktop takes ~80 s. Connect the monitor before power-on (the display mode comes from its EDID, read at boot; plugging a monitor in later is untested). Try the other micro-HDMI port: only one has been used on the bench. Check the serial console. |
 | The Pi waits about a minute before booting the card | Its EEPROM boot order tries the network first and nothing answers. Harmless; change `BOOT_ORDER` in the EEPROM if it bothers you. |
-| The boot stops early, the splash showing no icon lit (serial output ends after `reserve_io_interrupt_vectors`) | An early-boot hang seen once in about 20–30 boots on 2026-10-20 (on a network boot); it did not recur in the SD benches that followed. Power-cycle. |
-| A **network** boot stops at ~54 s, with no serial output and no kernel debugger | The open "network-boot wedge", while the network drivers load and the first-boot package processing reads the remote disk. It strikes the first network boot of a Pi that was off for minutes: about 1 in 10 network boots of a Pi that was powered off for minutes, about 1 in 250 when it was on moments before; cold SD first boots 12 of 12 clean (2026-10-21). Power-cycle: the warm Pi boots. |
+| The Pi freezes in its first minutes — screen, serial output and network all stop (early in the boot, or a minute or two after the desktop appeared) | The open boot freeze ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1). It strikes the first boot after the Pi was off for 10 minutes or more: up to 2 boots in 3 from the SD card on the bench (2026-11-01), about 1 in 3 network boots under heavy disk reads; a Pi that stays powered, or was on moments before, rarely sees it. Power-cycle: the next boot works. Being worked on. |
 | HTTPS pages fail with "certificate not yet valid" | The clock is wrong (1970 on a first boot, or behind by the time the Pi was off): the network was not up for the boot-time NTP sync. `/boot/system/preferences/Time --update`, then reload (§8.1). |
 | `pkgman` fails with "Server not found" | Only images built before 2026-10-20 pointed their HaikuPorts repository at a server with no arm64 packages. Drop it and add ours: `pkgman drop-repo HaikuPorts`, then `pkgman add-repo https://haiku-pi.github.io/packages/arm64`. |
 | A package copied by hand into `/boot/system/packages` fails to activate ("failed to init package") | The package daemon saw a half-copied file. Copy it elsewhere on the same volume first, then `mv` it into `packages/`. |

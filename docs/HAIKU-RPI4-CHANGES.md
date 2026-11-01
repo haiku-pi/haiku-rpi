@@ -146,10 +146,10 @@ path was broken in several places on arm64. After these commits a Pi 4 reaches t
 | `84fd3835a4` ★ | Kernel `remote_disk`: writes pipelined too | A write sent one 1 KiB block and waited for its reply, so a network-booted system wrote at 2.9 MB/s over gigabit. Writes larger than a block now keep up to 16 requests in flight, as reads do, and are resent while overdue (a write at an offset can be repeated). 200 MiB written and synced in 3 s (was ~74 s); Wine's packages installed in 42 s (94); a new Wine prefix (~1 GB) in 61 s (387). |
 | `13f5af2f89` ★ | `remote_disk` looks for its server with a 1 s reply timeout | The hello broadcast goes out as the link comes up; a lost one cost the 5 s request timeout. In about half of the Pi's network boots the boot volume came 5-9 s after the link; now within 40 ms (6 of 6). |
 
-**Open:** a Pi booted after a pause can freeze early (every CPU stops; KNOWN-ISSUES C1/C10). Booted a few minutes
-after running at its thermal limit, network boots froze 22 of 22 while the bench U-Boot ran `usb start` and 8 of 8
-booted without it (W44 10-31); SD boots 1 of 5. Booted after cooling to room temperature, network boots still freeze
-about 1 in 3 during heavy remote-disk reads. Reproducer `scripts/c1-heat-hunt.sh [--sd]`. `a46a16641e`, `80a6e1f2fb` and
+**Open:** a Pi booted after being off for a while can freeze in its first minutes (every CPU stops; KNOWN-ISSUES
+C1): cold SD boots 2 of 3 over 240 s (11-01), cold network boots ~1 in 3 under heavy remote-disk reads; one freeze
+point is the PCI listing, before the VL805. Booted a few minutes after running at its thermal limit, network boots
+froze 22 of 22 while the bench U-Boot ran `usb start` and 8 of 8 booted without it (W44 10-31). Reproducer `scripts/c1-heat-hunt.sh [--sd]`. `a46a16641e`, `80a6e1f2fb` and
 the `debug_heartbeat` setting (`775c21f7fb`) were written while hunting it; `a8daa2c23b` (the cpufreq driver's
 request order) was taken for a fix and is not one. See [KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1.
 

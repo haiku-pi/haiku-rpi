@@ -39,7 +39,7 @@ What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monit
 listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 Known limits: HDMI audio only with a monitor connected at boot; video in Firefox drops frames for the first seconds after the browser starts;
-a Pi booted again within minutes of running at its thermal limit (85-90 °C) can occasionally freeze early in the boot — let it cool, or give it a heatsink ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1).
+a Pi that has been off for a while can freeze in its first minutes — up to 2 boots in 3 from the SD card on the bench; power-cycle it and the next boot works ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1, being worked on).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
 [haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts

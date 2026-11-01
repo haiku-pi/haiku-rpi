@@ -18,7 +18,7 @@ pictures are in [SHOWCASE.md](SHOWCASE.md) and [docs/screenshots/](docs/screensh
 
 The port was done by an AI coding agent (Claude) working autonomously. The owner's first prompt went out on the
 evening of 2026-10-17. The Haiku desktop ran on the real Pi 2.5 hours later. Up to the date of this page the owner
-has written 27 prompts in all, and they are listed in [docs/OWNER-PROMPTS.md](docs/OWNER-PROMPTS.md). How the
+has written 51 prompts in all, and they are listed in [docs/OWNER-PROMPTS.md](docs/OWNER-PROMPTS.md). How the
 work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNEY.md).
 
 ---
@@ -74,13 +74,14 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Audio | HDMI (48 kHz stereo, from image-2026-10-24e) and the 3.5 mm headphone jack (44.1 kHz stereo), through the media kit |
 | Storage | SD card at UHS-I DDR50 (about 43 MB/s read); USB 3 storage through the VL805 (80–90 MB/s) |
 | Network | Gigabit Ethernet (GENET), TCP about 915 Mbit/s each way; WiFi (BCM43455, WPA2); NFSv4 client |
-| Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching and inquiry. Pairing is untested |
+| Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching, discovery and pairing by PIN. Bluetooth keyboards, mice and audio are untested |
 | Web | WebPositive (HaikuWebKit, JavaScript JIT) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback |
 | Windows programs | **Wine 11.20** with x86 translation: 32-bit x86 programs through Box64, x86-64 programs through FEX (`pkgman install wine wine_x86 wine_x86_64`). Heroes III, StarCraft, SimCity 3000, Half-Life (also full screen; a game's display mode becomes the screen's, scaled by the display hardware), Chocolate Doom and OpenTTD (x86-64) play; Direct3D 9 on the V3D |
 | Software | Python 3.14, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
 
-Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a monitor connected at boot, and video in Firefox
-drops frames for the first seconds after the browser starts. The USB keyboard and mouse and everyday desktop use
+Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: **a Pi that has been off for a while can freeze in its first minutes**
+(C1, up to 2 boots in 3 from the SD card; power-cycle and the next boot works — being worked on), HDMI audio only with a
+monitor connected at boot, and video in Firefox drops frames for the first seconds after the browser starts. The USB keyboard and mouse and everyday desktop use
 were checked by hand on 2026-10-25 (image-2026-10-28): they work, and the system feels fast. Firefox and the games are in the public package repository (`pkgman install firefox`,
 `pkgman install openarena`, `pkgman install supertuxkart`), and so is **Photocraft**, a photo editor written in Rust
 (`pkgman install photocraft`: Haiku's file dialogs and clipboard, GPU compositing on Vulkan).
