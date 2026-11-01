@@ -167,17 +167,18 @@ A run on 10-28.
 
 1. ~~Haiku source fixes~~ — done (step 2), branch `gcc16`.
 2. ~~gcc_syslibs and gcc_syslibs_devel 16.2.0~~ — done (step 2).
-3. **Switch the main build** (one session, when the bench and the main build allow; ~1 h of builds):
-   1. merge haiku `gcc16` into `rpi4` (fast-forward plus whatever `rpi4` gained; the five commits are independent of
-      the main session's work) and push;
-   2. `sources/buildtools` → branch `gcc16` (c2213226f9 or later), keep the 13.3 tools: rename
-      `sources/haiku/generated.arm64/cross-tools-arm64` → `cross-tools-arm64-gcc13` (or tag `gcc13-baseline`), then
+3. **Switch the main build** (one session, when the bench and the main build allow; ~1 h of builds). Order
+   matters: haiku d2fd8ddf8b makes the build need the 16.2 packages and tools, so **do not merge `gcc16` into
+   `rpi4` before (1) and (2) are done** (the four source fixes, 3c641a2b01..29a820de6e, are safe on their own and
+   can be cherry-picked any time):
+   1. both 16.2 hpkgs into `generated.arm64/download/` (and into `artifacts/packages/`, moving 13.3's
+      `gcc_syslibs-…bootstrap-2` out: publish-repo.sh allows one revision);
+   2. `sources/buildtools` → branch `gcc16` (c2213226f9 or later), keeping the 13.3 tools: rename
+      `generated.arm64/cross-tools-arm64` → `cross-tools-arm64-gcc13` (or tag `gcc13-baseline`), then
       `configure --build-cross-tools arm64 --cross-tools-source ../../buildtools -j12` in `generated.arm64`
-      (~10 min; the cross tools then also have the `<bitset>` fix);
-   3. the three-part bump: both 16.2 hpkgs into `generated.arm64/download/` (the repository line is already in
-      `gcc16`) and into `artifacts/packages/` (moving 13.3's `gcc_syslibs-…bootstrap-2` out: publish-repo.sh allows
-      one revision); a clean `objects/haiku`; `scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc`; grep the log for
-      `not available` (the 13.3 list only);
+      (~10 min; these cross tools then also have the `<bitset>` fix — the scratch ones of step 1 do not);
+   3. merge haiku `gcc16` into `rpi4`, push; a clean `objects/haiku`; `scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc`;
+      grep the log for `not available` (only the 13.3 list);
    4. `scripts/haiku-sysroot.sh` — it takes the newest `gcc_syslibs*` in the download directory, so the sysroot
       gets 16.2's libstdc++ and headers; recreate it before any port build.
 4. **Rebuild our packages** with 16.2 against that sysroot, each a revision bump (three parts): the GL stack first
