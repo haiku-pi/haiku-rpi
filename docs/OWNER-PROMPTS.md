@@ -1,6 +1,6 @@
 # The owner's prompts
 
-Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. 51
+Every prompt the project's owner wrote by hand about this port, verbatim, with the time it was sent. 54
 messages in sixteen days. The automatic ones are left out: the cron heartbeat that resumes autonomous work
 ("Haiku-Pi heartbeat …"), the weekly upstream-sync cron, task notifications, the context summaries the
 session writes for itself, and two messages from the parallel Phoenix-RTOS session about sharing the bench.
@@ -424,3 +424,28 @@ The weekly upstream sync now also watches Wine, Box64, FEX, U-Boot and Photocraf
 ## 51. 2026-11-01 11:34:54 UTC (12:34 CET)
 
 > Also make sure the user facing docs in GitHub like readme and known issue are up-to-date.
+
+## 52. 2026-11-01 11:36:31 UTC (12:36 CET): learnings for Phoenix-RTOS
+
+> And also schedule a task to think about what learnings and improvements can we bring the Phoenix-RTOS Pi4 port
+> from our work on Haiku. Maybe we learned something more about Pi4 performance, stability, compatibility etc...
+> that we can re-use to make Phoenix-RTOS "better" on the Pi4? Don't do these changes, but document them in
+> Phoenix-RTOS project tree as tasks for the future.
+
+A backlog of 32 future tasks in the Phoenix-RTOS tree (its `docs/inprogress/pi4-learnings-backlog.md`), no code changed there.
+
+## 53. 2026-11-01 13:10:57 UTC (14:10 CET): cheap fixes between boot cycles
+
+> As the boot freeze fixes requires long cycles of waiting and multipl reboots, please analyze which other fixes
+> for @docs/KNOWN-ISSUES.md or performance improvements or other smaller fixes (e.g. resulting from log analysis
+> - eliminatation of error or warning log lines) you could cheaply incorporate without wasting time waiting for
+> long boot cycles, cooldowns and retries.
+
+## 54. 2026-11-01 13:15:30 UTC (14:15 CET): GCC, native toolchain, numpy, performance
+
+> I'd like to add to the backlog - gcc migration - move to the newest one avaliable. Haiku side gcc packages -
+> so that it is possible to compile software inside Haiku. Verification of numpy in Python on Haiku - does it
+> build and install. Further analysis of the performance improvements areas - if there are any ways we can make
+> it faster? Add all this to the plan in a reasonable order.
+
+Ordered in [PLAN.md](PLAN.md) "Backlog, in order": GCC 16.2 first, then native packages built with it, then numpy, then the next performance round.
