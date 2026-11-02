@@ -356,7 +356,7 @@ artifacts/uart/*-{gb,gm2,lt,py,boot}{13,16}-*.
 | Wine d3dtest x86 window / full screen; arm64 full screen | fps | 146.5 / 144.5; 150.1 | 155.2 / 142.2; 148.5 | +6 ¹ / −2; −1 % |
 | Half-Life Uplink (Wine) window | fps | 90.9 | 91.8 | +1 % |
 | Wine prefix creation | s | 128–130 | 126–127 | −2 % |
-| glmark2-es2 window / full screen | score | 332, 329 / 88, 88 | 331, 330 / 88, 88 | 0 % |
+| glmark2-es2 window / full screen | score | 332, 329, 337 / 88, 88, 90 | 331, 330 / 88, 88 (3rd: early panic twice; the fixed-loader runs of the LTO A/B stand in) | 0 % |
 | App first launch: Debugger | ms | 194–233 | 166–186 | −15 % |
 | App first launch: MediaPlayer | ms | 102–130 | 77–92 | −25 % |
 | App launches: Terminal, StyledEdit, DeskCalc, ShowImage (1st, then 2nd/3rd) | ms | 110–120, then 35–100 | same | 0 % |
