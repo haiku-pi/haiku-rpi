@@ -18,8 +18,9 @@
 # Host tools: ruby, perl, python3, gperf, bison, flex, unifdef, cmake + ninja, meson.
 # Output: artifacts/packages/*.hpkg.
 #
-#   scripts/build-webkit.sh [STEP]      (STEP: start at that step, e.g. "haikuwebkit"; the earlier
-#                                        ones must already be in the sysroot)
+#   scripts/build-webkit.sh [STEP [LAST]]  (STEP: start at that step, e.g. "haikuwebkit"; the earlier
+#                                          ones must already be in the sysroot; LAST: stop after that
+#                                          step, e.g. "icu74 libpsl": the libraries only, no WebKit)
 #
 # The WebKit steps keep their tree between runs (artifacts/cross-ports/haikuwebkit-1.10.0/: src/,
 # build/), so that a failed or interrupted build continues where it stopped:
@@ -44,14 +45,16 @@ export LD_LIBRARY_PATH="$gen/objects/linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PA
 export PKG_CONFIG_SYSROOT_DIR="$sysroot"
 export PKG_CONFIG_LIBDIR="$np/lib/pkgconfig:$sysroot/boot/system/develop/lib/pkgconfig"
 
-# icu74 + icu74_devel: ICU, from the bootstrap packages (in the image already: the haiku package
-# requires them). Their compiled-in data directory is wrong (the image sets ICU_DATA instead:
-# tools/build/data/UserSetupEnvironment).
+# icu74 + icu74_devel: ICU, ours (scripts/build-icu.sh, in artifacts/packages; build-packages.sh builds it
+# first), else the bootstrap packages (whose compiled-in data directory is wrong: the image set ICU_DATA
+# for them, tools/build/data/UserSetupEnvironment). The haiku package requires them.
 icu74() {
-	local p
+	local p f
 	for p in icu74 icu74_devel; do
-		"$hostTools/package/package" extract -C "$sysroot/boot/system" \
-			"$gen/download/$p-74.1_bootstrap-1-arm64.hpkg"
+		f=$(ls "$root"/artifacts/packages/"$p"-74.1-[0-9]*-arm64.hpkg 2> /dev/null | sort -V | tail -n 1)
+		[ -n "$f" ] || f="$gen/download/$p-74.1_bootstrap-1-arm64.hpkg"
+		"$hostTools/package/package" extract -C "$sysroot/boot/system" "$f"
+		echo "build-webkit: $(basename "$f")"
 	done
 	rm -f "$sysroot/boot/system/.PackageInfo"
 	sed -i 's|/packages/[^/]*/\.self|/boot/system|g' "$sysroot"/boot/system/develop/lib/pkgconfig/icu-*.pc
@@ -245,13 +248,14 @@ haikuwebkit() {
 
 steps=(icu74 libexecinfo sqlite libxml2 libxslt lcms brotli woff2 libwebp dav1d libavif libpsl
 	webkit_source webkit_configure webkit_build haikuwebkit)
-start="${1:-${steps[0]}}"
+start="${1:-${steps[0]}}" last="${2:-}"
 started=0
 for s in "${steps[@]}"; do
 	[ "$s" = "$start" ] && started=1
 	[ "$started" = 1 ] || continue
 	echo "build-webkit: === $s"
 	"$s"
+	[ "$s" != "$last" ] || break
 done
 [ "$started" = 1 ] || { echo "build-webkit: no step $start (${steps[*]})" >&2; exit 2; }
 for p in libexecinfo sqlite libxml2 libxslt lcms brotli woff2 libwebp dav1d libavif1.0 libpsl \

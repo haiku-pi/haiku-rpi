@@ -22,16 +22,23 @@
 #   openarena, supertuxkart                scripts/package-games.sh (not run here: needs build-games.sh and
 #                                          build-stk.sh; only for -sHAIKU_PI_GAMES=1 images)
 #
-#   scripts/build-packages.sh [--sysroot]   (--sysroot: recreate the sysroot first)
+#   scripts/build-packages.sh [--sysroot] [--no-webkit]
+#       --sysroot: recreate the sysroot first; --no-webkit: build-webkit.sh's libraries (sqlite, libxml2,
+#       ... for Python and the rest), not HaikuWebKit itself (an hour, 2.6 GB of build tree)
 #
 # Needs a jam build of the tree (the cross compiler, haiku_devel.hpkg, the host package tool).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 ports="$root/sources/haikuports"
 download="$root/sources/haiku/generated.arm64/download"
-if [ "${1:-}" = --sysroot ]; then
-	"$root/scripts/haiku-sysroot.sh"
-fi
+webkit=(icu74 haikuwebkit)
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--sysroot) "$root/scripts/haiku-sysroot.sh"; shift ;;
+	--no-webkit) webkit=(icu74 libpsl); shift ;;
+	*) echo "build-packages: unknown option $1" >&2; exit 2 ;;
+	esac
+done
 
 "$root/scripts/build-gl-stack.sh"
 "$root/scripts/package-gl-stack.sh"
@@ -79,7 +86,9 @@ rm -rf "$DEST/share"'
 
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/build-netsurf.sh"
-"$root/scripts/build-webkit.sh"
+# ICU before WebKit (and libpsl), which build on it
+"$root/scripts/build-icu.sh"
+"$root/scripts/build-webkit.sh" "${webkit[@]}"
 # ncurses6: ours replaces upstream's bootstrap package (which looked for its terminfo database under a
 # package name it is not activated under); before the ports that link it
 "$root/scripts/build-ncurses.sh"
@@ -90,7 +99,6 @@ rm -rf "$DEST/share"'
 	--requires lib:libncursesw
 "$root/scripts/build-python.sh"
 "$root/scripts/fetch-any-packages.sh"
-"$root/scripts/build-icu.sh"
 
 # everyday command-line tools. Libraries in /boot/system/lib (ncurses6, zlib, expat) are
 # not ours to package-port.py, which takes them for the system's: their requires are named here.
@@ -128,7 +136,8 @@ make CC="$CC" AR="$AR" install DESTDIR="${DEST%/boot/system/non-packaged}" PREFI
 rm -f "$DEST"/lib/libxxhash.a
 rm -rf "$DEST/share"'
 "$root/scripts/package-port.py" "$ports/dev-libs/xxhash/xxhash-0.8.3.recipe"
-# rsync: its configure wrapper only works in the source tree; the run-time checks answered as on Haiku
+# rsync: its configure wrapper only works in the source tree; the run-time checks answered as on Haiku; C17:
+# its K&R comparators ("int (*)()") are "int (*)(void)" in C23, GCC 15's default, and qsort rejects them
 "$root/scripts/cross-port.sh" "$ports/net-misc/rsync/rsync-3.2.7.recipe" script '
 np="$SYSROOT/boot/system/non-packaged"
 aclocal -I m4
@@ -136,7 +145,7 @@ autoconf -o configure.sh
 autoheader
 ./configure.sh --host=aarch64-unknown-haiku --prefix=/boot/system/non-packaged \
 	--enable-xattr-support --disable-iconv --disable-iconv-open --disable-locale --disable-debug \
-	--with-included-zlib=no --disable-md2man CC="$CC" CPPFLAGS="-I$np/include" LDFLAGS="-L$np/lib" \
+	--with-included-zlib=no --disable-md2man CC="$CC -std=gnu17" CPPFLAGS="-I$np/include" LDFLAGS="-L$np/lib" \
 	rsync_cv_HAVE_SOCKETPAIR=yes rsync_cv_HAVE_SECURE_MKSTEMP=yes rsync_cv_HAVE_C99_VSNPRINTF=yes \
 	rsync_cv_HAVE_BROKEN_READDIR=no rsync_cv_HAVE_BROKEN_LARGEFILE=no
 make -j"$(nproc)"
@@ -219,9 +228,10 @@ for program in "$system"/bin/git* "$system/bin/scalar"; do
 done'
 "$root/scripts/package-port.py" "$ports/dev-vcs/git/git-2.56.0.recipe" --system-prefix --lib-tree git-core \
 	--requires lib:libz --requires lib:libexpat --requires cmd:nano
-# htop: Rivoreo's fork, the HaikuPorts htop with Haiku support
+# htop: Rivoreo's fork, the HaikuPorts htop with Haiku support; C17: its key handler table is declared with
+# "()" (no prototype), which C23, GCC 15's default, reads as "(void)"
 "$root/scripts/cross-port.sh" "$ports/sys-process/htop_rivoreo/htop_rivoreo-2.3.1.recipe" autotools \
-	--sysconfdir=/boot/system/settings
+	--sysconfdir=/boot/system/settings CFLAGS="-O2 -std=gnu17"
 "$root/scripts/package-port.py" "$ports/sys-process/htop_rivoreo/htop_rivoreo-2.3.1.recipe" \
 	--requires lib:libncursesw
 

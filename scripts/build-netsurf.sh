@@ -189,10 +189,12 @@ libsvgtiny() { nslib "$ports/media-libs/libsvgtiny/libsvgtiny-0.1.8.recipe"; }
 # PREFIX feeds only its -I$(PREFIX)/include -L$(PREFIX)/lib, so it is the sysroot's. Stripped here
 # (before xres), as package-port.py must not strip a file with resources. Two makes, as the recipe's
 # BUILD and INSTALL: the resource list is a wildcard, read before the first make writes the
-# translated Messages files, so only the second embeds them (without them, no UI texts).
+# translated Messages files, so only the second embeds them (without them, no UI texts). C++17: the BeOS
+# front end is C++98-era code that C++20 (GCC 16's default) rejects ("&nsbeos_find_app_path < ..." parses
+# as a template argument list).
 netsurf() {
 	PATH="$NSHOST/bin:$PATH" "$cross" "$ports/www-client/netsurf/netsurf-3.11.recipe" script "
-args=(TARGET=beos BUILD=release CC=\"\$CC\" CXX=\"\$CXX\" PREFIX=\"\$SYSROOT/boot/system/non-packaged/\"
+args=(TARGET=beos BUILD=release CC=\"\$CC\" CXX=\"\$CXX -std=gnu++17\" PREFIX=\"\$SYSROOT/boot/system/non-packaged/\"
 	BEOS_RC=\"$hostTools/rc/rc\" BEOS_XRES=\"$hostTools/xres\" BEOS_SETVER=\"$hostTools/setversion\"
 	BEOS_MIMESET=true NETSURF_STRIP_BINARY=YES STRIP=\"\$STRIP\" Q=)
 make -j\"\$(nproc)\" \"\${args[@]}\"
