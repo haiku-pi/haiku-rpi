@@ -30,7 +30,7 @@ of the image otherwise.
 | Applications | Firefox, WebPositive, MediaPlayer, Photocraft (photo editor), glmark2, GLTeapot, vkcube |
 | Games | OpenArena, SuperTuxKart; QuakeSpasm and vkQuake (Quake shareware), Yamagi Quake II (demo), Quake III Arena (demo) |
 | Windows programs (Wine 11.21; x86 via Box64, x86-64 via FEX) | Minesweeper, Notepad, PuTTY, Notepad++, SumatraPDF, 7-Zip (console) — each as x86 and x86-64 where both exist |
-| Windows games | Heroes of Might and Magic III (demo), SimCity 3000 (demo), StarCraft (shareware), Half-Life Uplink (demo), Fallout (demo), Age of Empires II (demo), Unreal Tournament (demo, OpenGL renderer), Diablo II (demo, in a window), Warcraft III (demo) |
+| Windows games | Heroes of Might and Magic III (demo), SimCity 3000 (demo), StarCraft (shareware), Half-Life Uplink (demo), Fallout (demo), Age of Empires II (demo), Unreal Tournament (demo, OpenGL renderer), Diablo II (demo), Warcraft III (demo) |
 
 Everything starts from the **Test Apps** folder on the Desktop with a double-click (small launcher
 programs, [tools/mega/apps.txt](../tools/mega/apps.txt); each program's output in `~/mega-logs/`). The

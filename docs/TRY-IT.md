@@ -39,7 +39,7 @@ What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monit
 listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 Known limits: HDMI audio only with a monitor connected at boot; video in Firefox drops frames for the first seconds after the browser starts;
-images before image-2026-11-02b can freeze in the first minutes after a long power-off (from image-2026-11-02 on only on a network boot) — power-cycle; fixed from image-2026-11-02b on ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1).
+images before image-2026-11-02b can freeze in the first minutes after a long power-off (from image-2026-11-02 on only on a network boot) — power-cycle; fixed from image-2026-11-02b on ([HAIKU-RPI4-CHANGES.md](HAIKU-RPI4-CHANGES.md)).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
 [haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts
