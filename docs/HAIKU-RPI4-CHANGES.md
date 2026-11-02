@@ -146,13 +146,16 @@ path was broken in several places on arm64. After these commits a Pi 4 reaches t
 | `84fd3835a4` ★ | Kernel `remote_disk`: writes pipelined too | A write sent one 1 KiB block and waited for its reply, so a network-booted system wrote at 2.9 MB/s over gigabit. Writes larger than a block now keep up to 16 requests in flight, as reads do, and are resent while overdue (a write at an offset can be repeated). 200 MiB written and synced in 3 s (was ~74 s); Wine's packages installed in 42 s (94); a new Wine prefix (~1 GB) in 61 s (387). |
 | `13f5af2f89` ★ | `remote_disk` looks for its server with a 1 s reply timeout | The hello broadcast goes out as the link comes up; a lost one cost the 5 s request timeout. In about half of the Pi's network boots the boot volume came 5-9 s after the link; now within 40 ms (6 of 6). |
 
-**Fixed (f593b2ae43):** a Pi booted after being off for a while could freeze in its first minutes. U-Boot loads
-only the header structures of the loader's first page, and the loader declares the whole page as headers: the rest
-held stale RAM (garbage cold, the previous boot's bytes warm). The loader clears it at entry; found with a U-Boot
-that fills RAM with random data before booting (warm boots froze 3 of 3 → alive 3 of 3 with the fix; cold SD boots
-6 of 6 alive). `a46a16641e`, `80a6e1f2fb`, the `debug_heartbeat` setting (`775c21f7fb`) and the brcmstb link
-options (`9cb5647ea4`) were written while hunting it; `a8daa2c23b` (the cpufreq driver's request order) was taken
-for a fix and is not one. See [KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1.
+**Fixed (d1a616afac):** a Pi booted after being off for a while could freeze in its first minutes. The kernel's
+empty TTBR0 table (installed for every kernel-only thread) came from the early page allocator, which does not clear,
+so the CPU walked whatever the RAM held: garbage after a long power-off. Upstream regression 593f25d6f1e. The kernel
+now clears it. The page is the first one above the loader's data: the loader's PE header page on an SD boot (which
+U-Boot copies only 0x278 bytes of; the loader clears the rest at entry, f593b2ae43, and U-Boot patch 0004 copies it
+all) and a U-Boot pool page on a network boot (U-Boot patch 0005 clears EFI pages); those stay as hardening. Found
+with a U-Boot that fills RAM with random data before booting and a page bisect: warm boots froze 3 of 3, alive 3 of
+3 with the kernel fix alone. `a46a16641e`, `80a6e1f2fb`, the `debug_heartbeat` setting (`775c21f7fb`) and the
+brcmstb link options (`9cb5647ea4`) were written while hunting it; `a8daa2c23b` (the cpufreq driver's request
+order) was taken for a fix and is not one. See [KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1.
 
 ---
 
