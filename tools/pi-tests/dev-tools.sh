@@ -11,13 +11,14 @@
 #
 # Lines "DEV <check> PASS|FAIL <detail>", "DEV end <passed>/<total>". Work directory /tmp/dev-tools
 # (recreated); the pip installs go to /boot/system/non-packaged and are removed again at the end.
+# (Haiku has no /dev/stdout: the lines go to file descriptor 3)
 if [ -t 1 ] || [ -n "$SSH_CONNECTION" ]; then
-	out=/dev/stdout
+	exec 3>&1
 else
-	out=/dev/dprintf
+	exec 3> /dev/dprintf
 	sleep 20
 fi
-say() { echo "DEV $*" > $out; }
+say() { echo "DEV $*" >&3; }
 pass=0 total=0
 check() {	# name command... — PASS/FAIL by exit status, with the output's last line
 	name="$1"; shift
