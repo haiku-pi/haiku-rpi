@@ -338,17 +338,39 @@ a fresh copy of the image: cold shader cache and a new Wine prefix every time, o
 
 Afterwards restore the card's usual image (the SD card holds what the main session last put on it).
 
+### Results (Pi, 2026-11-02 13:49–18:12; three alternating rounds, network boots; SD boot times last)
+
+Images gb-gcc13.img (hrev60299+232) and gb-gcc16.img (+233, the 16.2 branch); every games log checked for its
+image revision. No throttling (59.8–72 °C). Raw: artifacts/gcc-compare/ (results.txt, games-table.md), the logs in
+artifacts/uart/*-{gb,gm2,lt,py,boot}{13,16}-*.
+
 | Workload | Measure | GCC 13.3 | GCC 16.2 | Δ |
 |---|---|---|---|---|
-| QuakeSpasm timedemo (demo1) | fps | | | |
-| Yamagi Quake II timedemo | fps | | | |
-| vkQuake timedemo | fps | | | |
-| OpenArena timedemo | fps | | | |
-| SuperTuxKart (fixed race / benchmark mode) | fps | | | |
-| glmark2 | score | | | |
-| Boot time (power-on → desktop) | s | | | |
-| Firefox start (cold, to first page) | s | | | |
-| A Wine game (same scene) | fps | | | |
-| CPU microbenchmarks (string/memory routines, a compile, compression, sorting) | time / MB/s | | | |
+| QuakeSpasm timedemo 640×480 / 720p / 1080p | fps | 199.7 / 79.9 / 40.7 | 200.6 / 80.0 / 40.7 | 0 % |
+| vkQuake timedemo 720p / 1080p | fps | 53.0 / 31.5 | 52.9 / 31.5 | 0 % |
+| Yamagi Quake II timedemo 640×480 / 720p / 1080p | fps | 207.3 / 101.7 / 53.1 | 207.8 / 101.7 / 53.2 | 0 % |
+| Quake III demo (bots, q3dm1) 720p | fps | 89.2 | 88.7 | −0.5 % |
+| OpenArena timedemo 720p window / 1080p full screen | fps | 53.3 / 27.3 | 53.8 / 27.2 | +1 / 0 % |
+| SuperTuxKart race 720p | fps | 38.2 (35.8–41.3) | 39.0 (36.7–41.6) | noise |
+| Wine gltest arm64 / x86 | fps | 181.1 / 185.3 | 178.6 / 191.2 | −1 / +3 % ¹ |
+| Wine d3dtest x86 window / full screen; arm64 full screen | fps | 146.5 / 144.5; 150.1 | 155.2 / 142.2; 148.5 | +6 ¹ / −2; −1 % |
+| Half-Life Uplink (Wine) window | fps | 90.9 | 91.8 | +1 % |
+| Wine prefix creation | s | 128–130 | 126–127 | −2 % |
+| glmark2-es2 window / full screen | score | 332, 329 / 88, 88 | 331, 330 / 88, 88 | 0 % |
+| App first launch: Debugger | ms | 194–233 | 166–186 | −15 % |
+| App first launch: MediaPlayer | ms | 102–130 | 77–92 | −25 % |
+| App launches: Terminal, StyledEdit, DeskCalc, ShowImage (1st, then 2nd/3rd) | ms | 110–120, then 35–100 | same | 0 % |
+| Python 3.14 start cold / warm | s | 0.333–0.358 / 0.096–0.097 | 0.327–0.334 / 0.092–0.093 | −2 / −4 % |
+| Python sum(range(1e7)) / loop(1e6) / sort(2e5 str) | s | 0.83–0.94 / 0.92–0.96 / 0.39–0.40 | 0.81 / 0.97–1.01 / 0.39 | −3 / +5 / 0 % |
+| SD boot, loader banner → desktop cursor (warm) | s | 5.63, 5.63, 5.83 | 5.43, 5.83 (3rd: early panic) | 0 % |
+
+¹ One slow 13.3 run (170/128 fps vs ~190/155 in the other two): noise, not the compiler.
+
+**Reading:** GCC 16.2 is performance-neutral on this system — games, GPU, Wine, Python within noise; two app
+first launches (Debugger, MediaPlayer: large C++ binaries) start 15–25 % sooner. Not counted: two glmark2 runs, one
+per compiler (13.3: DHCP unanswered, the card booted; 16.2: an early panic). **Stability: 2 early panics in ~13
+boots of the 16.2 image, 0 in ~13 of the 13.3 one**, both right after ExitBootServices (one SD boot: execution at
+VA 0x24, EC=0). Neither image has the TTBR0 fix d1a616afac; analysis in progress
+([gcc16-early-panic.md](gcc16-early-panic.md)) — the switch of the main build waits for it.
 
 Results go here and into [HARDWARE-SUPPORT.md](../HARDWARE-SUPPORT.md).
