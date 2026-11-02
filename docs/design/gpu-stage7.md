@@ -186,7 +186,8 @@ Built in a separate output directory (`sources/haiku-stage7/generated.arm64`, co
 v3d v3dtest`): 0 warnings in the driver, `-Werror` confirmed in its compile line.
 
 Statistics (kernel setting `v3d_stats true`, every 5 s): the existing lines (`GPU busy` is now the union of
-the units' busy time, equal to the old figure in serial mode) plus
+the units' busy time, counted from after each kick's prologue — the old figure began before it, so in serial
+mode it reads lower by about the prologue time) plus
 `v3d: stats: queues concurrent, two or more units busy N ms (P% of the busy time), K jobs restarted`.
 
 ## 4. Risks
@@ -201,6 +202,7 @@ the units' busy time, equal to the old figure in serial mode) plus
 | Global per-queue FIFO (not per client) | one client's unbinned job blocks another's render | acceptable for one GL client; per-file round robin later |
 | Head-of-line: a CPU job waits for everything before it | Vulkan timestamp queries serialise as today | as today |
 | Mode switch at `open()` | none: both directions safe at any time (serial only gates new kicks) | — |
+| **`queues serial` is new code too** — the per-queue scheduler with a one-job gate, the dependency resolution and the watermark, not the old single queue | a regression in the default although concurrency is off | its order is the old one by construction (§2.1), but it has not met the GPU: the serial arms of §7 steps 1–3 are the regression gate for the default (results as the release image's), not only the A/B baseline |
 
 ## 5. Expected gain — honest numbers
 
@@ -249,7 +251,9 @@ scripts/gpu-queues-image.sh artifacts/images/haiku-pi4-2026-11-03.img artifacts/
 QEMU (no V3D: the driver never attaches, image-level check only): `scripts/qemu-virt.sh --image
 artifacts/images/gpu-queues.img --secs 200` reached the desktop (§9).
 
-**Cycle A — everything, one network boot (~60 min of tests; the SD card is not touched):**
+**Cycle A — everything, one network boot (~60 min of tests, ~70 min wall clock; the SD card is not touched;
+from an agent: `run_in_background`, as it exceeds the Bash tool's 10-minute limit, or split it with the phases
+file below):**
 
 ```sh
 scripts/netboot-cycle.sh --image artifacts/images/gpu-queues.img --secs 4200 --label gq-all \
@@ -266,7 +270,7 @@ What the steps do and the exit criteria:
 
 | Step | Lines | Pass |
 |---|---|---|
-| 1 `v3dtest -d all burst overlap restart`, serial then concurrent | `GQ v3dtest <mode>: ...` | exit 0 both; serial: `overlap: ... did not run beside the hung render list: serial queues`; concurrent: `... ran after N us, beside the hung render list: concurrent queues`; `restart: GPU resets X -> X+2` both; concurrent also `v3d: job N starts over` once; `driver mode` = wanted |
+| 1 `v3dtest -d all burst overlap restart`, serial then concurrent | `GQ v3dtest <mode>: ...` | exit 0 both (all checks: pixels, resets `X -> X+1` for overlap, `X -> X+2` for restart); `driver mode` = wanted; concurrent: `v3d: job N starts over` once (the restart run). The overlap test's "concurrent/serial queues" verdict is **advisory** (§10.1: if the binner's tile lists stay in the L2T until the hand-off flush, it says "serial" under `queues concurrent`); the authoritative evidence of concurrency is the statistics' `two or more units busy` > 0 ms in concurrent windows and 0 in serial ones (steps 2–4) |
 | 2 glmark2-es2 800×600, S C S C | `GQ glmark2 <mode>: score ...` + per scene | concurrent mean ≥ serial mean − 2 % (reference: 329 in an 800×600 window on the 11-02 GCC 16 images, W45 log 11-02 21:20); 0 GPU resets; `two or more units busy` > 0 ms in concurrent windows, 0 in serial |
 | 3 QuakeSpasm timedemo demo1 1280×720, S C S C | `GQ quakespasm <mode>: 969 frames ... fps` | concurrent ≥ serial − 2 %; 0 resets |
 | 4 soak 30 min concurrent: QuakeSpasm demo loop + glmark2-es2 loop at once | `GQ soak i/30 min: quake running yes, glmark2 runs n; driver mode concurrent, 0 GPU resets, 0 jobs restarted` | **0 resets** over 30 min (the UART log's `v3d: GPU reset after` count is authoritative), Quake alive throughout, glmark2 runs increasing; `v3dtest clear after the soak: exit 0` |
