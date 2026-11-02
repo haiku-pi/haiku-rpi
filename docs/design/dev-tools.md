@@ -48,8 +48,9 @@ compiler (`--host=linux --platform=haiku`, not `--bootstrap`), then the host's n
 (`--with-system-libdir=/boot/system/develop/lib`, `--with-system-includedir=/boot/system/develop/headers`, which
 configure would otherwise take from the build prefix) and the personality directory. `pkg-config -> pkgconf` as
 the recipe. The library is `libpkgconf.so.8` (3.x; the 1.5.3 recipe's `libVersion` 3.0.0 changed to 8.0.0). New
-in 3.x and packaged: `bomtool`, `pccritic`, `spdxtool`. The recipe's 1.5.3 had no pinning reason in its history
-(only revision bumps), so the newest release is built.
+in 3.x and packaged: `bomtool`, `pccritic`, `spdxtool`. The recipe states no reason for staying on 1.5.3 (our
+haikuports clone is shallow, so its history was not checked), and 3.x has the Haiku search path upstream, so the
+newest release is built.
 
 **cmake.** Cross-compiled with CMake itself (the recipe's `./configure` bootstrap compiles and runs programs on
 the build host) and the recipe's choices: system curl (our curl 8.22.0 package), expat and zlib; the recipe's
@@ -60,8 +61,9 @@ our repository); CMake's own CMakeLists for its bundled libuv has no Haiku branc
 upstream libuv has (link failed before: `uv__hrtime`, `uv__platform_invalidate_fd`). No RPATH (the link path named
 `/boot/system/non-packaged/lib`, where curl was in the sysroot). The four programs are ~17 MB each (libarchive,
 libuv, the debugger's cppdap, … statically inside); the package is 30 MB. Requires `lib:libcurl`, `libexpat`,
-`libz`, `libncursesw`, `libiconv`, `libcharset`, `libexecinfo`, `libbsd`, `libstdc++`, `libgcc_s` — all in the
-release images.
+`libz`, `libncursesw`, `libiconv`, `libcharset`, `libexecinfo`, `libstdc++`, `libgcc_s` — all in the
+release images. (libbsd and libnetwork are in the `haiku` package, which provides no `lib:` resolvables: a
+`lib:libbsd` requirement would make `pkgman install` fail, so none is written.)
 
 **binutils.** `git archive` of `sources/buildtools` HEAD (`binutils/`, 2.46.1 + Haiku's changes; fc2ad25b8b at
 the time), a Canadian cross (build x86_64-linux, host = target = aarch64-unknown-haiku) with the recipe's options:
@@ -96,7 +98,22 @@ All 13 packages extracted together:
 - no build-host path in any file (`__FILE__` in bfd's and CPack's assertions needed `-ffile-prefix-map`), no
   `/boot/system/non-packaged` in a program or library (make's `MAKE_CXX`, pkgconf's system directories, CMake's
   RPATH were the cases found and fixed); Python modules mention `non-packaged` on purpose (setuptools' scheme);
+- every `requires:` has a provider among our packages, the image build's download directory or `haiku`
+  (names only; this caught a hand-written `lib:libbsd` that nothing provides);
 - the provides/requires of each package are printed (summary in the table above).
+
+## QEMU smoke run (2026-11-02, no Pi)
+
+`scripts/image-add.sh` on a copy of release image-2026-11-02b: the 13 packages, packaging_python3.14,
+python3.14_devel, the dev image's `gcc-13.3.0…bootstrap-1` + `gcc_syslibs_devel` and jam's `haiku_devel` in
+`/boot/system/packages`, `tools/pi-tests/dev-tools.sh` as UserBootscript; `scripts/qemu-virt.sh` (virt,
+cortex-a72 ×4, TCG). **`DEV end 23/23`**, all PASS: every version check; `pkg-config --modversion libpkgconf`
+3.0.10 (Haiku search path); `cmake -P` ("on Haiku"); `as` + `ld` + `objdump` on a hand-written object; gcc 13.3
+runs **our** assembler and linker (`gcc -print-prog-name=as` →
+`/boot/system/develop/tools/aarch64-unknown-haiku/bin/as`, the package's link to `bin/as`); C hello with make;
+C and C++ with CMake + Ninja and with Meson; `pip install --no-index --no-build-isolation` of a pure project
+(setuptools backend → `/boot/system/non-packaged/lib/python3.14/site-packages`); and a Cython extension module
+built by pip through meson-python (meson, ninja, cython, gcc), imported and run (`fib(90)` right).
 
 ## Pi test plan
 

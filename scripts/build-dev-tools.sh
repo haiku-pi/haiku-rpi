@@ -19,7 +19,8 @@
 # dynamic symbol that no library on the image provides (libroot, libbsd, libnetwork, libstdc++,
 # libgcc_s, libz, libexpat, libcurl, libncursesw, libiconv, libpkgconf, ...: a missing one links fine and fails
 # only when the program starts on the Pi), a build-host path in any packaged file, and
-# /boot/system/non-packaged (the cross builds' prefix) in a program or library.
+# /boot/system/non-packaged (the cross builds' prefix) in a program or library, and a requirement no
+# package of ours, of the image build's download directory or haiku itself provides.
 #
 # Not here: the native gcc (it is built once, on GCC 16.2, after the main build switches:
 # docs/design/gcc16.md, "Next steps" 6). Needs scripts/haiku-sysroot.sh's sysroot with our ports
@@ -74,7 +75,7 @@ if want ninja; then
 CXX="$CXX" AR="$AR" python3 configure.py --host=linux --platform=haiku
 ninja ninja
 install -D ninja "$DEST/bin/ninja"'
-	"$package" "$ports/dev-build/ninja/ninja-1.13.2.recipe" --requires lib:libbsd
+	"$package" "$ports/dev-build/ninja/ninja-1.13.2.recipe"
 fi
 
 # --- pkgconf (provides pkg-config, as HaikuPorts' pkgconf): its search path is Haiku's own
@@ -108,7 +109,7 @@ if want cmake; then
 		-DCMAKE_CXX_FLAGS="-ffile-prefix-map=$root/artifacts/cross-ports/cmake-4.4.5/src=cmake-4.4.5" \
 		-DCMAKE_DATA_DIR=data/cmake -DCMAKE_DOC_DIR=documentation/packages/cmake \
 		-DCMAKE_MAN_DIR=documentation/man -DCMAKE_XDGDATA_DIR=data
-	"$package" "$recipes/dev-build/cmake/cmake-4.4.5.recipe" --requires lib:libbsd \
+	"$package" "$recipes/dev-build/cmake/cmake-4.4.5.recipe" \
 		--requires lib:libexpat --requires lib:libz --requires lib:libncursesw
 fi
 
@@ -261,6 +262,18 @@ if want check; then
 		&& echo " $1"' sh {} \;)"
 	[ -z "$leaks" ] || { echo "build-dev-tools: host or non-packaged paths in: $leaks" >&2; exit 1; }
 	echo "build-dev-tools: no host paths in the packaged files, no non-packaged path in a program"
+	# every requirement has a provider: in our repository, the HaikuPorts packages jam builds the
+	# image from, or the haiku package (version constraints not compared)
+	provided="$check/provided.txt"
+	for f in "$packages"/*.hpkg "$gen"/download/*.hpkg "$gen"/objects/haiku/arm64/packaging/packages/haiku.hpkg; do
+		"$pkgtool" list -i "$f" | sed -n 's/^\tprovides: \([^ =<>]*\).*/\1/p; s/^\tname: \(.*\)/\1/p'
+	done | LC_ALL=C sort -u > "$provided"
+	for p in "${pkgs[@]}"; do
+		unresolved="$("$pkgtool" list -i "$packages/$p.hpkg" | sed -n 's/^\trequires: \([^ =<>]*\).*/\1/p' \
+			| LC_ALL=C sort -u | LC_ALL=C comm -23 - "$provided")"
+		[ -z "$unresolved" ] || { echo "build-dev-tools: $p requires what nothing provides: $unresolved" >&2; exit 1; }
+	done
+	echo "build-dev-tools: every requirement of the packages has a provider"
 	for p in "${pkgs[@]}"; do
 		echo "== $p.hpkg ($(stat -c %s "$packages/$p.hpkg") bytes)"
 		"$pkgtool" list -i "$packages/$p.hpkg" | sed -n 's/^\t\(provides\|requires\): /  \1 /p'
