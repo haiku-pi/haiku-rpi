@@ -393,4 +393,5 @@ def main():
         os.path.join(out, f'{port}_devel-{version}-{args.revision}-arm64.hpkg'))
 
 
-main()
+if __name__ == '__main__':
+    main()
