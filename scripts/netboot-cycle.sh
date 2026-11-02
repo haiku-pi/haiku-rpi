@@ -24,12 +24,15 @@
 # stage before it once got the keys typed into U-Boot, which then stopped at its prompt);
 # --no-wedge-dump: not. --retry-wedge: a boot that has not set its display mode 120 s after power-on (the
 # wedge: ~52 s in a good boot) is ended and the cycle run once more, at once (the wedge strikes cold boots).
+# Always: when U-Boot's DHCP gets no answer ("Retry time exceeded") it boots the card instead, so such a
+# boot is ended and the cycle run again, up to twice (a run measured on the card's system is worthless).
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
 img="$HAIKU_RPI_ROOT/artifacts/images/haiku-pi4-regular.img"
 secs=200 label=netboot hdmi_every=20 record=""
 caps=()
 wedgeDump=1 retryWedge=0
+orig=("$@")
 args=()
 for a in "$@"; do [ "$a" = --retry-wedge ] || args+=("$a"); done
 while [ $# -gt 0 ]; do
@@ -61,7 +64,7 @@ uart_dir="$HAIKU_RPI_ROOT/artifacts/uart"; hdmi_dir="$HAIKU_RPI_ROOT/artifacts/h
 mkdir -p "$uart_dir" "$hdmi_dir"
 
 bench_lock
-hdmi_pid="" disk_pid="" record_pid="" wedge_pid="" cap_pid=""
+hdmi_pid="" disk_pid="" record_pid="" wedge_pid="" cap_pid="" dhcp_pid=""
 cleanup() {
 	# the capture too: a cycle stopped by a signal would otherwise leave it holding the UART and the bench lock
 	[ -n "$cap_pid" ] && kill "$cap_pid" 2>/dev/null || true
@@ -69,6 +72,7 @@ cleanup() {
 	[ -n "$disk_pid" ] && { pkill -P "$disk_pid" 2>/dev/null; kill "$disk_pid" 2>/dev/null; } || true
 	[ -n "$record_pid" ] && { pkill -P "$record_pid" 2>/dev/null; kill "$record_pid" 2>/dev/null; } || true
 	[ -n "$wedge_pid" ] && { pkill -P "$wedge_pid" 2>/dev/null; kill "$wedge_pid" 2>/dev/null; } || true
+	[ -n "$dhcp_pid" ] && { pkill -P "$dhcp_pid" 2>/dev/null; kill "$dhcp_pid" 2>/dev/null; } || true
 	rm -f "${recording:-}"
 	pi_power off || true
 	"$HAIKU_RPI_ROOT/scripts/netboot-server.sh" down >/dev/null 2>&1 || true
@@ -108,7 +112,25 @@ if [ "$retryWedge" = 1 ]; then
 	( sleep 120; grep -a -q 'hardware cursor shown' "$log" || { touch "$wedge_flag"; kill "$cap_pid"; } ) 9>&- &
 	wedge_pid=$!
 fi
+dhcp_flag="$uart_dir/.dhcp-$ts"
+( t=0; while [ $t -lt 120 ]; do sleep 2; t=$((t + 2))
+	grep -a -q "Retry time exceeded" "$log" 2>/dev/null && { touch "$dhcp_flag"; kill "$cap_pid"; exit 0; }
+	grep -a -q "Welcome to the Haiku boot loader" "$log" 2>/dev/null && exit 0
+  done ) 9>&- &
+dhcp_pid=$!
 rc=0; wait "$cap_pid" || rc=$?
+if [ -e "$dhcp_flag" ]; then
+	rm -f "$dhcp_flag"
+	tries=$(( ${NETBOOT_DHCP_RETRY:-0} + 1 ))
+	if [ "$tries" -le 2 ]; then
+		echo "netboot-cycle: U-Boot got no DHCP answer and would boot the card: once more ($tries)"
+		trap - EXIT
+		cleanup
+		NETBOOT_DHCP_RETRY=$tries exec "$0" "${orig[@]}"
+	fi
+	echo "netboot-cycle: no DHCP answer, twice retried: giving up" >&2
+	rc=3
+fi
 if [ -e "$wedge_flag" ]; then
 	rm -f "$wedge_flag"
 	echo "netboot-cycle: no display mode 120 s after power-on (the network-boot wedge): once more"
