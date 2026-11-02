@@ -14,6 +14,9 @@ executable('glview', 'glview.cpp', dependencies : [dep_gl, dep_be], install : tr
 # windowed OpenGL ES: BGLView with BGL_CONTEXT_ES (the GLES functions from libGLESv2)
 executable('glview-es', 'glview-es.cpp', dependencies : [dep_gl, dep_glesv2, dep_be], install : true)
 
+# full-screen GL on an overlay plane: page flips, vsync, missed flips (docs/design/gpu-stage6.md)
+executable('glflip', 'glflip.cpp', dependencies : [dep_gl, dep_be], install : true)
+
 # the display's retrace semaphore (BScreen::WaitForRetrace)
 executable('retrace', 'retrace.cpp', dependencies : [dep_be], install : true)
 

@@ -8,7 +8,8 @@
  *   present-bench [-W width] [-H height] [-n reps] [-s steps]
  *
  * steps (default all): c = CPU copies (RAM->RAM, RAM->write-combining, WC->RAM, one fused pass to
- * both), s = SYNC_BO on an imported BBitmap (lines absent, clean, dirty; needs /dev/dri/renderD128),
+ * both, RAM->WC with alpha forced and keyed as app_server writes the front buffer for overlays keyed
+ * by alpha: docs/design/gpu-stage6.md §3.3), s = SYNC_BO on an imported BBitmap (lines absent, clean, dirty; needs /dev/dri/renderD128),
  * d = DrawBitmap()+Sync() of a frame-sized bitmap in a borderless window at the screen's top left,
  * u = the same bitmap drawn as BGLView and glmark2 present: Invalidate(), then DrawBitmap() in Draw()
  * (an update session), with the default view color (app_server fills the background first, as
@@ -101,6 +102,43 @@ copy_rows_fused(uint8_t* back, uint8_t* front, const uint8_t* src, uint32_t stri
 }
 
 
+/*!	app_server's front buffer writes with overlays keyed by alpha
+	(src/servers/app/drawing/OverlayKeying.cpp, the same loops).
+*/
+static void
+copy_rows_opaque(uint8_t* dst, const uint8_t* src, uint32_t stride)
+{
+	for (uint32_t y = 0; y < sHeight; y++) {
+		uint32_t* d = (uint32_t*)(dst + y * stride);
+		const uint32_t* s = (const uint32_t*)(src + y * stride);
+		uint32_t i = 0;
+		for (; i + 4 <= sWidth; i += 4) {
+			const uint32_t a = s[i], b = s[i + 1], c = s[i + 2], e = s[i + 3];
+			d[i] = a | 0xff000000;
+			d[i + 1] = b | 0xff000000;
+			d[i + 2] = c | 0xff000000;
+			d[i + 3] = e | 0xff000000;
+		}
+		for (; i < sWidth; i++)
+			d[i] = s[i] | 0xff000000;
+	}
+}
+
+
+static void
+copy_rows_keyed(uint8_t* dst, const uint8_t* src, uint32_t stride, uint32_t key)
+{
+	for (uint32_t y = 0; y < sHeight; y++) {
+		uint32_t* d = (uint32_t*)(dst + y * stride);
+		const uint32_t* s = (const uint32_t*)(src + y * stride);
+		for (uint32_t i = 0; i < sWidth; i++) {
+			const uint32_t pixel = s[i];
+			d[i] = (pixel & 0x00ffffff) == key ? 0 : pixel | 0xff000000;
+		}
+	}
+}
+
+
 static int
 open_gpu()
 {
@@ -145,6 +183,17 @@ bench_copies()
 			for (int i = 0; i < sReps; i++)
 				copy_rows(wc, i & 1 ? a : b, stride);
 			report("copy RAM->WC (app_server to screen)", system_time() - start, sReps,
+				size);
+
+			start = system_time();
+			for (int i = 0; i < sReps; i++)
+				copy_rows_opaque(wc, i & 1 ? a : b, stride);
+			report("copy RAM->WC, alpha forced", system_time() - start, sReps, size);
+
+			start = system_time();
+			for (int i = 0; i < sReps; i++)
+				copy_rows_keyed(wc, i & 1 ? a : b, stride, 0x005000);
+			report("copy RAM->WC, keyed (all in a rect)", system_time() - start, sReps,
 				size);
 
 			start = system_time();
