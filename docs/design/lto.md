@@ -244,3 +244,9 @@ the userland's code generation.
 
 Side result: 24 network boots of the two fixed images, **0 early panics** (the unfixed gb-gcc16.img: 3 in
 ~14) — the loader fix eb4bdd0ea4 holds (Fisher p ≈ 0.04).
+
+## Decision (owner, 2026-11-02)
+
+**LTO is dropped.** Tried on GCC 16.2 for Haiku's whole userland: it builds and boots, but the Pi A/B above shows
+little or no gain (one small consistent loss), at +17 % build time. The configuration (tools/build/UserBuildConfig.lto)
+stays in the tree as the record of how; it is not used by any build.

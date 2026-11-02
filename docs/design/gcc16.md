@@ -242,6 +242,13 @@ scenes on softpipe (with `--data-path` for the test tree: without it the 13.3 bu
 debugger entries. `gb-gcc16.img` boots to the desktop and games-bench.sh starts QuakeSpasm. Not on the Pi (the
 main session runs the bench).
 
+## Decision (owner, 2026-11-02)
+
+**GCC 16.2 is the new default toolchain** (the Pi comparison: performance-neutral, two large C++ apps start
+15–25 % sooner; its only problem, the early-boot panic, was a latent loader bug — fixed in eb4bdd0ea4, 0 panics in 24
+boots since). **LTO is dropped** ([lto.md](lto.md): no gain). The main build switches as in "Next steps" 3–5 below;
+image-2026-11-03 is the last release built with 13.3.
+
 ## Next steps
 
 1. ~~Haiku source fixes~~ — done (step 2), branch `gcc16`.
