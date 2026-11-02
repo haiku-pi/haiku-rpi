@@ -86,6 +86,8 @@ rm -rf "$DEST/share"'
 
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/build-netsurf.sh"
+# ICU before WebKit (and libpsl), which build on it
+"$root/scripts/build-icu.sh"
 "$root/scripts/build-webkit.sh" "${webkit[@]}"
 # ncurses6: ours replaces upstream's bootstrap package (which looked for its terminfo database under a
 # package name it is not activated under); before the ports that link it
@@ -97,7 +99,6 @@ rm -rf "$DEST/share"'
 	--requires lib:libncursesw
 "$root/scripts/build-python.sh"
 "$root/scripts/fetch-any-packages.sh"
-"$root/scripts/build-icu.sh"
 
 # everyday command-line tools. Libraries in /boot/system/lib (ncurses6, zlib, expat) are
 # not ours to package-port.py, which takes them for the system's: their requires are named here.

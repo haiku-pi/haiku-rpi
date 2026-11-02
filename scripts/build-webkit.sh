@@ -45,14 +45,16 @@ export LD_LIBRARY_PATH="$gen/objects/linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PA
 export PKG_CONFIG_SYSROOT_DIR="$sysroot"
 export PKG_CONFIG_LIBDIR="$np/lib/pkgconfig:$sysroot/boot/system/develop/lib/pkgconfig"
 
-# icu74 + icu74_devel: ICU, from the bootstrap packages (in the image already: the haiku package
-# requires them). Their compiled-in data directory is wrong (the image sets ICU_DATA instead:
-# tools/build/data/UserSetupEnvironment).
+# icu74 + icu74_devel: ICU, ours (scripts/build-icu.sh, in artifacts/packages; build-packages.sh builds it
+# first), else the bootstrap packages (whose compiled-in data directory is wrong: the image set ICU_DATA
+# for them, tools/build/data/UserSetupEnvironment). The haiku package requires them.
 icu74() {
-	local p
+	local p f
 	for p in icu74 icu74_devel; do
-		"$hostTools/package/package" extract -C "$sysroot/boot/system" \
-			"$gen/download/$p-74.1_bootstrap-1-arm64.hpkg"
+		f=$(ls "$root"/artifacts/packages/"$p"-74.1-[0-9]*-arm64.hpkg 2> /dev/null | sort -V | tail -n 1)
+		[ -n "$f" ] || f="$gen/download/$p-74.1_bootstrap-1-arm64.hpkg"
+		"$hostTools/package/package" extract -C "$sysroot/boot/system" "$f"
+		echo "build-webkit: $(basename "$f")"
 	done
 	rm -f "$sysroot/boot/system/.PackageInfo"
 	sed -i 's|/packages/[^/]*/\.self|/boot/system|g' "$sysroot"/boot/system/develop/lib/pkgconfig/icu-*.pc
