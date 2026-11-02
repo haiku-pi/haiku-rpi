@@ -128,6 +128,27 @@ What to look for:
   file/`mmap` tests, locale-dependent tests, threading tests, and tests that build C/Cython/f2py
   code (they need a compiler, meson and Cython on the Pi: skipped or slow-marked).
 
+## Pi results (2026-11-02)
+
+Network sessions of image-2026-11-02b (+ the setrlimit fix below), the 8 packages installed with `pkgman install`:
+
+- `import numpy` → 2.5.4 from `vendor-packages`; `show_runtime()`: baseline NEON, NEON_FP16, NEON_VFPV4, ASIMD
+  (as expected on the Cortex-A72); a 300×300 matmul, `det`, `solve`, `fft` give the right numbers.
+- `numpy.test(label='fast')` without f2py: **11 min 38 s** on the Pi; **6 failed, 8 errors**, everything else passed
+  or skipped:
+  - 6 failures, all `longdouble`: `test_str_roundtrip`, `test_locale_longdouble`, two `dragon4_*[longdouble]`,
+    two `quantile` cases with longdouble. Cause: Haiku's `strtold()` is `strtod()` on every architecture (a 1999
+    glibc stub, "there is no long double type"), so `np.longdouble('1.2')` is the double 1.2. Fix in progress in
+    libroot (the glibc strtod template built for ldbl-128, as glibc's own sysdeps do).
+  - 8 errors, `test_mem_policy.py`: it compiles a C extension with meson at run time (no meson on the Pi; H18).
+  - The f2py tests need meson and a Fortran compiler: excluded (`--ignore=…/numpy/f2py`); without it pytest stops at
+    collection.
+- `test_xerbla_override` failed in the first run: `setrlimit(RLIMIT_CORE, (0, 0))` returned EINVAL ("current limit
+  exceeds maximum limit"); Haiku accepted no change of its fixed limits, even to the same value. Fixed in the kernel,
+  haiku `f0a1d5f5cf` (a request equal to the current limits succeeds); passes since.
+- Test commands: as above, plus `extra_argv=["-p","no:cacheprovider","-rfE","-q",
+  "--ignore=/boot/system/lib/python3.14/vendor-packages/numpy/f2py","--continue-on-collection-errors"]`.
+
 ## Open
 
 - **Native build on the Pi** (the other half of H19): needs H18's packages (gcc, ninja, meson,
@@ -142,4 +163,4 @@ What to look for:
   still use only the baseline. A Haiku branch in `npy_cpu_features.c` reading `ID_AA64ISAR0_EL1`
   (EL0 ID-register reads work on our kernel since the Wine work) would fix that; irrelevant on the
   Cortex-A72.
-- The packages are not published (`scripts/publish-repo.sh` not run) and not in an image.
+- Published in our repository (11-02): `pkgman install numpy_python3.14` (pytest_python3.14 and hypothesis_python3.14 for the tests); not in an image.
