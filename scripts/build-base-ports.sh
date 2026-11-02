@@ -37,13 +37,14 @@ rm -rf "$DEST/documentation"'
 
 # unzip: the recipe's "haiku" target forces CC=cc, so the same flags are given here; without
 # ICONV_MAPPING (no libiconv port yet), which is also what made it include <locale.h>. C17: its K&R
-# declarations (unxcfg.h: "struct tm *gmtime(), *localtime();") conflict with <time.h> in C23, GCC 15's default
+# declarations (unxcfg.h: "struct tm *gmtime(), *localtime();") conflict with <time.h> in C23, GCC 15's default;
+# HAVE_UTIME_H: utime() is otherwise implicitly declared, an error since GCC 14
 "$cross" "$ports/app-arch/unzip/unzip-6.10c23.recipe" script '
 make -f unix/Makefile unix_make
 make -f unix/Makefile unzip funzip unzipsfx CC="$CC" AS="$CC -c" CRCA_O="" LN="ln -s" \
 	CFLAGS="-O2 -std=gnu17 -DLARGE_FILE_SUPPORT -DUNICODE_SUPPORT -DUNICODE_WCHAR -DUTF8_MAYBE_NATIVE \
 		-DNO_LCHMOD -DHAVE_DIRENT_H -DHAVE_TERMIOS_H -DHAVE_LOCALE_H -DHAVE_WCHAR_H -DHAVE_CTYPE_H \
-		-DHAVE_WCTYPE_H -DHAVE_LANGINFO_H -DNO_SYSDIR -DBZIP2_SUPPORT \
+		-DHAVE_WCTYPE_H -DHAVE_LANGINFO_H -DHAVE_UTIME_H -DNO_SYSDIR -DBZIP2_SUPPORT \
 		-I$SYSROOT/boot/system/non-packaged/include" \
 	LF2="-lbe -L$SYSROOT/boot/system/non-packaged/lib -lbz2"
 make -f unix/Makefile install PREFIX="$DEST" MANDIR="$DEST/documentation/man/man1" LN="ln -s"
