@@ -30,12 +30,23 @@ notify --type information --group "Test image" --title "Setting up Wine" \
 start=$(date +%s)
 wineboot -i > /boot/home/mega-logs/wineboot.log 2>&1 < /dev/null
 say "wineboot: exit $? after $(( $(date +%s) - start )) s, syswow64 $(ls /boot/home/.wine/drive_c/windows/syswow64 2> /dev/null | wc -l) files"
+# a new prefix has only C: and Z: (/, which reports 0 bytes free); the games' registry paths below use D: (/boot)
+[ -e /boot/home/.wine/dosdevices/d: ] || ln -s /boot /boot/home/.wine/dosdevices/d:
 key='HKLM\Software\Wow6432Node\Blizzard Entertainment\Starcraft Shareware'
 if [ -d /boot/system/non-packaged/data/wine-games/SC ]; then
 	wine reg add "$key" /v InstallPath /d 'D:\system\non-packaged\data\wine-games\SC' /f > /dev/null 2>&1
 	wine reg add "$key" /v Program /d 'D:\system\non-packaged\data\wine-games\SC\Starcraft.exe' /f > /dev/null 2>&1
 	wine reg add "$key" /v StarCD /d 'D:\system\non-packaged\data\wine-games\SCCD' /f > /dev/null 2>&1
 	say "starcraft: registry keys set"
+fi
+# Diablo II stores where it was first started from and saves there: under Z: it says "not enough room on your Hard
+# Disk" when a character is created
+if [ -d /boot/system/non-packaged/data/wine-games/D2 ]; then
+	mkdir -p /boot/system/non-packaged/data/wine-games/D2/save
+	key='HKCU\Software\Blizzard Entertainment\Diablo II'
+	wine reg add "$key" /v InstallPath /d 'D:\system\non-packaged\data\wine-games\D2' /f > /dev/null 2>&1
+	wine reg add "$key" /v 'Save Path' /d 'D:\system\non-packaged\data\wine-games\D2\save\' /f > /dev/null 2>&1
+	say "diablo ii: registry keys set"
 fi
 # Unreal Tournament's OpenGL renderer crashes on the full list of extensions Wine reports (2026-10-31; KNOWN-ISSUES
 # W10): it gets only those it uses
