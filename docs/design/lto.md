@@ -99,8 +99,9 @@ duplicate name in `area.cpp` and `network.cpp`); `-Wfree-nonheap-object` ×7 in 
 at LTO: a few `-Wformat-overflow`, `-Wstringop-truncation`, `-Wrestrict` (inlined away). None is an error; candidates
 for upstream clean-up are the strace and libsolv ODR items.
 
-**Exports.** LTO drops **unused vague-linkage symbols** from the dynamic tables: 10 006 symbols in 198 files (libbe
-653, libtracker 646, app_server 427, libmedia 124, libroot 12 …), every one of them **weak** in the non-LTO build
+**Exports.** LTO drops **unused vague-linkage symbols** from the dynamic tables: 10 006 distinct symbols (11 200 file/symbol pairs) in 198 files
+(libbe 653, libtracker 646, app_server 427, libmedia 124, libroot 12 …), every one of them **weak** in the non-LTO
+build (checked for all 11 200)
 (inline functions, template instances, and 116 vtables/typeinfo in libbe of classes without a key function) — the
 copies every user emits itself. Checked: no ELF file of the LTO build, and none of the 87 runtime packages we ship
 (Mesa, WebKit, Firefox, Wine, SDL2, ffmpeg, Python, the games, …, extracted) imports a dropped symbol that its
@@ -193,11 +194,24 @@ Suggested order, if the Pi A/B favours LTO: the toolchain files' gcc-ar → the 
 libdrm/libglvnd/GLU → Mesa last. Each port then needs its own A/B (Quake timedemos, Python benchmark), since the
 system A/B above does not cover them.
 
+## Shipped static libraries are slim LTO archives
+
+`haiku_devel` ships 11 static libraries (`libshared.a`, `liblocalestub.a`, `libnetservices.a`, `libnetservices2.a`,
+`libcolumnlistview.a`, `libprint.a`, `libprintutils.a`, `libposix_error_mapper.a`, and the `libc.a`/`libm.a`/
+`libpthread.a` stubs). In the LTO build their members are **slim GCC 16.2 IR** (e.g. `liblocalestub.a`'s
+`CatalogStub.o`: empty `.text`, 16 `.gnu.lto_*` sections). The regular image does not contain `haiku_devel` and our
+ports' sysroot comes from the non-LTO `generated.arm64`, so the A/B is unaffected; but for adoption: a program linked
+against them needs the plugin of the **same** GCC (the dev images' on-device `gcc-13.3.0` package could not link them
+at all), and anything that calls `ld` or `ar x` directly fails. So the shipped archives need `-ffat-lto-objects` (or
+`-fno-lto`) — and, as for runtime_loader, not as a directory config variable (`StaticLibrary` sets `C++FLAGS` on its
+objects), but in the post-parse hook or the rule itself. Distributions ship fat objects for this reason.
+
 ## Decisions needed
 
 - None to finish part 1. For adoption: the per-directory workarounds (#3–#6) are fine for an experiment; a main-build
   LTO option should become proper jam rules on a `lto` branch (and `__attribute__((symver))` for the four libraries)
   rather than a UserBuildConfig that redefines two rules.
+- If adopted: fat (or non-LTO) objects for the static libraries `haiku_devel` ships (section above).
 - The +17 % clean-build time and the dropped weak exports (safe for C++ ABI, checked against everything we ship) are
   the costs; whether they are worth it is the Pi A/B's answer.
 
