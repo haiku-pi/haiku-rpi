@@ -22,16 +22,23 @@
 #   openarena, supertuxkart                scripts/package-games.sh (not run here: needs build-games.sh and
 #                                          build-stk.sh; only for -sHAIKU_PI_GAMES=1 images)
 #
-#   scripts/build-packages.sh [--sysroot]   (--sysroot: recreate the sysroot first)
+#   scripts/build-packages.sh [--sysroot] [--no-webkit]
+#       --sysroot: recreate the sysroot first; --no-webkit: build-webkit.sh's libraries (sqlite, libxml2,
+#       ... for Python and the rest), not HaikuWebKit itself (an hour, 2.6 GB of build tree)
 #
 # Needs a jam build of the tree (the cross compiler, haiku_devel.hpkg, the host package tool).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 ports="$root/sources/haikuports"
 download="$root/sources/haiku/generated.arm64/download"
-if [ "${1:-}" = --sysroot ]; then
-	"$root/scripts/haiku-sysroot.sh"
-fi
+webkit=(icu74 haikuwebkit)
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--sysroot) "$root/scripts/haiku-sysroot.sh"; shift ;;
+	--no-webkit) webkit=(icu74 libpsl); shift ;;
+	*) echo "build-packages: unknown option $1" >&2; exit 2 ;;
+	esac
+done
 
 "$root/scripts/build-gl-stack.sh"
 "$root/scripts/package-gl-stack.sh"
@@ -79,7 +86,7 @@ rm -rf "$DEST/share"'
 
 "$root/scripts/build-base-ports.sh"
 "$root/scripts/build-netsurf.sh"
-"$root/scripts/build-webkit.sh"
+"$root/scripts/build-webkit.sh" "${webkit[@]}"
 # ncurses6: ours replaces upstream's bootstrap package (which looked for its terminfo database under a
 # package name it is not activated under); before the ports that link it
 "$root/scripts/build-ncurses.sh"

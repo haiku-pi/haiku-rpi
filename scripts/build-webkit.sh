@@ -18,8 +18,9 @@
 # Host tools: ruby, perl, python3, gperf, bison, flex, unifdef, cmake + ninja, meson.
 # Output: artifacts/packages/*.hpkg.
 #
-#   scripts/build-webkit.sh [STEP]      (STEP: start at that step, e.g. "haikuwebkit"; the earlier
-#                                        ones must already be in the sysroot)
+#   scripts/build-webkit.sh [STEP [LAST]]  (STEP: start at that step, e.g. "haikuwebkit"; the earlier
+#                                          ones must already be in the sysroot; LAST: stop after that
+#                                          step, e.g. "icu74 libpsl": the libraries only, no WebKit)
 #
 # The WebKit steps keep their tree between runs (artifacts/cross-ports/haikuwebkit-1.10.0/: src/,
 # build/), so that a failed or interrupted build continues where it stopped:
@@ -245,13 +246,14 @@ haikuwebkit() {
 
 steps=(icu74 libexecinfo sqlite libxml2 libxslt lcms brotli woff2 libwebp dav1d libavif libpsl
 	webkit_source webkit_configure webkit_build haikuwebkit)
-start="${1:-${steps[0]}}"
+start="${1:-${steps[0]}}" last="${2:-}"
 started=0
 for s in "${steps[@]}"; do
 	[ "$s" = "$start" ] && started=1
 	[ "$started" = 1 ] || continue
 	echo "build-webkit: === $s"
 	"$s"
+	[ "$s" != "$last" ] || break
 done
 [ "$started" = 1 ] || { echo "build-webkit: no step $start (${steps[*]})" >&2; exit 2; }
 for p in libexecinfo sqlite libxml2 libxslt lcms brotli woff2 libwebp dav1d libavif1.0 libpsl \
