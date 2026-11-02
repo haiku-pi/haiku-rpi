@@ -218,3 +218,29 @@ objects), but in the post-parse hook or the rule itself. Distributions ship fat 
 Files of the study (gcc16 tree, not in git): `artifacts/lto/` (build logs `pi-gl-lto.buildlog`,
 `pi-gl-nolto.buildlog`, timings `*.time`/`*.mem`, the export and size check scripts `exports.sh`, `imports.py`,
 `sizes.py`), `sources/haiku/generated.arm64-lto/` (the LTO build, 769 MB of objects).
+
+## Pi A/B results (2026-11-02 19:33–23:18)
+
+gb-gcc16-fix.img vs gb-gcc16-lto-fix.img (both GCC 16.2 with the secondary-CPU fix eb4bdd0ea4/132765eed5; only
+Haiku's userland differs), three alternating rounds, network boots, no throttling (61.8–71 °C). Raw:
+artifacts/lto-ab/ (results.txt, games-table.md).
+
+| Workload | GCC 16.2 | 16.2 + LTO | Δ |
+|---|---|---|---|
+| Quakes, OpenArena, Half-Life (all settings) | — | — | within ±1 % |
+| SuperTuxKart 720p | 41.8 (2 runs) | 37.5 (31.2–43.3) | noise (its spread) |
+| Wine gltest arm64 | 186.6 (183.9–190.0) | 178.9 (177.8–179.7) | **−4 %, in all three rounds** |
+| Wine gltest x86 / d3dtest | — | — | within ±1 % |
+| glmark2 window / full screen | 329–331 / 88 | 330 / 88 | 0 % |
+| App first launch (Terminal, StyledEdit, MediaPlayer, ShowImage, DeskCalc, Debugger) | — | — | within noise (±10 %, both ways) |
+| Python cold start | 0.330–0.363 s | 0.315–0.332 s | −4 % |
+| Python warm start, sum, loop, sort | — | — | within ±2 % |
+
+**Verdict: LTO of Haiku's userland brings no measurable gain on this system**, one small consistent loss (Wine's
+arm64 GL test, −4 %), against +17 % clean build time and libroot +5.9 % text. Not adopted. Worth revisiting
+per port (Mesa, ffmpeg, SDL2, Python with PGO) where the hot code is the port's own; the core result is
+the same as GCC 13.3 → 16.2: this workload is bound by the GPU, memory and the display path, not by
+the userland's code generation.
+
+Side result: 24 network boots of the two fixed images, **0 early panics** (the unfixed gb-gcc16.img: 3 in
+~14) — the loader fix eb4bdd0ea4 holds (Fisher p ≈ 0.04).
