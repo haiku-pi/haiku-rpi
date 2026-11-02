@@ -47,7 +47,11 @@ done
 rm -f "$out/boot/system/.PackageInfo"
 # Packaged .pc files name the package's own mount point (/packages/<name>/.self); installed, those
 # files appear under /boot/system.
-sed -i 's|/packages/[^/]*/\.self|/boot/system|g' "$out"/boot/system/develop/lib/pkgconfig/*.pc
+# (Not through symbolic links: ncurses6_bootstrap's form.pc, ncurses.pc ... point to ../formw.pc ..., which
+# resolve only in the package's own layout.)
+for f in "$out"/boot/system/develop/lib/pkgconfig/*.pc; do
+	[ -L "$f" ] || sed -i 's|/packages/[^/]*/\.self|/boot/system|g' "$f"
+done
 mkdir -p "$out/boot/system/non-packaged"
 for f in develop/lib/libroot.so develop/lib/crti.o develop/lib/libstdc++.so develop/lib/libz.so \
 	develop/headers/posix/stdio.h develop/headers/os/interface/View.h \
