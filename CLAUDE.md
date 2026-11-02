@@ -14,3 +14,5 @@ Read `docs/knowledge/` only for the area you are touching.
 - Commit in `sources/haiku` on branch `rpi4`, push to `origin` (the haiku-pi fork); then record the
   state with `scripts/snapshot-state.sh` and commit + push this repo.
 - Heavy builds go through `scripts/heavy-build.sh` (one at a time, memory-capped).
+- Releases: follow [docs/RELEASING.md](docs/RELEASING.md); a release is not done until README, KNOWN-ISSUES,
+  HAIKU-RPI4-CHANGES and the other user-facing docs describe it (`scripts/release-docs-check.sh TAG` prints `ok`).
