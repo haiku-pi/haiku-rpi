@@ -1,0 +1,55 @@
+ddraw: create a version 1 primary surface whose format cannot be a render target
+
+Since "ddraw: Force render target bind flags on v1 swapchain candidate
+surfaces." (6b486ec7830a, 2026-06), is_render_target() makes every
+version 1 primary surface a render target, also without
+DDSCAPS_3DDEVICE. wined3d's OpenGL adapter never gives
+WINED3DFMT_P8_UINT the render target capability, so an 8-bit primary
+surface requested with an explicit DDSCAPS_VIDEOMEMORY failed to be
+created (without a memory flag it falls back to system memory). Diablo
+II (demo 1.04, IDirectDraw, 640x480x8, DDSCAPS_PRIMARYSURFACE |
+DDSCAPS_FLIP | DDSCAPS_COMPLEX | DDSCAPS_VIDEOMEMORY) stopped at start:
+"Error 22: a critical error has occurred while initializing DirectDraw"
+-- on any GL driver, the same with unpatched Wine 11.20 on x86-64 Linux
+(llvmpipe).
+
+ddraw_texture_init() already retries without
+WINED3D_BIND_SHADER_RESOURCE when the application did not ask for a
+texture; it now also retries without WINED3D_BIND_RENDER_TARGET when the
+application did not ask for a 3D device (no DDSCAPS_3DDEVICE): the
+surface then has no render target binding, as before that commit. A
+Direct3D device still needs DDSCAPS_3DDEVICE, so nothing can render into
+it. Only creations that failed take the new path.
+
+On a Raspberry Pi 4 (V3D, OpenGL 2.1, the i386 side under Box64) the
+demo now starts full screen: its menu at 800x600, a Barbarian in the Act
+1 camp at 640x480, 25 frames a second (the game's own rate); the same on
+x86-64 with llvmpipe. StarCraft, Heroes III, SimCity 3000, Fallout and
+an 8 bpp DirectDraw test are unchanged.
+
+--- a/dlls/ddraw/surface.c
++++ b/dlls/ddraw/surface.c
+@@ -6537,7 +6537,22 @@ static HRESULT ddraw_texture_init(struct
+             if (FAILED(hr = wined3d_texture_create(wined3d_device, &wined3d_desc,
+                     layers, levels, WINED3D_TEXTURE_CREATE_GET_DC_LENIENT, NULL,
+                     texture, &ddraw_texture_wined3d_parent_ops, &wined3d_texture)))
+-                return hr;
++            {
++                /* Version 1 primary surfaces are render targets even without
++                 * DDSCAPS_3DDEVICE (see is_render_target()), but not every
++                 * format can be one: P8 never is with the OpenGL renderer.
++                 * If the user didn't explicitly ask for a 3D device, strip
++                 * WINED3D_BIND_RENDER_TARGET as well and try again. */
++                if (!(wined3d_desc.bind_flags & WINED3D_BIND_RENDER_TARGET)
++                        || (desc->ddsCaps.dwCaps & DDSCAPS_3DDEVICE))
++                    return hr;
++
++                wined3d_desc.bind_flags &= ~WINED3D_BIND_RENDER_TARGET;
++                if (FAILED(hr = wined3d_texture_create(wined3d_device, &wined3d_desc,
++                        layers, levels, WINED3D_TEXTURE_CREATE_GET_DC_LENIENT, NULL,
++                        texture, &ddraw_texture_wined3d_parent_ops, &wined3d_texture)))
++                    return hr;
++            }
+         }
+     }
+ 
