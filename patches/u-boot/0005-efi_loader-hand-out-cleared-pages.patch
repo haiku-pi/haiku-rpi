@@ -1,0 +1,31 @@
+From: haiku-rpi
+Subject: [PATCH] efi_loader: hand out cleared pages from efi_allocate_pages()
+
+AllocatePages()/AllocatePool() returned memory as it was in the RAM. With a
+random fill of the RAM before booting (what a cold start leaves), Haiku booted
+over the network froze 3 of 3 warm boots; the culprit page, found by
+bisecting, was the pool page of a debug image info table entry (24 bytes
+used, the rest of the page as found). Clearing what efi_allocate_pages()
+hands out (pools come from it too): alive 3 of 3.
+---
+diff --git a/lib/efi_loader/efi_memory.c b/lib/efi_loader/efi_memory.c
+index c3da7c20..87d87df7 100644
+--- a/lib/efi_loader/efi_memory.c
++++ b/lib/efi_loader/efi_memory.c
+@@ -500,6 +500,16 @@ efi_status_t efi_allocate_pages(enum efi_allocate_type type,
+ 		return EFI_OUT_OF_RESOURCES;
+ 	}
+ 
++	/*
++	 * Hand out cleared memory. The specification leaves the contents
++	 * undefined, but an EFI application that relies on zeroes - or on the
++	 * slack of a pool allocation - then sees whatever was in the RAM:
++	 * garbage after a cold start, the previous boot's bytes after a warm
++	 * one. Haiku on a Raspberry Pi 4 hung early in its kernel that way
++	 * (a page of the debug image info table's pool). Clearing costs
++	 * little next to loading the image into these pages.
++	 */
++	memset((void *)(uintptr_t)efi_addr, 0, (size_t)pages << EFI_PAGE_SHIFT);
+ 	*memory = efi_addr;
+ 
+ 	return EFI_SUCCESS;
