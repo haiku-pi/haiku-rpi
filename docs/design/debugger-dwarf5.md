@@ -144,8 +144,10 @@ std::execute_native_thread_routine(void*) + 0x18 (.../gccsys/src/gcc/libstdc++-v
 pthread_thread_entry(void*, void*) + 0x18
 ```
 
-(Report lines are zero-based, as the Debugger counts; `-1`: the source file is not on the target, see
-Gaps.) The system's Debugger on the same image: `-gdwarf-5` C program "Unsupported compilation unit
+(Report lines are zero-based — the Debugger's convention, also with DWARF 4: `dbgtarget.c:9` is line
+10; `-1`: the source file is not on the target, see Gaps. The image's libstdc++ is its own build,
+gcc_syslibs 13.3.0_2026_03_29_bootstrap-2, not the sysroot's 6.0.32 of the host tests: its line tables
+are version 5 in version 4 units as well.) The system's Debugger on the same image: `-gdwarf-5` C program "Unsupported compilation unit
 version: 5", frames `add3 + 0`, `twice + 0x10`, `main + 0x18` (symbols only), "No variables available";
 `-gdwarf-4` C++ program: argument lists, but no source line for `leaf`/`worker` (the file named twice) and
 libstdc++'s `thread.cc` under `.../gccsys/obj/aarch64-unknown-haiku/libstdc++-v3/src/c++11/` (one directory
@@ -191,4 +193,7 @@ lambda → `_M_run` → `std::execute_native_thread_routine(void*)` with libstdc
 variables; `old-c-dw5` with "Unsupported compilation unit version: 5" and bare symbol names; then
 `DWARF5 end`; compare-sessions.sh: C 0 lines differ, C++ only the 2 `npos` lines. Rebuild the image: the
 first two commands of the QEMU section (`artifacts/images/haiku-pi4-dwarf5-test.img` is built from
-image-2026-11-03 and the dwarf5 branch at 1b4e49fd6c).
+image-2026-11-03 and the dwarf5 branch at 1b4e49fd6c: its libdebugger.so has sha256 da315bb2d1816b8a…; a
+rebuilt one should match, else it is not the tested reader). Watch for "did not end, killed" lines (the
+quit hang, 2 of 12 sessions in QEMU; four sessions of the system's Debugger are too few to say whether it
+has it too).
