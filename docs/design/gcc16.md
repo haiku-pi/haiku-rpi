@@ -249,6 +249,20 @@ main session runs the bench).
 boots since). **LTO is dropped** ([lto.md](lto.md): no gain). The main build switches as in "Next steps" 3–5 below;
 image-2026-11-03 is the last release built with 13.3.
 
+### Packages after the switch (decided 2026-11-02)
+
+No mass rebuild. libstdc++ 6.0.36 keeps the SONAME and all 6003 exports of 13.3's 6.0.32 (libgcc_s 170 ⊇ 152), so
+13.3-built packages run unchanged on a 16.2 system. The reverse is not true: a 16.2-built C++ package may need
+6.0.36 symbols, and our packages require only `lib:libstdc++` (no version). Therefore:
+1. publish `gcc_syslibs`/`gcc_syslibs_devel` 16.2 first, after checking them on a 13.3 image (install, run the C++
+   apps: relcheck), so `pkgman update` gives every system the new runtime;
+2. the `haiku` packages build with 16.2 from the switch on;
+3. other packages are rebuilt with 16.2 when they change anyway (new upstream version, our patches), or where 16.2
+   measurably helps (large C++ apps: first launch 15–25 % sooner); the native gcc (H18 part 2) must be 16.2;
+4. no republishing of everything: the package repository is a git repository with large files, every republished
+   package adds its whole size to the history, for no measured gain. (The parallel tree already proved that the
+   ports build with 16.2.)
+
 ## Next steps
 
 1. ~~Haiku source fixes~~ — done (step 2), branch `gcc16`.
