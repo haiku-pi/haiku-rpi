@@ -136,7 +136,8 @@ make CC="$CC" AR="$AR" install DESTDIR="${DEST%/boot/system/non-packaged}" PREFI
 rm -f "$DEST"/lib/libxxhash.a
 rm -rf "$DEST/share"'
 "$root/scripts/package-port.py" "$ports/dev-libs/xxhash/xxhash-0.8.3.recipe"
-# rsync: its configure wrapper only works in the source tree; the run-time checks answered as on Haiku
+# rsync: its configure wrapper only works in the source tree; the run-time checks answered as on Haiku; C17:
+# its K&R comparators ("int (*)()") are "int (*)(void)" in C23, GCC 15's default, and qsort rejects them
 "$root/scripts/cross-port.sh" "$ports/net-misc/rsync/rsync-3.2.7.recipe" script '
 np="$SYSROOT/boot/system/non-packaged"
 aclocal -I m4
@@ -144,7 +145,7 @@ autoconf -o configure.sh
 autoheader
 ./configure.sh --host=aarch64-unknown-haiku --prefix=/boot/system/non-packaged \
 	--enable-xattr-support --disable-iconv --disable-iconv-open --disable-locale --disable-debug \
-	--with-included-zlib=no --disable-md2man CC="$CC" CPPFLAGS="-I$np/include" LDFLAGS="-L$np/lib" \
+	--with-included-zlib=no --disable-md2man CC="$CC -std=gnu17" CPPFLAGS="-I$np/include" LDFLAGS="-L$np/lib" \
 	rsync_cv_HAVE_SOCKETPAIR=yes rsync_cv_HAVE_SECURE_MKSTEMP=yes rsync_cv_HAVE_C99_VSNPRINTF=yes \
 	rsync_cv_HAVE_BROKEN_READDIR=no rsync_cv_HAVE_BROKEN_LARGEFILE=no
 make -j"$(nproc)"
@@ -227,9 +228,10 @@ for program in "$system"/bin/git* "$system/bin/scalar"; do
 done'
 "$root/scripts/package-port.py" "$ports/dev-vcs/git/git-2.56.0.recipe" --system-prefix --lib-tree git-core \
 	--requires lib:libz --requires lib:libexpat --requires cmd:nano
-# htop: Rivoreo's fork, the HaikuPorts htop with Haiku support
+# htop: Rivoreo's fork, the HaikuPorts htop with Haiku support; C17: its key handler table is declared with
+# "()" (no prototype), which C23, GCC 15's default, reads as "(void)"
 "$root/scripts/cross-port.sh" "$ports/sys-process/htop_rivoreo/htop_rivoreo-2.3.1.recipe" autotools \
-	--sysconfdir=/boot/system/settings
+	--sysconfdir=/boot/system/settings CFLAGS="-O2 -std=gnu17"
 "$root/scripts/package-port.py" "$ports/sys-process/htop_rivoreo/htop_rivoreo-2.3.1.recipe" \
 	--requires lib:libncursesw
 
