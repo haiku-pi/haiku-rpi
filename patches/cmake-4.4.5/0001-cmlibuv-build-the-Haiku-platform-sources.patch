@@ -1,0 +1,37 @@
+cmlibuv: build the Haiku platform sources
+
+The bundled libuv has src/unix/haiku.c, but its CMakeLists.txt (CMake's own, not libuv's) has no
+Haiku branch, so cmake links without the platform functions (uv__hrtime, uv__platform_invalidate_fd,
+...). The same sources, definitions and libraries as upstream libuv's CMakeLists.txt for Haiku.
+HaikuPorts builds cmake with the system libuv (--system-libuv), so its patchset does not need this.
+
+--- a/Utilities/cmlibuv/CMakeLists.txt	2026-11-02 14:08:56.303465181 +0100
++++ b/Utilities/cmlibuv/CMakeLists.txt	2026-11-02 14:08:56.320777288 +0100
+@@ -291,6 +291,27 @@
+     )
+ endif()
+ 
++if(CMAKE_SYSTEM_NAME STREQUAL "Haiku")
++  list(APPEND uv_libraries
++    bsd
++    network
++    )
++  list(APPEND uv_headers
++    include/uv/posix.h
++    )
++  list(APPEND uv_defines
++    _BSD_SOURCE
++    )
++  list(APPEND uv_sources
++    src/unix/bsd-ifaddrs.c
++    src/unix/haiku.c
++    src/unix/no-fsevents.c
++    src/unix/no-proctitle.c
++    src/unix/posix-hrtime.c
++    src/unix/posix-poll.c
++    )
++endif()
++
+ if(CMAKE_SYSTEM_NAME STREQUAL "HP-UX")
+   list(APPEND uv_libraries
+     rt

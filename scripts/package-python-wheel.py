@@ -3,7 +3,7 @@
 module package, <module>_python3.14 (as HaikuPorts' dev-python recipes name them).
 
     scripts/package-python-wheel.py WHEEL [--revision N] [--requires R]... [--provides P]...
-        [--replace OLD NEW]...
+        [--replace OLD NEW]... [--name NAME] [--map DIST RESOLVABLE]...
 
 Run it with a Python 3.14 that has the `installer` and `packaging` modules (scripts/build-numpy.sh's
 venv). The wheel is a cross-built one (numpy) or a pure-Python one (py3-none-any: pytest, ...).
@@ -17,6 +17,8 @@ What the recipes' INSTALL() does with `python3.14 -m installer -p $prefix`, done
   - bytecode for every module, compiled by this Python (the same 3.14 as the target) with the
     paths on Haiku and --invalidation-mode unchecked-hash: packagefs is read-only, a stale .pyc
     can never happen and Python never stats the source to check one
+  - the wheel's data in share/ moved to Haiku's places: share/man to documentation/man, the rest
+    to data/
   - ELF objects stripped (--strip-unneeded); their NEEDED entries become requires as in
     package-port.py; a host path in any file fails the packaging
 
@@ -24,7 +26,11 @@ In artifacts/packages/: <module>_python3.14-<version>-<N>-<arch>.hpkg, arch "any
 wheel (Root-Is-Purelib and no ELF objects), arm64 otherwise. Provides <module>_python3.14 and
 <module>_python314 (the name other recipes require) and cmd:<script>_3.14 / cmd:<script>; requires
 haiku, cmd:python3.14 and <dep>_python314 for every Requires-Dist that applies on Haiku (markers
-evaluated, extras left out). Like package-port.py's, the package is also extracted into the sysroot.
+evaluated, extras left out; --map names another resolvable for one, e.g. meson -> cmd:meson). Like
+package-port.py's, the package is also extracted into the sysroot.
+
+--name NAME: a program that HaikuPorts packages under its own name, not as a python module (meson):
+the package is NAME, provides NAME and cmd:<script> only, and the scripts keep their names.
 """
 
 import argparse
@@ -78,7 +84,8 @@ def licenses_of(meta):
                     ('BSD', 'BSD (3-clause)')):
                 if key in text:
                     return [name]
-    return [meta.get('License') or 'Unknown']
+    # a bare SPDX identifier in License (Cython: Apache-2.0)
+    return [licenseNames.get(meta.get('License'), meta.get('License') or 'Unknown')]
 
 
 def main():
@@ -92,7 +99,13 @@ def main():
     parser.add_argument('--replace', nargs=2, action='append', default=[], metavar=('OLD', 'NEW'),
         help='replace OLD by NEW in the installed text files (a build-time path on the host by '
             'its name on Haiku: numpy/__config__.py names the cross compiler)')
+    parser.add_argument('--name', default='',
+        help='the package name, for a program HaikuPorts does not package as <module>_python3.14 '
+            '(meson); its scripts are not version suffixed')
+    parser.add_argument('--map', nargs=2, action='append', default=[], metavar=('DIST', 'RESOLVABLE'),
+        help='the requirement a Requires-Dist on DIST becomes (meson-python: meson -> cmd:meson)')
     args = parser.parse_args()
+    requirementMap = {canonicalize_name(d): r for d, r in args.map}
 
     with zipfile.ZipFile(args.wheel) as z:
         metaName = next(n for n in z.namelist() if re.match(r'[^/]+\.dist-info/METADATA$', n))
@@ -100,7 +113,7 @@ def main():
         wheelInfo = z.read(metaName.replace('/METADATA', '/WHEEL')).decode()
     dist = canonicalize_name(meta['Name']).replace('-', '_')
     version = meta['Version']
-    name = f'{dist}_python{pythonVersion}'
+    name = args.name or f'{dist}_python{pythonVersion}'
     work = os.path.join(root, 'artifacts/cross-ports', f'{dist}-{version}')
     stage = os.path.join(work, 'install')
     shutil.rmtree(stage, ignore_errors=True)
@@ -114,10 +127,22 @@ def main():
         installer.install(source, destination, {'INSTALLER': b'haiku-pi\n'})
     sys_ = stage + prefix
 
+    # the wheel's data files in share/, where Haiku has them: manual pages in documentation/man,
+    # the rest in data/ (meson: its man page and a polkit action)
+    share = os.path.join(sys_, 'share')
+    if os.path.isdir(share):
+        for d in sorted(os.listdir(share)):
+            target = os.path.join(sys_, 'documentation/man' if d == 'man' else 'data/' + d)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.move(os.path.join(share, d), target)
+        os.rmdir(share)
+
     # console scripts: <name>-3.14 and a <name> symlink (the recipes' INSTALL())
     commands = []
     binDir = os.path.join(sys_, 'bin')
-    if os.path.isdir(binDir):
+    if os.path.isdir(binDir) and args.name:
+        commands = sorted(os.listdir(binDir))
+    elif os.path.isdir(binDir):
         for f in sorted(os.listdir(binDir)):
             os.rename(os.path.join(binDir, f), os.path.join(binDir, f'{f}-{pythonVersion}'))
             os.symlink(f'{f}-{pythonVersion}', os.path.join(binDir, f))
@@ -173,7 +198,8 @@ def main():
     for r in meta.get_all('Requires-Dist') or []:
         req = Requirement(r)
         if req.marker is None or req.marker.evaluate(markerEnvironment):
-            requires.add(canonicalize_name(req.name).replace('-', '_') + '_python'
+            requires.add(requirementMap.get(canonicalize_name(req.name))
+                or canonicalize_name(req.name).replace('-', '_') + '_python'
                 + pythonVersion.replace('.', ''))
     for n in needed:
         if os.path.exists(os.path.join(pp.sysroot + pp.nonPackaged, 'lib', n)) \
@@ -181,8 +207,8 @@ def main():
             requires.add(f'lib:{pp.resolvable(pp.lib_base(n))}')
         # else: libroot and the other system libraries, in "haiku"; libpython's symbols come
         # from the running python3.14 (extension modules do not link it, as on Linux)
-    provides = [f'{name} = {version}-{args.revision}',
-        f'{dist}_python{pythonVersion.replace(".", "")} = {version}'] \
+    provides = [f'{name} = {version}-{args.revision}'] \
+        + ([] if args.name else [f'{dist}_python{pythonVersion.replace(".", "")} = {version}']) \
         + [f'cmd:{pp.resolvable(c)} = {version}' for c in commands] \
         + [f'{p} = {version}' for p in args.provides]
 

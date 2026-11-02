@@ -365,6 +365,7 @@ host.
 | `scripts/build-netsurf.sh [PORT]` | NetSurf 3.11, OpenSSL 3, curl and NetSurf's libraries | `artifacts/packages/` |
 | `scripts/build-python.sh [--no-host]` | CPython 3.14.8 (ssl, sqlite3, ctypes, readline on libedit, curses, ...); builds a host Python of the same version first | `artifacts/packages/` |
 | `scripts/build-icu.sh [--revision N]` | ICU 74.1 with its data inside libicudata | `artifacts/packages/` |
+| `scripts/build-dev-tools.sh [--only NAME]...` | the developer tools (H18): make, ninja, pkgconf, cmake, binutils, meson, pip, setuptools, wheel, Cython, meson-python, pyproject-metadata; checks every program's libraries and symbols against the image's ([design/dev-tools.md](design/dev-tools.md)); ~15 min | `artifacts/packages/` |
 | `scripts/build-ffmpeg.sh` | ffmpeg 6.1 with the `hevc_rpivid` hardware decoder | `artifacts/packages/` |
 | `scripts/build-rust.sh [STEP]` | rustc 1.90.0 + cargo that cross-compile for `aarch64-unknown-haiku` (no Rust runs on Haiku); ~21 min; resumable; `source artifacts/rust/env.sh` to use it | `artifacts/rust/` |
 | `scripts/build-spidermonkey.sh [STEP]` | Firefox's JavaScript shell `js` (JIT on); ~7 min at 10 jobs. Not needed for Firefox: `build-firefox.sh` runs this script's `source` and `hosttools` steps itself | `artifacts/spidermonkey-tests/non-packaged/` |

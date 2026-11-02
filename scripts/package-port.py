@@ -19,7 +19,9 @@ sysroot, libstdc++/libgcc_s/libatomic; the system's own libraries need nothing b
 license and summary from the recipe. --static-suffix renames lib<name>.a to lib<name><SUFFIX>.a
 (fluidlite: "-static", as jam's fluidlite build feature expects). Both packages are also extracted into the
 sysroot's boot/system, as the image will have them. Other run-time names of a library, symlinks to its
-soname in lib/ (ncurses6: libncurses.so.6 -> libncursesw.so.6), are kept and provided too.
+soname in lib/ (ncurses6: libncurses.so.6 -> libncursesw.so.6), are kept and provided too. Other
+directories of the prefix go into the runtime package as they are with --tree PATH (make:
+develop/headers/gnumake.h, binutils: develop/tools, the tool directory the compiler driver searches).
 
 A port installed with the packaged prefix (--system-prefix: install/boot/system, e.g. CPython, whose
 build bakes its prefix into sysconfig) may also have develop/headers/ (to the _devel package as they
@@ -132,6 +134,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('recipe')
     parser.add_argument('--revision', default='1')
+    parser.add_argument('--summary', default='',
+        help='the summary, when the recipe\'s needs its variables expanded (binutils: '
+            '${targetMachineTriple})')
     parser.add_argument('--static-suffix', default='')
     parser.add_argument('--lib-version', default='',
         help='the version the libraries are provided at, as the recipe has it (ncurses6: 6.6.0; '
@@ -156,6 +161,10 @@ def main():
         help='the port is installed with prefix /boot/system (install/boot/system), not non-packaged')
     parser.add_argument('--lib-tree', action='append', default=[],
         help='a directory of lib/ that goes into the runtime package as it is (python3.14)')
+    parser.add_argument('--tree', action='append', default=[],
+        help='a directory of the installed prefix, relative to it, that goes into the runtime package '
+            'as it is (make: develop/headers, binutils: develop/tools); ELF objects are stripped and '
+            'their NEEDED entries turned into requires')
     parser.add_argument('--global-writable', action='append', default=[],
         help='a directory of the runtime package, relative to /boot/system, that is writable '
             '(non-packaged/lib/python3.14/site-packages)')
@@ -170,7 +179,7 @@ def main():
     recipeName = os.path.basename(args.recipe)[:-len('.recipe')]
     port, version = recipeName.rsplit('-', 1)
     text = open(args.recipe).read()
-    summary = recipe_field(text, 'SUMMARY') or port
+    summary = args.summary or recipe_field(text, 'SUMMARY') or port
     licenses = [l.strip() for l in recipe_field(text, 'LICENSE').split('\n') if l.strip()]
     copyrights = [c.strip() for c in recipe_field(text, 'COPYRIGHT').split('\n') if c.strip()] \
         or [f'The {port} authors']
@@ -266,6 +275,19 @@ def main():
                     programNeeded.extend(elf_dynamic(path)[1])
                     subprocess.run([tools + 'strip', '--strip-unneeded', path], check=True)
 
+    # other trees of the prefix, as they are (binutils: develop/tools/<triplet>/bin, the links the
+    # compiler driver runs, and lib/ldscripts)
+    for tree in args.tree:
+        shutil.copytree(os.path.join(install, tree), os.path.join(runtime, tree), symlinks=True,
+            dirs_exist_ok=True)
+        for dirpath, _, files in os.walk(os.path.join(runtime, tree)):
+            for f in files:
+                path = os.path.join(dirpath, f)
+                head = open(path, 'rb').read(18) if not os.path.islink(path) else b''
+                if head[:4] == b'\x7fELF' and head[16] in (2, 3):
+                    programNeeded.extend(elf_dynamic(path)[1])
+                    subprocess.run([tools + 'strip', '--strip-unneeded', path], check=True)
+
     # global writable directories: in the package, extracted to the writable location on activation
     for w in args.global_writable:
         if os.path.isdir(os.path.join(install, w)):
@@ -303,7 +325,8 @@ def main():
         provides.append(f'lib:{resolvable(lib_base(name))} = {libVersion}{compat}')
         develProvides.append(f'devel:{resolvable(lib_base(name))} = {libVersion}{compat}')
     for c in commands:
-        provides.append(f'cmd:{resolvable(c.replace("+", "_"))} = {version}')
+        # '+' is valid in a resolvable (HaikuPorts: cmd:c++filt, cmd:g++)
+        provides.append(f'cmd:{resolvable(c)} = {version}')
     for c in args.devel_bin:
         develProvides.append(f'cmd:{resolvable(c)} = {version}')
     for n in programNeeded:
@@ -318,7 +341,7 @@ def main():
     if os.path.isdir(os.path.join(install, 'include')):
         shutil.copytree(os.path.join(install, 'include'), os.path.join(devel, 'develop/headers'),
             symlinks=True)
-    if os.path.isdir(os.path.join(install, 'develop/headers')):
+    if os.path.isdir(os.path.join(install, 'develop/headers')) and 'develop/headers' not in args.tree:
         shutil.copytree(os.path.join(install, 'develop/headers'),
             os.path.join(devel, 'develop/headers'), symlinks=True, dirs_exist_ok=True)
     for f in (sorted(os.listdir(libDir)) if os.path.isdir(libDir) else []):
