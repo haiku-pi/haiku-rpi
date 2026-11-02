@@ -163,11 +163,91 @@ Terminal, StyledEdit, MediaPlayer, ShowImage, DeskCalc, Debugger each open 3 win
 (13.3-built Mesa/GLU against the 16.2 libstdc++); desktop on the screenshot; 3 debugger syslog lines, as the 13.3
 A run on 10-28.
 
+## Step 3 (11-02): a complete 16.2 build in a parallel tree
+
+So that the main build (13.3) keeps working while the packages are rebuilt, step 3 ran in a **second checkout**,
+`/home/houp/haiku-rpi-gcc16` on the build host (every script finds its paths from its own location, so nothing in
+them changed for that):
+
+| Path | What |
+|---|---|
+| `.` | worktree of this repository, branch **`gcc16-build`** (pushed); `local.conf` copied (the shared heavy-build lock, the game data) |
+| `sources/haiku` | worktree, branch **`gcc16-build`** (pushed) = `origin/rpi4` f593b2ae43 (the release-image-2026-11-02 commit, which has the four source fixes) + de1a4a439d, the cherry-picked repository bump (gcc_syslibs 16.2.0) — all `gcc16` has that `rpi4` lacks |
+| `sources/buildtools` | the step 1–2 `gcc16` worktree moved here (c2213226f9) |
+| `sources/{mesa,libdrm,libglvnd}` | worktrees, branches `gcc16-build` at the main tree's commits (f64c84cae9, bd858a245b, 7cc03c3236); not changed, not pushed |
+| `sources/haikuports`, `sources/u-boot` | detached worktrees at c17ec5a8d2 / 8d534cec; the recipes' `download/` tarballs copied; `u-boot.bin` copied from the main tree (built there with patches 0001–0004) |
+| `generated.arm64` | new: `configure --build-cross-tools arm64 --cross-tools-source ../../buildtools` (so the cross tools have the `<bitset>` fix); `download/` copied from the main tree with the 13.3 gcc_syslibs removed and the two 16.2 hpkgs added |
+| `artifacts/` | `packages/` copied (and rebuilt in place, same names and revisions); `downloads/`, `cross-ports/dl/` hard-linked; `pi-firmware`, `wifi-firmware`, `wine-11.20`, `wine-games` symbolic links (read-only inputs of the image scripts) |
+
+Nothing was written into the main tree's `sources/` or `artifacts/`. Packages keep their names and revisions
+(e.g. `mesa-26.2.6-1`): they are never published from this tree, and which compiler built a file is in its
+`.comment` (`GCC: (GNU) 16.2.0`), checked for every package below. The bumps belong to the switch of the main build.
+
+**Rebuilt with 16.2** (all ELF files of each package `GCC: (GNU) 16.2.0`; packages in `artifacts/packages/` of that
+tree, staged in its `download/`):
+
+- Haiku itself, `-sHAIKU_PI_GL=1 @pi-mmc`: clean `objects`, rc 0, the same `not available` list as 13.3 (11
+  packages), 3834 warning lines. A clean build prints 11 `fatal error: jpeglib.h/png.h/avif.h/webp/encode.h: No such
+  file` lines from the translators' catalog-key extraction (step 2's first clean build had the same; incremental
+  builds none): not compiles, no `...failed`.
+- `build-packages.sh --no-webkit` (new option, below), then `build-webkit.sh webkit_source`: the GL stack (libdrm,
+  libglvnd, Mesa 26.2.6 with V3D/V3DV, the Vulkan loader, the GL tests; mesa/mesa_devel 26.2.6-1, glu/glu_devel
+  9.0.3-6 via `package-gl-stack.sh --glu-revision 6`), libogg, libvorbis, fluidlite, libsdl2 2.32.10-5, ffmpeg6 6.1.6-3,
+  zstd, gzip, tar, bzip2, unzip, the NetSurf set (libiconv, libpng16, libjpeg_turbo, libutf8proc, OpenSSL 3.5.9, curl,
+  the ns* libraries, netsurf), ICU 74.1, the WebKit libraries (libexecinfo, sqlite 3.53.4, libxml2, libxslt, lcms,
+  brotli, woff2, libwebp, dav1d, libavif, libpsl), **HaikuWebKit 1.10.0** (~45 min, 1556 warning lines), ncurses6,
+  libedit, **python3.14 3.14.8-2**, nano, libpcre2, wget, lz4, xxhash, rsync, vim, openssh, git, htop_rivoreo.
+- Games: `build-games.sh` (SDL2, QuakeSpasm, Yamagi Quake II, vkQuake, ioquake3 for OpenArena and the Quake III demo,
+  sdlvk), `build-stk.sh` and `build-stk.sh --no-data --gles`, `package-games.sh` (supertuxkart 1.5-2 and openarena
+  0.8.8-4, their data packages kept), `build-glmark2.sh --package` (glmark2 2023.01-2). No game needed a change.
+- Compiler warnings per port about as with 13.3 (ffmpeg 140 → 176, QuakeSpasm 2 → 4, ioquake3 14 → 12, Python 10 →
+  6, NetSurf 614 → 628, ICU 4171 → 4134; SDL2, vkQuake, STK's own 0).
+
+**Per-port fixes** (coordination repository, branch `gcc16-build`; all harmless with 13.3):
+
+| Commit | Port | GCC 16 change | Fix |
+|---|---|---|---|
+| 37a7416, 5c5b129 | unzip 6.10c23 | C23 default: `struct tm *gmtime(), *localtime();` conflicts with `<time.h>`; implicit `utime()` (an error since GCC 14) | `-std=gnu17`, `-DHAVE_UTIME_H` |
+| acbd335 | NetSurf 3.11 (BeOS front end) | C++20 default: `(char *)&nsbeos_find_app_path < …` parses as a template argument list | the front end as `-std=gnu++17` |
+| 840f9fa | rsync 3.2.7, htop_rivoreo 2.3.1 | C23: K&R comparators / a key-handler table declared with `()` are `(void)` prototypes; qsort and calls with arguments rejected | `-std=gnu17` |
+
+Not GCC-specific, found because the tree was new: `haiku-sysroot.sh` failed on a fresh sysroot (ec310ca: the ncurses6
+bootstrap package's `form.pc` … are symbolic links that dangle in the sysroot and `sed -i` stopped on them);
+`build-webkit.sh`'s `icu74` step extracted the ICU bootstrap packages, which `download/` no longer has since our
+`build-icu.sh` replaced them (4e1bc6d: it takes ours, and `build-packages.sh` builds ICU before WebKit);
+`build-packages.sh` builds correctly only on a fresh sysroot (`--sysroot`): a second run finds the first run's
+libiconv and tar's configure takes its `iconv.h` without linking it. New options (14993fd): `build-packages.sh
+--no-webkit` (the WebKit libraries, not WebKit) and `build-webkit.sh [STEP [LAST]]`. The main tree's copies of these
+scripts are unchanged (another session builds with them); merge `gcc16-build` when the main build switches.
+
+**Not rebuilt** (13.3-built packages copied from the main tree; they run on the 16.2 runtime, which keeps every
+6.0.32 symbol): Firefox 157.0.1-5 (needs the Rust toolchain and ~22 GB), Wine 11.21-2 with wine_data/directx/x86/
+x86_64 and wine_mono (5.5 GB tree), wayland, wayland_server, libxkbcommon, photocraft, the Python extension modules
+(`build-python-modules.sh`). The **mega image** was not made: `build-mega-image.sh --size 12000` needs 24 GB free next
+to its output, and the host had 25 GB with 12 GB to keep.
+
+**Images** (that tree's `artifacts/images/`):
+
+- `haiku-pi4-regular.img` — the regular GL image, everything above inside (WebKit included), 1 086 324 736 bytes, sha256
+  cc535e84…
+- `gb-gcc16.img` — the comparison image: the regular GL image at `-sHAIKU_IMAGE_SIZE=3500` (the 1.09 GB one has no room
+  for the games, Wine and a Wine prefix), then `games-bench-image.sh` (the 16.2 game trees, supertuxkart 1.5-2, Wine
+  11.21-2, the Half-Life Uplink tree, UserBootscript `games-bench.sh`) plus glmark2 2023.01-2 and step 2's `launchtime`,
+  `cxxrt`, `cxxrt-rootfirst` in `/boot/home`; 3 707 764 736 bytes (sparse, 1.3 GB on disk), sha256 596dc6b9…
+
+**QEMU virt** (`qemu-virt.sh`): the regular image with the games tree and a smoke UserBootscript: desktop up, Tracker
+and Deskbar on libstdc++.so.6.0.36, **GLTeapot runs 30 s** (16.2 Mesa/GLU), **QuakeSpasm** plays demo1 (softpipe),
+`python3.14` 3.14.8 with sqlite 3.53.4 and OpenSSL 3.5.9 imports and queries, glmark2/glmark2-es2 (16.2) score
+scenes on softpipe (with `--data-path` for the test tree: without it the 13.3 build fails the same way), no
+debugger entries. `gb-gcc16.img` boots to the desktop and games-bench.sh starts QuakeSpasm. Not on the Pi (the
+main session runs the bench).
+
 ## Next steps
 
 1. ~~Haiku source fixes~~ — done (step 2), branch `gcc16`.
 2. ~~gcc_syslibs and gcc_syslibs_devel 16.2.0~~ — done (step 2).
-3. **Switch the main build** (one session, when the bench and the main build allow; ~1 h of builds). Order
+3. **Switch the main build** (one session, when the bench and the main build allow; ~1 h of builds; step 3 above did
+   all of it in a parallel tree, with the per-port fixes on the coordination branch `gcc16-build` to merge first). Order
    matters: haiku d2fd8ddf8b makes the build need the 16.2 packages and tools, so **do not merge `gcc16` into
    `rpi4` before (1) and (2) are done** (the four source fixes, 3c641a2b01..29a820de6e, are safe on their own and
    can be cherry-picked any time):
@@ -197,7 +277,7 @@ A run on 10-28.
    carry: it requires only `haiku` and has its own 13.3 C++ headers, so on a 16.2 image it keeps working (its
    programs link against libstdc++ 6.0.36, a superset), but the on-device compiler stays 13.3 until then.
 7. **Binutils 2.47**, its own A/B, after 5.
-8. **Performance comparison** (below).
+8. **Performance comparison** (below; its images exist since step 3, the Pi runs are the main session's).
 
 ### The weekly upstream merge from now on
 
@@ -226,6 +306,37 @@ Owner, 11-01: the migration ends, once the image, the packages and the games are
 gates, with a GCC 13.3 vs 16.2 comparison on the same Pi and the same scenes. **Both builds are measured fresh in
 one series** (alternating, same card, same cooling, same firmware and settings; three runs each, median reported),
 not against old numbers.
+
+**The two images** (same Haiku commit f593b2ae43, same profile, size and test content; only the compiler differs):
+
+- 16.2: `/home/houp/haiku-rpi-gcc16/artifacts/images/gb-gcc16.img` (step 3).
+- 13.3: made in the main tree, at haiku `rpi4` f593b2ae43 (release-image-2026-11-02; if `rpi4` has moved on, build the
+  16.2 image again from the same commit instead), with the same commands:
+
+  ```
+  PI_IMAGE_OUT=artifacts/images/gcc13-regular-3500.img scripts/build.sh -sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=3500 @pi-mmc
+  S=artifacts/gcc-syslibs/16.2
+  scripts/games-bench-image.sh artifacts/images/gcc13-regular-3500.img artifacts/images/gb-gcc13.img \
+      artifacts/packages/glmark2-2023.01-2-arm64.hpkg:/boot/system/packages/glmark2-2023.01-2-arm64.hpkg \
+      $S/launchtime:/boot/home/launchtime $S/cxxrt:/boot/home/cxxrt $S/cxxrt-rootfirst:/boot/home/cxxrt-rootfirst
+  rm artifacts/images/gcc13-regular-3500.img
+  ```
+
+  (the same `launchtime` binary on both; Wine is 11.21-2 on both — if the main tree's Wine changes, copy the new
+  packages into the gcc16 tree's `artifacts/packages` and remake `gb-gcc16.img` the same way).
+
+**Runs**, from the main tree, alternating 13 → 16 → 13 → 16 → 13 → 16 (thermal drift cancels), network boot (each boot
+a fresh copy of the image: cold shader cache and a new Wine prefix every time, on both):
+
+| Workload | Command (IMG = either image; one label per run) | Read with |
+|---|---|---|
+| Games: QuakeSpasm, vkQuake, Yamagi Quake II (timedemos), Quake III demo, OpenArena (timedemo), SuperTuxKart (60 s race), Wine gltest/d3dtest, Half-Life Uplink | `scripts/netboot-cycle.sh --image IMG --secs 2400 --until 'GB end' --retry-wedge --label gb13-1` (~25 min) | `scripts/games-bench-table.py --a gcc13 <gb13 logs> --b gcc16 <gb16 logs>` |
+| glmark2-es2 (window + full screen) | `scripts/netboot-cycle.sh --image IMG --bootscript tools/pi-tests/glmark2.sh --secs 1200 --until 'GM2 end' --label gm2-13-1` | the `GM2 … Score` lines |
+| App launch times (Terminal, StyledEdit, MediaPlayer, ShowImage, DeskCalc, Debugger, 3 each), the C++ runtime, GLTeapot | `scripts/netboot-cycle.sh --image IMG --bootscript tools/pi-tests/gcc-syslibs.sh --secs 600 --until 'CXXRT end' --label lt13-1` | `CXXRT launch …: window N ms` |
+| Python 3.14 + sqlite: start-up, `benchmark` (sum, loop, sort), sqlite3, hashlib, zlib … | `scripts/netboot-cycle.sh --image IMG --bootscript tools/pi-tests/python.sh --secs 600 --until 'PY end' --label py13-1` | `PY startup-*`, `PY benchmark` |
+| Boot time (SD, the real path) | `scripts/sd-cycle.sh --flash IMG --secs 120 --label boot13-1`, then twice `scripts/sd-cycle.sh --secs 120 --label boot13-2` (warm) per image | `scripts/boot-times.sh artifacts/uart/*-boot13-*.log` (loader → kernel → boot volume → cursor) |
+
+Afterwards restore the card's usual image (the SD card holds what the main session last put on it).
 
 | Workload | Measure | GCC 13.3 | GCC 16.2 | Δ |
 |---|---|---|---|---|
