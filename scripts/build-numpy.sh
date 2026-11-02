@@ -37,7 +37,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 testDeps=1
-revision=1
+revision=2
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--no-test-deps) testDeps=0; shift ;;
