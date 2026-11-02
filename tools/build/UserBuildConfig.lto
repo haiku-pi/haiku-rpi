@@ -1,0 +1,108 @@
+# LTO study (H17b, docs/design/lto.md): per-output-directory build config, read by Jamrules after
+# build/jam/UserBuildConfig (the port's options) and after BuildSetup copied HAIKU_* into TARGET_*.
+# Copy it to <output directory>/UserBuildConfig (Jamrules reads one per output directory); the
+# sources stay as they are.
+#
+#   -sHAIKU_PI_LTO=0   this output directory without LTO (the baseline, same flags otherwise)
+#   -sHAIKU_PI_LTO_FLAGS="-flto ..."   the compile options (default -flto)
+#   -sHAIKU_PI_LTO_LINKFLAGS="-flto=4 ..."   the link options (default -flto=4: jam has no make
+#       jobserver, so -flto=auto would start nproc LTRANS jobs per concurrent link)
+#
+# Only userland: kernel, kernel add-ons and boot loader objects clear TARGET_CCFLAGS/C++FLAGS
+# (KernelRules, BootRules), so they never see -flto.
+
+HAIKU_PI_LTO ?= 1 ;
+HAIKU_PI_LTO_FLAGS ?= -flto ;
+HAIKU_PI_LTO_LINKFLAGS ?= -flto=4 ;
+HAIKU_PI_RUNTIME_LOADER_OBJECTS = add_ons.o commpage.o elf.o elf_haiku_version.o elf_load_image.o
+	elf_symbol_lookup.o elf_tls.o elf_versioning.o pe.o errors.o export.o heap.o images.o
+	runtime_loader.o utility.o kernel_vsprintf.o kernel_cpp.o KMessage.o find_directory.o ;
+
+if $(HAIKU_PI_LTO) = 1 {
+	Echo "LTO study: userland with $(HAIKU_PI_LTO_FLAGS), linked with $(HAIKU_PI_LTO_LINKFLAGS)" ;
+	local arch = $(TARGET_PACKAGING_ARCHS[1]) ;
+	TARGET_CCFLAGS_$(arch) += $(HAIKU_PI_LTO_FLAGS) ;
+	TARGET_C++FLAGS_$(arch) += $(HAIKU_PI_LTO_FLAGS) ;
+	TARGET_LINKFLAGS_$(arch) += $(HAIKU_PI_LTO_LINKFLAGS) ;
+
+	# static libraries of slim LTO objects need the plugin's symbol index
+	local tools = $(HAIKU_CC_$(arch):D) ;
+	TARGET_AR_$(arch) = $(tools)/$(HAIKU_GCC_MACHINE_$(arch))-gcc-ar ;
+	TARGET_RANLIB_$(arch) = $(tools)/$(HAIKU_GCC_MACHINE_$(arch))-gcc-ranlib ;
+
+	# runtime_loader is linked by plain ld (MainBuildRules Ld, no LTO plugin), from its own objects
+	# and from libroot objects: fat (IR + machine code) objects in libroot, so that libroot.so still
+	# links with LTO and runtime_loader takes the machine code; runtime_loader's own objects without
+	# LTO (below, UserBuildConfigRulePostBuildTargets: StaticLibrary sets C++FLAGS on its objects,
+	# which hides a directory config variable)
+	AppendToConfigVar CCFLAGS : HAIKU_TOP src system libroot : -ffat-lto-objects : global ;
+	AppendToConfigVar C++FLAGS : HAIKU_TOP src system libroot : -ffat-lto-objects : global ;
+
+	# symbol versioning is top-level asm (B_DEFINE_SYMBOL_VERSION: ".symver f, f@@VERSION"); in a
+	# partitioned LTO link the asm and the function it names can land in different LTRANS units
+	# ("invalid attempt to declare external version name as default"): one partition for those
+	# (the libraries with B_DEFINE_SYMBOL_VERSION: libroot, libbe, libbsd, userlandfs' libfuse)
+	local dir ;
+	for dir in system/libroot kits libs/bsd add-ons/kernel/file_systems/userlandfs/server/fuse {
+		AppendToConfigVar LINKFLAGS : HAIKU_TOP src [ FSplitPath $(dir) ] : -flto-partition=one
+			: local ;
+	}
+}
+
+# the struct-offsets headers are read from "gcc -S" output: that must be assembly, not LTO IR
+actions CreateAsmStructOffsetsHeader1
+{
+	$(C++) -S "$(2)" $(C++FLAGS) -fno-lto $(CCDEFS) $(CCHDRS) -o - \
+		| $(SED) 's/@define/#define/g' | grep "#define" \
+		| $(SED) -e 's/[\$\#]\([0-9]\)/\1/' > "$(1)"
+	grep -q "#define" "$(1)"
+}
+
+rule UserBuildConfigRulePostBuildTargets
+{
+	if $(HAIKU_PI_LTO) = 1 {
+		local arch = $(TARGET_PACKAGING_ARCHS[1]) ;
+		local cpu = $(HAIKU_CPU_$(arch)) ;
+		local rl = src!system!runtime_loader ;
+		local object ;
+		for object in <$(rl)!$(arch)>$(HAIKU_PI_RUNTIME_LOADER_OBJECTS)
+				<$(rl)!arch!$(cpu)!$(arch)>arch_relocate.o {
+			CCFLAGS on $(object) += -fno-lto ;
+			C++FLAGS on $(object) += -fno-lto ;
+		}
+	}
+}
+
+# MergeObject (ld -r) by plain ld cannot read slim LTO objects: an archive among the inputs (the
+# interface kit's libshared.a) then contributes nothing, as no LTO symbol is undefined for ld.
+# With LTO, merge through the compiler driver: "gcc -r" loads the plugin and writes an object with
+# the merged LTO IR (GCC's incremental link). The rest of the rule as in MainBuildRules.
+rule MergeObjectFromObjects
+{
+	local objects = [ FGristFiles $(2) ] ;
+
+	on $(1) {
+		if ! $(PLATFORM) in $(SUPPORTED_PLATFORMS) {
+			return ;
+		}
+
+		if $(PLATFORM) = host {
+			LINK on $(1) = $(HOST_LD) ;
+		} else if $(HAIKU_PI_LTO) = 1 && ! $(TARGET_BOOT_PLATFORM)
+				&& ( ! $(objects[1]) || $(HAIKU_PI_LTO_FLAGS[1]) in [ on $(objects[1])
+					return $(TARGET_CCFLAGS_$(TARGET_PACKAGING_ARCH)) ] ) {
+			# (not for KernelMergeObject/BootMergeObject: their objects have no
+			# TARGET_CCFLAGS, and the boot loader's add raw ld flags)
+			LINK on $(1) = $(TARGET_CC_$(TARGET_PACKAGING_ARCH)) ;
+			LINKFLAGS on $(1) = -nostdlib $(HAIKU_PI_LTO_LINKFLAGS) ;
+		} else {
+			LINK on $(1) = $(TARGET_LD_$(TARGET_PACKAGING_ARCH)) ;
+		}
+	}
+
+	MakeLocateDebug $(1) ;
+	Depends $(1) : $(objects) ;
+	Depends $(1) : $(3) ;
+	LocalDepends obj : $(1) ;
+	MergeObjectFromObjects1 $(1) : $(objects) $(3) ;
+}
