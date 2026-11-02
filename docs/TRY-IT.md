@@ -39,7 +39,7 @@ What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monit
 listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 Known limits: HDMI audio only with a monitor connected at boot; video in Firefox drops frames for the first seconds after the browser starts;
-a Pi that has been off for a while can freeze in its first minutes — up to 2 boots in 3 from the SD card on the bench; power-cycle it and the next boot works ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1, being worked on).
+images up to image-2026-10-31 can freeze in the first minutes after a long power-off — power-cycle; fixed in the next image ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
 [haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts
