@@ -33,6 +33,32 @@ Citation keys:
   `yuv420p10le` system-memory frames, which the plugin already converts for its consumers. No
   change to the plugin or to MediaPlayer is needed for stage 2.
 
+## 0a. H.264: a licence-clean route (survey 2026-11-02, not scheduled)
+
+H.264 on the Pi 4 is decoded by the VideoCore firmware (its `vc.ril.video_decode` MMAL component),
+reached through VCHIQ (shared-memory message queues + doorbells). Linux does it in the Raspberry Pi
+kernel with `bcm2835-codec` (V4L2 M2M, up to 1920×1920) on `vchiq-mmal`, `vc-sm-cma` and VCHIQ — not
+in mainline. Licences of the pieces (headers read 2026-11-02):
+
+| Piece | Where | Licence | Use for us |
+|---|---|---|---|
+| VCHIQ core (`vchiq_core.c`, `vchiq_arm.c`, headers) | raspberrypi/linux `staging/vc04_services/interface/vchiq_arm` | **GPL-2.0 OR BSD-3-Clause** (Broadcom) | usable under BSD-3 |
+| VCHIQ core, already on a non-Linux kernel | FreeBSD `sys/contrib/vchiq` (arm64 since 2025-11, Linux merges 2026-08); NetBSD `sys/external/bsd/vchiq` | Broadcom BSD-3 or GPL-2 | **the base to port** |
+| VCHIQ client examples | FreeBSD `bcm2835_audio.c`, NetBSD `bcm2835_vcaudio.c` (service `AUDS`) | BSD-2 | reference |
+| MMAL client + userspace VCHIQ library + VCOS | raspberrypi/userland `interface/mmal`, `interface/vchiq_arm`, `interface/vcos` (archived 2025-08); Ultibo's fork | **BSD-3-Clause** | port as libmmal |
+| Kernel MMAL client, codec, buffer sharing | Linux `vchiq-mmal`, `bcm2835-codec`, `vc-sm-cma` | GPL-2.0 only | behaviour reference only, no code |
+| Circle's VCHIQ port | rsta2/circle `addon/vc4` | GPL (project GPL-3.0) | no |
+
+No BSD system or small OS drives the video decoder; they use VCHIQ for audio only.
+
+Plan if scheduled (estimated 2.5–4 weeks + Pi time): (1) port FreeBSD's VCHIQ to a Haiku kernel driver
+exposing `/dev/vchiq` with the ioctls the userland library uses; (2) port userland's libmmal/libvchiq
+(VCOS pthreads backend); (3) a media-kit decoder add-on on `vc.ril.video_decode`, frames copied by VCHIQ
+bulk transfers first, zero-copy (our own buffer import; `vc-sm-cma` is GPL) and stage-6 overlays later.
+Risks: the path is legacy firmware (still in Pi 4 firmware; the Pi 5 has no H.264 block); gain for
+playback alone is small (CPU: 1080p H.264 at ~100 fps on 4 threads); VCHIQ also unlocks the camera, the
+ISP, H.264 encode and JPEG.
+
 ## 1. Hardware facts
 
 From [DTS] and [L]:
