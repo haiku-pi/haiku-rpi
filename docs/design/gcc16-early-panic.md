@@ -14,7 +14,7 @@ a second "CPU 0" on CPU 0's kernel stack. The two CPUs then corrupt each other's
 CPU number in a register (x19) across the cache switch, so it never reads that memory. Upstream Haiku has the same
 latent bug.
 
-Confidence: high for the mechanism of the SD crash: every register in its iframe is accounted for (below). Medium
+Confidence: high. Every register in the SD crash's iframe is accounted for, and QEMU reproduces the same signature when a secondary is forced to CPU 0 (last section). Medium
 for the netboot crash (garbled output, but it fits). It is not shown on hardware yet; the experiment below does
 that in about 10 Pi boots.
 
@@ -150,6 +150,24 @@ record overwritten by the other CPU, this time landing on the lock's address: an
 - QEMU (TCG) has no cache model, so the stale line itself **cannot be reproduced in QEMU**. QEMU can only show the
   consequence (a secondary entering as CPU 0); see the next section.
 
-## QEMU consequence control
+## QEMU consequence control: the SD crash, reproduced
 
-(see below: filled in after the run)
+The test used image B unchanged except for one instruction in its `BOOTAA64.EFI`: the reload in
+`arm64_secondary_startup2` (file offset 0x21a4, `ldr w0, [sp, #28]` = `b9401fe0`) became `mov w0, #0`
+(`52800000`). This is the value a stale line delivers, made certain. It ran on `scripts/qemu-virt.sh` (virt,
+cortex-a72, `-smp 4`, ramfb at 1024×768 × 32 bpp), on a throwaway copy of the image. Logs are in `artifacts/qemu/`
+(not in git).
+
+| Run | Loader | Result |
+|---|---|---|
+| 183825 | unchanged B | normal boot: "Welcome to kernel debugger output!" right after ExitBootServices, through to the first-login scripts |
+| 183945 | B, secondaries get cpu 0 | `PANIC: unhandled pagefault! FAR=20 ELR=20 ESR=86000006`, Thread 1 on CPU 0, iframe 0xffff000002461ba8, **SP=ffff000002461ee0, LR=0x20, FP=0x400**, then the other CPUs panic with their output interleaved |
+| 184053 | same | `unhandled pagefault! FAR=600 ELR=ffff0000000b1a5c` (in `thread_block`, which `_mutex_lock`'s slow path calls) |
+| 184123 | same | same as 183945: SP=ffff000002461ee0, LR=0x20, FP=0x400 |
+
+3 of 3 runs crashed before the first kernel message, and 2 of 3 with **the Pi SD crash's signature**: the same
+iframe address, the same SP and LR=0x20 (depth 32), with FP = 0x400, QEMU's 1024-pixel width where the Pi has
+0x780 = 1920. QEMU maps nothing at physical 0x20, so the jump ends as an instruction abort (ESR 0x86000006)
+instead of the armstub's UNDEF. The several CPUs panicking at once match the netboot crash. So "a secondary
+enters as CPU 0" is enough to produce the observed crash, down to the register values. Only the cause on the
+Pi, the stale cache line, cannot be shown under QEMU (TCG has no caches). That needs the primed Pi experiment above.
