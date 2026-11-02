@@ -179,7 +179,7 @@ them changed for that):
 | `generated.arm64` | new: `configure --build-cross-tools arm64 --cross-tools-source ../../buildtools` (so the cross tools have the `<bitset>` fix); `download/` copied from the main tree with the 13.3 gcc_syslibs removed and the two 16.2 hpkgs added |
 | `artifacts/` | `packages/` copied (and rebuilt in place, same names and revisions); `downloads/`, `cross-ports/dl/` hard-linked; `pi-firmware`, `wifi-firmware`, `wine-11.20`, `wine-games` symbolic links (read-only inputs of the image scripts) |
 
-Nothing was written into the main tree's `sources/` or `artifacts/`. Packages keep their names and revisions
+Nothing was written into the main tree's `sources/` or `artifacts/`. The step 1–2 scratch output directory's build output was deleted (its logs stay in the agent job's scratch directory) and its buildtools worktree moved here: for a later `build-gcc-syslibs.sh --full`, use `--buildtools`, `--cross-tools` and `--generated` of this tree instead. Packages keep their names and revisions
 (e.g. `mesa-26.2.6-1`): they are never published from this tree, and which compiler built a file is in its
 `.comment` (`GCC: (GNU) 16.2.0`), checked for every package below. The bumps belong to the switch of the main build.
 
@@ -322,7 +322,7 @@ not against old numbers.
   rm artifacts/images/gcc13-regular-3500.img
   ```
 
-  (the same `launchtime` binary on both; Wine is 11.21-2 on both — if the main tree's Wine changes, copy the new
+  (the main tree's game trees (10-29) and SuperTuxKart package (10-21) were built from the scripts and patches as they are now — no commit to `build-games.sh`, `build-q3.sh`, `build-vkquake.sh`, `build-stk.sh`, `patches/libsdl2`, `patches/yquake2` since — so both sides have the same game sources; the same `launchtime` binary on both; Wine is 11.21-2 on both — if the main tree's Wine changes, copy the new
   packages into the gcc16 tree's `artifacts/packages` and remake `gb-gcc16.img` the same way).
 
 **Runs**, from the main tree, alternating 13 → 16 → 13 → 16 → 13 → 16 (thermal drift cancels), network boot (each boot
