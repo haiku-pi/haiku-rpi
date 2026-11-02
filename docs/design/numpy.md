@@ -149,6 +149,12 @@ Network sessions of image-2026-11-02b (+ the setrlimit fix below), the 8 package
 - Test commands: as above, plus `extra_argv=["-p","no:cacheprovider","-rfE","-q",
   "--ignore=/boot/system/lib/python3.14/vendor-packages/numpy/f2py","--continue-on-collection-errors"]`.
 
+### With strtold_l (2026-11-02 evening)
+
+numpy 2.5.4-2, built against a libroot with `strtold_l()` (haiku 46a18aecb4; `HAVE_STRTOLD_L 1`), on an image with it:
+the same fast suite gives **0 failed** (the six longdouble failures are gone) and the 8 `test_mem_policy` errors
+(meson at run time, H18). 2.5.4-2 needs that libroot: it is published with the first release image that has it.
+
 ## Open
 
 - **Native build on the Pi** (the other half of H19): needs H18's packages (gcc, ninja, meson,
