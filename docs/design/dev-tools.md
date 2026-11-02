@@ -189,3 +189,7 @@ macros under C++.)
   the system copies as the recipe does.
 - `_devel` packages of other ports (H18's "the `_devel` packages"): most of ours exist (scripts/package-port.py
   makes them); a list of what a fresh image misses for common builds is part 2.
+
+## Pi result (2026-11-02)
+
+`tools/pi-tests/dev-tools.sh` on image-2026-11-03 candidate + the 13 packages + the bootstrap gcc 13.3: **DEV end 23/23** (artifacts/dev-tools-pi/dev-tools.txt).
