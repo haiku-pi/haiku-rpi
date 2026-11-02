@@ -5,9 +5,9 @@ media kit, plus this port's drivers and the ported libraries. Everything below w
 bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-11-02).
 
 **Download:** a ready-to-flash image is on the
-[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-02)
-(`haiku-pi4-2026-11-02.img.xz`, 340 MB; 8 GB card or larger; written with
-`xz -dc haiku-pi4-2026-11-02.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
+[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-02b)
+(`haiku-pi4-2026-11-02b.img.xz`, 340 MB; 8 GB card or larger; written with
+`xz -dc haiku-pi4-2026-11-02b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
 Imager's "Use custom"). It is this page's regular image, built 2026-10-29, booted from a card before publishing.
 Wine (`pkgman install wine wine_x86 wine_x86_64`) needs this image or a newer one.
 
@@ -39,7 +39,7 @@ What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monit
 listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 Known limits: HDMI audio only with a monitor connected at boot; video in Firefox drops frames for the first seconds after the browser starts;
-images up to image-2026-10-31 can freeze in the first minutes after a long power-off — power-cycle; fixed from image-2026-11-02 on ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1).
+images before image-2026-11-02b can freeze in the first minutes after a long power-off (from image-2026-11-02 on only on a network boot) — power-cycle; fixed from image-2026-11-02b on ([KNOWN-ISSUES.md](KNOWN-ISSUES.md) C1).
 
 **Software:** `pkgman` works out of the box: the image's HaikuPorts repository is ours,
 [haiku-pi.github.io/packages](https://github.com/haiku-pi/packages) (arm64 builds of the HaikuPorts
