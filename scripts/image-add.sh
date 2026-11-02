@@ -3,6 +3,7 @@
 # experiments that need a setting or a tool on the card (e.g. the kernel's syslog time stamps):
 #
 #   scripts/image-add.sh [--remove PATH]... IMG OUT [FILE:PATH]...   (PATH as the booted system sees it, under /boot)
+#   scripts/image-add.sh --in-place [--remove PATH]... IMG [FILE:PATH]...   (changes IMG itself)
 #
 #   printf 'syslog_time_stamps true\n' > /tmp/kernel
 #   scripts/image-add.sh artifacts/images/X.img artifacts/images/X-ts.img \
@@ -15,10 +16,17 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
 removes=()
+inPlace=no
+[ "${1:-}" = --in-place ] && { inPlace=yes; shift; }
 while [ "${1:-}" = --remove ]; do removes+=("$2"); shift 2; done
-[ $# -ge 3 ] || [ $# -ge 2 -a ${#removes[@]} -gt 0 ] || { echo "usage: $0 [--remove PATH]... IMG OUT FILE:PATH..." >&2; exit 2; }
-img="$1" out="$2"; shift 2
-cp --sparse=always "$img" "$out"
+if [ $inPlace = yes ]; then
+	[ $# -ge 2 ] || [ $# -ge 1 -a ${#removes[@]} -gt 0 ] || { echo "usage: $0 --in-place [--remove PATH]... IMG FILE:PATH..." >&2; exit 2; }
+	img="$1" out="$1"; shift
+else
+	[ $# -ge 3 ] || [ $# -ge 2 -a ${#removes[@]} -gt 0 ] || { echo "usage: $0 [--remove PATH]... IMG OUT FILE:PATH..." >&2; exit 2; }
+	img="$1" out="$2"; shift 2
+	cp --sparse=always "$img" "$out"
+fi
 p2=$(( $(sfdisk -J "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["partitiontable"]["partitions"][1]["start"])') * 512 ))
 for r in ${removes[@]+"${removes[@]}"}; do
 	dest="/myfs${r#/boot}"
