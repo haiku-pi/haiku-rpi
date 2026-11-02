@@ -24,9 +24,12 @@ say "app_server: $(ps | grep -o '[^ ]*servers/app_server' | head -n 1)"
 say "screen: $(screenmode 2>&1 | head -n 1)"
 for f in /boot/system/non-packaged/add-ons/kernel/drivers/dev/graphics/bcm2711_display \
 		/boot/system/non-packaged/add-ons/accelerants/bcm2711_display.accelerant \
-		/boot/system/settings/kernel/drivers/bcm2711_display; do
+		/boot/home/config/settings/kernel/drivers/bcm2711_display; do
 	[ -e "$f" ] && say "present: $f"
 done
+# which driver runs, and how (its boot lines)
+grep -a -E 'loaded driver .*bcm2711_display|bcm2711_display: (overlays|no overlays|vertical blank)' \
+	/var/log/syslog 2> /dev/null | tail -n 4 | while read -r line; do say "syslog: $line"; done
 
 # run NAME SECONDS COMMAND... — its lines to the console, then its exit status
 run() {
@@ -50,7 +53,7 @@ run flip-cover 60 $d/glflip -w -n 600 -i 1 -o
 run flip-window 60 env HAIKU_EGL_OVERLAY=0 $d/glflip -w -n 600 -i 0
 run glview 30 $d/glview -W 512 -s 5
 # image C (overlays above the desktop): can the firmware scan the HEVC decoder's SAND128 pictures?
-if [ -e /boot/system/settings/kernel/drivers/bcm2711_display ]; then
+if grep -a -q 'bcm2711_display: overlays: .* above the desktop' /var/log/syslog 2> /dev/null; then
 	run sand 60 $d/sandprobe
 fi
 say "temp: $(tr -s ' \n' ' ' < /dev/power/bcm2835_thermal/0 2> /dev/null)"

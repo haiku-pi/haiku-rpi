@@ -371,11 +371,11 @@ Read: `grep -a -E 'GS6|bcm2711_display: (plane|overlays|vertical)' artifacts/uar
 
 | Step | Expected on B (positive markers) | On A |
 |---|---|---|
-| boot | `bcm2711_display: overlays: planes 1-6 under (keyed) the desktop, 3 buffers of 8100 KiB reserved`; `vertical blank: SMI interrupt`; `GS6 app_server: /boot/system/non-packaged/servers/app_server`; the desktop on HDMI as always | no `overlays:` line; packaged app_server |
+| boot | `loaded driver /boot/system/non-packaged/add-ons/kernel/drivers/dev/graphics/bcm2711_display` (without it app_server falls back to the GOP `framebuffer` and the desktop still looks normal: this line is the marker), `bcm2711_display: overlays: planes 1-6 under (keyed) the desktop, 3 buffers of 8100 KiB reserved` (C: `above the desktop`), `vertical blank: SMI interrupt` (the retire rule assumes it); `GS6 app_server: /boot/system/non-packaged/servers/app_server`; the desktop on HDMI as always. The same lines repeat as `GS6 syslog:` | packaged driver, no `overlays:` line; packaged app_server |
 | bench | `copy RAM->WC, alpha forced` within ~10 % of `copy RAM->WC` (3.24 ms at 1080p, 10-25) | the same rows (the bench does not depend on the image) |
 | bitmapcheck | the same 12 `BMC` hashes on A and B | reference |
 | overlay | `OVL rgb32: overlays` (and ycbcr422, yuv420); per space `bitmap 0/1: No error`, `filled ok` (user code wrote the kernel-area buffer), `SetViewOverlay: No error, key 0,80,0,0`, `240 flips ... 0 failed`, `end: PASS`. HDMI: bars in order (white, yellow, cyan, green, magenta, red, blue, black) scaled 2× in the window, the white square moving, the yellow window over the bars, the bars cut at the left edge after the move. YCbCr422 (type 45) is the one nobody ran before: wrong colours there = byte order (try `B_YCbCr422` → 47 UYVY / 46 YVYU) | `no overlays` ×3, `end: FAIL` (allocation refused) |
-| flip-vsync | `GLF frames 1200 in 20.0x s = 59.9x–60.0x fps`, `0 over 1.5x the median`; every `egl_haiku: overlay: ... 0 missed, 0 starved, 0 late, 0 dropped (swap interval 1, vblank 16.6xx ms)`; driver `plane 1: N updates in N vblanks, 0 late, 0 gaps, 0 superseded` — **the stage 6 exit** | no `overlay:` lines; the rate of the window path (~74–110 fps at 1080p, unsynced: A has no vsync) |
+| flip-vsync | **the stage 6 exit, all four:** `GLF frames 1200 in 20.0x s = 59.9x–60.0x fps` (`0 over 1.5x the median`); every `egl_haiku: overlay: ... 0 missed, 0 starved, 0 late, 0 dropped (swap interval 1, vblank 16.6xx ms)` (`starved` counts GPU-late frames, which also break 60.00); driver `plane 1: N updates in N vblanks, 0 late, 0 gaps, 0 superseded` | no `overlay:` lines; the rate of the window path (~74–110 fps at 1080p, unsynced: A has no vsync) |
 | flip-free | `GLF ... fps` > 60 (estimated ~100–120: two flips per blank with three bitmaps); driver `superseded` > 0 possible | window path rate |
 | flip-cover | as flip-vsync; HDMI: the yellow window over the triangle while it is shown (keying) | — |
 | flip-window | `HAIKU_EGL_OVERLAY=0`: the stage-5 rate at 1080p, for comparison with flip-free | same |
@@ -384,8 +384,8 @@ Read: `grep -a -E 'GS6|bcm2711_display: (plane|overlays|vertical)' artifacts/uar
 
 Then on the bench (owner or a scripted mouse): MediaPlayer playing a clip in a window gets an RGB32
 overlay (its decoder's output): moving another window over it keeps that window on top; full screen
-scales on the plane. KDL (`Alt+SysRq+D` or `kdl` from a terminal) over a full-screen glflip: the
-debugger's text is readable.
+scales on the plane. The kernel debugger's opaque palette (500159a1cd) is only compile-checked: these images keep the
+release's kernel, so KDL over a plane needs an image built from `stage6`.
 
 ## 9. Status (2026-11-02, host only)
 
@@ -410,6 +410,12 @@ debugger's text is readable.
 - Open, by the Pi run: whether EL0 may write the kernel-area overlay buffers (overlaytest
   `filled ok`); per-pixel alpha of a non-cursor ARGB plane over another plane (the keyed desktop);
   packed YUYV (type 45, never sent by Linux); the real unsynced rate; the cost of the forced alpha.
+- Behaviour change to weigh before merging into `rpi4`: every full-screen BGLView (SDL games
+  included) takes a plane by default, and `BGLView::SwapBuffers()` now sets swap interval 0 (EGL
+  callers keep EGL's default 1); run games-bench on image B first; `HAIKU_EGL_OVERLAY=0` is the
+  fallback. A program that renders in its window thread while holding the looper lock > 50 ms gets
+  dropped flips (counted).
+- QEMU proves only the keying-off path; keying, planes, EL0 access, the retire rule: Pi only.
 - Follow-ups: mailbox-style unsynced flips (recognise flips superseded before their update point);
   YCbCr output from the ffmpeg plugin when the consumer offers overlays; the rpivid SAND probe and
   `RPIVID_PICTURE_SCANOUT` (§5); KDL hiding planes is not needed with keying (the opaque palette).

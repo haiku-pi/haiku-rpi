@@ -9,7 +9,8 @@
 #          accelerant and app_server (no overlays: GL presents through the window, as in stage 5)
 #       b: a + the stage6 display driver and accelerant (the packaged ones hidden by a BlockedEntries
 #          setting) and app_server (started instead of the packaged one by a user_launch override)
-#       c: b + the driver setting overlay_above_desktop (overlays above an opaque desktop, no keying)
+#       c: b + the driver setting overlay_above_desktop (overlays above an opaque desktop, no keying;
+#          home/config/settings/kernel/drivers: the only directory the boot loader reads them from)
 #
 # Build directories (override with the environment): HAIKU_GEN (default sources/haiku-stage6/
 # generated.arm64), STAGE6_BUILD (artifacts/stage6/build: mesa/, libglvnd/, gl-tests/), the overlaytest
@@ -86,7 +87,7 @@ b|c)
 		"$g/app_server:$np/servers/app_server"
 		"$g/app_server.launch:/boot/system/settings/user_launch/app_server"
 	)
-	[ "$variant" = c ] && files+=("$g/bcm2711_display.above:/boot/system/settings/kernel/drivers/bcm2711_display")
+	[ "$variant" = c ] && files+=("$g/bcm2711_display.above:/boot/home/config/settings/kernel/drivers/bcm2711_display")
 	;;
 *) echo "gpu-stage6-image: variant a, b or c" >&2; exit 2 ;;
 esac
