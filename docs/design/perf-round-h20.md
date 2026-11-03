@@ -137,7 +137,7 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
      tools/pi-tests/net-perf.sh`) with `pmustat -a` / `profile -k` running (C8 needs it).
   3. *Wine prefix breakdown on today's build*: `tools/pi-tests/prefix-timeline.sh` (C5 needs it).
   4. *WoW64 GL after Wine 0028*: `profile -f` on Warcraft III / NFS demo menus (C7 needs it).
-- **Still unmeasured**: everything this item produces.
+- **Still unmeasured**: everything this item produces. → Measured 11-03 evening: §6 "C0 results".
 
 ### C1. DT_RELR for Firefox (and the cold A/B that was never run)
 
@@ -218,7 +218,7 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
 - **Risk**: low for the attribution; medium for driver changes (the card is also the flash target and the boot path).
 - **Measure**: Linux `dd oflag=direct` on the flash lane vs Haiku `iocheck.sh`/raw writes, same card, same
   sizes (1 MiB, 64 MiB); a second, different card on Haiku; `scripts/sd-cycle.sh --read-back` for integrity.
-- **Still unmeasured**: the card's write speed on Linux; a second card.
+- **Still unmeasured**: the card's write speed on Linux; a second card. (C0 11-03: still unmeasured, the card was in use.)
 
 ### C5. Wine first-start: the prefix
 
@@ -233,7 +233,8 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
 - **Risk**: medium: prefix contents depend on user name/paths/registry; a stale template misbehaves silently.
 - **Measure**: `tools/pi-tests/prefix-timeline.sh PREFIX` + `tools/wine-tests/prefix-timeline.py` (per-process wall and
   CPU, written bytes), on the card and on the network boot; compare to the C4 write speed.
-- **Still unmeasured**: the whole breakdown today.
+- **Still unmeasured**: the whole breakdown today. → Network boot measured in C0 (§6): 80 s, 32 CPU-s, ~1 core busy;
+  the card side is still open.
 
 ### C6. Firefox first-video warm-up (G2)
 
@@ -268,7 +269,8 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
   NFS menus; archive.org assets in `tools/mega/assets.txt`, driven by `tools/pi-tests/wine-games.sh` with
   `WINEDEBUG=+fps`, W44 10-31 10:56). If memcpy is still > ~30 %, implement; if not, drop. These demos are not in
   `games-bench`, so a before/after needs them added to the bench image.
-- **Still unmeasured**: the post-0028 profile; whether any measurable title is copy-bound now.
+- **Still unmeasured**: the post-0028 profile; whether any measurable title is copy-bound now. → C0 (§6): Warcraft III
+  menu memcpy 3.1 %: **C7 dropped**.
 
 ### C8. WiFi SDIO DMA (F4)
 
@@ -286,7 +288,8 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
   busy % and the share of the SDIO PIO loops; and the same transfer against a different access point or band
   (5 GHz) to see whether Mbit/s moves at all. Only if CPU > ~80 % busy or the rate moves with a better AP does DMA
   have a case.
-- **Still unmeasured**: CPU load during WiFi transfers; the throughput limit without the bench AP.
+- **Still unmeasured**: CPU load during WiFi transfers; the throughput limit without the bench AP. → C0 (§6): CPUs
+  15–17 % busy, spin-waits 37–58 % of non-idle: **DMA dropped** (N7 instead); another AP still untried.
 
 ### C9. Box64 / FEX settings per game
 
@@ -425,9 +428,9 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 
 | Item | Image | Before | After | Runs | Logs |
 |---|---|---|---|---|---|
-| C0 (measurement, no change) | 11-03c (11-03b for one A/B) | — | profile + pmustat of a desktop session; C5/C7/C8 gates; below | 4 network sessions, 11-03 20:53–22:05 | `artifacts/h20-c0/out/`, `artifacts/uart/20261103-*-session-h20-c0*.log` |
+| C0 (measurement, no change) | 11-03c (11-03b for one A/B) | — | profile + pmustat of a desktop session; C5/C7/C8 gates; below | 4 network sessions, 11-03 20:55–22:05 | `artifacts/h20-c0/out/`, `artifacts/uart/20261103-*-session-h20-c0*.log` |
 
-### C0 results (2026-11-03 20:53–22:05, image-2026-11-03c, network sessions)
+### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
 Image 11-03c (hrev60299+276), network boot (remote disk), sessions `h20-c0` (85 min), `h20-c0-fork-b` (11-03b),
 `h20-c0-fork-c` and `h20-c0-startcost` (11-03c, fresh boots). The card (the owner's mega20) was not written. Raw output:
@@ -449,7 +452,8 @@ gives 24.7 % unknown, the same python3 as the main command 0.2 %. A traced build
 `B_SYSTEM_PROFILER_IMAGE_ADDED` event after the initial scan (team, thread and exec events do arrive). Cause, by
 arithmetic (not yet tested): `ImageNotificationService::Notify()` (`src/system/kernel/image.cpp`) builds its KMessage in
 `char eventBuffer[128]`; with 64-bit pointers the three fields need 28 (header) + 32 + 32 + 40 = **132 bytes**
-(`sizeof(FieldHeader)` is 20), so `AddPointer("imageStruct")` fails and the system profiler's `EventOccurred()` drops
+(`sizeof(FieldHeader)` is 20), and `KMessage::_AllocateSpace()` returns `B_BUFFER_OVERFLOW` for a buffer it does not
+own, so `AddPointer("imageStruct")` fails and the system profiler's `EventOccurred()` drops
 the event for a NULL `imageStruct`. The team service's message is exactly 128 bytes ("team"/"teamStruct" are one byte
 shorter each), which is why team events work. Not an rpi4 change (upstream code; x86_64 should show it too). Fix:
 a 256-byte buffer, as thread.cpp's 180. Everything below therefore takes userland shares from the debugger-path runs
@@ -464,7 +468,7 @@ at 1519–1565 MHz while busy. Run 1: 778 744 ticks (4 CPUs × 196 s), idle 49.9
 | # | Symbol | Share (run, base) | Where / callers | Explained? → candidate |
 |---|---|---|---|---|
 | 1 | (userland of teams started after `profile -a`) | 65 % of run 1 non-idle | the profiler bug above | → **N1** |
-| 2 | `memcpy` (libroot) | **10.5 %** of system non-idle (run 3, 27.7 s CPU) | app_server window threads: STK's GL window **20.8 s** (72 %; the present copy, `HWInterface::CopyToBackAndFront` in the same thread), Firefox's 6.4 s (`DrawBitmap`, `copy_row_opaque`) | copies already fused (§2) and DRAM-bound (§3); new: the STK menu renders unpaced, ~165 fps (derived: 1024×576×4 B read once, written twice ≈ 2.1 ms at ~2.2 GB/s; 20.8 s / 2.1 ms in ~60 s) → **N3** |
+| 2 | `memcpy` (libroot) | **10.5 %** of system non-idle (run 3, 27.7 s CPU) | app_server window threads: STK's GL window **20.8 s** (72 %; the present copy, `HWInterface::CopyToBackAndFront` in the same thread), Firefox's 6.4 s (`DrawBitmap`, `copy_row_opaque`) | copies already fused (§2) and DRAM-bound (§3); new: the STK menu renders far above the 60 Hz refresh: ~190 fps (derived: the fused copy is 6.27 ms per 1080p frame, gpu-present.md §2 table; × 1024·576 / 1920·1080 = 0.28 → ~1.8 ms; 20.8 s / 1.8 ms ≈ 11 500 frames in ~60 s), and windowed presents are unpaced (flip-window 124.1 fps, C10) → **N3** |
 | 3 | `memcpy` (apps) | 12.4 % of the apps' CPU (run 4) | Firefox's busiest thread (an NSPR thread, 46 s; likely its compositor, unverified) 13.2 s, the rest of it in libxul; another Firefox thread 6.6 s; STK 2.6 s (`u_vbuf_draw_vbo`: client vertex arrays, 3.4 % of STK) | Firefox software compositing: parked (§3); STK: the game's GL use |
 | 4 | Firefox threads (libxul, JIT) | 70 % of the apps' CPU (run 4) | unstripped parent run: JIT 11 % (`EnterJit` 4.7 %, JIT fallback 6.6 %), `memcpy` 3.9 %, `cache_start_sub_transaction` 2.7 %, `GenetDevice::Send` 1.8 % (remote disk), LZ4HC 1.3 % (startup cache) | Gecko-internal except the BFS item → **N6** |
 | 5 | SuperTuxKart main thread | 24.5 % of the apps' CPU (run 4); ~65 % of a core in its menu | `cg-stk` (251 448 ticks): v3d `cache_hash` → BLAKE3 **5.1 %**, `__aarch64_*` atomics 5.5 % (`v3d_draw_vbo`, `util_primconvert_draw_vbo`), `__tls_get_addr` **2.3 %** (from every GL call: glvnd dispatch), `FontWithFace::render` 4.4 % and `irr::…draw2D*` (the game) | → **N4**, **N5**, C11 atomics |
@@ -527,7 +531,7 @@ steps.
 |---|---|---|---|---|
 | N1 | `profile -a` drops image events | 65 % of a desktop session's non-idle ticks unattributed | `eventBuffer[256]` in image.cpp's `Notify()`; then re-run C0 run (1) | S |
 | N2 | process start 1.5–1.9× slower after GUI apps ran | fork+exec 4.6 → 6.8–8.7 ms, posix_spawn 3.4 → 4.9–6.7, fork+exit 1.0 → 2.3 ms; runtime-loader symbol work 20–29 % of ticks in the slow state | unknown: attribute first (a full `profile -k -l -v` of forkbench in both states; what a GUI start leaves behind: watchers, loader caches, areas) | S to attribute, M to fix |
-| N3 | windowed GL presents run unpaced | STK's menu: its main thread ~84 % of a core plus app_server's copy for its window 20.8 s CPU per ~60 s (~38 % of a core; ~165 fps derived) | pace windowed presents to the display (EGL swap interval 1 for windows by default; benchmarks set 0) | M |
+| N3 | windowed GL presents run unpaced | STK's menu: its main thread ~84 % of a core plus app_server's copy for its window 20.8 s CPU per ~60 s (~38 % of a core; ~190 fps derived, row 2) | pace windowed presents to the display (EGL swap interval 1 for windows by default; benchmarks set 0) | M |
 | N4 | v3d shader-variant cache hashes its key with BLAKE3 at every lookup | 5.1 % of STK's CPU (`cache_hash` → `blake3_compress_*_portable`, from `_mesa_hash_table_search`) | `_mesa_hash_data` over key + the key's stored BLAKE3 instead of a fresh BLAKE3 (`v3d_program.c`); with the next Mesa revision | S |
 | N5 | TLS access through `__tls_get_addr` | 18.1 % of a busy python3; 2.3 % of STK (every GL call through glvnd) | TLS descriptors (TLSDESC) in runtime_loader, or initial-exec TLS for libpython / libGLdispatch | M |
 | N6 | BFS journal: sub-transaction start walks all blocks | 2.9 s CPU of a Firefox first start; 3.1 s in the 196 s session | bound the combined transaction (Journal) or make the walk incremental (block cache) | S (bound) / M |
@@ -541,15 +545,14 @@ haikuporter) — attribute, then fix; (3) **N3**, the largest single CPU consume
 
 ## 7. Still unmeasured, in one list
 
-- A whole-desktop profile since the 10-24 work (C0); `pmustat` IPC and miss rates of any real workload other than
-  the 10-25 smoke checks (spin 5 s IPC 1.2; 64 MiB copies IPC 0.49 vs 16 KiB 0.87: W43 10-25 06:42).
-- The SD card's write speed on Linux (C4); a second card on Haiku.
-- CPU load and the limit-without-the-access-point of WiFi (C8).
+- (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
+  Wine prefix, the post-0028 Warcraft III profile, WiFi CPU load.)
+- A system-wide profile with the applications attributed (needs N1); the cause of the process-start slowdown (N2).
+- The SD card's write speed on Linux (C4); a second card on Haiku; the Wine prefix from the card (C5).
+- The WiFi limit without the bench AP (another AP or 5 GHz, C8).
 - The fraction of Firefox's package a first launch touches, and the order's stability (C2).
 - Cold-card effect of DT_RELR (C1).
 - Today's boot phase table (C3).
-- The breakdown of the 126 s Wine prefix on the current build (C5).
-- The post-0028 profile of the 32-bit GL demos (C7).
 - Which Wine games are CPU-bound; any per-setting Box64/FEX game rate (C9).
 - The stage-6 re-run after `stage6-keying` (C10, owned by F2) and MediaPlayer's per-frame RGB32 conversion cost.
 - `KDEBUG_LEVEL 1 → 0`, out-of-line atomics, OpenBLAS (C11).

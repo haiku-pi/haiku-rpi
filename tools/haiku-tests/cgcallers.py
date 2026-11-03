@@ -63,6 +63,8 @@ def main():
     parser.add_argument("--self", action="store_true", help="list the top functions by self ticks")
     parser.add_argument("--top", type=int, default=25)
     args = parser.parse_args()
+    if not args.self and not args.pattern:
+        parser.error("a PATTERN or --self")
 
     edges = collections.Counter()
     self_ticks = collections.Counter()
