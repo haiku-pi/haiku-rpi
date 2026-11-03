@@ -21,7 +21,7 @@ sys="--sysroot=artifacts/sysroot-arm64"
 "$g-gcc" $sys -O2 -o "$bin/resolvetime" tools/haiku-tests/resolvetime.c -lnetwork
 "$g-gcc" $sys -O2 -shared -fPIC -o "$bin/libtlsr.so" tools/haiku-tests/tlsreload/libtlsr.c
 "$g-gcc" $sys -O2 -o "$bin/tlsreload" tools/haiku-tests/tlsreload/tlsreload.c
-"$g-gcc" $sys -O2 -I artifacts/sysroot-arm64/boot/system/develop/headers/os/opengl -o "$bin/eglterm" \
+"$g-gcc" $sys -O2 -I artifacts/sysroot-arm64/boot/system/develop/headers/os/opengl -I artifacts/sysroot-arm64/boot/system/non-packaged/develop/headers/os/opengl -L artifacts/sysroot-arm64/boot/system/non-packaged/lib -o "$bin/eglterm" \
 	tools/gl-tests/eglterm.c -lEGL
 "$g-gcc" $sys -O2 -I artifacts/sysroot-arm64/boot/system/non-packaged/develop/headers -o "$bin/vkf32" \
 	tools/gl-tests/vkf32.c "$(ls artifacts/sysroot-arm64/boot/system/lib/libvulkan.so.1 artifacts/sysroot-arm64/boot/system/non-packaged/lib/libvulkan.so.1 2>/dev/null | head -n 1)"
