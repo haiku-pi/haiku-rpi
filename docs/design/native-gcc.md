@@ -117,7 +117,9 @@ projects, `pip install` of a pure and of a Cython package compiled by gcc 16.2).
 
 - **Replacing the bootstrap gcc 13.3 in the dev profile** (`HAIKU_PI_DEV`): `build/jam/repositories/HaikuPorts/arm64`
   now lists `gcc-16.2.0_2026_11_01-1`, `binutils-2.46.1-1`, `make-4.4.1-1` (the hpkgs in `generated.arm64/download/`);
-  the dev image build with them is being checked (2026-11-03).
+  haiku b59f1c957f. The dev image built with them (no new `not available` line: bc and wget, as before) boots in
+  QEMU and passes native-gcc.sh **19/19** (the Fortran and CMake checks skip: no gcc_fortran/cmake in that image;
+  log artifacts/qemu/20261103-074747-virt.log) (2026-11-03).
 - **haiku_devel in the repository**: programs that use Haiku's headers and libraries (`libroot`, `libbe`, every C program's
   `<stdio.h>`) need the `haiku_devel` package of the same build as the running system (`haiku_devel` requires `haiku ==`
   its own version). Only the development image has it; from the first GCC 16.2 release on, each release publishes its

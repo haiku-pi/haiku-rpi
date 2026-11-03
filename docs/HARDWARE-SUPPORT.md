@@ -185,7 +185,7 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
 | OpenArena on ioquake3 | 0.8.8 (-1) | 46 fps at 1280×720 window, 22–29 at 1920×1080 (10-20); game code in ioq3's QVM interpreter; published, its data in 5 parts (each under GitHub's file limit) |
 | SuperTuxKart | 1.5 (-1) | GL 2.1 renderer 28–38 fps at 1280×720; GLES 3.1 shader renderer 16–18 fps (10-20); published, data in 3 parts |
 | llama2.c | — | stories15M 45.7 tok/s on 4 cores (10-20); test images only |
-| Native build tools (dev image) | gcc 13.3, binutils, make, python3.10, haikuporter (Haiku's arm64 build packages); patch 2.8, tar 1.35, gzip 1.13, xz 5.6.4, bzip2 1.0.8, diffutils 3.10 (ours) | haikuporter built a first port (hoedown 3.0.7) natively in QEMU (10-19) |
+| Native build tools (dev image) | gcc 16.2 (since haiku b59f1c957f; 13.3 bootstrap before), binutils 2.46.1, make 4.4.1, python3.10, haikuporter (Haiku's arm64 build packages); patch 2.8, tar 1.35, gzip 1.13, xz 5.6.4, bzip2 1.0.8, diffutils 3.10 (ours) | haikuporter built a first port (hoedown 3.0.7) natively in QEMU (10-19) |
 
 ## Build and test infrastructure
 
