@@ -11,7 +11,9 @@
 #     commits come in through merges) is named in docs/HAIKU-RPI4-CHANGES.md by its 10-character hash;
 #   - README.md and docs/TRY-IT.md point at TAG;
 #   - docs/KNOWN-ISSUES.md was checked against the logs today;
-#   - docs/HANDS-ON-CHECKS.md names TAG (what the newest release is).
+#   - docs/HANDS-ON-CHECKS.md names TAG (what the newest release is);
+#   - no docs/KNOWN-ISSUES.md row says it is fixed in the "next image": this release is that image, so the
+#     row leaves the register (RELEASING.md step 5).
 # Exit 0 when all pass; each failure is one line.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,5 +38,8 @@ for f in README.md docs/TRY-IT.md docs/HANDS-ON-CHECKS.md; do
 done
 grep -q "Checked against the weekly logs up to \*\*$(date +%F)" docs/KNOWN-ISSUES.md \
 	|| bad "docs/KNOWN-ISSUES.md: \"Checked against the weekly logs up to\" is not today ($(date +%F))"
+grep -n -i 'next image' docs/KNOWN-ISSUES.md | grep '^[0-9]*:| ' | while IFS= read -r l; do
+	echo "release-docs-check: docs/KNOWN-ISSUES.md row fixed in the \"next image\" (this one): ${l:0:60}"
+done | grep . && fail=1
 [ "$fail" = 0 ] && echo "release-docs-check: ok"
 exit "$fail"
