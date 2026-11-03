@@ -325,6 +325,9 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
 | | e2f63c3b65 | app_server: keyed front-buffer writes (`OverlayKeying.cpp`, `HWInterface::_WriteFrontRow()`), the rectangles from `ConfigureOverlay`/`HideOverlay`/`ReleaseOverlayChannel`, configure hook checked |
 | | 500159a1cd | kernel debugger console: opaque 32-bit palette |
 | | eb591bcde9 | bcm2711_display: SAND128 NV12 plane type for the rpivid probe (experimental) |
+| | d1b2a607ae | kernel/vm: a clone of a B_CONTIGUOUS area is mapped in full (root cause of the first Pi run's panic; for `rpi4`) |
+| | b35441057a | v3d: an import with unmapped pages fails (`B_BAD_ADDRESS`) instead of panicking (for `rpi4`) |
+| | 80beae9619 | bcm2711_display: overlay buffers are physical mappings of the contiguous memory (fully mapped clones, write-combining); freed buffers keep their memory while the device is open |
 | haiku-pi/libglvnd `stage6` (from `rpi4` 7cc03c3) | be20124 | BGLView: overlay flips in `SetBitmap()`, leaving overlay mode, `hgl_native_window_shows_overlays()`, `SwapBuffers(vSync)` → `eglSwapInterval` |
 | haiku-pi/mesa `stage6` (from `rpi4` f64c84cae97) | 3f1ab3f8289 | egl/haiku: overlay bitmaps for full-screen surfaces, area-clone import, retirement rule, vsync presenter, swap interval, statistics |
 | haiku-rpi (this repo) | — | `tools/gl-tests/glflip.cpp`, `tools/haiku-tests/overlaytest.cpp`, `tools/haiku-tests/sandprobe.cpp`, `tools/haiku-tests/host-overlay-keying/` (host test of the keyed copy), `present-bench` rows "alpha forced"/"keyed", `tools/pi-tests/gpu-stage6.sh` (bootscript), `tools/pi-tests/gpu-stage6-image.sh` (images) |
@@ -387,7 +390,34 @@ overlay (its decoder's output): moving another window over it keeps that window 
 scales on the plane. The kernel debugger's opaque palette (500159a1cd) is only compile-checked: these images keep the
 release's kernel, so KDL over a plane needs an image built from `stage6`.
 
-## 9. Status (2026-11-02, host only)
+## 9. Status
+
+### 2026-11-03: first Pi run of image B — overlays work, glflip's import panicked; fixed
+
+`artifacts/uart/20261103-002335-gs6-b.log`: the boot markers, `copy RAM->WC, alpha forced` 3.34 ms vs
+3.31 ms plain (**measured**: the forced alpha costs 1 %), bitmapcheck, and **overlaytest PASS in all
+three spaces** (user code wrote the kernel-area buffers; 240 transfer flips at 60/s, 0 failed; HDMI
+to grade). Then glflip's first import: `PANIC: get_memory_map() called on unmapped memory!` in
+`v3d_map_memory` ← `import_memory`.
+
+Root cause: `vm_clone_area()` maps a clone's pages only when the clone is `B_FULL_LOCK`; a clone of a
+`B_CONTIGUOUS` area (Mesa's clone of the overlay buffer, and v3d's kernel clone of that) gets the
+`B_CONTIGUOUS` wiring but is mapped lazily, while `lock_memory_etc()` skips `B_FULL_LOCK`/
+`B_CONTIGUOUS` areas as already mapped — so `get_memory_map()` met unmapped pages. Fixes: the VM
+maps such clones in full (d1b2a607ae; needs a kernel from `stage6`/`rpi4`); v3d checks the pages and
+returns `B_BAD_ADDRESS` instead of panicking (b35441057a); and, for the release kernel in the test
+images, the display driver hands out a *physical mapping* of the contiguous memory (80beae9619):
+clones of it are mapped in full and keep the write-combining type (which also removes the cacheable
+alias Mesa's clone of RAM had). A physical mapping holds no pages, so freed overlay buffers keep their
+memory until the device closes (the GPU may still write one whose bitmap is gone). Image B now also
+carries the stage6 v3d driver (packaged one blocked, as in gpu-present.md §5).
+
+QEMU (no V3D, so the import path itself does not run there): image B rebuilt — bitmapcheck's 12
+hashes identical to the packaged app_server's, glview `PASS`, overlaytest fails cleanly (no
+overlays), no panic. The Haiku parts are built with the GCC 13.3 cross tools now kept as
+`generated.arm64/cross-tools-arm64-gcc13` (the release images' compiler; the main tree moved to 16.2).
+
+### 2026-11-02 (host only)
 
 - Builds: the display driver, accelerant and app_server with jam's own flags (`-Werror`) in
   `sources/haiku-stage6/generated.arm64`; the kernel debugger console object; libGL (libglvnd) and

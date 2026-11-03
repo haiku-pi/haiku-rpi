@@ -28,7 +28,7 @@ for f in /boot/system/non-packaged/add-ons/kernel/drivers/dev/graphics/bcm2711_d
 	[ -e "$f" ] && say "present: $f"
 done
 # which driver runs, and how (its boot lines)
-grep -a -E 'loaded driver .*bcm2711_display|bcm2711_display: (overlays|no overlays|vertical blank)' \
+grep -a -E 'loaded driver .*bcm2711_display|bcm2711_display: (overlays|no overlays|vertical blank)|v3d: cannot import' \
 	/var/log/syslog 2> /dev/null | tail -n 4 | while read -r line; do say "syslog: $line"; done
 
 # run NAME SECONDS COMMAND... — its lines to the console, then its exit status
