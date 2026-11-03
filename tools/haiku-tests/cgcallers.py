@@ -4,6 +4,7 @@ thread): sums the ticks of every call edge into functions whose name contains PA
 over all files. `profile -S` only gives flat or inclusive counts; this gives the edges.
 
     tools/haiku-tests/cgcallers.py DIR PATTERN [--top N]
+    tools/haiku-tests/cgcallers.py DIR --self [--top N]     the functions with the most self ticks (flat profile)
 
 Pi: profile -k -l -i 250 -v cg ./program; copy cg/ back (tar).
 """
@@ -58,7 +59,8 @@ def parse(path, edges, self_ticks):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("dir")
-    parser.add_argument("pattern")
+    parser.add_argument("pattern", nargs="?", default="")
+    parser.add_argument("--self", action="store_true", help="list the top functions by self ticks")
     parser.add_argument("--top", type=int, default=25)
     args = parser.parse_args()
 
@@ -67,6 +69,15 @@ def main():
     for name in os.listdir(args.dir):
         if name.startswith("callgrind.out"):
             parse(os.path.join(args.dir, name), edges, self_ticks)
+
+    if args.self:
+        total = sum(self_ticks.values())
+        top = self_ticks.most_common(args.top)
+        pretty = demangle([f for f, _ in top])
+        print("CGSELF %d self ticks" % total)
+        for fn, ticks in top:
+            print("%8d  %5.2f %%  %s" % (ticks, 100.0 * ticks / max(total, 1), pretty[fn][:150]))
+        return
 
     callers = collections.Counter()
     for (caller, callee), ticks in edges.items():

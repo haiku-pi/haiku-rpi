@@ -3,7 +3,8 @@
 Written 2026-11-03 (desk work, no Pi time used) from the measurements this repository already has. PLAN.md
 backlog row 6: "a measured list ranked by gain/effort, then done in that order". Baseline system:
 **image-2026-11-03b** (haiku `rpi4` 5d9132a49c, hrev60299+262, GCC 16.2, GPU stage 7 queues, DWARF 5).
-Nothing here was measured today; every number is quoted from a log entry or document named next to it.
+Nothing here was measured today; every number is quoted from a log entry or document named next to it. C0 was run
+the same evening: its measurements and the re-ranked list are in §6 "C0 results".
 
 Legend. **measured**: a number in the named file/log entry. **derived**: arithmetic on measured numbers (shown).
 **estimated**: a guess with its basis stated. **unmeasured**: no number exists. Effort: **S** = under a day,
@@ -339,6 +340,8 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
 
 ## 5. Ranking (gain/effort)
 
+(The ranking as written before C0. After it: N1, N2, N3, then C1, C2 — §6 "C0 results"; C7 and C8 dropped.)
+
 Ranked by expected gain per effort, weighting by how much of the gain is measured. "Gain" bucket: H = seconds on a
 frequent action or ≥ 2× on a hot path; M = sub-second to ~3 s, or one user-visible stall; L = ≤ 5 % or first-run
 only; ? = unmeasured.
@@ -422,7 +425,119 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 
 | Item | Image | Before | After | Runs | Logs |
 |---|---|---|---|---|---|
-| (none yet) | | | | | |
+| C0 (measurement, no change) | 11-03c (11-03b for one A/B) | — | profile + pmustat of a desktop session; C5/C7/C8 gates; below | 4 network sessions, 11-03 20:53–22:05 | `artifacts/h20-c0/out/`, `artifacts/uart/20261103-*-session-h20-c0*.log` |
+
+### C0 results (2026-11-03 20:53–22:05, image-2026-11-03c, network sessions)
+
+Image 11-03c (hrev60299+276), network boot (remote disk), sessions `h20-c0` (85 min), `h20-c0-fork-b` (11-03b),
+`h20-c0-fork-c` and `h20-c0-startcost` (11-03c, fresh boots). The card (the owner's mega20) was not written. Raw output:
+`artifacts/h20-c0/out/` (text profiles, pmustat, callgrind trees `cg-stk/` and `cg-ff/`). Workload:
+`tools/pi-tests/c0-desktop.sh`, **196 s** (Terminal; Firefox on haiku-os.org, then Wikipedia in a second window;
+MediaPlayer on the 1080p HEVC clip for 30 s; two `pkgman search`; SuperTuxKart's main menu 60 s, its first start;
+everything quits), run four times: (1) `profile -a -k -S -i 1000`, (2) `profile -k -S` (the debugger path: the script
+and every team it starts), (3) `profile -a -k` per thread, (4) `profile -k` per thread; `pmustat -A -a 20` back to back
+during (1). Ranked with `tools/haiku-tests/profsum.py` (share of non-idle ticks), callers with
+`tools/haiku-tests/cgcallers.py` (`--self` added) on single-team `profile -k -C -v` runs: STK's menu for 6 min with an
+unstripped `libEGL_mesa.so.0` of the same build ID (`__EGL_VENDOR_LIBRARY_FILENAMES`), and Firefox from a copy of its
+directory holding the unstripped `libxul.so` of the same build ID (parent team only; a first start with a new profile,
+since the copy's install path differs). Stripped libraries (libxul, Mesa) and JIT code otherwise show up as stack-walk
+fallbacks (`pthread_thread_entry`, `runtime_loader`, `commpage_thread_exit`), not as functions.
+
+**First finding: `profile -a` loses every team started after it.** All userland ticks of those teams count as
+"unknown": **65 % of the non-idle ticks** of run (1) (253 863 of 390 155), and `profile -a -k -S sh -c 'python3 …'`
+gives 24.7 % unknown, the same python3 as the main command 0.2 %. A traced build of `profile` shows no
+`B_SYSTEM_PROFILER_IMAGE_ADDED` event after the initial scan (team, thread and exec events do arrive). Cause, by
+arithmetic (not yet tested): `ImageNotificationService::Notify()` (`src/system/kernel/image.cpp`) builds its KMessage in
+`char eventBuffer[128]`; with 64-bit pointers the three fields need 28 (header) + 32 + 32 + 40 = **132 bytes**
+(`sizeof(FieldHeader)` is 20), so `AddPointer("imageStruct")` fails and the system profiler's `EventOccurred()` drops
+the event for a NULL `imageStruct`. The team service's message is exactly 128 bytes ("team"/"teamStruct" are one byte
+shorter each), which is why team events work. Not an rpi4 change (upstream code; x86_64 should show it too). Fix:
+a 256-byte buffer, as thread.cpp's 180. Everything below therefore takes userland shares from the debugger-path runs
+and the single-team runs, and system-wide shares only for the teams that existed before the profiler (app_server,
+servers) and the kernel.
+
+Load (pmustat during run 1): idle before **0.5 %** busy; Terminal + Firefox loading 55 %, pages + video 42–55 %, STK's
+menu with Firefox's two windows still open **74–76 % of all four CPUs** (IPC 0.29; in run 3 STK's main thread ~84 % of a
+core and app_server's thread for its window ~38 %), 3 % after; IPC 0.29–0.64, L2 refills 13–22 % of L2 accesses, the ARM
+at 1519–1565 MHz while busy. Run 1: 778 744 ticks (4 CPUs × 196 s), idle 49.9 %, kernel ~25 % of the non-idle ticks.
+
+| # | Symbol | Share (run, base) | Where / callers | Explained? → candidate |
+|---|---|---|---|---|
+| 1 | (userland of teams started after `profile -a`) | 65 % of run 1 non-idle | the profiler bug above | → **N1** |
+| 2 | `memcpy` (libroot) | **10.5 %** of system non-idle (run 3, 27.7 s CPU) | app_server window threads: STK's GL window **20.8 s** (72 %; the present copy, `HWInterface::CopyToBackAndFront` in the same thread), Firefox's 6.4 s (`DrawBitmap`, `copy_row_opaque`) | copies already fused (§2) and DRAM-bound (§3); new: the STK menu renders unpaced, ~165 fps (derived: 1024×576×4 B read once, written twice ≈ 2.1 ms at ~2.2 GB/s; 20.8 s / 2.1 ms in ~60 s) → **N3** |
+| 3 | `memcpy` (apps) | 12.4 % of the apps' CPU (run 4) | Firefox's busiest thread (an NSPR thread, 46 s; likely its compositor, unverified) 13.2 s, the rest of it in libxul; another Firefox thread 6.6 s; STK 2.6 s (`u_vbuf_draw_vbo`: client vertex arrays, 3.4 % of STK) | Firefox software compositing: parked (§3); STK: the game's GL use |
+| 4 | Firefox threads (libxul, JIT) | 70 % of the apps' CPU (run 4) | unstripped parent run: JIT 11 % (`EnterJit` 4.7 %, JIT fallback 6.6 %), `memcpy` 3.9 %, `cache_start_sub_transaction` 2.7 %, `GenetDevice::Send` 1.8 % (remote disk), LZ4HC 1.3 % (startup cache) | Gecko-internal except the BFS item → **N6** |
+| 5 | SuperTuxKart main thread | 24.5 % of the apps' CPU (run 4); ~65 % of a core in its menu | `cg-stk` (251 448 ticks): v3d `cache_hash` → BLAKE3 **5.1 %**, `__aarch64_*` atomics 5.5 % (`v3d_draw_vbo`, `util_primconvert_draw_vbo`), `__tls_get_addr` **2.3 %** (from every GL call: glvnd dispatch), `FontWithFace::render` 4.4 % and `irr::…draw2D*` (the game) | → **N4**, **N5**, C11 atomics |
+| 6 | `__aarch64_ldadd4_acq_rel` (kernel, stack, genet) | 2.0 % of system non-idle (run 1) | no single caller (as W43 10-24 13:46) | C11, unchanged |
+| 7 | `ConditionVariableEntry::Wait` / `_Notify`, `switch_sem_etc`, `thread_block` | 1.0 / 0.5 / 0.4 / 0.3 % (run 1); 1–3 % in every profile | — | most likely the tick landing where interrupts come back on after a context switch, not CPU spent there; unverified |
+| 8 | `cache_start_sub_transaction` (block cache) | 0.8 % of system non-idle; **2.9 s** CPU in one Firefox first start | all from BFS `Journal::Lock`; walks every block of the combined transaction at each sub-transaction (O(n) per write, O(n²) per combined transaction) | → **N6** |
+| 9 | `GenetDevice::Send` | 0.9 % (run 1); 10.1 % of non-idle while Wine writes its prefix | netboot remote-disk writes: ~12 µs CPU per frame (8.4 s for ~1 GB) | bench only (network boot); not ranked |
+
+Profile controls (§2 items that must stay down): TLS `python3 -m timeit "sum(i*i for i in range(1000000))"` **392 / 412
+ms** (10-24: 391) — not regressed, but `__tls_get_addr` is still **18.1 %** of that loop's profile (→ N5); fresh-boot
+forkbench: `arch_cpu_sync_icache` 11.8 %, `__aarch64_ldadd4_acq_rel` 7.2 % of its ticks (10-24: 6.5 %, 5–8 %) with
+fork+exec at the 10-24 time — not regressed. pmustat: python3 CPU-bound IPC **1.68**, L1D refills 0.04 %; 64 MiB
+copies IPC **0.435** (10-25: 0.49), 16 KiB copies 0.86 (0.87).
+
+**Process start gets slower once GUI applications have run (N2).** Same binary (`tools/haiku-tests/forkbench.c`,
+GCC 16.2), µs per operation:
+
+| State (11-03c unless noted) | fork+exit | fork+exec `/bin/true` | posix_spawn | `for` 200 × `/bin/true` |
+|---|---|---|---|---|
+| fresh boot, 11-03b | 1007–1055 | 4607–4670 | 3332–3429 | 1.01–1.04 s |
+| fresh boot | 977–1151 | 4607–4701 | 3348–3386 | 1.06 s |
+| after `pkgman install` | 1004 | 4595 | 3539 | — |
+| Terminal open | 1258 | **6799** | 4867 | — |
+| Firefox open / quit | 2231 / 1146 | 6308 / 7847 | 5405 / 5288 | — |
+| STK open / quit | 2425 / 2299 | **8748 / 8313** | 6697 / 6572 | — |
+| after the 85-minute C0 session | 1298–1751 | 7883–8075 | 4578–5160 | 1.56 s |
+
+So 11-03b = 11-03c = the 10-24 baseline on a fresh boot; the first GUI application (Terminal) adds ~2 ms to every
+fork+exec and the slowdown stays after the applications quit (teams back to 29; areas 1723 → 1971–2842). In the slow
+state the runtime loader's symbol work (`resolve_symbol`, `find_symbol`, `elf_hash`, `relocate_rela`, `match_symbol`,
+`strcmp`) is ~20–29 % of forkbench's ticks; on the fresh boot none of them is in its top 12. `/bin/true` still loads
+only libroot and libgcc_s (`listimage` of a `sleep`). Cause unknown. `tools/pi-tests/startcost-steps.sh` repeats the
+steps.
+
+**Gating numbers for C4, C5, C7, C8:**
+
+- **C4 (SD writes): still unmeasured.** The card holds the owner's test image (mega20), so no Linux `dd` in the flash
+  lane; a network session cannot measure the card's write path.
+- **C5 (Wine prefix): 80 s** on this network boot (`prefix-timeline.sh`, Mono/Gecko off, fresh image, 788 system32 /
+  855 syswow64 files) — not comparable with the 126–131 s of the games-bench image (other image and package set). Wine's
+  processes used **32 CPU-s** (system32 16.3, syswow64 9.4, other 6.5 of which wineserver 6.4); the CPUs were 11.5 %
+  busy over a 170 s window that holds the 80 s (≈ one core during the prefix). Kernel top: `GenetDevice::Send` 10.1 %,
+  `memcpy` 9.1 %, `arch_user_memcpy` 3.3 % of non-idle (the remote-disk writes). So: neither CPU-bound nor disk-bound
+  on four cores — one chain of processes, ~1 core busy, the rest waiting. The card side still needs C4.
+- **C7 (map_buffer_client_pointer): dropped.** Warcraft III demo menu (WoW64 + Box64, `WINEDEBUG=+fps`) **12.1 fps**,
+  the same as after 0028 on 10-31. `profile -k -S` of wine and its children: `memcpy` **3.1 %**
+  (`wow64_glMapBufferRange` 0.35 %; 53 % before 0028), so the gate (> ~30 %) fails. Where the time goes: 54 % in code
+  of no Haiku image (Box64's translated x86 code and PE DLLs, charged to "commpage"), `_user_thread_yield` 12.1 % +
+  `NtYieldExecution` 3.6 % (a thread spinning on yield), `present_framebuffer_surface_gdi` 3.0 %; CPUs 49 % busy.
+- **C8 (WiFi DMA): dropped for this bench.** `tcp_throughput` 64 MiB to the host over PhoenixNet (802.11n, 2.4 GHz):
+  **49.6 up / 46.2 down Mbit/s** (HARDWARE-SUPPORT: 37.4 / 46.0); CPUs **15.3 / 16.8 %** busy, the busiest one 31.6 /
+  45.4 %. Of the non-idle ticks, `spin` + `system_time` are **58 % / 37 %** (busy-waiting in the SDHCI command path;
+  `SdhciBus::_ExecuteCommand` + `ExecuteIoCommand` 12 / 13 %), `memcpy` 22 % on download. Not CPU-bound, so DMA has no
+  rate case on this access point; waiting for the controller's interrupt instead of spinning would give back up to
+  ~half a core during transfers (N7). Another AP / 5 GHz: not tried (the bench has one).
+
+**New candidates (from this profile):**
+
+| ID | Item | Measured | Likely fix | Effort |
+|---|---|---|---|---|
+| N1 | `profile -a` drops image events | 65 % of a desktop session's non-idle ticks unattributed | `eventBuffer[256]` in image.cpp's `Notify()`; then re-run C0 run (1) | S |
+| N2 | process start 1.5–1.9× slower after GUI apps ran | fork+exec 4.6 → 6.8–8.7 ms, posix_spawn 3.4 → 4.9–6.7, fork+exit 1.0 → 2.3 ms; runtime-loader symbol work 20–29 % of ticks in the slow state | unknown: attribute first (a full `profile -k -l -v` of forkbench in both states; what a GUI start leaves behind: watchers, loader caches, areas) | S to attribute, M to fix |
+| N3 | windowed GL presents run unpaced | STK's menu: its main thread ~84 % of a core plus app_server's copy for its window 20.8 s CPU per ~60 s (~38 % of a core; ~165 fps derived) | pace windowed presents to the display (EGL swap interval 1 for windows by default; benchmarks set 0) | M |
+| N4 | v3d shader-variant cache hashes its key with BLAKE3 at every lookup | 5.1 % of STK's CPU (`cache_hash` → `blake3_compress_*_portable`, from `_mesa_hash_table_search`) | `_mesa_hash_data` over key + the key's stored BLAKE3 instead of a fresh BLAKE3 (`v3d_program.c`); with the next Mesa revision | S |
+| N5 | TLS access through `__tls_get_addr` | 18.1 % of a busy python3; 2.3 % of STK (every GL call through glvnd) | TLS descriptors (TLSDESC) in runtime_loader, or initial-exec TLS for libpython / libGLdispatch | M |
+| N6 | BFS journal: sub-transaction start walks all blocks | 2.9 s CPU of a Firefox first start; 3.1 s in the 196 s session | bound the combined transaction (Journal) or make the walk incremental (block cache) | S (bound) / M |
+| N7 | WiFi SDIO waits by spinning | `spin` + `system_time` 37–58 % of non-idle during transfers | interrupt-driven command completion in the SDHCI path | S–M |
+
+**Re-ranked next three:** (1) **N1**, an hour with the re-run of run (1), because every later system-wide profile
+needs it; (2) **N2**, measured 1.5–1.9× on every program start in a normal session (shell scripts, builds, configure,
+haikuporter) — attribute, then fix; (3) **N3**, the largest single CPU consumer of the session (a game menu taking
+~1.2 cores between the game and app_server). Then C1 and C2 as in §5; N4 rides along with the next Mesa revision
+(S); C7 and C8 (DMA) leave the list.
 
 ## 7. Still unmeasured, in one list
 
@@ -452,7 +567,8 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | Boot | `scripts/sd-cycle.sh --flash IMG --secs 120`, `scripts/boot-times.sh LOG`, `scripts/boot-bench.sh` (reliability) |
 | Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c` |
 | Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh` |
-| Profiling | `profile -a -k -S`, `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py`, `lookupsim.py` |
+| Profiling | `profile -a -k -S` (N1: misses teams started after it), `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py` (`--self`: flat top of callgrind output), `profsum.py` (rank text profiles, a symbol by thread), `lookupsim.py`; desktop workload `tools/pi-tests/c0-desktop.sh` |
+| Process start over a session | `tools/pi-tests/startcost-steps.sh` (forkbench after each desktop step) |
 | Wine | `tools/pi-tests/prefix-timeline.sh`, `x86-cpubench.sh`, `wine-games.sh`; `tools/wine-tests/cpubench.c`, `prefix-timeline.py` |
 | Firefox | `tools/pi-tests/firefox-video.sh`, `ffstall.sh`, `ffv-prof.sh`, `firefox-start-loop.sh` |
 | DT_RELR | `tools/pi-tests/relr.sh`, `scripts/relr-image.sh`, `artifacts/relr/` |
