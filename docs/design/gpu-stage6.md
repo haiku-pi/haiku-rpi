@@ -227,9 +227,21 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
 
 - `HWInterface`: a list of the visible overlays' rectangles (screen coordinates, clipped) with the key
   colour; every 32-bit front-buffer write (`_CopyToFront`, the front half of `CopyToBackAndFront`)
-  goes through `_WriteFrontRow()`: when keying is enabled (the accelerant reported
-  `B_OVERLAY_KEYING_USES_ALPHA`), alpha is forced to 0xff, and inside an overlay rectangle a pixel
-  whose RGB equals the key becomes 0. Not enabled: `memcpy` as before (every other accelerant).
+  goes through `_WriteFrontRow()`: while keying is on, alpha is forced to 0xff, and inside an overlay
+  rectangle a pixel whose RGB equals the key becomes 0. Off: `memcpy` as before (every other
+  accelerant, and this one while no overlay is configured — `stage6-keying`, §9 2026-11-03 afternoon).
+- Keying is on only while an overlay is configured (the accelerant reported
+  `B_OVERLAY_KEYING_USES_ALPHA`, 32-bit mode). Without a visible overlay the driver scans the desktop
+  out opaque — plane 0 as XRGB8888 (scaled modes), or the firmware's frame buffer, whose alpha mode
+  U-Boot sets to `BCM2835_MBOX_ALPHA_MODE_IGNORED` (`drivers/video/bcm2835.c`) — so alpha does not
+  matter then. Order: the **first** overlay's `ConfigureOverlay` takes the exclusive lock (no drawing
+  thread is in the middle of an unkeyed write), adds its rectangle and makes the whole front buffer
+  opaque from the back buffer (`CopyBackToFront(screen)`, keyed; ~3.4 ms at 1080p), and only then calls
+  the accelerant, whose `set_overlay` switches plane 0 to ARGB8888. A second lock, `fOverlayChangeLock`
+  (taken after the exclusive one), orders all overlay changes, so a second overlay configured meanwhile
+  waits for the pass instead of having plane 0 switched early. Hide/release: the accelerant first (the
+  plane goes), then the rectangle; with none left keying stays on for 100 ms more, since the firmware
+  takes a plane change at its next update point (up to a frame later).
 - `AccelerantHWInterface`: fetches `overlay_supported_features`; `ConfigureOverlay`/`HideOverlay`
   update the list before calling the accelerant. Ordering: `SetViewOverlay` configures before it
   invalidates the view (`ServerWindow.cpp:2047-2060`), a window move configures before it blits
@@ -237,11 +249,12 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
   overlay) — so the key pixels written next are keyed against the new rectangle.
 - `Overlay::TakeOverToken()` clears the other overlay's token (if it is not itself), so a deleted
   bitmap no longer releases the shared channel; `ConfigureOverlay`/`HideOverlay` check the hook.
-- Cost: forcing alpha makes every front copy a read-OR-write instead of `memcpy` on this accelerant,
-  also without overlays (switching it on with the first overlay would need a whole-screen pass under
-  the drawing lock). Expected memory-bound like `memcpy` (**estimated**; `present-bench` gains a
-  "RAM->WC, alpha forced" row to measure it next to `copy RAM->WC` 3.24 ms at 1080p, **measured**
-  10-25).
+- Cost: forcing alpha makes every front copy a read-OR-write instead of `memcpy`; with keying only
+  while an overlay is configured that costs nothing in the ordinary case. **Measured** on the Pi
+  (present-bench, 11-03, the loops compiled at app_server's -O2 in their own file and checked against
+  `OverlayKeying.o` with objdump): the forced alpha costs ≤ 1.5 % of the copy, 16- or 64-byte loop
+  alike — the copy is bound by the write-combining stores, not by the loop; yet the games A/B lost
+  1–3 % with keying always on and nothing with it only under overlays (§9, 18:45).
 - The kernel debugger's 32-bit palette gets alpha 0xff (`frame_buffer_console.cpp`), so KDL output
   stays visible (and opaque) over a plane.
 
@@ -339,6 +352,8 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
 | | f56bf64ac2b | egl/haiku: the mailbox for swap interval 0 |
 | haiku `stage6` | fb313a10c5 | bcm2711_display: four reserved overlay buffers (the mailbox) |
 | haiku `stage6-rpi4` | 9c0002fe2b … 18e9f01b0b | the 12 haiku commits rebased onto `rpi4` 38bc4de5d7 (GCC 16.2), no conflicts; builds with 16.2 (kernel, drivers, accelerant, app_server) |
+| haiku `stage6-keying` (from `stage6-rpi4b` 0c7a4d1256) | bf0e7f37e6 | app_server: `copy_row_opaque()` 64 bytes per iteration (vector extensions: ldp/stp of q registers) |
+| | 4279c0fda2 | app_server: keying only while an overlay is configured; the first one makes the front buffer opaque under the exclusive lock before the accelerant shows it (§3.3) |
 | haiku-rpi (this repo) | — | `tools/gl-tests/glflip.cpp`, `tools/haiku-tests/overlaytest.cpp`, `tools/haiku-tests/sandprobe.cpp`, `tools/haiku-tests/host-overlay-keying/` (host test of the keyed copy), `present-bench` rows "alpha forced"/"keyed", `tools/pi-tests/gpu-stage6.sh` (bootscript), `tools/pi-tests/gpu-stage6-image.sh` (images) |
 
 The v3d driver is not touched: import (`DRM_V3D_HAIKU_IMPORT_MEMORY` of the area clone) and the fence
@@ -400,6 +415,84 @@ scales on the plane. The kernel debugger's opaque palette (500159a1cd) is only c
 release's kernel, so KDL over a plane needs an image built from `stage6`.
 
 ## 9. Status
+
+### 2026-11-03 (18:45): keying only while an overlay is shown (`stage6-keying`) — the non-plane losses are gone
+
+The games A/B of §10 showed stage 6 at −1…−3 % in cases that never take a plane. Suspect: app_server
+forced alpha on every front buffer write (`copy_row_opaque()`, one 16-byte vector per iteration with
+GCC 16) also without overlays.
+
+**Measured first** (Pi, `present-bench -s c`, cold source, ms per frame; the row writers now built at
+app_server's -O2 in `tools/gl-tests/present-bench-keying.cpp` and checked instruction for instruction
+against `OverlayKeying.o` — the old "alpha forced" row had been inlined at -O3 into a 64-byte loop, so
+it never measured what app_server ran):
+
+| copy | 640×480 | 1280×720 | 1920×1080 |
+|---|---|---|---|
+| RAM→WC `memcpy` (keying off) | 0.45 | 1.42 | 3.36 |
+| RAM→WC, alpha forced, old 16-byte loop | 0.45 | 1.43 | 3.41 |
+| RAM→WC, alpha forced, new 64-byte loop | 0.45 | 1.44 | 3.40 |
+| fused back + front (`CopyToBackAndFront`), `memcpy` | 0.81 | 2.56 | 5.75 |
+| fused, front alpha forced, old / new loop | 0.81 / 0.81 | 2.53 / 2.52 | 5.74 / 5.73 |
+
+The copy is bound by the write-combining stores: the forced alpha costs ≤ 1.5 % of it and the loop
+width nothing — at 640×480 ≤ 0.005 ms per frame, far below the 0.14 ms of the 207 → 201 fps drop. So the
+copy alone does not explain it; the A/B below decides.
+
+**Change** (haiku `stage6-keying`, on `stage6-rpi4b` 0c7a4d1256, pushed; §3.3): keying is on only while an
+overlay is configured (the driver scans the desktop out opaque otherwise); the first overlay makes the
+front buffer opaque from the back buffer under the exclusive lock before the accelerant switches plane 0
+to ARGB; hide/release: plane first, rectangle after, keying 100 ms longer; `fOverlayChangeLock` orders
+overlay changes (bf0e7f37e6 64-byte loop, 4279c0fda2 keying). Display driver and accelerant unchanged.
+Host test `host-overlay-keying/run.sh` PASS; QEMU: the 12 bitmapcheck hashes unchanged.
+
+**Pi checks** (`artifacts/images/gs6k-checks.img` = gb-stage6-k.img + the tests, bootscript
+`gpu-stage6.sh`; runs `20261103-125103-gs6k-checks`, `20261103-155608-gs6k-checks2`): overlaytest PASS in
+the three spaces, twice, and once more after the GL runs; its new front-buffer census: **before** the
+first overlay the probe's 4096 alpha-0 pixels are in the front buffer as drawn (not keyed), **while shown**
+0 non-opaque pixels outside the overlay and its 307 200 key pixels transparent (the pass and the keyed
+writes work), **after** it 4096 again (keying off). MediaPlayer plays a clip on plane 1 (356 updates in
+356 vblanks), HDMI shows the video in its window. flip-vsync 1200 frames 60.00 fps, every overlay line 0
+missed/late/dropped (one window with 1 starved, the GPU's); flip-free 131.6 fps; flip-cover 60.00; flip-window
+125; glview PASS; 0 panics. HDMI as in gs6-b3 (bars, the yellow window over them, the bars cut at the left
+edge) — including YCbCr422 (type 45) showing black, as it did in gs6-b3 already: packed YUYV does not scan
+on this firmware (open, experimental as §3.2 says).
+
+**Games A/B** (`gb-stage6-a` = A; B = `gb-stage6-k.img`: gb-stage6-b with the stage6-keying app_server;
+C = B with mesa 26.2.6-1 (GCC 13.3), the app_server alone; D = C with the `rpi4` GL stack (no stage 6)
+built by GCC 16.2, `artifacts/stage6/gl16/`, the compiler alone; screen saver off; A ×3, B, C, D ×2,
+alternating; `artifacts/queue-keying/`):
+
+| game, setting | A: rpi4 (3) | B: stage6-keying (2) | C: B with mesa -1 (2) | D: B with rpi4 GL by GCC 16.2 (2) | B vs A | C vs A | D vs A |
+|---|---|---|---|---|---|---|---|
+| quakespasm 640x480 | 202.4 | 202.3 | 202.4 | 201.6 | -0 % | -0 % | -0 % |
+| quakespasm 1280x720 | 80.8 | 80.7 | 80.9 | 80.8 | -0 % | +0 % | -0 % |
+| quakespasm 1920x1080 | 40.9 | 40.2 | 41.0 | 41.0 | -2 % | +0 % | +0 % |
+| vkquake 1280x720 | 54.9 | 55.1 | 53.9 | 55.0 | +0 % | -2 % | +0 % |
+| vkquake 1920x1080 | 33.1 | 33.0 | 33.1 | 33.2 | -0 % | +0 % | +0 % |
+| quake2 640x480 | 202.7 | 206.7 | 207.1 | 206.4 | +2 % | +2 % | +2 % |
+| quake2 1280x720 | 102.7 | 102.0 | 102.7 | 102.5 | -1 % | -0 % | -0 % |
+| quake2 1920x1080 | 53.3 | 54.8 | 53.1 | 53.5 | +3 % | -0 % | +0 % |
+| quake3 1280x720 | 88.5 | 88.8 | 88.7 | 88.9 | +0 % | +0 % | +0 % |
+| openarena 1280x720 window | 53.2 | 53.3 | 53.0 | 53.6 | +0 % | -0 % | +1 % |
+| openarena 1920x1080 fullscreen | 28.1 | 27.9 | 28.1 | 28.1 | -1 % | +0 % | +0 % |
+| supertuxkart 1280x720 | 36.9 | 45.7 | 36.0 | 38.0 | +24 % | -3 % | +3 % |
+| wine gltest-arm64 20s | 160.6 | 163.6 | 165.8 | 166.6 | +2 % | +3 % | +4 % |
+| wine gltest-x86 20s | 162.2 | 162.3 | 165.6 | 163.6 | +0 % | +2 % | +1 % |
+| wine d3dtest-x86 window | 124.5 | 129.4 | 131.5 | 128.8 | +4 % | +6 % | +3 % |
+| wine d3dtest-x86 fullscreen | 141.3 | 140.4 | 142.8 | 141.1 | -1 % | +1 % | -0 % |
+| wine d3dtest-arm64 fullscreen | 149.2 | 148.4 | 150.8 | 148.2 | -1 % | +1 % | -1 % |
+| wine halflife window | 91.2 | 93.4 | 92.7 | 91.2 | +3 % | +2 % | +0 % |
+
+- B vs A: every case without a plane within ±1 % (QuakeSpasm 640×480 −0 % was −2 %, Quake II 640×480/
+  1280×720 +2/−1 % were −3/−2 %, Wine d3dtest full screen −1 % were −3 %, gltest-x86 +0 % was −3 %).
+  Keying off without overlays recovers what the copy measurement could not show; the whole-system cost
+  of the keyed writes was larger than the isolated copy's (not explained further).
+- C ≈ A: the stage6-keying app_server and driver cost nothing. D ≈ A: GCC 16.2 is not the cause either.
+- Left: the plane cases with Mesa's stage 6 code — Quake II 1080p +3 %, but QuakeSpasm 1080p −2 % and
+  OpenArena 1080p −1 % (C and D +0 % there). That is the plane path at a frame rate below 60 (swap
+  interval 0, the mailbox supersedes frames), in Mesa, not app_server; a follow-up for `egl_haiku`.
+- SuperTuxKart +24 % in B (45.9/45.5 vs 34.7–38.6): not explained; its bench line is the noisiest.
 
 ### 2026-11-03 (01:30): Pi run 2 — exit met for vsync; unsynced fixed by a mailbox; rebased on 16.2
 
@@ -542,3 +635,8 @@ for p in mesa mesa_devel; do $P extract -C artifacts/sysroot-arm64/boot/system a
 # 4. the image; check that mesa made it in
 scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc && grep -a 'mesa.*not available' artifacts/build/<ts>.log   # (no output)
 ```
+
+**2026-11-03 (18:45): land `stage6-keying` instead of `stage6-rpi4b`.** It is `stage6-rpi4b` plus two
+app_server commits (a fast-forward), so the merge branch takes it with `git merge stage6-keying` (or a new
+merge of `stage6-keying` into `rpi4`); Mesa, libglvnd and the mesa -2 packages are unchanged. With it, the
+A/B above has no non-plane case worse than −1 %; the plane cases at < 60 fps (QuakeSpasm −2 %) are Mesa's.
