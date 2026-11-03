@@ -11,7 +11,7 @@ and more Linux networking than the [SD card path](docs/BUILD.md); you should be 
 `sudo`, network interfaces and a serial console.
 
 > **Tested on:** a Raspberry Pi 4 Model B, 4 GB, connected to a USB-Ethernet adapter on an Ubuntu 26.04
-> build host, 2026-10-20/21.
+> build host, 2026-10-20 to 2026-11-03 (every release image's checks run over a network boot).
 
 ---
 
@@ -227,8 +227,9 @@ scripts/netboot-server.sh up artifacts/images/haiku-pi4-regular.img
 scripts/netboot-server.sh down          # when you are done
 ```
 
-What to expect (2026-10-21, the regular image, KDEBUG level 1 kernel): **the desktop about 55 seconds
-after power-on** (54.8 s, measured over 15 network boots on 2026-10-20). The serial console shows the firmware's network
+What to expect (2026-11-03, the image-2026-11-03b and -03c release candidates): **the desktop about 46 seconds
+after power-on** (two release checks: U-Boot starts ~29 s after power-on, U-Boot → desktop 16.3 and 17.3 s;
+54.8 s over 15 network boots on 2026-10-20). The serial console shows the firmware's network
 boot, U-Boot's DHCP and `tftpboot`, the loader, and the kernel log with
 `Mounted boot partition: /dev/disk/virtual/remote_disk/0/1`.
 
@@ -293,13 +294,15 @@ other Pi cycle, and restore a peer project's netboot server at the end.
 scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc
 # 2. serve the new image (a fresh copy of it)
 scripts/netboot-server.sh up artifacts/images/haiku-pi4-regular.img
-# 3. power-cycle the Pi: the desktop ~55 s later
+# 3. power-cycle the Pi: the desktop ~46 s later
 ```
 
 From an edited source file to the new system's desktop takes about two minutes, with no card writing
 and no card swapping. The pieces that made it fast (2026-10-20/21): the kernel's remote disk keeps 16
 requests in flight instead of one (desktop ~90 → 70–80 s), the loader 8 (its part 25 → 5.5 s; desktop
-~60 s), and the kernel's lighter debug level (54.8 s).
+~60 s), and the kernel's lighter debug level (54.8 s); later (10-23 to 10-29) pipelined writes, a 1 s retry of the
+remote disk's first request and the kernel's serial output sent from the UART's interrupt took it to ~46 s
+(2026-11-03).
 
 Test images work the same way. Build one with `scripts/mkimage-pi4.sh` — a test tree, a boot script
 that runs a test and prints to the serial console, kernel settings, a blocked driver
@@ -350,10 +353,7 @@ The Pi's clock comes from NTP once the network is up (the Pi has no battery cloc
 
 The image's WiFi driver (`broadcomfmac`, BCM43455 over SDIO) loads on a network boot as on an SD boot,
 while the boot volume comes over Ethernet. Joins on the regular image worked 3 of 3 times (2026-10-19,
-SD boots). Some of the network-boot stops described below happened inside or right before the WiFi driver's
-attach, and
-on 2026-10-20 a SuperTuxKart test image that stopped twice that way booted with the driver hidden. For
-test images that do not need WiFi you can hide it:
+SD boots). For test images that do not need WiFi you can hide the driver:
 
 ```sh
 scripts/mkimage-pi4.sh --out artifacts/images/haiku-pi4-test.img \
@@ -369,24 +369,26 @@ a temporary file and the git-ignored image.
 
 ## 10. Known issues
 
-- **The network-boot wedge.** **If the Pi has been off for more than a couple of minutes, its first network
-  boot may stop at ~52 s; power-cycle and it boots.** Measured: about 1 in 10 network boots of a Pi that was powered off for minutes, about 1 in 250 when it was on moments before; cold SD first boots 12 of 12 clean (2026-10-21). It strikes
-  while the network drivers load and the first-boot package processing reads the remote disk: the serial line
-  goes quiet, the remote disk's requests stop, the kernel debugger does not answer — the whole system stops.
-  Back-to-back boots (a development loop) almost never see it. `netboot-cycle.sh` types the kernel debugger's break and per-CPU stack dumps into any boot that
-  goes quiet for 20 s before app_server set its display mode (`--no-wedge-dump` turns it off), and records the
-  disk timeline. If you hit one: power-cycle and boot again.
+- **No known stop of network boots any more.** Until image-2026-11-02 about 1 in 10 network boots of a Pi that
+  had been off for minutes froze about 50 s in (serial line, HDMI and the remote disk all stopped). The cause was
+  the kernel's empty TTBR0 table, taken from memory it never cleared (haiku d1a616afac, fixed 2026-11-02, in
+  image-2026-11-02b and later; U-Boot patch 0005 also clears the EFI pages it hands out). Cold network boots
+  with U-Boot 0005: 3 of 3 (11-02); cold SD boots with the kernel fix: 10 of 10 (11-03). The hunt is in
+  [docs/log/WEEK-2026-W44.md](docs/log/WEEK-2026-W44.md) and [WEEK-2026-W45.md](docs/log/WEEK-2026-W45.md). `netboot-cycle.sh` still types the kernel
+  debugger's break and per-CPU stack dumps into any boot that goes quiet for 20 s before app_server set its
+  display mode (`--no-wedge-dump` turns it off), and records the disk timeline.
+- **The remote disk moves 1 KiB per request** (KNOWN-ISSUES F8): 16 requests in flight in the kernel, for reads
+  and writes (~70 MB/s written and synced), 8 in the loader. It is a block device, not an NFS root.
 - **Network boot timing on a busy host.** The remote disk is served by the host; under a heavy build
   (load ~15) boots were slower, and a test that checks the desktop at a fixed time reported "failures"
   that were slow boots. Time network boots on a quiet host.
-- **An SD-booted Pi probes for a remote disk server too** (the driver is in every image): with no
-  network yet, the probe fails at once (`Network is unreachable`). With a server running on the LAN, an
-  SD-booted Pi would also show the served disk — keep the server down while you test SD boots (the
-  scripts do).
 - **devfs reloads `remote_disk` on a network boot** from the boot volume, and the reloaded instance's
-  server search fails (`Network is unreachable`). Harmless so far.
+  server search fails (`Network is unreachable`). Harmless: the boot disk stays open, so its driver is never
+  replaced (checked 2026-10-30; KNOWN-ISSUES D1). An SD-booted system does not start the driver at all (since
+  image-2026-10-23c), so a server on the LAN does not show up there.
 - An **early-boot hang** (the serial line stops after `reserve_io_interrupt_vectors`) was seen once in
-  about 20 boots on 2026-10-20, on a network boot; the same image booted on the next try.
+  about 20 boots on 2026-10-20, on a network boot; the same image booted on the next try. Not recorded again in
+  the weekly logs since.
 - RAM does not survive a reset on the Pi 4 (tested 2026-10-20), so there is no post-mortem of a stopped
   boot: the serial console and the disk timeline are what you get.
 

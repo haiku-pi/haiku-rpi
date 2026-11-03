@@ -8,9 +8,9 @@ bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 everything of `image-2026-10-23d` plus a 3 s faster boot, faster memory/string functions, thread-local variables
 and file reads, two kernel panics fixed (C5, C8), and the onboard USB hub no longer dropping out in ~1 boot in 10
 (C9) — relevant for the keyboard and mouse checks below. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
-Ethernet cable; power on. The desktop comes up in about 70 s, most of it the bench Pi's firmware trying the
-network first. Wine: `pkgman install wine wine_x86 wine_x86_64 wine_mono` (wine 11.20-23, Wine Mono: .NET
-programs run, no Mono question).
+Ethernet cable; power on. The desktop comes up a little over a minute after power-on, most of it the bench Pi's
+firmware trying the network first (the release cards on 2026-11-03: U-Boot at ~58 s, the desktop ~6.5 s later). Wine: `pkgman install wine wine_x86 wine_x86_64 wine_mono` (wine 11.21-2, Wine
+Mono: .NET programs run, no Mono question).
 
 **When something is wrong**, the most useful things to send back are:
 - the system log: `/var/log/syslog` (Terminal: `cp /var/log/syslog ~/Desktop/` and copy it off on a USB
@@ -38,4 +38,6 @@ desktop use is fine, the system feels fast. Since then a card-booted Pi also get
 
 Known limits you may run into ([KNOWN-ISSUES.md](KNOWN-ISSUES.md)): HDMI audio only when the monitor is connected at boot; the first
 video played after Firefox starts drops frames (play it again); a full-screen Windows game switches the screen
-to its own resolution (the monitor shows it scaled, with black bars at the sides) until it ends; Bluetooth pairing is untested.
+to its own resolution (the monitor shows it scaled, with black bars at the sides) until it ends; Bluetooth devices
+(keyboards, mice, audio) are untested; after a screen-mode change while a video plays in MediaPlayer, the video stays
+black until it is restarted.

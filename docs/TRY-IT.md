@@ -2,13 +2,14 @@
 
 The **regular Haiku image** for the Pi 4: the full desktop with Haiku's applications, preferences and
 media kit, plus this port's drivers and the ported libraries. Everything below was measured on the
-bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-11-02).
+bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-11-04).
 
 **Download:** a ready-to-flash image is on the
 [releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-03c)
 (`haiku-pi4-2026-11-03c.img.xz`, 341 MB; 8 GB card or larger; written with
 `xz -dc haiku-pi4-2026-11-03c.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
-Imager's "Use custom"). It is this page's regular image, built 2026-10-29, booted from a card before publishing.
+Imager's "Use custom"). It is this page's regular image (4.4 GiB instead of 1.1 GB), built 2026-11-03 with GCC
+16.2, release-checked over a network boot and booted from a card before publishing.
 Wine (`pkgman install wine wine_x86 wine_x86_64`) needs this image or a newer one.
 
 This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md) (first time, step by step),
@@ -19,21 +20,21 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 
 | Area | State |
 |---|---|
-| Boot | SD card → U-Boot → Haiku loader → desktop: 5.4–5.7 s from the Haiku loader, about 70 s from power-on on the bench Pi, whose firmware tries the network first (first boot a little longer); or **from the network**, the boot volume served by the build host (below) |
+| Boot | SD card → U-Boot → Haiku loader → desktop: 5.4–5.6 s from the Haiku loader, 6.4–6.6 s from U-Boot (2026-11-03, four boots of the release cards); about 64 s from power-on on the bench Pi, whose firmware tries the network first (with the factory boot order that wait does not happen; not timed). 10 of 10 cold boots after 30 minutes off (11-03). Or **from the network**, the boot volume served by the build host (below) |
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences or from a fullscreen game (SDL), scaled to the monitor by the firmware; hardware cursor; 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1, and **Vulkan 1.3** (V3DV, presenting into Haiku windows; SDL2's Vulkan windows). GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
-| Games (OpenArena + SuperTuxKart: packages, `-sHAIKU_PI_GAMES=1`; the Quakes: test images) | Timedemos in a window (10-25, `tools/pi-tests/games-bench.sh`): QuakeSpasm demo1 **200 fps at 640×480, 80 at 1280×720, 41 at 1920×1080** (a played demo stays on QuakeSpasm's 72 fps cap). Yamagi Quake II, GL1 renderer: **206 / 102 / 53 fps** at 640×480 / 1280×720 / 1920×1080. **vkQuake** (Vulkan): 53 fps at 1280×720, 31 at 1920×1080. **OpenArena** (Quake III engine, ioquake3): **53 fps at 1280×720**, 27 at 1920×1080 full screen; the Quake III demo with bots ~88 fps at 1280×720. **SuperTuxKart 1.5**: 35–38 fps at 1280×720 (its OpenGL 2.1 renderer). Under Wine: Direct3D 9 (d3dtest) ~150 fps windowed, 141–149 full screen; Half-Life Uplink (software renderer) ~99 fps. A fullscreen game at 1280×720 switches the display mode (OpenArena: 46.8 fps, against 26 at 1920×1080) |
+| Games (OpenArena + SuperTuxKart: packages, `-sHAIKU_PI_GAMES=1`; the Quakes: test images) | Timedemos in a window (2026-11-03, `tools/pi-tests/games-bench.sh`, 3 boots, screen saver off): QuakeSpasm demo1 **202 fps at 640×480, 80 at 1280×720, 41 at 1920×1080** (a played demo stays on QuakeSpasm's 72 fps cap). Yamagi Quake II, GL1 renderer: **207 / 102 / 53 fps** at 640×480 / 1280×720 / 1920×1080. **vkQuake** (Vulkan): 55 fps at 1280×720, 33 at 1920×1080. **OpenArena** (Quake III engine, ioquake3): **53 fps at 1280×720**, 28 at 1920×1080 full screen; the Quake III demo with bots 89 fps at 1280×720. **SuperTuxKart 1.5**: 38 fps at 1280×720 in a race (35–41; its OpenGL 2.1 renderer). Under Wine: Direct3D 9 (d3dtest, 32-bit x86) 126 fps windowed, 143 full screen; Half-Life Uplink (software renderer) 91 fps in a window. Image-2026-11-03c's display planes change these by −3…+3 % (Quake II at 1080p +3 %; [design/gpu-stage6.md](design/gpu-stage6.md) §9). A fullscreen game at 1280×720 switches the display mode (OpenArena: 46.8 fps, against 26 at 1920×1080; 10-20) |
 | Audio | HDMI (from image-2026-10-24e: "Raspberry Pi HDMI", 48 kHz stereo, recorded back on the bench) and the 3.5 mm headphone jack ("Raspberry Pi headphones", 44.1 kHz stereo); measured, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ...; **HEVC decoded by the SoC's decoder block** (bit-exact; 1080p at ~115 fps on under half a core, 4K at ~38 fps), the rest in software |
 | CPU | 4 cores (SMP), 600–1500 MHz: the ARM clock follows the load (a cpufreq module; the minimum in the power saving scheduler mode), the core clock stays at 500 MHz; the firmware still throttles when hot. `cat /dev/power/bcm2835_thermal/0`: temperature, throttling, clocks. `time` and ProcessController tell user from kernel time |
 | Storage | SD card at UHS-I DDR50 (~43 MB/s reads); USB 3 storage through the VL805 (~80–90 MB/s) |
-| USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); the bench's Logitech K120 keyboard and Pixart mouse enumerate and get input devices (`/dev/input/keyboard/usb/0`, `/dev/input/mouse/usb/0`); typing and pointing still need a hands-on check |
+| USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); the bench's Logitech K120 keyboard and Pixart mouse: typing, pointing and everyday desktop use checked by hand (2026-10-25); keys and mouse in SDL games not yet |
 | Network | Gigabit Ethernet (GENET, DHCP; TCP ~915 Mbit/s each way); WiFi (BCM43455: scan, WPA2, DHCP, verified by a boot script that joins through net_server, `scripts/wifi-join-image.sh`; joining from Network preferences takes the same path but has not been tried by hand); NFSv4 client |
 | Web | **WebPositive** (HaikuWebKit 1.10, JavaScript JIT on) and NetSurf 3.11, both in the Applications menu: HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders in both |
-| Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); pairing devices is untested |
+| Bluetooth | The on-board controller (BCM43455) through Haiku's Bluetooth stack: patched at open, its address read, inquiries run. Start `bluetooth_server` (nothing starts it at boot, as on other Haiku systems); discovery and pairing by PIN from another computer work (10-23); Bluetooth keyboards, mice and audio are untested |
 | Other | SoC temperature/throttling (`/dev` thermal driver), GPIO driver, the hardware random number generator (feeds `/dev/random`) |
 | Photo editing | **Photocraft** 0.17.0 (`pkgman install photocraft`; Applications → PhotoCraft, or Tracker's Open with on an image): a Rust photo editor on Haiku's Wayland compatibility layer, GPU compositing through Vulkan (V3DV); Haiku's file panel, alerts and clipboard (text, images, files), dead keys and Compose. First start compiles its GPU programs in ~10 s (once; Mesa's shader cache keeps them). Shortcuts use the Command key, as in every Haiku app. Known: each start opens its own window; `.pcraft` documents have no Haiku file type yet |
-| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; Firefox's window in ~3 s once started before (7.7 s the first time after a boot); **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — frames drop only in the first seconds after the browser starts; `scripts/build-firefox.sh`) |
+| Software | **Python 3.14** in the image (ssl, sqlite3, ctypes, readline line editing, curses, ...), numpy in the package repository; **GCC 16.2** (C, C++, Fortran), make, CMake, Ninja and Meson on the Pi itself from the package repository (11-03; [USER-GUIDE.md](USER-GUIDE.md) §11.3); Rust 1.90 cross-compiles for it (`scripts/build-rust.sh`); llama2.c runs TinyStories models (46 tok/s on 4 cores); **Firefox 157** in the image (Applications menu; Firefox's window in 3.1 s once started before (2026-11-03), 10.2 s the first time after a network boot, 8.2 s after a card boot (10-25); **WebGL 1 and 2** on the GPU; plays H.264, VP8/VP9, AV1 and HEVC — HEVC on the decoder block — frames drop only in the first seconds after the browser starts; `scripts/build-firefox.sh`) |
 
 What still needs a person at the Pi (keyboard, mouse, audio by ear, a real monitor, WiFi from the preferences) is
 listed step by step in [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
@@ -75,7 +76,8 @@ install them on a running system: `pkgman install openarena supertuxkart` (their
 GitHub's 100 MiB file limit).
 
 Verified from scratch in a fresh clone on 2026-10-19, NetSurf included: about 28 minutes on a 16-thread
-host (bootstrap 16 of them, `build-packages.sh` 8). Since WebKit joined `build-packages.sh`, add about an
+host (bootstrap 16 of them, `build-packages.sh` 8), then with GCC 13.3 (the cross compiler is GCC 16.2 since
+2026-11-03; the from-scratch build has not been timed again). Since WebKit joined `build-packages.sh`, add about an
 hour (its compile; `scripts/build-webkit.sh` resumes where an interrupted build stopped). Expected noise while every step still exits 0: a GNU
 mirror's certificate error while fetching tar and libiconv (the fetch falls back to ftp.gnu.org), three
 `arm64/Jamfile: No such file` lines (hyperv, disasm, ltrace), and in the regular build `jpeglib.h`/`png.h`
@@ -90,7 +92,8 @@ sudo dd if=artifacts/images/haiku-pi4-regular.img of=/dev/sdX bs=4M conv=fsync s
 ```
 
 Put the card in the Pi, connect HDMI (and USB keyboard/mouse, Ethernet), power on. The rainbow
-screen, U-Boot and the Haiku boot log pass by; the desktop appears after about 75 s. A serial console
+screen, U-Boot and the Haiku boot log pass by; the desktop appears about 6.5 s after U-Boot starts (about 64 s
+after power-on on a Pi whose boot order tries the network first). A serial console
 (115200 8N1 on GPIO 14/15) shows the kernel log.
 
 ## Without a monitor: HDMI capture card + serial console
@@ -112,7 +115,7 @@ For fast iteration the Pi can boot an image straight from the build host: the Pi
 boot files and a netboot U-Boot by TFTP, U-Boot loads the Haiku loader, and the loader and kernel read
 the boot volume from the host as a remote disk (Haiku's `remote_disk`, served by
 `remote_disk_server`). A freshly built image boots a minute later, without touching the card; whatever
-Haiku writes goes to a copy of the image, made afresh each time. Desktop in about 90 s.
+Haiku writes goes to a copy of the image, made afresh each time. Desktop about 46 s after power-on (2026-11-03).
 
 ```sh
 scripts/build-uboot.sh                    # also builds artifacts/uboot/u-boot-netboot.bin

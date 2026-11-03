@@ -18,12 +18,14 @@ explains each build step in more depth, with all the options.
 
 - A Raspberry Pi 4 Model B (4 GB tested; see the note above).
 - A microSD card of **2 GB or more**. The regular image is about 1.1 GB, and about 1.8 GB with the games.
-  The partitions are as large as the image, so the rest of a bigger card stays unused for now.
+  The partitions are as large as the image, so the rest of a bigger card stays unused for now. (The ready-made
+  release images on the [releases page](https://github.com/haiku-pi/haiku-rpi/releases) are 4.4 GiB and need a
+  card of 8 GB or more.)
 - A USB-C power supply for the Pi 4 (the official 5 V / 3 A one or equivalent). A weak supply makes the
   firmware throttle the CPU.
 - A display on **micro-HDMI**: the port nearest the USB-C jack (HDMI 0). The second HDMI port is not used.
-- A **USB keyboard and mouse**. They are detected and get input devices, but this port's author (an AI agent)
-  has no hands: typing and pointing have not been checked by a person yet. Please report what you find.
+- A **USB keyboard and mouse**. Typing, pointing and everyday desktop use were checked by hand on 2026-10-25
+  (a Logitech K120 keyboard and a Pixart mouse); other models have not been tried.
 - **Ethernet** is recommended for `pkgman` and the browsers. WiFi works as well (section 6).
 - *Optional:* a USB-to-serial (3.3 V UART) adapter on the GPIO header, to watch the boot log: GND on pin 6,
   adapter RX on pin 8 (GPIO 14, Pi TX), adapter TX on pin 10 (GPIO 15, Pi RX), **115200 8N1**.
@@ -92,7 +94,7 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc   # the regular image
 The result is **`artifacts/images/haiku-pi4-regular.img`**, about 1.1 GB.
 
 How long it takes: from a fresh clone to the image, about 28 minutes on a 16-thread host, measured on
-2026-10-19. Since then WebKit has joined `build-packages.sh` and adds about an hour. If that step is interrupted,
+2026-10-19 (then with GCC 13.3; the cross compiler is GCC 16.2 since 2026-11-03, not timed again). Since then WebKit has joined `build-packages.sh` and adds about an hour. If that step is interrupted,
 run it again: `scripts/build-webkit.sh` resumes where it stopped.
 
 Some messages look like errors but are expected. If every step exits with status 0, you can ignore them:
@@ -153,8 +155,12 @@ system partition (BFS).
 2. Plug in the power. Things appear in this order:
    - the firmware's rainbow square, then U-Boot's text for a few seconds;
    - Haiku's boot splash, where the icons light up one by one as the kernel brings up its drivers;
-   - **the desktop, after about 80 seconds**: the Deskbar in the top-right corner and Tracker's desktop icons.
-     The first boot takes a little longer, because Haiku sets up its settings and grows its partition.
+   - **the desktop**: the Deskbar in the top-right corner and Tracker's desktop icons. From U-Boot to the desktop
+     takes about 6.5 seconds (2026-11-03). If your Pi's EEPROM boot order tries the network first (as on our
+     bench Pi), the firmware waits about a minute for an answer before it boots the card: there the desktop
+     appears about 64 seconds after power-on. With the factory boot order (SD card first) that wait does not
+     happen; we have not timed that path. On the first boot the package daemon processes the packages once;
+     on the bench that made no measurable difference.
 3. If a serial adapter is connected, the kernel log scrolls by at 115200 baud.
 
 Nothing on the screen? Then go to [section 8](#8-troubleshooting).
@@ -176,7 +182,7 @@ On the network:
 - **Ethernet** gets its address by DHCP automatically. The clock is set by NTP once the network is up, because
   the Pi has no battery-backed clock.
 - **WiFi:** open Preferences → Network, pick the wireless interface and join your network. The join path has been
-  verified by a script; doing it by hand has not been tried yet. From Terminal it is
+  verified by a script; doing it from the preferences by hand has not been tried yet. From Terminal it is
   `ifconfig /dev/net/broadcomfmac/0 join <SSID> <password>`. The [User Guide](docs/USER-GUIDE.md) has the details.
 
 ---
@@ -191,7 +197,7 @@ On the network:
 | Watch a video | **MediaPlayer**. HEVC (H.265) files are decoded by the SoC's hardware decoder |
 | Look at the hardware | About Haiku (leaf menu) shows the 4 Cortex-A72 cores and the RAM. In Terminal, `cat /dev/power/bcm2835_thermal/0` shows temperature and clocks, `listusb` the USB devices |
 | Install software | `pkgman install <package>`, e.g. `pkgman install sqlite_devel`, from our arm64 repository |
-| Program | `python3` (3.14, with readline line editing) |
+| Program | `python3` (3.14, with readline line editing); GCC 16.2, make, CMake and Meson from the package repository ([User Guide §11.3](docs/USER-GUIDE.md#113-developing-programs)) |
 
 ---
 

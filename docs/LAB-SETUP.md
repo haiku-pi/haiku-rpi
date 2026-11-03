@@ -23,7 +23,7 @@ Every number in [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md) and every rate in
 
 The Pi's EEPROM boot order tries the **network first**, then the SD card. So whatever answers DHCP on the Pi
 LAN decides how the Pi boots: with nothing answering, it boots its card (the network attempt costs time
-first: about 58 s on 2026-10-18).
+first: about 58 s on 2026-10-18, and again on 2026-11-03).
 
 ## Configuration: `local.conf`
 
@@ -82,8 +82,8 @@ The capture card delivers 1920×1080 YUYV (converted as BT.709 limited range); M
   and what a test drew. The screenshots in [screenshots/](screenshots/) are such frames.
 - **Live preview**: `scripts/pi-test.sh` opens a window from the card (ffplay, or mpv);
   `PREVIEW_FORMAT=mjpeg` forces MJPEG.
-- A capture card is not a monitor: dots seen in captures while a GL program runs (KNOWN-ISSUES G1) may be
-  the card's.
+- A capture card is not a monitor: dots seen in captures while a GL program runs may be the card's
+  (whether a real monitor shows them is check 6 of [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md)).
 
 ## Power
 
@@ -101,7 +101,7 @@ lane:
 |---|---|---|---|
 | **Flash lane** | `scripts/flashlane-server.sh`: DHCP/TFTP with a Raspberry Pi Linux kernel and a busybox initramfs (`scripts/flashlane-build.sh`, `tools/flashlane/init`), and an HTTP server (`FLASHLANE_PORT`, default 8099) | fetches `job.txt`, streams the image onto its SD card, reads the written bytes back and compares the SHA-256 (or, in read mode, streams part of the card back to the host); prints `HFL ` lines ending with `HFL end`; powers off | `scripts/sd-cycle.sh --flash IMG` / `--read-back FILE` |
 | **SD boot** | nothing | boots its card: firmware → U-Boot → Haiku loader → kernel | `scripts/sd-cycle.sh`, `scripts/boot-bench.sh` |
-| **Network boot** | `scripts/netboot-server.sh up IMG`: DHCP + TFTP for the firmware, a netboot U-Boot and the Haiku loader; `remote_disk_server` serves a fresh copy of IMG as the boot volume | boots Haiku from the host, writing nothing to its card; desktop in about 55–60 s | `scripts/netboot-cycle.sh`, `scripts/pi-test.sh --netboot IMG` |
+| **Network boot** | `scripts/netboot-server.sh up IMG`: DHCP + TFTP for the firmware, a netboot U-Boot and the Haiku loader; `remote_disk_server` serves a fresh copy of IMG as the boot volume | boots Haiku from the host, writing nothing to its card; desktop about 46 s after power-on (2026-11-03) | `scripts/netboot-cycle.sh`, `scripts/pi-test.sh --netboot IMG` |
 
 The flash lane takes about 14 s to write and 8 s to verify a 352 MB image (2026-10-18). The network boot
 needs no card writing at all, so an image built a minute ago boots at once; what Haiku writes goes to
@@ -139,7 +139,7 @@ about 120 s.
 | Script | What it does |
 |---|---|
 | `scripts/sd-cycle.sh [--flash IMG] [--no-boot] [--secs N] [--until RE]... [--fail RE]... [--send SECS:TEXT]... [--hdmi-every N]` | One SD cycle: optionally flash, then boot the card with no DHCP server answering, capture (default 120 s), power off, restore the peer. Exit: 0 ended on `--until` (or ran its full time without one), 1 flashing failed, 2 the UART stayed silent, 3 a `--fail` line, 4 the UART went quiet. `--read-back FILE [--read-mb N]` copies the card's first N MiB (default 400) instead of booting; `scripts/sd-syslog.sh` then prints Haiku's syslog from it |
-| `scripts/netboot-cycle.sh [--image IMG] [--secs N] [--no-wedge-dump]` | One network-boot cycle (default image: the regular image, 200 s). Logs the remote disk's request count every 5 s (`<ts>-<label>-disk.txt`: a boot whose serial line is quiet but whose disk reads go on is alive). If the line goes quiet for 20 s before the display driver reports "hardware cursor shown", it enters the debugger and types each CPU's stack crawl, `ici` and `ints` (the network-boot wedge dump) |
+| `scripts/netboot-cycle.sh [--image IMG] [--secs N] [--no-wedge-dump]` | One network-boot cycle (default image: the regular image, 200 s). Logs the remote disk's request count every 5 s (`<ts>-<label>-disk.txt`: a boot whose serial line is quiet but whose disk reads go on is alive). If the line goes quiet for 20 s before the display driver reports "hardware cursor shown", it enters the debugger and types each CPU's stack crawl, `ici` and `ints` (the dump for a boot that stopped; written for the cold-boot freeze, fixed 2026-11-02) |
 | `scripts/boot-bench.sh N [IMG]` | Boot reliability: N trials of flash, SD boot, 200 s capture, the debugger at 158 s with each CPU's stack, ICIs, threads and timers. A trial passes when app_server set its mode and the thread list has `w>Deskbar` and `w>Desktop`. Nothing is typed before 158 s (an earlier key would revive a frozen boot and hide it). `--grade LOG...` grades existing logs |
 | `scripts/pi-test.sh [--flash IMG \| --regular \| --netboot IMG] [--no-preview] [--no-power-off]` | The owner's interactive session: optionally write an image, boot (SD or network), show the serial console live in the terminal (logged), open the HDMI preview; closing the window powers the Pi off and restores the bench |
 | `scripts/netboot-server.sh up IMG \| down \| status` | The network boot's servers (dnsmasq, TFTP root from IMG's FAT partition, `remote_disk_server`) |

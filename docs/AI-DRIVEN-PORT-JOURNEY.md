@@ -4,7 +4,9 @@
 > port does now, see the [showcase](../SHOWCASE.md), [TRY-IT.md](TRY-IT.md) and the
 > [User Guide](USER-GUIDE.md). Every number below comes from the weekly logs
 > ([WEEK-2026-W42](log/WEEK-2026-W42.md), [WEEK-2026-W43](log/WEEK-2026-W43.md)), where each one is
-> recorded with the test that produced it.
+> recorded with the test that produced it. The boot-freeze section below was extended to the freeze's fix
+> (2026-11-02, [WEEK-2026-W44](log/WEEK-2026-W44.md), [WEEK-2026-W45](log/WEEK-2026-W45.md)), and the open
+> issues carry their state of 2026-11-04 in brackets.
 
 *About three days. 216 coordination-repository commits; 113 commits on the Haiku fork's `rpi4`
 branch on top of upstream (112 of ours by the evening of 10-20, 114 on 10-21, plus one upstream merge; 156 files, about 33 000 lines added);
@@ -230,7 +232,7 @@ accessed and writable from the start. At level 1: **upload 600 → 914 Mbit/s, d
 (gigabit's TCP payload ceiling is about 940), with an SD boot bench, a 15-minute application soak and
 15 network boots as the check.
 
-### The network-boot wedge, then the hot-boot freeze (open)
+### The network-boot wedge, then the hot-boot freeze (fixed 2026-11-02)
 
 About one network boot in 18 to 45 stopped about 54 s in, while network drivers loaded and the first
 boot's package processing read the remote disk. The serial line went quiet, HDMI froze, the kernel
@@ -282,6 +284,15 @@ That closed only the heat-plus-short-pause form. The same afternoon, network boo
 enough to cool to room temperature froze about 1 in 3 during heavy remote-disk reads, `usb start` or not — and the
 heartbeat showed every CPU idle when the SoC stopped, so the next suspects are DMA masters and the firmware, not code a
 CPU was running. Open. The reproducer is `scripts/c1-heat-hunt.sh [--sd]`.
+
+- **The cause, two weeks in** (11-01/02). A U-Boot that fills RAM with random data before booting made the
+  freeze happen warm, 3 of 3, and a bisect over which pages were left random narrowed it to one page on each
+  path. Both were the kernel's empty TTBR0 table — installed for every kernel-only thread, taken from an early
+  page allocator that does not clear, so the CPU walked whatever the RAM held: after a long power-off, garbage.
+  Upstream regression 593f25d6f1e. The fix, haiku d1a616afac, clears it (in image-2026-11-02b and later); a
+  loader fix and two U-Boot patches stay as hardening. Confirmed 2026-11-03: 10 of 10 boots from the card after
+  30 minutes off each, where up to 2 in 3 had frozen ([HAIKU-RPI4-CHANGES.md](HAIKU-RPI4-CHANGES.md), the
+  "Fixed (d1a616afac)" note).
 
 ## Techniques that mattered
 
@@ -374,18 +385,29 @@ Each was caught by the agent's own later measurement and corrected in the log in
 
 ## Open issues
 
-- The network-boot wedge (above); SD boots are not affected.
-- An early-boot hang, seen once in about 30 boots on 10-20, not reproduced since.
-- Firefox drops frames on H.264 video (121–271 of 300 in tests; VP9 and AV1 about 4 %); decoding keeps
-  up, presentation does not (no GPU compositor in Firefox on Haiku).
-- Audio, keyboard, mouse and Bluetooth pairing are not checked by a person.
-- No hardware H.264 decoding (on the BCM2711 it is VideoCore firmware only) and no HDMI audio.
-- About one ioquake3 run in four needs SIGKILL after SIGTERM; under heavy load the audio time source
-  once published nothing for 16 s.
-- GPU plane flips and asynchronous queues are deferred. Native haikuporter builds on Haiku arm64 have
-  produced one test port so far; the published packages are cross-built on the host.
+As they stood on 2026-10-21; the state on 2026-11-04 in brackets. The current register is
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
-Next on the plan: Windows programs through Wine with x86 translation ([PLAN.md](PLAN.md), H15).
+- The network-boot wedge (above); SD boots are not affected. [Fixed 2026-11-02 (d1a616afac); SD boots turned out
+  to be affected too.]
+- An early-boot hang, seen once in about 30 boots on 10-20, not reproduced since. [Not recorded again.]
+- Firefox drops frames on H.264 video (121–271 of 300 in tests; VP9 and AV1 about 4 %); decoding keeps
+  up, presentation does not (no GPU compositor in Firefox on Haiku). [Mostly a cold start: the first video
+  after Firefox starts; played again from the SD card, 0 of 300 dropped (KNOWN-ISSUES G2).]
+- Audio, keyboard, mouse and Bluetooth pairing are not checked by a person. [Keyboard and mouse checked by
+  the owner 2026-10-25; pairing by PIN works (10-23); audio by ear still open.]
+- No hardware H.264 decoding (on the BCM2711 it is VideoCore firmware only) and no HDMI audio. [HDMI audio
+  from image-2026-10-24e; H.264 through VCHIQ planned last (PLAN H21).]
+- About one ioquake3 run in four needs SIGKILL after SIGTERM; under heavy load the audio time source
+  once published nothing for 16 s. [About 1 in 10 from openarena 0.8.8-3; the time source stall not seen
+  again (KNOWN-ISSUES C4).]
+- GPU plane flips and asynchronous queues are deferred. Native haikuporter builds on Haiku arm64 have
+  produced one test port so far; the published packages are cross-built on the host. [Asynchronous queues
+  from image-2026-11-03b, plane flips from image-2026-11-03c; GCC 16.2 runs on the Pi and builds numpy, the
+  published packages are still cross-built.]
+
+Next on the plan: Windows programs through Wine with x86 translation ([PLAN.md](PLAN.md), H15). [Done: Wine
+11.21 with Box64 and FEX, published.]
 
 ## Takeaways
 
@@ -403,6 +425,6 @@ Next on the plan: Windows programs through Wine with x86 translation ([PLAN.md](
 - **Generic bugs surface on new hardware.** Much of the work was in upstream Haiku code that had
   only run on QEMU: EL2 handling, the GIC, SDHCI, the FDT bus, the toolchain, `ASSERT()` side effects,
   time accounting, kernel stacks. A real board and a lowered debug level found them.
-- **One prompt is enough to start; a person is still needed to finish.** The owner's 27 prompts (in six days) set
-  direction. What remains open is what only a person can check — a keyboard, a speaker, a monitor —
+- **One prompt is enough to start; a person is still needed to finish.** The owner's 27 prompts in the first
+  six days (54 by 2026-11-01) set direction. What remains open is what only a person can check — a keyboard, a speaker, a monitor —
   and decisions that are theirs to make.

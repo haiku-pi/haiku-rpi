@@ -17,8 +17,9 @@ USB 3, audio over HDMI and on the headphone jack, and hardware HEVC decoding. Th
 pictures are in [SHOWCASE.md](SHOWCASE.md) and [docs/screenshots/](docs/screenshots/).*
 
 The port was done by an AI coding agent (Claude) working autonomously. The owner's first prompt went out on the
-evening of 2026-10-17. The Haiku desktop ran on the real Pi 2.5 hours later. Up to the date of this page the owner
-has written 54 prompts in all, and they are listed in [docs/OWNER-PROMPTS.md](docs/OWNER-PROMPTS.md). How the
+evening of 2026-10-17. The Haiku desktop ran on the real Pi 2.5 hours later. 32 SD card release images were published
+from 2026-10-22 to image-2026-11-03c (2026-11-03). Up to 2026-11-01 the owner had
+written 54 prompts in all, and they are listed in [docs/OWNER-PROMPTS.md](docs/OWNER-PROMPTS.md). How the
 work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNEY.md).
 
 ---
@@ -47,7 +48,10 @@ sudo dd if=artifacts/images/haiku-pi4-regular.img of=/dev/sdX bs=4M conv=fsync s
 
 Before `bootstrap.sh`, install the host packages and build Haiku's `jam`, as described in [docs/BUILD.md](docs/BUILD.md).
 Check `/dev/sdX` before you run `dd`, because it overwrites the whole device. Then put the card in the Pi, connect
-HDMI, a USB keyboard and mouse and Ethernet, and power on. The desktop appears after about 75 seconds.
+HDMI, a USB keyboard and mouse and Ethernet, and power on. Haiku's part of the boot, from U-Boot to the desktop,
+takes about 6.5 seconds; on our bench Pi, whose firmware tries the network first, the desktop is up about 64 seconds
+after power-on (2026-11-03). With the factory boot order (SD card first) that network wait does not happen; we have
+not timed that path.
 
 - **First time?** Follow [TUTORIAL.md](TUTORIAL.md). It walks through the whole path: hardware, build, flashing,
   first boot and what to try.
@@ -60,16 +64,16 @@ HDMI, a USB keyboard and mouse and Ethernet, and power on. The desktop appears a
 
 ## What works
 
-These numbers were measured on the bench Pi (4 GB) between 2026-10-18 and 2026-10-21. The full table, with drivers
-and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
+These numbers were measured on the bench Pi (4 GB) between 2026-10-18 and 2026-11-03; each row of the full table,
+[docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md), gives its date, the driver and the limits.
 
 | Area | State |
 |---|---|
-| Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop in about 75 s. Over the network (the boot volume served by the build host): about 55 s |
+| Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop: U-Boot to desktop 6.4–6.6 s (2026-11-03); on the bench Pi, whose firmware tries the network first, ~64 s from power-on. Over the network (the boot volume served by the build host): ~46 s from power-on. 10 of 10 cold boots after 30 minutes off |
 | CPU | 4 × Cortex-A72 (SMP). The clock follows the load from 600 to 1500 MHz. Temperature, throttling and clocks are in `/dev/power/bcm2835_thermal/0` |
 | Display | HDMI at the monitor's native mode (1920×1080 on the bench), with lower modes scaled by the firmware. Hardware cursor and 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows; the GPU's binning, rendering, texture and compute queues run concurrently (from image-2026-11-03b); full-screen GL and MediaPlayer's video are shown on display planes, flipped without tearing (from image-2026-11-03c) |
-| Games | QuakeSpasm 56–70 fps at 1280×720 · Yamagi Quake II 81–89 fps · vkQuake (Vulkan) 52 fps · OpenArena 46 fps · SuperTuxKart 1.5 28–38 fps |
+| Games | Timedemos in a 1280×720 window (2026-11-03): QuakeSpasm 80 fps · Yamagi Quake II 102 fps · vkQuake (Vulkan) 55 fps · OpenArena 53 fps · SuperTuxKart 1.5 about 38 fps in a race |
 | Video | ffmpeg 6.1 codecs in the media kit. **HEVC is decoded by the SoC's decoder block**: 1080p at about 115 fps (bit-exact), 4K at about 38 fps |
 | Audio | HDMI (48 kHz stereo, from image-2026-10-24e) and the 3.5 mm headphone jack (44.1 kHz stereo), through the media kit |
 | Storage | SD card at UHS-I DDR50 (about 43 MB/s read); USB 3 storage through the VL805 (80–90 MB/s) |
@@ -81,7 +85,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 
 Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a
 monitor connected at boot, and video in Firefox drops frames for the first seconds after the browser starts. The USB keyboard and mouse and everyday desktop use
-were checked by hand on 2026-10-25 (image-2026-10-28): they work, and the system feels fast. Firefox and the games are in the public package repository (`pkgman install firefox`,
+were checked by hand on 2026-10-25 (image-2026-10-25e): they work, and the system feels fast. Firefox and the games are in the public package repository (`pkgman install firefox`,
 `pkgman install openarena`, `pkgman install supertuxkart`), and so is **Photocraft**, a photo editor written in Rust
 (`pkgman install photocraft`: Haiku's file dialogs and clipboard, GPU compositing on Vulkan).
 To try everything at once, build the test image: [docs/MEGA-IMAGE.md](docs/MEGA-IMAGE.md).

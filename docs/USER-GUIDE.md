@@ -42,7 +42,7 @@ desktop, built in: the **Deskbar** (the panel with the menu and the list of runn
 | Item | Notes |
 |---|---|
 | **Raspberry Pi 4 Model B** | Only a **4 GB** board (rev 1.1) has been used. The 1 GB, 2 GB and 8 GB boards are untested. |
-| **microSD card** | The regular image is about 1.1 GB, the image with the games about 1.8 GB. A UHS-I card gives the full speed (§10.2): the driver switches it to 1.8 V signalling (DDR50). A card without UHS-I runs in the older high-speed mode (19 MB/s reads were measured in that mode on 2026-10-18, before later driver speed-ups). |
+| **microSD card** | The release images are 4.4 GiB: a card of 8 GB or more. A self-built regular image is about 1.1 GB, the image with the games about 1.8 GB. A UHS-I card gives the full speed (§10.2): the driver switches it to 1.8 V signalling (DDR50). A card without UHS-I runs in the older high-speed mode (19 MB/s reads were measured in that mode on 2026-10-18, before later driver speed-ups). |
 | **Power supply** | A USB-C supply adequate for the Pi 4. If it is not, the temperature device reports `under-voltage` (§12). |
 | **HDMI monitor** | One monitor on one micro-HDMI port. The bench uses a 1920×1080 monitor; the desktop runs at the monitor's native mode, read from its EDID. Other native resolutions and two monitors are untested. |
 | **USB keyboard and mouse** | On the bench a Logitech K120 keyboard and a Pixart optical mouse **enumerate** and get their input devices (2026-10-20); typing and pointing by hand on the desktop were checked on 2026-10-25 and work. |
@@ -65,34 +65,41 @@ cable, then power on.
 | first | the firmware's rainbow screen | the firmware's messages |
 | then | U-Boot's text, briefly | U-Boot's log; it starts the Haiku loader (`EFI/BOOT/BOOTAA64.EFI`) |
 | next | the Haiku boot splash; its icons light up one by one as the boot advances | the loader's log, then the kernel log: CPUs, drivers, the boot volume (`Mounted boot partition: /dev/disk/mmc/0/1`) |
-| ~75 s | the desktop: Deskbar at the top right, the Tracker's desktop icons | `bcm2711_display: hardware cursor shown` and the servers' messages |
+| ~6.5 s after U-Boot | the desktop: Deskbar at the top right, the Tracker's desktop icons | `bcm2711_display: hardware cursor shown` and the servers' messages |
 
 The boot chain is: the Pi firmware (`start4.elf`, `config.txt` on the card's FAT partition) →
 U-Boot (it provides UEFI and the device tree) → `haiku_loader.efi` → the Haiku kernel and its modules
 from the card's BFS partition. BFS is Haiku's file system.
 
-**Timings** (bench Pi, SD card): the desktop appears **about 75 s** after power-on (72.7 s, 2026-10-23); of that,
-U-Boot to the desktop is ~15 s, and most of the rest is the Pi's firmware trying the network first (below).
-The **first boot** of a freshly written card takes a little longer: the package daemon processes the
-packages once. There is no language prompt: the image ships English locale settings, so the first
-boot goes straight to the desktop.
+**Timings** (bench Pi, SD card, the image-2026-11-03b and -03c release cards, four boots, 2026-11-03): U-Boot
+to the desktop **6.4–6.6 s**, of which the Haiku loader to the desktop 5.4–5.6 s. The bench Pi's firmware tries
+the network first (below), so U-Boot starts ~58 s after power-on and the desktop appears **about 64 s** after
+power-on. With the factory boot order (SD card first) that wait does not happen; we have not timed that path.
+On the **first boot** of a freshly written card the package daemon processes the packages once; in these four
+boots it made no measurable difference (first boots 6.46 and 6.63 s, later boots 6.43 s). There is no language
+prompt: the image ships English locale settings, so the first boot goes straight to the desktop.
 
 **Boot order.** If the Pi's EEPROM boot order tries the network before the SD card and nothing
 answers on the network, the firmware waits about a minute before it boots the card (seen on the bench
 on 2026-10-18). With the factory boot order this does not apply.
 
 **Reliability.** The SD boot bench of the regular image reached the desktop in 10 out of 10 boots
-(2026-10-19) and in every 3- and 5-boot bench of later builds through 2026-10-21.
+(2026-10-19) and in every 3- and 5-boot bench of later builds through 2026-10-21. Boots of a Pi that had been
+off for a while could freeze in their first minutes until image-2026-11-02b (§14); image-2026-11-03 booted 10 of
+10 times from the card after 30 minutes off each (2026-11-03).
 
 ### 2.3 Booting from the network instead
 
 For development, the Pi can also boot an image straight from a Linux build host, with no SD card
 writing: the firmware loads its files and U-Boot by TFTP, and the Haiku loader and kernel read the
-boot volume from the host as a remote disk. The desktop then appears after **~55–60 s** (2026-10-20/21);
-from image-2026-10-23c on, the remote disk also writes at ~70 MB/s (it wrote ~3 MB/s), faster than the SD card.
+boot volume from the host as a remote disk. The desktop then appears **about 46 s** after power-on (two release
+checks, 2026-11-03; U-Boot to the desktop 16.3 and 17.3 s); from image-2026-10-23c on, the remote disk also
+writes at ~70 MB/s (it wrote ~3 MB/s), faster than the SD card.
 This needs the host-side scripts; see [TRY-IT.md](TRY-IT.md#boot-from-the-network-no-sd-card-writing)
 and [design/netboot.md](design/netboot.md). It is not an NFS root: Haiku boots from a block
-device. Network boots have a known rare stop (§14).
+device, 1 KiB per request (KNOWN-ISSUES F8). On a network boot devfs loads `remote_disk` a second time and that
+instance's server search fails in the log (`Network is unreachable`): harmless (KNOWN-ISSUES D1). The freeze that
+stopped about 1 in 10 network boots of a Pi that had been off for minutes is fixed from image-2026-11-02b (§14).
 
 ## 3. Which image has what
 
@@ -199,9 +206,12 @@ writes it straight into the window's memory (2026-10-19).
 | A 256×256 GL window, 5 minutes on end | 485.6 frames/s, 0 GPU resets | 2026-10-18 |
 | An OpenGL ES 3.1 triangle in a 256×256 window | ~1500 frames/s | 2026-10-20 |
 | A Vulkan cube (`vkcube`, test tool), 640×480 / 1600×900, FIFO | 403 / 111 frames/s | 2026-10-20 |
+| glmark2-es2, 800×600 window / 1920×1080 full screen | score 330–337 / 88–90 | 2026-11-02 |
+| A full-screen GL test flipped on a display plane (image-2026-11-03c), vsync on / off | 60.00 frames/s, 0 missed flips in 1200 frames / 131.6 frames/s | 2026-11-03 |
 
-The direct write presents about 100 megapixels per second at every window size. The games are
-in §6.
+The direct write presents about 100 megapixels per second at every window size. Since image-2026-11-03b the
+GPU's binning, render, texture and compute queues run concurrently (`queues serial` in the v3d driver settings
+turns it off). The games are in §6.
 
 ### 5.3 Seeing a program's frame rate
 
@@ -239,19 +249,27 @@ files, which is why they are not packaged.
 
 ### 6.2 Measured frame rates
 
+The games bench (`tools/pi-tests/games-bench.sh`) of 2026-11-03: timedemos in a window, three boots, the
+screen saver off, the GCC 16.2 build before display planes; image-2026-11-03c's planes change these by −3…+3 %
+(Quake II at 1920×1080 +3 %; [design/gpu-stage6.md](design/gpu-stage6.md) §9).
+
 | Game | Setting | Frames/s | Date |
 |---|---|---|---|
-| QuakeSpasm, demo1 | 640×480 window | 66–72 | 2026-10-19 |
-| | 1280×720 window | 56–70 | 2026-10-19 |
-| | 1920×1080 | 30–43 (GPU-bound) | 2026-10-19 |
-| Yamagi Quake II, GL1, attract demo | 640×480 window | 135–171 | 2026-10-19 |
-| | 1280×720 window | 81–89 | 2026-10-19 |
-| vkQuake, timedemo demo1 | 1280×720 window | 52.2 | 2026-10-20 |
-| OpenArena, timedemo `demo088-test1` | 1280×720 window | 46.1 | 2026-10-20 |
-| | 1280×720 **full screen** (display mode switched) | 46.8 | 2026-10-20 |
-| | 1920×1080 full screen / borderless | 22–29 | 2026-10-20 |
-| SuperTuxKart (legacy GL 2.1), 4-kart race on Hacienda | 1280×720 window | 28–38 | 2026-10-20 |
-| SuperTuxKart-GLES (shaders: lighting, sky), same race | 1280×720 window | 16–18 | 2026-10-20 |
+| QuakeSpasm, timedemo demo1 | 640×480 / 1280×720 / 1920×1080 window | 202.5 / 80.3 / 41.0 | 2026-11-03 |
+| Yamagi Quake II, GL1, timedemo | 640×480 / 1280×720 / 1920×1080 window | 206.8 / 102.3 / 53.1 | 2026-11-03 |
+| vkQuake, timedemo demo1 | 1280×720 / 1920×1080 window | 54.9 / 33.1 | 2026-11-03 |
+| Quake III Arena, its demo with bots | 1280×720 window | 89.0 | 2026-11-03 |
+| OpenArena, timedemo `demo088-test1` | 1280×720 window / 1920×1080 full screen | 53.3 / 28.1 | 2026-11-03 |
+| SuperTuxKart (legacy GL 2.1), a 60 s race | 1280×720 window | 37.6 (35.1–41.2) | 2026-11-03 |
+| Under Wine: Half-Life Uplink (software renderer) | window | 90.7 | 2026-11-03 |
+
+Older measurements of things the bench does not repeat:
+
+| Game | Setting | Frames/s | Date |
+|---|---|---|---|
+| QuakeSpasm, demo1 played (not a timedemo: capped at 72) | 1280×720 window | 56–70 | 2026-10-19 |
+| OpenArena, timedemo `demo088-test1` | 1280×720 **full screen** (display mode switched) | 46.8 | 2026-10-20 |
+| SuperTuxKart-GLES (shaders: lighting, sky), 4-kart race on Hacienda | 1280×720 window | 16–18 | 2026-10-20 |
 | SuperTuxKart `--benchmark` (Black Forest, the heaviest track) | 1280×720 window, legacy | typical 5 | 2026-10-20 |
 
 The rates come from the games' timedemos or from Mesa's presented-frame counter (§5.3). At
@@ -374,8 +392,10 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
 - **H.264 is decoded on the CPU.** On the Pi 4 the H.264 hardware sits behind the VideoCore
   firmware, which this port does not drive. The CPU is fast enough for files: FFmpeg decodes 300
   frames of 1080p H.264 in 2.9 s on four threads, several times real time (2026-10-20).
-- MediaPlayer converts every decoded frame to RGB on the CPU before showing it; showing the
-  decoder's output directly is future work.
+- MediaPlayer converts every decoded frame to RGB on the CPU before showing it (the ffmpeg plugin delivers
+  B_RGB32). From image-2026-11-03c the RGB frames are shown on a display plane (scaled by the display hardware,
+  no copy by app_server); YCbCr frames and showing the decoder's output without a copy are future work
+  ([design/gpu-stage6.md](design/gpu-stage6.md) §4–5).
 
 ### 7.3 Audio: HDMI and the 3.5 mm jack
 
@@ -423,6 +443,8 @@ this project) is in the regular image: **Applications → Firefox**, or `/boot/s
 | First start (it creates the profile and the font cache) | 16 s |
 | Later starts showing a local page | 5.9–6.3 s, mostly Firefox's own start |
 | Later starts showing https://www.haiku-os.org/ | 8.1–9.6 s |
+| Its window, image-2026-11-03b/c release checks (2026-11-03): first start after a network boot / later starts | 10.2 s / 3.1 s |
+| Its window, first start after a boot from the card (2026-10-25) | 8.2 s |
 | WebGL | **WebGL 1 and WebGL 2**, renderer "Broadcom", on an OpenGL ES 3.1 context |
 | Video it says it can play (`canPlayType`) | "probably": H.264, HEVC, VP8, VP9, AV1 (MP4/WebM), Vorbis, Opus; "maybe": MP3; no Theora |
 
@@ -547,8 +569,8 @@ df /nfs
 Verified on 2026-10-18: the listing and `df`'s sizes are correct. Two cosmetic "NFS Error" lines
 are printed, and `df`'s device field shows garbage characters. Speed over NFS has not been measured.
 
-There is no SSH server or client in the image yet (openssh is not built for arm64). To copy files to
-the Pi, use NFS, `curl` from a web server, or a USB stick (§10.1).
+There is no SSH server or client in the image; `pkgman install openssh` adds both (§11.1). To copy files to
+the Pi, use `scp`, NFS, `curl` from a web server, or a USB stick (§10.1).
 
 ## 10. USB, storage and other hardware
 
@@ -559,7 +581,8 @@ hubs, keyboards, mice and storage. `listusb` lists the devices.
 
 - Keyboard and mouse: they get `/dev/input/keyboard/usb/0` and `/dev/input/mouse/usb/0` (2026-10-20).
   The serial log line "no handlers" for the keyboard is its second, multimedia-keys interface, and
-  is harmless. **Typing and pointing are untested by hand.**
+  is harmless. Typing, pointing and everyday desktop use were checked by hand on 2026-10-25 (the bench's
+  Logitech K120 and Pixart mouse).
 - USB storage: a stick appears as `/dev/disk/usb/0/0/raw`. Raw reads from a USB 3 stick ran at
   **78–90 MB/s** (2026-10-18/19).
 - Mounting a stick's file system (FAT, BFS, ...) uses Haiku's ordinary mounting, but it has not been
@@ -569,11 +592,13 @@ hubs, keyboards, mice and storage. `listusb` lists the devices.
 
 The SD card runs at UHS-I DDR50 (1.8 V signalling, 50 MHz) with one DMA command per transfer:
 
-| Measurement (2026-10-20) | Speed |
-|---|---|
-| Raw sequential reads | **42.6 MB/s** (the bus limit is 50) |
-| Reading a large package through the file cache | 44 MB/s |
-| Writes | 29–36 MB/s |
+| Measurement | Speed | Date |
+|---|---|---|
+| Raw sequential reads | **42.6 MB/s** (the bus limit is 50) | 2026-10-20 |
+| Reading a large package through the file cache | 44 MB/s | 2026-10-20 |
+| Writes in 64 MiB samples | 29–36 MB/s | 2026-10-20 |
+| 128 MB written and synced | 19–22 MB/s | 2026-10-25 |
+| Sustained writes on the bench card | 6–8 MB/s (likely the card, much rewritten by the bench) | 2026-10-23 |
 
 Higher modes (SDR104) are out of reach: the controller's base clock is 100 MHz. A 20-minute soak with
 22 write-and-verify passes of 64 MiB had 0 errors (2026-10-19).
@@ -618,7 +643,8 @@ pkgman install sqlite_devel
 
 Both repositories and `pkgman install sqlite_devel` over HTTPS worked on the Pi on 2026-10-20.
 
-**What our repository has** (113 packages on 2026-10-21): Firefox 157; the games OpenArena and
+**What our repository has** (154 packages on 2026-11-03): Wine with x86 and x86-64 translation (§11.5); GCC
+16.2 and the build tools (§11.3); numpy; Photocraft; Firefox 157; the games OpenArena and
 SuperTuxKart (their data in parts); Mesa and GLU; SDL2; ffmpeg 6.1 with the HEVC hardware decoder;
 HaikuWebKit and the libraries it needs (brotli, dav1d, lcms, libavif, libwebp, libxml2, libxslt, sqlite,
 woff2, ...); NetSurf; OpenSSL 3 and curl; ICU 74; Python 3.14 with libedit and ncurses; zstd;
@@ -645,7 +671,8 @@ python3.14
 - The interactive prompt has line editing and history (`readline`, on libedit), and `curses` works
   (ncurses 6.6, 256 colours in Terminal) (2026-10-20).
 - Checked on the Pi (2026-10-20): `ssl` (OpenSSL 3.5.9), `sqlite3`, `ctypes`, `zlib`/`bz2`/`lzma`/
-  `zstd`, `decimal`, `json`, sockets, `subprocess`, threads. `sum(range(10**7))` takes 1.3 s.
+  `zstd`, `decimal`, `json`, sockets, `subprocess`, threads. `sum(range(10**7))` takes 0.81 s on the GCC 16.2
+  build (2026-11-02; 1.3 s on 2026-10-20).
 - **pip and numpy** are in the package repository: `pkgman install pip_python3.14 numpy_python3.14` (numpy 2.5.4;
   2.5.4-2 needs image-2026-11-03 or later). numpy's fast test suite passes on the Pi (the f2py and run-time compile
   tests need the native compiler below). With the compiler (11.3) numpy also builds on the Pi itself, from its
@@ -732,8 +759,8 @@ refuses to install it on an older image). x86-64 programs also need the next ker
 the CPU's feature registers readable by programs, which FEX reads). Build a new image
 ([TRY-IT.md](TRY-IT.md#build-the-image)).
 
-The packages were built on 2026-10-23 (`scripts/build-wine.sh`) and are in our repository with the Wayland
-packages they need. Without `wine_mono` the first start asks to install Wine Mono (.NET); Cancel is fine
+The packages (wine 11.21-2) were built on 2026-11-02 (`scripts/build-wine.sh`) and are in our repository with
+the Wayland packages they need. Without `wine_mono` the first start asks to install Wine Mono (.NET); Cancel is fine
 for most programs.
 
 Run a program from Terminal:
@@ -772,10 +799,11 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (2026-10-29, wine 11.20-23):
+**Known limits** (written 2026-10-29 for wine 11.20-23; the open items of wine 11.21-2 are in KNOWN-ISSUES §5):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
   Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
-  second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike; 2D games (Heroes III, StarCraft, SimCity 3000)
+  second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike (126 for 32-bit x86 on 2026-11-03, with the
+  screen saver off); 2D games (Heroes III, StarCraft, SimCity 3000)
   and Half-Life (from wine 11.20-11 also full screen) play; 8-bit (256-colour) DirectDraw games such as
   StarCraft draw on OpenGL from 11.20-12. wined3d's software renderer is there too
   (`WINE_D3D_CONFIG=renderer=gdi` in the environment): DirectDraw only, no Direct3D.
@@ -818,7 +846,7 @@ It prints, from the VideoCore firmware:
 
 Temperatures on the bench Pi: 50–52 °C idle (2026-10-18), up to 64 °C under Quake (2026-10-19), a
 72–74 °C plateau in a 20-minute soak of Quake, SD writes and network traffic, **never throttled**
-(2026-10-19).
+(2026-10-19); 58–73 °C after the games bench's runs, never throttled (2026-11-03).
 
 ### 12.2 The clock follows the load
 
@@ -830,6 +858,10 @@ still throttles on its own if the chip gets too hot.
 
 - Starting work from an idle clock costs little: a 0.7 s burst took 0.73 s from idle against 0.68 s
   with the clock already up (2026-10-20).
+- Up to image-2026-11-03c the driver looked only at the busiest core: a chain of short programs (a shell
+  script, a build) spreads over the four cores at about a quarter each, and the clock stayed at 750–1200 MHz
+  (fork+exec 6.6–8.0 ms instead of 4.7 once the first ~2 minutes after power-on are over). Fixed after that
+  release (KNOWN-ISSUES F10).
 - **ProcessController**'s menu has **Power saving** (and the default, low latency): power saving
   keeps the ARM at its minimum.
 - Why this matters: without a driver asking, the firmware drops the ARM to 600 MHz and the core to
@@ -882,13 +914,13 @@ work that way, which also lets you run things on a Pi without a keyboard.
 
 | Symptom | What it is / what to do |
 |---|---|
-| Nothing on the monitor | Wait: the desktop takes ~80 s. Connect the monitor before power-on (the display mode comes from its EDID, read at boot; plugging a monitor in later is untested). Try the other micro-HDMI port: only one has been used on the bench. Check the serial console. |
+| Nothing on the monitor | Wait: the desktop comes ~6.5 s after U-Boot starts, about 64 s after power-on when the Pi's boot order tries the network first. Connect the monitor before power-on (the display mode comes from its EDID, read at boot; plugging a monitor in later is untested). Try the other micro-HDMI port: only one has been used on the bench. Check the serial console. |
 | The Pi waits about a minute before booting the card | Its EEPROM boot order tries the network first and nothing answers. Harmless; change `BOOT_ORDER` in the EEPROM if it bothers you. |
 | The Pi freezes in its first minutes — screen, serial output and network all stop, after it was off for a while | Images before image-2026-11-02b: the kernel used a page of memory it had not cleared as a translation table ([HAIKU-RPI4-CHANGES.md](HAIKU-RPI4-CHANGES.md)); image-2026-11-02 still froze this way on a network boot. Power-cycle: the next boot works. Fixed from image-2026-11-02b on. |
 | HTTPS pages fail with "certificate not yet valid" | The clock is wrong (1970 on a first boot, or behind by the time the Pi was off): the network was not up for the boot-time NTP sync. `/boot/system/preferences/Time --update`, then reload (§8.1). |
 | `pkgman` fails with "Server not found" | Only images built before 2026-10-20 pointed their HaikuPorts repository at a server with no arm64 packages. Drop it and add ours: `pkgman drop-repo HaikuPorts`, then `pkgman add-repo https://haiku-pi.github.io/packages/arm64`. |
 | A package copied by hand into `/boot/system/packages` fails to activate ("failed to init package") | The package daemon saw a half-copied file. Copy it elsewhere on the same volume first, then `mv` it into `packages/`. |
-| Firefox takes long to start | The first start creates the profile and the font cache (16 s). Later starts: 6–10 s (§8.2). |
+| Firefox takes long to start | The very first start creates the profile and the font cache (16 s, 2026-10-20). The first start after a boot reads Firefox from disk: 8.2 s from the card, 10.2 s on a network boot; later starts open the window in 3.1 s (§8.2). |
 | Firefox drops frames in the first video after it starts | Known: a cold start (§8.2). Play it again; booting from the SD card helps. |
 | Quake II: the GL3 renderer does not start | It needs desktop OpenGL 3.2; use `+set vid_renderer gl1` (§6.3). |
 | SuperTuxKart says "OpenGL version is too old" | That is about its shader renderer; it falls back to the legacy one. For shaders, start `SuperTuxKart-GLES`. |
@@ -908,5 +940,5 @@ work that way, which also lets you run things on a Pi without a keyboard.
 | The keyboard's serial log line says "no handlers" | Its multimedia-keys interface; the main keyboard interface is handled. |
 
 For everything not listed, the weekly logs in [log/](log/) record each problem found and how it was
-fixed; the newest entries of each day are at the top, and the open items are in the "Next" list at
-the end of the current week's log.
+fixed; the entries are in time order, and the open items are in the "Next" list at the end of the
+current week's log.

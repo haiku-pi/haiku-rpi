@@ -13,7 +13,8 @@ WebPositive, NetSurf, Firefox and Python.
 
 All numbers below were measured on the project's build host (AMD Ryzen 7 PRO 250, 8 cores / 16 threads,
 29 GB RAM, Ubuntu 26.04) and its bench Pi (Raspberry Pi 4 Model B, 4 GB) between 2026-10-17 and
-2026-10-21. Progress and the measurements behind them are in the weekly logs in [log/](log/).
+2026-10-21 unless they carry a later date. The cross compiler has been GCC 16.2 since 2026-11-03 (GCC 13.3
+before); the build times below were taken with 13.3 and have not been measured again. Progress and the measurements behind them are in the weekly logs in [log/](log/).
 
 ## Contents
 
@@ -120,7 +121,8 @@ everything below from the repository root.
 2. Fetches Haiku's `hrev*` tags from Haiku's own repository (review.haiku-os.org). The build names its
    revision after the newest tag, and neither the fork nor the GitHub mirror carries them.
 3. Configures the Haiku arm64 build in `sources/haiku/generated.arm64` and builds the cross tools
-   (gcc and binutils from `sources/buildtools`) under `heavy-build.sh`.
+   (gcc and binutils from `sources/buildtools`: GCC 16.2 and binutils 2.46.1 since 2026-11-03,
+   [design/gcc16.md](design/gcc16.md)) under `heavy-build.sh`.
 4. Downloads the upstream arm64 build packages (gcc_syslibs, zlib, ...) into jam's download directory
    (`scripts/fetch-build-packages.sh`). jam cannot fetch them itself here: our repository definition also
    lists our own packages, so its checksum names no directory on Haiku's server.
@@ -444,9 +446,10 @@ operating system, select `artifacts/images/haiku-pi4-regular.img`, pick the card
 
 1. Put the card into the Pi, connect HDMI, a USB keyboard and mouse and, for the network, Ethernet. Power
    on.
-2. The firmware's rainbow screen, U-Boot and Haiku's boot screen pass by; **the desktop appears after
-   about 80 seconds** (the first boot is a little longer: the package daemon processes the packages
-   once).
+2. The firmware's rainbow screen, U-Boot and Haiku's boot screen pass by; **the desktop appears about
+   6.5 seconds after U-Boot starts** (2026-11-03, release images; on the first boot the package daemon
+   processes the packages once, which made no measurable difference there). On a Pi whose boot order tries
+   the network first, that is about 64 seconds after power-on (below).
 3. On a 3.3 V USB-serial adapter on GPIO 14/15 (115200 8N1) you see U-Boot, the loader and the kernel's
    log.
 
