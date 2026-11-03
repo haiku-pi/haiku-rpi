@@ -16,6 +16,7 @@ Checked against the weekly logs up to **2026-11-03 01:08**.
 
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
+| C11 | **Fixed in haiku 2bf2f773ba + 5d9132a49c (next image): an application could freeze while opening a window** — the window stays empty (white) and the program uses a full CPU core. Seen with SuperTuxKart in about one start in four (it opens and closes windows while it chooses its OpenGL version); any program that starts threads after others have ended can hit it. A new thread's first wait was interrupted (a signal pending from its start), and libroot's read-write lock then never noticed that it had been given the lock ([design/stk-start-hang.md](design/stk-start-hang.md)). | Images image-2026-10-29b to image-2026-11-03 | Quit the program (Deskbar: right-click it, Quit, or `kill`) and start it again | W45: 11-03 14:40 |
 | C4 | **The media kit's audio time source published nothing for 16 s** under the 15-minute application soak (Firefox + SuperTuxKart + 1080p HEVC). This used to crash MediaPlayer's video producer; the crash is fixed (time conversions in double precision), the stall itself is unexplained. Not seen since: 10-24, the same 15-minute soak on image-2026-10-24d with a watcher on the time source (`tools/haiku-tests/tswatch.cpp`): while audio ran, its last publish was never more than 24 ms old; 0 crashes. | Once, in the first of three soak runs | — | W43: 10-20 10:00, 10-24 10:57 |
 
 ## 2. Graphics and UI
