@@ -16,6 +16,7 @@ Checked against the weekly logs up to **2026-11-03 15:00**.
 
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
+| C12 | **Fixed in haiku e09cfa1d9e (next image): a program ended by a signal could have another of its threads crash** — "has encountered an error … Segment violation" for a program that was being closed anyway, e.g. a Firefox content process when Firefox is ended with `kill`/SIGTERM (about 1 such end in 60). The kernel deleted the stack of the thread that took the signal while the program's other threads still ran and used objects on it; an old upstream race ([design/firefox-contentproc-crash.md](design/firefox-contentproc-crash.md)). | All images; quitting normally (Quit, closing the window) does not do it | Choose Terminate in the dialog | W45: 11-03 19:00 |
 | C4 | **The media kit's audio time source published nothing for 16 s** under the 15-minute application soak (Firefox + SuperTuxKart + 1080p HEVC). This used to crash MediaPlayer's video producer; the crash is fixed (time conversions in double precision), the stall itself is unexplained. Not seen since: 10-24, the same 15-minute soak on image-2026-10-24d with a watcher on the time source (`tools/haiku-tests/tswatch.cpp`): while audio ran, its last publish was never more than 24 ms old; 0 crashes. | Once, in the first of three soak runs | — | W43: 10-20 10:00, 10-24 10:57 |
 
 ## 2. Graphics and UI
