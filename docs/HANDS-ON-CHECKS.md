@@ -4,7 +4,7 @@ What only a person at the Pi can check: things you hear, type, click or see on a
 says what to do, what should happen, and what to send back when it does not. Everything else is tested by the
 bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
-**The image:** the SD card of the bench Pi holds **image-2026-11-03**, the newest release (hrev60299+239: the secondary-CPU start-up fix, long double parsing at full precision, `strtod_l()`; everything of image-2026-11-02b), flashed 11-03 01:00 by the release check and booted from it for the overnight cold-boot series; the **test ("mega") image** ([MEGA-IMAGE.md](MEGA-IMAGE.md)) goes back on it afterwards (mega18, with the next GCC 16.2 build). Earlier notes on what changed:
+**The image:** the SD card of the bench Pi holds the **test ("mega") image mega18** since 11-03 07:40 — the newest system plus every program and game we test, started from the Test Apps folder on the Desktop ([MEGA-IMAGE.md](MEGA-IMAGE.md)): the first build with **GCC 16.2**, the GPU job queues running concurrently (stage 7), the Debugger reading DWARF 5, Wine 11.21-2; smoke test 33 of 33. The newest release is **image-2026-11-03** (the last GCC 13.3 build: the secondary-CPU start-up fix, long double at full precision); its 10 cold boots after 30 minutes off each were all alive. Earlier notes on what changed:
 everything of `image-2026-10-23d` plus a 3 s faster boot, faster memory/string functions, thread-local variables
 and file reads, two kernel panics fixed (C5, C8), and the onboard USB hub no longer dropping out in ~1 boot in 10
 (C9) — relevant for the keyboard and mouse checks below. Plug the HDMI monitor, the USB keyboard and mouse, headphones in the 3.5 mm jack and the
