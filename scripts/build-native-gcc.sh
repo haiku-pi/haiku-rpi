@@ -9,8 +9,9 @@
 #
 #   scripts/build-native-gcc.sh [--only STEP]... [--version V] [--revision N] [--rev REV]
 #       [--buildtools DIR] [--cross-tools DIR] [--generated DIR] [--work DIR] [--no-fortran] [--jobs N]
-#   STEP: source sysroot xfortran configure build install package check (default: all, in order;
-#         each step but check is skipped when its stamp in the work directory exists)
+#   STEP: source sysroot xfortran configure build install package check clean (default: all, in order;
+#         each step but check and clean is skipped when its stamp in the work directory exists; clean
+#         keeps the logs in artifacts/native-gcc/ and deletes the work directory)
 #
 # Source: buildtools at REV (default c2213226f9, branch gcc16: GCC 16.2.0 with Haiku's changes; read with
 # git archive, the checkout is not touched) and the gcc_syslibs patchset (patches/gcc_syslibs/
@@ -40,7 +41,9 @@
 # driver's built-in search paths are Haiku's (no sysroot).
 #
 # Output: artifacts/packages/gcc-V-N-arm64.hpkg (+ gcc_fortran); not published. The work directory
-# (default artifacts/native-gcc-build) grows to ~8 GB; delete it afterwards.
+# (default artifacts/native-gcc-build) grows to ~4 GB; step clean deletes it. Extracted package trees are
+# deleted with the build tools' rm_attrs, not rm: their attribute emulation keys attributes by inode, and a
+# stale entry attaches itself to the next file with that inode (WEEK-2026-W43, 10-24).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 gen="$root/sources/haiku/generated.arm64"
@@ -70,13 +73,14 @@ while [ $# -gt 0 ]; do
 	*) echo "build-native-gcc: unknown option $1" >&2; exit 2 ;;
 	esac
 done
-[ ${#only[@]} -gt 0 ] || only=(source sysroot xfortran configure build install package check)
+[ ${#only[@]} -gt 0 ] || only=(source sysroot xfortran configure build install package check clean)
 want() { local n; for n in "${only[@]}"; do [ "$n" = "$1" ] && return 0; done; return 1; }
 [ -n "$crossTools" ] || crossTools="$gen/cross-tools-arm64"
 cross="$crossTools/bin"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 hostTools="$gen/objects/linux/x86_64/release/tools"
 pkg() { LD_LIBRARY_PATH="$gen/objects/linux/lib" "$pkgtool" "$@"; }
+rmAttrs() { LD_LIBRARY_PATH="$gen/objects/linux/lib" "$hostTools/rm_attrs" "$@"; }
 gccVersion="${portVersion%%_*}"
 languages=c,c++
 $fortran && languages=c,c++,fortran
@@ -115,7 +119,8 @@ fi
 # 2. The build sysroot: haiku + haiku_devel only (the compiler's own C++ headers and libraries come
 #    from the cross tools; libstdc++ for its programs statically, below)
 if want sysroot && [ ! -f "$sysroot/.done" ]; then
-	rm -rf "$sysroot"; mkdir -p "$sysroot/boot/system"
+	[ ! -e "$sysroot" ] || rmAttrs -rf "$sysroot"
+	mkdir -p "$sysroot/boot/system"
 	for p in "$haikuPkg" "$haikuDevel"; do pkg extract -C "$sysroot/boot/system" "$p"; done
 	rm -f "$sysroot/boot/system/.PackageInfo"
 	touch "$sysroot/.done"
@@ -127,13 +132,16 @@ fi
 mkdir -p "$work/bin" "$work/lib"
 printf '*libgcc:\n-lgcc\n\n' > "$work/libgcc.specs"
 ln -sfn "$crossTools/$triple/lib/libstdc++-static.a" "$work/lib/libstdc++.a"
-wrap() {	# name driver
-	printf '#!/bin/sh\nexec %s --sysroot=%s -specs=%s -L%s "$@"\n' "$2" "$sysroot" "$work/libgcc.specs" \
+wrap() {	# name driver [specs]
+	printf '#!/bin/sh\nexec %s --sysroot=%s %s -L%s "$@"\n' "$2" "$sysroot" "${3--specs=$work/libgcc.specs}" \
 		"$work/lib" > "$work/bin/$triple-$1"
 	chmod +x "$work/bin/$triple-$1"
 }
 for t in gcc g++ c++ cpp; do wrap $t "$cross/$triple-$t"; done
 for t in ar as ld nm objcopy objdump ranlib readelf strip; do ln -sfn "$cross/$triple-$t" "$work/bin/$triple-$t"; done
+# (libgfortran.so, the one library of this build that is shipped, so gets NEEDED libroot.so only; its two
+# unwinder calls for backtraces resolve in libgcc_s.so.1, which libroot.so itself needs: step check
+# resolves every file in its NEEDED closure)
 $fortran && wrap gfortran "$xf/bin/$triple-gfortran"
 export PATH="$work/bin:$PATH"
 
@@ -215,7 +223,6 @@ stage="$work/stage"
 gccTree="$stage/gcc" fortranTree="$stage/gcc_fortran"
 if want package; then
 	needFree 15
-	rmAttrs() { LD_LIBRARY_PATH="$gen/objects/linux/lib" "$hostTools/rm_attrs" "$@"; }
 	[ ! -e "$stage" ] || rmAttrs -rf "$stage"
 	mkdir -p "$gccTree" "$fortranTree"
 	cp -a "$inst/boot/system/." "$gccTree/"
@@ -375,37 +382,49 @@ fi
 # 8. Check the packages as the Pi gets them
 if want check; then
 	chk="$work/check"
-	rm -rf "$chk"; mkdir -p "$chk/x" "$chk/sys"
+	[ ! -e "$chk" ] || rmAttrs -rf "$chk"
+	mkdir -p "$chk/x" "$chk/sys" "$chk/syms"
 	names=(gcc)
 	[ -f "$packages/gcc_fortran-$portVersion-$revision-arm64.hpkg" ] && names+=(gcc_fortran)
 	for n in "${names[@]}"; do pkg extract -C "$chk/x" "$packages/$n-$portVersion-$revision-arm64.hpkg"; done
 	for p in "$haikuPkg" "$syslibs"; do pkg extract -C "$chk/sys" "$p"; done
 	re="$cross/$triple-readelf" nm="$cross/$triple-nm"
-	# what the system has: haiku's and gcc_syslibs' libraries, and the packages' own (libgfortran)
-	libs=()
 	isElf() { [ "$(head -c 4 "$1" | od -An -c | tr -d ' ')" = '177ELF' ]; }
-	while IFS= read -r -d '' l; do isElf "$l" && libs+=("$l"); done \
-		< <(find "$chk/sys/lib" "$chk/x/lib" -maxdepth 1 -name '*.so*' -type f -print0 2>/dev/null)
-	for l in "${libs[@]}"; do "$re" -d "$l" | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p'; basename "$l"; done \
-		| LC_ALL=C sort -u > "$chk/sonames.txt"
-	for l in "${libs[@]}"; do "$nm" -D --defined-only "$l" | awk '{print $NF}'; done \
-		| sed 's/@.*//' | LC_ALL=C sort -u > "$chk/defined.txt"
+	needed() { "$re" -d "$1" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'; }
+	# the system's libraries (haiku, gcc_syslibs) and the packages' own (libgfortran), by SONAME
+	declare -A libFile=()
+	while IFS= read -r -d '' l; do
+		isElf "$l" || continue
+		so="$("$re" -d "$l" | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p')"
+		libFile[${so:-$(basename "$l")}]="$l"
+		"$nm" -D --defined-only "$l" | awk '{print $NF}' | sed 's/@.*//' | LC_ALL=C sort -u \
+			> "$chk/syms/${so:-$(basename "$l")}"
+	done < <(find "$chk/sys/lib" "$chk/x/lib" -maxdepth 1 -name '*.so*' -type f -print0 2>/dev/null)
+	# each file's undefined symbols must be defined in its own NEEDED closure (as the runtime loader
+	# finds them for a program that does not happen to load the library some other way)
 	elves=0 bad=0
 	while IFS= read -r -d '' f; do
-		[ "$(head -c 4 "$f" | od -An -c | tr -d ' ')" = '177ELF' ] || continue
-		type="$("$re" -h "$f" | sed -n 's/^ *Type: *\([A-Z]*\).*/\1/p')"
-		[ "$type" = DYN ] || continue		# objects and archives are linked by the user's programs
+		isElf "$f" || continue
+		[ "$("$re" -h "$f" | sed -n 's/^ *Type: *\([A-Z]*\).*/\1/p')" = DYN ] || continue	# objects, archives: linked by user programs
 		elves=$((elves + 1))
-		missingLibs="$("$re" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | LC_ALL=C sort -u \
-			| LC_ALL=C comm -23 - "$chk/sonames.txt")"
-		[ -z "$missingLibs" ] || { echo "build-native-gcc: ${f#"$chk/x/"} needs $missingLibs" >&2; bad=1; }
-		missing="$("$nm" -D --undefined-only "$f" | awk '$1 == "U" {print $2}' \
-			| sed 's/@.*//' | LC_ALL=C sort -u | LC_ALL=C comm -23 - "$chk/defined.txt")"
-		[ -z "$missing" ] || { echo "build-native-gcc: ${f#"$chk/x/"}: undefined on Haiku: $missing" >&2; bad=1; }
-		echo "  ${f#"$chk/x/"}: NEEDED $("$re" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')" >> "$chk/needed.txt"
+		declare -A seen=()
+		queue=($(needed "$f")) closure=()
+		while [ ${#queue[@]} -gt 0 ]; do
+			n="${queue[0]}"; queue=("${queue[@]:1}")
+			[ -z "${seen[$n]:-}" ] || continue
+			seen[$n]=1
+			[ -n "${libFile[$n]:-}" ] || { echo "build-native-gcc: ${f#"$chk/x/"} needs $n, which the system lacks" >&2; bad=1; continue; }
+			closure+=("$chk/syms/$n")
+			queue+=($(needed "${libFile[$n]}"))
+		done
+		unset seen
+		missing="$("$nm" -D --undefined-only "$f" | awk '$1 == "U" {print $2}' | sed 's/@.*//' | LC_ALL=C sort -u \
+			| LC_ALL=C comm -23 - <(cat /dev/null "${closure[@]}" | LC_ALL=C sort -u))"
+		[ -z "$missing" ] || { echo "build-native-gcc: ${f#"$chk/x/"}: not defined by its NEEDED libraries: $missing" >&2; bad=1; }
+		echo "  ${f#"$chk/x/"}: NEEDED $(needed "$f" | tr '\n' ' ')" >> "$chk/needed.txt"
 	done < <(find "$chk/x" -type f -print0)
 	[ $bad = 0 ] || exit 1
-	echo "build-native-gcc: $elves programs/libraries, every NEEDED library and symbol resolved"
+	echo "build-native-gcc: $elves programs/libraries, every NEEDED library present, every symbol defined in its NEEDED closure"
 	sed 's/.*: NEEDED //' "$chk/needed.txt" | sort | uniq -c | sed 's/^/  NEEDED: /'
 	[ -x "$chk/x/develop/tools/$gccLibDir/cc1" ] && [ -x "$chk/x/develop/tools/$gccLibDir/cc1plus" ] \
 		|| { echo "build-native-gcc: cc1/cc1plus missing" >&2; exit 1; }
@@ -440,5 +459,15 @@ if want check; then
 		pkg list -i "$f" | sed -n 's/^\t\(provides\|requires\): /  \1 /p'
 	done
 	echo "build-native-gcc: every requirement has a provider"
-	rm -rf "$chk"
+	rmAttrs -rf "$chk"
+fi
+
+# 9. Clean: the logs to artifacts/native-gcc/, the work directory away
+if want clean; then
+	mkdir -p "$root/artifacts/native-gcc"
+	for l in configure.log configure-gcc.log build.log install.log xfortran-configure.log xfortran-build.log; do
+		[ ! -f "$work/$l" ] || cp "$work/$l" "$root/artifacts/native-gcc/"
+	done
+	rmAttrs -rf "$work"
+	echo "build-native-gcc: $work deleted (logs in artifacts/native-gcc/)"
 fi

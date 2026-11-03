@@ -13,9 +13,9 @@ package of the development image.
 | `gcc-16.2.0_2026_11_01-1-arm64.hpkg` | 88.2 MB | drivers (`gcc`, `g++`, `c++`, `cc`, `cpp`, `gcc-ar/nm/ranlib`, `gcov`, `gcov-dump`, `gcov-tool`, `lto-dump`, `aarch64-unknown-haiku-*`), `cc1`, `cc1plus`, `lto1`, `collect2`, `lto-wrapper`, the LTO plugin, `g++-mapper-server` (C++ modules); GCC's headers and libstdc++'s C++ headers, crt files, `libgcc.a`, `libgcc_eh.a`, `libgcov.a`, `libatomic.a`, `libstdc++exp.a`, `libgomp.spec`; man pages |
 | `gcc_fortran-16.2.0_2026_11_01-1-arm64.hpkg` | 21.3 MB | `gfortran`, `f951`, the intrinsic modules (`finclude`), `libgfortran.so.5.0.0` (+ static), `libcaf_single.a`, `libcaf_shmem.a` |
 
-Not published, not in an image. Build: `scripts/build-native-gcc.sh` (~20 min on the host: the cross gfortran ~5,
+Not published, not in an image. Build: `scripts/build-native-gcc.sh` (~20 min on the host; its last step `clean` deletes the work directory: the cross gfortran ~5,
 configure ~3, the build ~7 under heavy-build.sh at 13 jobs, packaging and checks ~3; work directory 3.6 GB,
-`artifacts/native-gcc-build`, delete it afterwards; the 11-03 build's logs are in `artifacts/native-gcc/`). 45 compiler warning lines in the build, none Haiku-specific.
+`artifacts/native-gcc-build`; the logs are kept in `artifacts/native-gcc/`). 45 compiler warning lines in the build, none Haiku-specific.
 
 **provides** (as HaikuPorts' `sys-devel/gcc`): `gcc`, `cmd:c++`, `cmd:cc`, `cmd:cpp`, `cmd:g++`, `cmd:gcc`, `cmd:gcc_ar`,
 `cmd:gcc_nm`, `cmd:gcc_ranlib`, `cmd:gcov`, `cmd:gcov_dump`, `cmd:gcov_tool`, `cmd:lto_dump` (`= 16.2.0_2026_11_01
@@ -70,13 +70,19 @@ compat >= 7`), `cmd:aarch64_unknown_haiku_gcc_16.2.0`; gcc_fortran: `gcc_fortran
 - **DISABLE_ASLR**: as the recipe, `SYS:ENV DISABLE_ASLR=1` on the drivers, cc1, cc1plus, f951, lto1, collect2,
   lto-wrapper, g++-mapper-server (precompiled headers are mapped at a fixed address), set with the build tools'
   `addattr`; the stage tree is removed with `rm_attrs` afterwards, because the build's attribute emulation keys its
-  entries by inode (the 10-24 stale-attribute trap, WEEK-2026-W43).
+  entries by inode (the 10-24 stale-attribute trap, WEEK-2026-W43). The same holds for every package *extracted* on
+  the host (the build sysroot, the check tree): the script deletes those with `rm_attrs -rf`, not `rm`. The first runs
+  on 11-03 still used `rm` there; their 20 949 orphaned attribute directories (04:30–05:01) were moved to
+  `artifacts/attributes-stale-20261103-native-gcc`. (`build-dev-tools.sh` and `build-gcc-syslibs.sh` still `rm -rf`
+  their extracted trees: same leak, not fixed here.)
 
 ## Checks (host, step `check`)
 
 The two packages extracted, with `haiku` and `gcc_syslibs` 16.2 as the system:
 - all 30 programs and shared libraries (DYN): every NEEDED library is on the system (29 × `libroot.so libnetwork.so`,
-  libgfortran `libroot.so`), every undefined dynamic symbol is defined there;
+  libgfortran `libroot.so`), and every undefined dynamic symbol is defined in the file's own NEEDED closure (not just
+  somewhere on the system). libgfortran's two unwinder calls (`_Unwind_Backtrace`, `_Unwind_GetIPInfo`, for
+  backtraces) resolve in `libgcc_s.so.1` through `libroot.so`, which needs it — as gcc_syslibs' libstdc++;
 - no build-host path in any packaged file (also archives and objects);
 - `cc1`/`cc1plus` present; the driver's built-in library paths `/boot/system/develop/lib/` and
   `/boot/system/non-packaged/develop/lib/`, cc1's include paths `/boot/system/develop/headers/posix` … and the C++
@@ -97,6 +103,17 @@ and C calling a `bind(c)` Fortran routine with `-lgfortran`); CMake with make an
 `/bin/c++`). The failure was the test's: GCC ≥ 11 names the notes file of a one-step `--coverage` compile+link
 `cov-hello.gcno`; the test now compiles separately. Second run, with the Fortran-warning check added: **NGCC end 24/24** (log `artifacts/qemu/20261103-050217-virt.log`, the image
 `artifacts/images/native-gcc-qemu.img`); no debugger or crash lines in the log.
+
+## Not done yet
+
+- **Replacing the bootstrap gcc 13.3 in the dev profile** (`HAIKU_PI_DEV`): the three-part bump of AGENTS.md — the hpkg
+  in `generated.arm64/download/` (and `artifacts/packages/`, already there), the version in
+  `build/jam/repositories/HaikuPorts/arm64` (today `gcc-13.3.0_2026_03_29_bootstrap-1`, plus `binutils`/`make` →
+  2.46.1-1 / 4.4.1-1 of part 1), a `sources/haiku` commit; then grep the image build log for `not available`. After the
+  Pi run.
+- **Publishing**: gcc requires `gcc_syslibs == 16.2.0_2026_11_01` and `gcc_syslibs_devel == 16.2.0_2026_11_01`, which are
+  not in `artifacts/packages/` yet (gcc16.md: published after their check on a 13.3 image). Publish them first (or
+  together); `publish-repo.sh` of gcc alone would leave an unresolvable repository entry.
 
 ## Known gaps
 
