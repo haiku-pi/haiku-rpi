@@ -641,14 +641,20 @@ python3.14
   (ncurses 6.6, 256 colours in Terminal) (2026-10-20).
 - Checked on the Pi (2026-10-20): `ssl` (OpenSSL 3.5.9), `sqlite3`, `ctypes`, `zlib`/`bz2`/`lzma`/
   `zstd`, `decimal`, `json`, sockets, `subprocess`, threads. `sum(range(10**7))` takes 1.3 s.
-- `pip` has not been tried.
+- **pip and numpy** are in the package repository: `pkgman install pip_python3.14 numpy_python3.14` (numpy 2.5.4;
+  2.5.4-2 needs image-2026-11-03 or later). numpy's fast test suite passes on the Pi (the f2py and run-time compile
+  tests need the native compiler below).
 
 ### 11.3 Developing programs
 
-- **C and C++ on the Pi itself**: a separate development image (`-sHAIKU_PI_DEV=1`, see
-  `tools/build/UserBuildConfig`) has gcc 13, binutils, make, Python 3.10 and haikuporter; gcc builds
-  and runs C and C++17 programs on the Pi (a compile takes ~2 s; 2026-10-19). The regular image has no
-  compiler.
+- **Build tools from the package repository** (2026-11-03): `pkgman install make ninja cmake meson pkgconf binutils`
+  and, for Python projects, `pip_python3.14 setuptools_python3.14 wheel_python3.14 cython_python3.14
+  meson_python_python3.14`. Checked on the Pi: make, CMake + Ninja and Meson builds, `pip install` of a pure and of a
+  Cython package (docs/design/dev-tools.md). A native GCC 16.2 (C, C++, Fortran) package is built and checked in
+  QEMU; it is published after its Pi check (docs/design/native-gcc.md).
+- **C and C++ on the Pi itself, today**: the development image (`-sHAIKU_PI_DEV=1`, see
+  `tools/build/UserBuildConfig`) has gcc 13 (a bootstrap build), binutils, make, Python 3.10 and haikuporter. The
+  regular image has no compiler.
 - **Cross-compiling from Linux**: the build tree's arm64 cross gcc builds Haiku programs. C++
   programs built with it before 2026-10-20 could not catch exceptions (every `throw` ended the
   program); the fixed toolchain links `libgcc_s` as needed.
