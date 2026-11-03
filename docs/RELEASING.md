@@ -33,7 +33,10 @@ in the same publish, not later. `scripts/release-docs-check.sh` enforces the mec
    - Packages published with it (wine, numpy, dev tools, gcc_syslibs …): their design docs, and the
      release notes' "in the package repository" line.
 6. **Publish:** `gh release create TAG -R haiku-pi/haiku-rpi --title … --notes-file notes.md IMG.xz SHA256SUMS`;
-   packages that depend on this image (e.g. a new libroot symbol) with `scripts/publish-repo.sh` *after* it.
+   packages that depend on this image (e.g. a new libroot symbol) with `scripts/publish-repo.sh` *after* it —
+   and, from the first GCC 16.2 release on, the release's own `haiku_devel` (the build tree's
+   `generated.arm64/objects/haiku/arm64/packaging/packages/haiku_devel.hpkg`, copied into `artifacts/packages/` under its
+   versioned name `haiku_devel-<version>-arm64.hpkg`): the native gcc needs Haiku's headers of the running build.
 7. **Record:** `scripts/snapshot-state.sh release-TAG` (manifest), the weekly log entry (times from `date`),
    commit with explicit pathspecs, push.
 8. **The card** back to what the owner expects (the mega image, docs/HANDS-ON-CHECKS.md), if a step flashed it.

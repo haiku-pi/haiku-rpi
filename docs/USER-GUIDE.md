@@ -650,11 +650,15 @@ python3.14
 - **Build tools from the package repository** (2026-11-03): `pkgman install make ninja cmake meson pkgconf binutils`
   and, for Python projects, `pip_python3.14 setuptools_python3.14 wheel_python3.14 cython_python3.14
   meson_python_python3.14`. Checked on the Pi: make, CMake + Ninja and Meson builds, `pip install` of a pure and of a
-  Cython package (docs/design/dev-tools.md). A native GCC 16.2 (C, C++, Fortran) package is built and checked in
-  QEMU; it is published after its Pi check (docs/design/native-gcc.md).
-- **C and C++ on the Pi itself, today**: the development image (`-sHAIKU_PI_DEV=1`, see
-  `tools/build/UserBuildConfig`) has gcc 13 (a bootstrap build), binutils, make, Python 3.10 and haikuporter. The
-  regular image has no compiler.
+  Cython package (docs/design/dev-tools.md).
+- **C, C++ and Fortran on the Pi itself** (2026-11-03): `pkgman install gcc gcc_fortran binutils` installs GCC 16.2
+  (`gcc`, `g++`, `gfortran`; LTO, OpenMP, precompiled headers, gcov). Checked on the Pi: 24 of 24 compiler checks, and
+  the make/CMake/Meson/pip checks above built with it (docs/design/native-gcc.md). Compiling against Haiku's own
+  headers (every C program's `<stdio.h>`, the Haiku API) also needs the `haiku_devel` package of your image's build:
+  the development image has it, and it is published with each release from the first GCC 16.2 release on. On an
+  older image, installing gcc also updates gcc_syslibs to 16.2 (checked: that image's programs keep working).
+- **The development image** (`-sHAIKU_PI_DEV=1`, see `tools/build/UserBuildConfig`) has the compiler, binutils, make,
+  Python 3.10, haikuporter and haiku_devel. The regular image has no compiler.
 - **Cross-compiling from Linux**: the build tree's arm64 cross gcc builds Haiku programs. C++
   programs built with it before 2026-10-20 could not catch exceptions (every `throw` ended the
   program); the fixed toolchain links `libgcc_s` as needed.

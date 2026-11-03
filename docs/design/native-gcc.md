@@ -13,7 +13,7 @@ package of the development image.
 | `gcc-16.2.0_2026_11_01-1-arm64.hpkg` | 88.2 MB | drivers (`gcc`, `g++`, `c++`, `cc`, `cpp`, `gcc-ar/nm/ranlib`, `gcov`, `gcov-dump`, `gcov-tool`, `lto-dump`, `aarch64-unknown-haiku-*`), `cc1`, `cc1plus`, `lto1`, `collect2`, `lto-wrapper`, the LTO plugin, `g++-mapper-server` (C++ modules); GCC's headers and libstdc++'s C++ headers, crt files, `libgcc.a`, `libgcc_eh.a`, `libgcov.a`, `libatomic.a`, `libstdc++exp.a`, `libgomp.spec`; man pages |
 | `gcc_fortran-16.2.0_2026_11_01-1-arm64.hpkg` | 21.3 MB | `gfortran`, `f951`, the intrinsic modules (`finclude`), `libgfortran.so.5.0.0` (+ static), `libcaf_single.a`, `libcaf_shmem.a` |
 
-Not published, not in an image. Build: `scripts/build-native-gcc.sh` (~20 min on the host; its last step `clean` deletes the work directory: the cross gfortran ~5,
+**Published 2026-11-03** in our package repository (Pi check below: 24 of 24); not in an image. Build: `scripts/build-native-gcc.sh` (~20 min on the host; its last step `clean` deletes the work directory: the cross gfortran ~5,
 configure ~3, the build ~7 under heavy-build.sh at 13 jobs, packaging and checks ~3; work directory 3.6 GB,
 `artifacts/native-gcc-build`; the logs are kept in `artifacts/native-gcc/`). 45 compiler warning lines in the build, none Haiku-specific.
 
@@ -104,16 +104,24 @@ and C calling a `bind(c)` Fortran routine with `-lgfortran`); CMake with make an
 `cov-hello.gcno`; the test now compiles separately. Second run, with the Fortran-warning check added: **NGCC end 24/24** (log `artifacts/qemu/20261103-050217-virt.log`, the image
 `artifacts/images/native-gcc-qemu.img`); no debugger or crash lines in the log.
 
+## Pi results (2026-11-03)
+
+On the 16.2 test image (`haiku-pi4-16rc.img`, hrev60299+259) in a network session (`artifacts/native-gcc-pi/run.sh`):
+`pkgman install` of both packages, gcc_syslibs_devel 16.2, the image's `haiku_devel`, binutils, make, CMake, Ninja and
+the part 1 Python tools, then `native-gcc.sh`: **NGCC end 24/24** (the QEMU set: versions, paths, C, C++ 20/23, the Haiku
+API, LTO, OpenMP, PCH, gcov, `-static-libgcc`, Fortran, C calling Fortran, CMake with make and Ninja) and
+`dev-tools.sh` with this compiler: **DEV end 23/23**, `DEV gcc 16.2.0` (make, CMake + Ninja and Meson builds of C++
+projects, `pip install` of a pure and of a Cython package compiled by gcc 16.2). Logs in `artifacts/native-gcc-pi/`.
+
 ## Not done yet
 
-- **Replacing the bootstrap gcc 13.3 in the dev profile** (`HAIKU_PI_DEV`): the three-part bump of AGENTS.md — the hpkg
-  in `generated.arm64/download/` (and `artifacts/packages/`, already there), the version in
-  `build/jam/repositories/HaikuPorts/arm64` (today `gcc-13.3.0_2026_03_29_bootstrap-1`, plus `binutils`/`make` →
-  2.46.1-1 / 4.4.1-1 of part 1), a `sources/haiku` commit; then grep the image build log for `not available`. After the
-  Pi run.
-- **Publishing**: gcc requires `gcc_syslibs == 16.2.0_2026_11_01` and `gcc_syslibs_devel == 16.2.0_2026_11_01`, which are
-  not in `artifacts/packages/` yet (gcc16.md: published after their check on a 13.3 image). Publish them first (or
-  together); `publish-repo.sh` of gcc alone would leave an unresolvable repository entry.
+- **Replacing the bootstrap gcc 13.3 in the dev profile** (`HAIKU_PI_DEV`): `build/jam/repositories/HaikuPorts/arm64`
+  now lists `gcc-16.2.0_2026_11_01-1`, `binutils-2.46.1-1`, `make-4.4.1-1` (the hpkgs in `generated.arm64/download/`);
+  the dev image build with them is being checked (2026-11-03).
+- **haiku_devel in the repository**: programs that use Haiku's headers and libraries (`libroot`, `libbe`, every C program's
+  `<stdio.h>`) need the `haiku_devel` package of the same build as the running system (`haiku_devel` requires `haiku ==`
+  its own version). Only the development image has it; from the first GCC 16.2 release on, each release publishes its
+  `haiku_devel` with it (docs/RELEASING.md).
 
 ## Known gaps
 

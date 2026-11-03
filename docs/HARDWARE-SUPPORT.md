@@ -177,6 +177,7 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
 | CPython | python3.14 3.14.8 (-2) | in the image; ssl, sqlite3, ctypes, lzma, zstd, readline (libedit), curses (ncurses 6.6) |
 | numpy | 2.5.4 (-2) | published; NEON/ASIMD baseline, no BLAS; fast test suite 0 failures on the Pi (8 errors: tests that compile at run time) |
 | Build tools | make 4.4.1, ninja 1.13.2, cmake 4.4.5, meson 1.12.1, pkgconf 3.0.10, binutils 2.46.1, pip 26.2.2, Cython 3.3.1, meson-python 0.22.1 | published 11-03; Pi 23/23 (make/CMake/Meson builds, pip installs) |
+| Native compiler | gcc 16.2.0 (C, C++, Fortran: gcc, gcc_fortran) | published 11-03; Pi 24/24 (C, C++23, Haiku API, LTO, OpenMP, PCH, gcov, Fortran, CMake); needs the image's haiku_devel for Haiku headers |
 | C++ runtime | gcc_syslibs 16.2.0 (libstdc++ 6.0.36) | published 11-03; on image-2026-11-03 (13.3-built system) the release checks pass with it: 0 problems |
 | QuakeSpasm | 0.96.3 | test images only (needs the game data) |
 | Yamagi Quake II | 8.60 | GL1 renderer; 135–171 fps at 640×480, 81–89 at 1280×720 (10-19); test images only |
