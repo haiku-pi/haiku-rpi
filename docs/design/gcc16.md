@@ -263,11 +263,54 @@ No mass rebuild. libstdc++ 6.0.36 keeps the SONAME and all 6003 exports of 13.3'
    package adds its whole size to the history, for no measured gain. (The parallel tree already proved that the
    ports build with 16.2.)
 
+## Main build switched (2026-11-03)
+
+The main tree builds with GCC 16.2 since 2026-11-03 01:00, after the Pi queue's release check of image-2026-11-03
+(the last 13.3 build) had passed. Done as in "Next steps" 3, with the package policy above:
+
+| What | Now |
+|---|---|
+| Cross tools | `generated.arm64/cross-tools-arm64` = `aarch64-unknown-haiku-gcc (GCC) 16.2.0`, binutils 2.46.1: `configure --build-cross-tools arm64 --cross-tools-source /home/houp/haiku-rpi-gcc16/sources/buildtools -j12` (~3 min), buildtools **`gcc16` c2213226f9** (with the `<bitset>` fix). `sources/buildtools` itself stays on `master` fc2ad25b8b: it has build residue (`missing`, `.info` files) and `gcc16` is checked out in the parallel tree's worktree, so git cannot switch it; until that tree is retired, the cross tools' source is that worktree (manifests record `sources/buildtools` as master — see the note in `manifests/2026-11-03-gcc16-main-switch.md`) |
+| 13.3 tools | renamed to `generated.arm64/cross-tools-arm64-gcc13` (13.3.0, unchanged); tags **`gcc13-baseline`**: buildtools fc2ad25b8b, haiku 46a18aecb4 (rpi4 just before the merge), both on origin |
+| gcc_syslibs | `gcc_syslibs` / `gcc_syslibs_devel` 16.2.0_2026_11_01-1 in `generated.arm64/download/` (from `artifacts/gcc-syslibs/16.2/`); the three 13.3 packages (`gcc_syslibs` bootstrap-1 and -2, `gcc_syslibs_devel` bootstrap-1) moved to **`artifacts/gcc-syslibs/13.3/`**; stale `build_packages/gcc_syslibs*13.3*` extractions deleted. **`artifacts/packages/` is unchanged** (still the published 13.3 `gcc_syslibs-…bootstrap-2`, no 16.2 package): the 16.2 runtime is published only after its check on a 13.3 image (above) |
+| Haiku | rpi4 **38bc4de5d7** = merge of `gcc16` (d2fd8ddf8b) into 46a18aecb4; clean (rpi4 already had the four source fixes as cherry-picks and the loader fix eb4bdd0ea4, so the merge only adds the repository definition's gcc_syslibs bump); pushed |
+| Coordination | main 7a53315 = merge of `gcc16-build` (the per-port fixes and script fixes of step 3); pushed |
+
+**Build**: clean `objects/haiku`, `scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc`: rc 0, ~4 min, 6211 compiles, 3619
+`warning:` lines, no errors (log `artifacts/build/20261103-005901.log`; cross tools `…/20261103-gcc16-cross-tools.log`).
+`not available`: bc diffutils gutenprint9 lame mesa_swpipe netcat sharutils tcpdump wget which zip — the same 11 as the
+13.3 builds. All 509 ELF files of haiku.hpkg carry `GCC: (GNU) 16.2.0`. Image `artifacts/images/haiku-pi4-regular.img`
+(1 086 324 736 bytes, hrev60299+245).
+
+**Sysroot**: `scripts/haiku-sysroot.sh` (libstdc++.so.6.0.36 and the 16.2 headers), then the GL stack into it:
+`scripts/build-gl-stack.sh --reconfigure` (`--reconfigure`, so meson rebuilds everything: the compiler's path did not
+change, and ninja would have kept the 13.3 objects) — libdrm, libglvnd, Mesa (V3D/V3DV, softpipe), GLU, the Vulkan
+loader, the GL tests; every file of `artifacts/gl-stack/non-packaged` 16.2-built; 98 warning lines. **Not packaged**
+(mesa/glu keep their published 13.3-built 26.2.6-1 / 9.0.3-6 in the image). The sysroot's `non-packaged/` now holds only
+the GL stack: the ports that later builds link against (SDL2, curl, OpenSSL, Python, ncurses, …) are no longer in it;
+`build-packages.sh` puts them back — but it also re-packages every port at its current revision into
+`artifacts/packages/` (16.2 builds under the published names: publish-repo.sh keeps the published bytes, but images
+would then carry them). Run it only together with deliberate bumps, or with `cross-port.sh` alone for what a build needs.
+
+**QEMU virt** (the image + `tools/pi-tests/gcc-syslibs.sh` as UserBootscript, step 2's `cxxrt`/`launchtime`):
+gcc_syslibs 16.2.0 active; `cxxrt` and `cxxrt-rootfirst` ok; Tracker, Deskbar, Terminal on libstdc++.so.6.0.36;
+Terminal, StyledEdit, MediaPlayer, ShowImage, DeskCalc, Debugger each open 3 windows; **GLTeapot runs 30 s**
+(13.3-built Mesa/GLU packages on the 16.2 runtime); desktop on the screenshot; 3 debugger syslog lines (as before);
+no panic (`artifacts/qemu/20261103-010623-virt.{log,png}`).
+
+**Still to do**: the Pi gates on the 16.2 regular image (boot bench, the gpu-it equivalents, mega-smoke,
+`tools/pi-tests/gcc-syslibs.sh`); `gcc_syslibs` 16.2 published after its check on a 13.3 image; `scripts/release-check.sh`
+now compiles with the 16.2 tools (it uses `cross-tools-arm64`), so checking a 13.3 release image needs
+`cross-tools-arm64-gcc13` and a 13.3 sysroot; the native compiler (H18 part 2); retiring the parallel tree
+(`/home/houp/haiku-rpi-gcc16`, 33 GB) once the buildtools source has another home (a `sources/buildtools` cleaned of
+its build residue and switched to `gcc16`).
+
 ## Next steps
 
 1. ~~Haiku source fixes~~ — done (step 2), branch `gcc16`.
 2. ~~gcc_syslibs and gcc_syslibs_devel 16.2.0~~ — done (step 2).
-3. **Switch the main build** (one session, when the bench and the main build allow; ~1 h of builds; step 3 above did
+3. ~~Switch the main build~~ — done 11-03, see "Main build switched" above; 4 is replaced by "Packages after the
+   switch". The plan as it was: (one session, when the bench and the main build allow; ~1 h of builds; step 3 above did
    all of it in a parallel tree, with the per-port fixes on the coordination branch `gcc16-build` to merge first). Order
    matters: haiku d2fd8ddf8b makes the build need the 16.2 packages and tools, so **do not merge `gcc16` into
    `rpi4` before (1) and (2) are done** (the four source fixes, 3c641a2b01..29a820de6e, are safe on their own and
@@ -313,12 +356,13 @@ working branch and `master` keeps mirroring upstream plus our four commits.
 
 ### The 13.3 baseline stays reproducible
 
-Do not delete or overwrite it. The 13.3 toolchain is `sources/haiku/generated.arm64/cross-tools-arm64`, built from
-buildtools `fc2ad25b8b` (branch `master`); the image that goes with it is release 2026-10-31
+Do not delete or overwrite it. The 13.3 toolchain is `sources/haiku/generated.arm64/cross-tools-arm64-gcc13` (renamed at
+the switch, 11-03), built from buildtools `fc2ad25b8b` (branch `master`, tag `gcc13-baseline`; haiku's last 13.3 rpi4
+commit is tagged `gcc13-baseline` too: 46a18aecb4, the 13.3 release image-2026-11-03 is 46a18aecb4 as well); the image that goes with it is release 2026-10-31
 (`manifests/2026-10-31-release-image-2026-10-31.md`: haiku 821aaf239d, every repository's SHA) and its packages in
 `artifacts/packages/`. To rebuild it: check out the manifest's SHAs (there is no restore script yet),
 `configure --build-cross-tools arm64 --cross-tools-source <buildtools at fc2ad25b8b>`, and the 13.3 gcc_syslibs
-packages kept in the download directory and `artifacts/gcc-syslibs/`. When switching the main build to 16.2, keep a
+packages kept in `artifacts/gcc-syslibs/13.3/` (moved out of the download directory at the switch). When switching the main build to 16.2, keep a
 `generated.arm64-gcc13` (or the tag `gcc13-baseline` in buildtools and haiku) so step 8 can rebuild both fresh.
 
 ## Performance comparison (last step)
