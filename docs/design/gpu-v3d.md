@@ -301,7 +301,8 @@ plays a clip through an overlay; KDL still prints on HDMI after a mode change.
 716633f51b, 7a37185fe7): retrace semaphore from the SMI interrupt (needs `tools/overlays/haiku-fkms.dts`,
 now the default) at 60.00 Hz; modes up to native via a scaled primary plane (`screenmode` lists 40+, switch
 and back verified on HDMI); hardware cursor on plane 7 (scripted moves, clipping, scaled modes); KDL prints
-after a mode change. Open: overlays (needs MediaPlayer, i.e. H14), flips (stage 6), owner check with a mouse.
+after a mode change. Open then: overlays, flips (stage 6), owner check with a mouse — all done since: stage 6
+landed 2026-11-03 (gpu-stage6.md), the mouse checked by hand 2026-10-25.
 
 **Stage 5 — zero-copy into BBitmaps, P2 (1–1.5 weeks).** Area-import ioctl (pins pages, maps them into the
 V3D MMU, quarantine on release), GPU blit into the imported bitmap, cache maintenance around the job.
@@ -319,13 +320,15 @@ copy 20.7** (2.9×) — 59.4 is suspiciously near the refresh rate (800² ran at
 look for a cap in app_server's bitmap drawing before stage 6. GLTeapot/GLInfo now build (packaged mesa,
 `jam -sHAIKU_PI_GL=1`).
 
-**Stage 6 — full-screen and overlay GL, P3 (1–1.5 weeks).** Full-screen: GL renders into plane buffers,
+**Stage 6 — full-screen and overlay GL, P3 (1–1.5 weeks).** *Done 2026-11-03 (image-2026-11-03c):
+[gpu-stage6.md](gpu-stage6.md).* Full-screen: GL renders into plane buffers,
 swap = fence-gated `SET_PLANE` flip (never render into the buffer on screen). Windowed overlay GL is optional
 (firmware planes have alpha but no colour key, so occlusion needs app_server cooperation).
 *Exit:* a full-screen GL demo runs vsynced at 60.00 fps with 0 missed flips over 1200 frames; the same demo
 unsynced exceeds 60.
 
-**Stage 7 — asynchronous queues (1–2 weeks).** Per-queue FIFOs, bin/render overlap, TFU/CSD concurrently;
+**Stage 7 — asynchronous queues (1–2 weeks).** *Done 2026-11-03 (image-2026-11-03b):
+[gpu-stage7.md](gpu-stage7.md).* Per-queue FIFOs, bin/render overlap, TFU/CSD concurrently;
 watchdog per queue.
 *Exit:* a GL benchmark (glmark2-es2 or a timedemo) ≥ stage 6 throughput, 0 wedges over a 30-minute soak,
 `boot-bench` unaffected.
