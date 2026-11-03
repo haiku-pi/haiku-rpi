@@ -181,7 +181,7 @@ macros under C++.)
 
 ## Open
 
-- The native **gcc** package (16.2, after the switch) — then the dev image carries make/binutils from here plus
+- The native **gcc** package (16.2, after the switch): built 11-03, [native-gcc.md](native-gcc.md) (QEMU 24/24, not yet on the Pi) — then the dev image carries make/binutils from here plus
   that gcc, and `pkgman install gcc make cmake` works on a fresh image (PLAN H18 exit criterion).
 - Publishing (scripts/publish-repo.sh) and putting them into the dev image (`HAIKU_PI_DEV`: the repository file
   lists `make-4.4.1_bootstrap`, `binutils-…bootstrap`), after the Pi run.

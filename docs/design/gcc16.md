@@ -335,7 +335,8 @@ its build residue and switched to `gcc16`).
    GCC 16 source breakage is likely (they choose their own `-std`); fix per port in its patches/.
 5. **Pi gates** equal to 13.3's: boot bench, gpu-it, mega-smoke (scripts/sd-cycle.sh, the bench lock), plus
    `tools/pi-tests/gcc-syslibs.sh` (now version-independent, with a GLTeapot check) on the regular image.
-6. **Native compiler package** (H18): the HaikuPorts gcc recipe ported to 16.2 (its libsanitizer patches) — so
+6. **Native compiler package** (H18) — built 11-03: [native-gcc.md](native-gcc.md) (gcc + gcc_fortran 16.2.0_2026_11_01-1,
+   QEMU 24/24, Pi pending). The plan as it was: the HaikuPorts gcc recipe ported to 16.2 (its libsanitizer patches) — so
    the native compiler is built once, on the new version. It needs the two host traps above
    (`gcc_cv_*_pie=no`, `-lnetwork`) and replaces the `gcc-13.3.0…bootstrap-1` the dev images (`HAIKU_PI_DEV`)
    carry: it requires only `haiku` and has its own 13.3 C++ headers, so on a 16.2 image it keeps working (its
