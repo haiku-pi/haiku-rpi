@@ -552,13 +552,15 @@ was not written. Raw output `artifacts/h20-c0b/`; tools `tools/haiku-tests/forkb
 `startcost-steps.sh`.
 
 **Cause: the clock governor (`bcm2835_cpufreq`) runs a chain of short processes at 750–1200 MHz.** The "fresh" state
-of C0 was the first minutes after boot, when the boot's own work keeps the ARM at 1500 MHz (8 idle samples at 1500
-right after the session came up); a minute or two later an idle desktop sits at 750 MHz and every program start is
-measured with the clock the governor picks for it. No GUI application is needed:
+of C0 was the first ~2 minutes after power-on, when the ARM stays at 1500 MHz whatever the load (8 idle samples at 1500
+right after the session came up; the drop to 750 came with the CPUs at the same ~2 % busy before and after it, so not
+the load: most likely the firmware's boot-time turbo period that `bcm2835_cpufreq`'s header describes, inferred, not
+traced). After that an idle desktop sits at 750 MHz and every program start runs at the clock the governor picks for
+it. No GUI application is needed:
 
 | State (11-03c + f6c52282df) | fork+exit | fork+exec `/bin/true` | posix_spawn | ARM clock during the run |
 |---|---|---|---|---|
-| session up (~2 min after power-on) | 965–1066 | 4619–4731 | 3403–3459 | 1500 |
+| session up (~1.5–2 min after power-on) | 965–1066 | 4619–4731 | 3403–3459 | 1500 |
 | Terminal started 5 s before | 1001 | 4647 | 3398 | — |
 | the same Terminal, minutes later / after it quit | 1415 / 1011 | 7265 / 8037 | 4841 / 4858 | 750–1500 (mostly 750–1000) |
 | **second boot, no application at all, 4 min idle** | **1373** | **6629** | **4549** | 750 ×7, 1000, 1500 ×2 |
@@ -612,8 +614,13 @@ h20-imgevt's only in `bcm2835_cpufreq`, by `package list`; the tested module is 
 
 Before the fix the same script at ~10 min uptime gave after-pkgman 6176, Terminal 7036, Firefox quit **7829** µs
 fork+exec. Slow state / fresh: **1.03×** (was 1.4–1.7×); runs with an application busy are contention, not a start
-cost. Idle power unchanged: an idle desktop still samples 750 MHz between bursts, as before the fix (the sampler's own
-`grep`/`pmustat` starts show as single 1500 samples in both). Sanity on the fixed image: `stk-start-loop.sh 10` **10/10** ok, 0 hangs (115.5–115.9 fps in its 20 s race); `kill-race-loop.sh 10` **10/10**, 0 faults.
+cost. The first step of `startcost-steps.sh` measured ~5.2 ms fork+exec in both the before and the after run (right
+after copying 130 MB of packages to the remote disk), so it is left out above; the before run also had one
+`posix_spawn failed` in that step (one call, unexplained transient, not seen again). Idle power unchanged: an idle
+desktop still samples 750 MHz between bursts, as before the fix (the sampler's own `grep`/`pmustat` starts show as
+single 1500 samples in both). The trade-off: a steady light load spread over the cores that totals 55 % of one CPU or
+more (video playback, a page load) now runs at 1500 MHz where the per-CPU levels gave 1000–1200, so the SoC runs
+warmer then; the firmware still throttles on temperature. Sanity on the fixed image: `stk-start-loop.sh 10` **10/10** ok, 0 hangs (115.5–115.9 fps in its 20 s race); `kill-race-loop.sh 10` **10/10**, 0 faults.
 
 Side observations: `_exit()` in libroot flushes stdio (`_IO_cleanup()` in `_exit.c`, upstream behaviour; POSIX says it
 must not), so a forked child that `_exit`s re-prints its parent's buffered output — forkbench's first line appears
