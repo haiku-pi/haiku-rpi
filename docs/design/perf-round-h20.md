@@ -429,6 +429,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | Item | Image | Before | After | Runs | Logs |
 |---|---|---|---|---|---|
 | C0 (measurement, no change) | 11-03c (11-03b for one A/B) | — | profile + pmustat of a desktop session; C5/C7/C8 gates; below | 4 network sessions, 11-03 20:55–22:05 | `artifacts/h20-c0/out/`, `artifacts/uart/20261103-*-session-h20-c0*.log` |
+| C0b / N2 (bcm2835_cpufreq total load) | h20-imgevt → h20-startcost (haiku `startcost` 83db805485) | fork+exec 6.6–8.0 ms at ≥ 4 min uptime (4.6–4.7 in the first minutes) | 4.6–4.8 ms at any uptime, after Terminal / Firefox / STK quit; idle still 750 MHz | 3 network sessions, 11-03 22:23–23:12 | `artifacts/h20-c0b/`, `artifacts/uart/20261103-22*-session-h20-c0b*.log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -530,7 +531,7 @@ steps.
 | ID | Item | Measured | Likely fix | Effort |
 |---|---|---|---|---|
 | N1 | `profile -a` drops image events | 65 % of a desktop session's non-idle ticks unattributed | `eventBuffer[256]` in image.cpp's `Notify()`; then re-run C0 run (1) | S |
-| N2 | process start 1.5–1.9× slower after GUI apps ran | fork+exec 4.6 → 6.8–8.7 ms, posix_spawn 3.4 → 4.9–6.7, fork+exit 1.0 → 2.3 ms; runtime-loader symbol work 20–29 % of ticks in the slow state | unknown: attribute first (a full `profile -k -l -v` of forkbench in both states; what a GUI start leaves behind: watchers, loader caches, areas) | S to attribute, M to fix |
+| N2 | process start 1.5–1.9× slower after GUI apps ran | fork+exec 4.6 → 6.8–8.7 ms, posix_spawn 3.4 → 4.9–6.7, fork+exit 1.0 → 2.3 ms; runtime-loader symbol work 20–29 % of ticks in the slow state | **done (C0b below):** not the apps — the cpufreq governor leaves the ARM at 750–1200 MHz for a fork/exec chain spread over four cores (the "fresh" state was the boot's busy minutes at 1500); fix: the clock also follows the CPUs' total active time (haiku `startcost` 83db805485): 1.03× of fresh | S |
 | N3 | windowed GL presents run unpaced | STK's menu: its main thread ~84 % of a core plus app_server's copy for its window 20.8 s CPU per ~60 s (~38 % of a core; ~190 fps derived, row 2) | pace windowed presents to the display (EGL swap interval 1 for windows by default; benchmarks set 0) | M |
 | N4 | v3d shader-variant cache hashes its key with BLAKE3 at every lookup — **done: mesa rpi4 ebf1ee1ff1b, ships with mesa 26.2.6-3 (Pi check: STK menu profile)** | 5.1 % of STK's CPU (`cache_hash` → `blake3_compress_*_portable`, from `_mesa_hash_table_search`) | `_mesa_hash_data` over key + the key's stored BLAKE3 instead of a fresh BLAKE3 (`v3d_program.c`); with the next Mesa revision | S |
 | N5 | TLS access through `__tls_get_addr` | 18.1 % of a busy python3; 2.3 % of STK (every GL call through glvnd) | TLS descriptors (TLSDESC) in runtime_loader, or initial-exec TLS for libpython / libGLdispatch | M |
@@ -543,11 +544,87 @@ haikuporter) — attribute, then fix; (3) **N3**, the largest single CPU consume
 ~1.2 cores between the game and app_server). Then C1 and C2 as in §5; N4 rides along with the next Mesa revision
 (S); C7 and C8 (DMA) leave the list.
 
+### C0b: start-cost slowdown (N2) — the ARM clock, not the applications (2026-11-03 22:23–23:12)
+
+Image `h20-imgevt` (11-03c + f6c52282df), network sessions `h20-c0b`, `h20-c0b-idle` and (fix) `h20-c0b-fix`; the card
+was not written. Raw output `artifacts/h20-c0b/`; tools `tools/haiku-tests/forkbench.c`, `pmustat`,
+`tools/pi-tests/startcost-clock.sh` (forkbench with the ARM clock sampled from `/dev/power/bcm2835_thermal/0`) and
+`startcost-steps.sh`.
+
+**Cause: the clock governor (`bcm2835_cpufreq`) runs a chain of short processes at 750–1200 MHz.** The "fresh" state
+of C0 was the first minutes after boot, when the boot's own work keeps the ARM at 1500 MHz (8 idle samples at 1500
+right after the session came up); a minute or two later an idle desktop sits at 750 MHz and every program start is
+measured with the clock the governor picks for it. No GUI application is needed:
+
+| State (11-03c + f6c52282df) | fork+exit | fork+exec `/bin/true` | posix_spawn | ARM clock during the run |
+|---|---|---|---|---|
+| session up (~2 min after power-on) | 965–1066 | 4619–4731 | 3403–3459 | 1500 |
+| Terminal started 5 s before | 1001 | 4647 | 3398 | — |
+| the same Terminal, minutes later / after it quit | 1415 / 1011 | 7265 / 8037 | 4841 / 4858 | 750–1500 (mostly 750–1000) |
+| **second boot, no application at all, 4 min idle** | **1373** | **6629** | **4549** | 750 ×7, 1000, 1500 ×2 |
+| clock held at 1500 by a busy loop (`sh -c 'while :; do :; done'`) | 1049 | **4802** | 3546 | 1500 ×8 |
+| the same seconds later, loop killed | 1502 | 6613 | 4265 | 750–1500 |
+
+So C0's "Terminal open → 6.8 ms" was the step order (Terminal came after `pkgman install`, past the boot's busy
+minutes), not Terminal: Terminal measured 5 s after its start was fast. The decisive measurement is
+`pmustat -u` / `-k` of `forkbench 100` in both states: the same work, fewer cycles per second.
+
+| pmustat, `forkbench 100` | elapsed | cycles (all modes) | inst user / kernel | L1D TLB refills /1k inst (u/k) | L2 refills /1k inst (u/k) | "MHz while busy" |
+|---|---|---|---|---|---|---|
+| fresh | 0.91 s | 1.70–1.73 G | 241–243 M / 547–584 M | 6.0–6.1 / 6.1–6.5 | 5.2–5.6 / 5.3 | 1723–1724 |
+| slow | 1.34 s | 1.66–1.75 G | 263 M / 555 M | 6.2 / 6.7 | 5.7 / 5.8 | 1130–1142 |
+
+(The "MHz while busy" figure is cycles over the scheduler's busy time, so its absolute value is off; the ratio is the
+point. The user instruction count is system-wide, so the longer slow run collects more background work.) Why the
+governor stays low: `pmustat -A` per CPU during the loop — busy **33.6 / 28.9 / 12.3 / 33.6 %**. A fork+exec chain
+(each child waits for the one before) spreads over the four cores at about a quarter each, under the scheduler's
+target load (55 %), so `_RequestPerformanceLevel()` only ever *lowers* every CPU's level, and the driver asks for the
+rate covering the highest level; together the CPUs are as busy as one CPU that never rests (sum 108 %).
+
+The runtime loader's share (20–29 % in C0) is a consequence: with the clock low, the CPU-bound symbol lookups
+(`elf_hash`, `strcmp`, hash-chain walks) take longer while the memory-bound kernel work scales less. `profile -k -S
+forkbench` at the governor's clock: runtime_loader functions (`find_symbol`, `strcmp`, `load_image`, ...) 8.5 % of
+744 ticks; at a held 1500 MHz 2.6 % of 617 ticks (small samples; `artifacts/h20-c0b/prof-*.txt`), which is why C0's
+fresh-boot profile (at 1500 MHz) had none of them in its top 12.
+
+Also from C0, now explained: "fork+exit 2.3 ms after STK" was measured **with SuperTuxKart still running** — the
+game does not end on SIGTERM within 5 s and `startcost-steps.sh` killed `$2` of `ps`, which is the game's first
+argument (`--windowed`), not its team ID; its "STK quit" rows (C0 and this round) are a running game's menu (two
+busy cores between the game and app_server). Fixed in the script (team ID column, SIGKILL after 5 s); with the game
+really gone the numbers are back to the fresh ones (below). Areas, semaphores, ports and images after the
+applications quit are back within a few % of the fresh counts (areas 1705 → 1795, sems 977 → 995): nothing left
+behind matters here.
+
+**Fix (haiku `startcost` 83db805485, `bcm2835_cpufreq: follow the CPUs' total load as well`; pushed, not merged
+into rpi4):** the clock thread also adds up the CPUs' active time (`cpu_get_active_time()`) over its 50 ms interval
+and asks for the maximum when the total reaches 55 % of one CPU (the scheduler's target load for one CPU); the
+per-CPU levels and the lowering hysteresis are unchanged. Image `artifacts/images/h20-startcost.img` (release build
+options `-sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc` from the worktree; its haiku package differs from
+h20-imgevt's only in `bcm2835_cpufreq`, by `package list`; the tested module is byte-identical to the committed one).
+
+| After the fix (h20-startcost) | fork+exit | fork+exec | posix_spawn | clock |
+|---|---|---|---|---|
+| session up | 1012 | 4755 | 3496 | 1500 |
+| no application, 5 min idle (twice) | 973–1117 | **4611–4667** | 3304–3420 | 1500 during the run |
+| `startcost-steps.sh`: after `pkgman install` / Terminal open / Firefox quit | 1031 / 1063 / 1124 | **4637 / 4651 / 4825** | 3393 / 3433 / 3446 | — |
+| SuperTuxKart killed (-9) | 1105–1156 | 4765–4839 | 3486–3660 | 1500 |
+| (while loaded: Firefox loading pages / STK's menu running) | 2389 / 2389 | 7196 / 8557 | 5313 / 6772 | — |
+
+Before the fix the same script at ~10 min uptime gave after-pkgman 6176, Terminal 7036, Firefox quit **7829** µs
+fork+exec. Slow state / fresh: **1.03×** (was 1.4–1.7×); runs with an application busy are contention, not a start
+cost. Idle power unchanged: an idle desktop still samples 750 MHz between bursts, as before the fix (the sampler's own
+`grep`/`pmustat` starts show as single 1500 samples in both). Sanity on the fixed image: `stk-start-loop.sh 10` **10/10** ok, 0 hangs (115.5–115.9 fps in its 20 s race); `kill-race-loop.sh 10` **10/10**, 0 faults.
+
+Side observations: `_exit()` in libroot flushes stdio (`_IO_cleanup()` in `_exit.c`, upstream behaviour; POSIX says it
+must not), so a forked child that `_exit`s re-prints its parent's buffered output — forkbench's first line appears
+once per child when its stdout is a pipe. Firefox ended with a segmentation violation on `hey Firefox quit` once
+(before-fix run), not seen in the after run.
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
   Wine prefix, the post-0028 Warcraft III profile, WiFi CPU load.)
-- A system-wide profile with the applications attributed (needs N1); the cause of the process-start slowdown (N2).
+- A system-wide profile with the applications attributed (needs N1). (N2's cause: found, C0b.)
 - The SD card's write speed on Linux (C4); a second card on Haiku; the Wine prefix from the card (C5).
 - The WiFi limit without the bench AP (another AP or 5 GHz, C8).
 - The fraction of Firefox's package a first launch touches, and the order's stability (C2).
@@ -571,7 +648,7 @@ haikuporter) — attribute, then fix; (3) **N3**, the largest single CPU consume
 | Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c` |
 | Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh` |
 | Profiling | `profile -a -k -S` (N1: misses teams started after it), `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py` (`--self`: flat top of callgrind output), `profsum.py` (rank text profiles, a symbol by thread), `lookupsim.py`; desktop workload `tools/pi-tests/c0-desktop.sh` |
-| Process start over a session | `tools/pi-tests/startcost-steps.sh` (forkbench after each desktop step) |
+| Process start over a session | `tools/pi-tests/startcost-steps.sh` (forkbench after each desktop step), `startcost-clock.sh` (forkbench with the ARM clock sampled) |
 | Wine | `tools/pi-tests/prefix-timeline.sh`, `x86-cpubench.sh`, `wine-games.sh`; `tools/wine-tests/cpubench.c`, `prefix-timeline.py` |
 | Firefox | `tools/pi-tests/firefox-video.sh`, `ffstall.sh`, `ffv-prof.sh`, `firefox-start-loop.sh` |
 | DT_RELR | `tools/pi-tests/relr.sh`, `scripts/relr-image.sh`, `artifacts/relr/` |
