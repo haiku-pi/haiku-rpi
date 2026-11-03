@@ -469,3 +469,76 @@ overlays), no panic. The Haiku parts are built with the GCC 13.3 cross tools now
 - Follow-ups:
   YCbCr output from the ffmpeg plugin when the consumer offers overlays; the rpivid SAND probe and
   `RPIVID_PICTURE_SCANOUT` (§5); KDL hiding planes is not needed with keying (the opaque palette).
+
+## 10. Games-bench A/B and the merge (prepared 2026-11-03, not landed)
+
+Pi run 3 (gs6-b3): flip-vsync 60.00 fps, every overlay line 0/0/0/0; **flip-free 130.42 fps** (351
+superseded per 300 flips); flip-cover 60.00; flip-window 124.14; 0 panics — stage 6 passes.
+
+**Branches** (all fast-forward their `rpi4`; nothing pushed to `rpi4`):
+
+| Repository | Branch | Head | What |
+|---|---|---|---|
+| haiku-pi/haiku | `stage6-rpi4b` | 0c7a4d1256 | the 9 stage-6 commits rebased onto `rpi4` a4ba606e0c (GCC 16.2, stage 7, DWARF 5); the two fixes already on `rpi4` (797972f727, 978d166f24) dropped by the rebase; no conflicts |
+| | `stage6-merge` | 3c2076b79a | `rpi4` + merge 3d2dc923ea of `stage6-rpi4b` + "arm64 repository: mesa 26.2.6-2" |
+| haiku-pi/mesa | `stage6-merge` | f62183f6e63 | `rpi4` f64c84cae97 + merge of `stage6` (f56bf64ac2b) |
+| haiku-pi/libglvnd | `stage6-merge` | 8391faa | `rpi4` 7cc03c3 + merge of `stage6` (be20124) |
+
+**Packages** (GCC 16.2, `artifacts/packages-hold/`, not `artifacts/packages`): `mesa-26.2.6-2` and
+`mesa_devel-26.2.6-2` (the mesa package carries libdrm + libglvnd + Mesa; same file list as -1), built by
+`scripts/build-gl-stack.sh` / `package-gl-stack.sh` from the two merge branches into a private sysroot copy
+(the scripts take `GL_SYSROOT`, `GL_BUILD`, `GL_STAGE`, `GL_MESA_SRC`, `GL_LIBGLVND_SRC`, `PACKAGES_OUT` now;
+defaults unchanged):
+
+```sh
+export GL_SYSROOT=$PWD/artifacts/stage6/gl/sysroot GL_BUILD=$PWD/artifacts/stage6/gl/build \
+  GL_STAGE=$PWD/artifacts/stage6/gl/stage GL_MESA_SRC=$PWD/sources/mesa-stage6 \
+  GL_LIBGLVND_SRC=$PWD/sources/libglvnd-stage6 PACKAGES_OUT=$PWD/artifacts/packages-hold
+cp -a artifacts/sysroot-arm64 $GL_SYSROOT
+scripts/build-gl-stack.sh --only libglvnd && scripts/build-gl-stack.sh --only mesa && scripts/build-gl-stack.sh --only stage
+scripts/package-gl-stack.sh --revision 2
+```
+
+**Games-bench images** (one base: `rpi4` a4ba606e0c, GCC 16.2, built in `sources/haiku-stage6/generated.arm64`
+with `-sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=3500 @pi-mmc` → `artifacts/stage6/gb-base.img`; both images with
+gcc16.md's added files: glmark2 2023.01-2, launchtime, cxxrt, cxxrt-rootfirst):
+
+- `artifacts/images/gb-stage6-a.img` — `rpi4` as is (published mesa 26.2.6-1).
+- `artifacts/images/gb-stage6-b.img` — the same base, mesa 26.2.6-1 replaced by 26.2.6-2, and the
+  `stage6-merge` display driver, accelerant and app_server non-packaged (BlockedEntries + user_launch, as
+  gpu-stage6-image.sh b); `/boot/home/stage6-versions.txt`. QEMU: boots, games-bench starts with
+  `mesa-26.2.6-2`.
+- Confound to keep in mind: the published mesa 26.2.6-1 of A was built with GCC 13.3, B's -2 with 16.2.
+
+Run (alternating A, B, A, B, A, B; as gcc16.md):
+
+```sh
+scripts/netboot-cycle.sh --image artifacts/images/gb-stage6-a.img --secs 2400 --until 'GB end' --retry-wedge --label gb6a-1
+scripts/netboot-cycle.sh --image artifacts/images/gb-stage6-b.img --secs 2400 --until 'GB end' --retry-wedge --label gb6b-1
+# ... -2, -3
+scripts/games-bench-table.py --a rpi4 artifacts/uart/*-gb6a-*.log --b stage6 artifacts/uart/*-gb6b-*.log
+```
+
+In B, full-screen SDL games and the Quakes present on a plane: `egl_haiku: overlay:` lines appear only
+with `HAIKU_EGL_FPS=1` (games-bench does not set it); the driver's `bcm2711_display: plane N: ...` lines
+on the console show which games took a plane.
+
+**Landing** (after the A/B; every step a fast-forward or a copy):
+
+```sh
+cd /home/houp/haiku-rpi
+# 1. sources: rpi4 fast-forwards to the merge branches
+git -C sources/haiku fetch origin && git -C sources/haiku merge --ff-only origin/stage6-merge && git -C sources/haiku push origin rpi4
+git -C sources/mesa fetch haiku-pi && git -C sources/mesa merge --ff-only haiku-pi/stage6-merge && git -C sources/mesa push haiku-pi rpi4
+git -C sources/libglvnd fetch haiku-pi && git -C sources/libglvnd merge --ff-only haiku-pi/stage6-merge && git -C sources/libglvnd push haiku-pi rpi4
+# 2. the package bump's three parts: the .hpkg (only the newest revision), jam's download copy,
+#    and the repository version (already in the merged haiku: 3c2076b79a)
+mv artifacts/packages/mesa-26.2.6-1-arm64.hpkg artifacts/packages/mesa_devel-26.2.6-1-arm64.hpkg artifacts/packages-hold/
+cp artifacts/packages-hold/mesa-26.2.6-2-arm64.hpkg artifacts/packages-hold/mesa_devel-26.2.6-2-arm64.hpkg artifacts/packages/
+cp artifacts/packages/mesa-26.2.6-2-arm64.hpkg artifacts/packages/mesa_devel-26.2.6-2-arm64.hpkg sources/haiku/generated.arm64/download/
+# 3. the sysroot as the image has it (package-gl-stack.sh's last step, for ports built against it)
+P=sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/package/package
+for p in mesa mesa_devel; do $P extract -C artifacts/sysroot-arm64/boot/system artifacts/packages/$p-26.2.6-2-arm64.hpkg; done
+# 4. the image; check that mesa made it in
+scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc && grep -a 'mesa.*not available' artifacts/build/<ts>.log   # (no output)
+```

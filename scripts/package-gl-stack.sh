@@ -19,6 +19,8 @@
 #   glu, glu_devel  GLU 9.0.3
 # The libraries are those build-gl-stack.sh stages (stripped, named by soname). The packages are also
 # extracted into the sysroot (artifacts/sysroot-arm64/boot/system), for ports built against them.
+# A branch's stack (see build-gl-stack.sh): GL_SYSROOT, GL_STAGE and GL_MESA_SRC as there, and
+# PACKAGES_OUT=DIR instead of artifacts/packages.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 revision=1 gluRevision=""
@@ -32,13 +34,14 @@ done
 gen="$root/sources/haiku/generated.arm64"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
-np="$root/artifacts/sysroot-arm64/boot/system/non-packaged"
-stage="$root/artifacts/gl-stack/non-packaged"
-out="$root/artifacts/packages"
+sysroot="${GL_SYSROOT:-$root/artifacts/sysroot-arm64}"
+np="$sysroot/boot/system/non-packaged"
+stage="${GL_STAGE:-$root/artifacts/gl-stack/non-packaged}"
+out="${PACKAGES_OUT:-$root/artifacts/packages}"
 work="$out/build"
 [ -f "$stage/lib/libGL.so.1" ] || { echo "package-gl-stack: run scripts/build-gl-stack.sh first" >&2; exit 1; }
 [ -f "$np/lib/libGLU.so.1" ] || { echo "package-gl-stack: run scripts/build-gl-stack.sh --only glu first" >&2; exit 1; }
-mesaVersion=$(cat "$root/sources/mesa/VERSION")
+mesaVersion=$(cat "${GL_MESA_SRC:-$root/sources/mesa}/VERSION")
 gluVersion=9.0.3
 mkdir -p "$out"
 rm -rf "$work"
@@ -175,9 +178,9 @@ fi
 # and into the sysroot as the image has them (/boot/system): the compiler searches the system's
 # develop/headers/os/... (BGLView: <opengl/GLView.h>), not non-packaged's
 for p in mesa mesa_devel; do
-	"$pkgtool" extract -C "$root/artifacts/sysroot-arm64/boot/system" "$out/$p-$mesaVersion-$revision-arm64.hpkg"
+	"$pkgtool" extract -C "$sysroot/boot/system" "$out/$p-$mesaVersion-$revision-arm64.hpkg"
 done
 [ -z "$gluRevision" ] || for p in glu glu_devel; do
-	"$pkgtool" extract -C "$root/artifacts/sysroot-arm64/boot/system" "$out/$p-$gluVersion-$gluRevision-arm64.hpkg"
+	"$pkgtool" extract -C "$sysroot/boot/system" "$out/$p-$gluVersion-$gluRevision-arm64.hpkg"
 done
 echo "package-gl-stack: extracted into the sysroot's boot/system"

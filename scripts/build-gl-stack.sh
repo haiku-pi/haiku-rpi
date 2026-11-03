@@ -16,6 +16,10 @@
 #   scripts/build-gl-stack.sh [--sysroot] [--reconfigure]
 #                             [--only libdrm|libglvnd|mesa|glu|vulkan|gl-tests|stage]
 #
+# A branch's stack, without touching the main one (environment, all optional): GL_SYSROOT=DIR (a copy of
+# the sysroot to build against and install into; the cross file is rewritten for it), GL_BUILD=DIR (build
+# dirs), GL_STAGE=DIR (the staged tree), GL_LIBGLVND_SRC=DIR, GL_MESA_SRC=DIR (worktrees).
+#
 # Uses tools/meson/haiku-arm64.cross and the sysroot of scripts/haiku-sysroot.sh (created when
 # missing, recreated with --sysroot). Build dirs: artifacts/gl-build/<name>; each project is
 # installed into the sysroot (DESTDIR, prefix /boot/system/non-packaged) so the next one finds it.
@@ -34,9 +38,18 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cross="$root/tools/meson/haiku-arm64.cross"
-sysroot="$root/artifacts/sysroot-arm64"
-build="$root/artifacts/gl-build"
-stage="$root/artifacts/gl-stack/non-packaged"
+sysroot="${GL_SYSROOT:-$root/artifacts/sysroot-arm64}"
+build="${GL_BUILD:-$root/artifacts/gl-build}"
+stage="${GL_STAGE:-$root/artifacts/gl-stack/non-packaged}"
+mesaSrc="${GL_MESA_SRC:-$root/sources/mesa}"
+libglvndSrc="${GL_LIBGLVND_SRC:-$root/sources/libglvnd}"
+if [ -n "${GL_SYSROOT:-}" ]; then
+	# the cross file with that sysroot
+	mkdir -p "$build"
+	sed -e "s|^sysroot = .*|sysroot = '$sysroot'|" -e "s|^root = .*|root = '$root'|" "$cross" \
+		> "$build/haiku-arm64.cross"
+	cross="$build/haiku-arm64.cross"
+fi
 tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
 prefix=/boot/system/non-packaged
 only="" newSysroot=0 reconfigure=0
@@ -104,7 +117,7 @@ if want libdrm; then
 fi
 if want libglvnd; then
 	# as HaikuPorts' sys-libs/libglvnd recipe: headers under os/opengl
-	meson_project libglvnd "$root/sources/libglvnd" --includedir=develop/headers/os/opengl \
+	meson_project libglvnd "$libglvndSrc" --includedir=develop/headers/os/opengl \
 		-Dx11=disabled -Dglx=disabled -Dhgl=true
 	# and as its INSTALL(): the GL kit headers where Haiku code includes them from
 	inc="$sysroot$prefix/develop/headers/os"
@@ -113,7 +126,7 @@ if want libglvnd; then
 	rmdir "$inc/opengl/opengl"
 fi
 if want mesa; then
-	meson_project mesa "$root/sources/mesa" --includedir=develop/headers/os/opengl \
+	meson_project mesa "$mesaSrc" --includedir=develop/headers/os/opengl \
 		-Dplatforms=haiku -Degl=enabled -Dglvnd=enabled -Dglx=disabled -Dgbm=disabled \
 		-Dgallium-drivers=v3d,softpipe -Dvulkan-drivers=broadcom -Dllvm=disabled \
 		-Dgallium-rusticl=false -Dgallium-va=disabled -Dvideo-codecs= \
@@ -202,8 +215,8 @@ if want stage; then
 	done
 	{
 		echo "# GL stack staged by scripts/build-gl-stack.sh on $(date -u +%Y-%m-%dT%H:%MZ)"
-		for r in libdrm libglvnd mesa; do
-			printf '%s %s\n' "$r" "$(git -C "$root/sources/$r" describe --always --dirty --tags)"
+		for r in libdrm:"$root/sources/libdrm" libglvnd:"$libglvndSrc" mesa:"$mesaSrc"; do
+			printf '%s %s\n' "${r%%:*}" "$(git -C "${r#*:}" describe --always --dirty --tags)"
 		done
 	} > "$stage/add-ons/opengl/gl-stack-versions.txt"
 	echo "build-gl-stack: staged $(find "$stage" -type f | wc -l) files, $(du -sh "$stage" | cut -f1) in $stage"
