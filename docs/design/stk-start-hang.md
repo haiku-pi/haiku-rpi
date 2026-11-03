@@ -106,13 +106,13 @@ Mesa shader compilation, the V3D driver, app_server, a futex in libroot's pthrea
 
 ## Fix (haiku branch `stk-hang`, worktree, not merged)
 
-- **190d425ea5 `libroot/os: rw_lock: wait again after an interrupted block`** — a waiter has a `queued` flag and
+- **2bf2f773ba `libroot/os: rw_lock: wait again after an interrupted block`** — a waiter has a `queued` flag and
   a `status`, set by whoever dequeues it (`rw_lock_unblock()`, `__rw_lock_destroy()`) with the lock's mutex held;
   the waiter blocks, with `wait_status` set anew under that mutex, until it is dequeued (the idiom of
   `pthread_rwlock`'s `_Wait()`). An interruption can no longer lose the hand-off, whatever interrupts. Adds
   `rw_lock_interrupt_test`. A `#pragma GCC diagnostic ignored "-Wdangling-pointer"` around the enqueue: GCC 16
   cannot see that the stack waiter is dequeued before the function returns.
-- **032ba8c63f `kernel/arm64: kernel exit work when a thread first enters userland`** — `arch_thread_enter_userspace()`
+- **5d9132a49c `kernel/arm64: kernel exit work when a thread first enters userland`** — `arch_thread_enter_userspace()`
   does what an exception's return to EL0 does (`thread_at_kernel_exit()` when signals are pending, else
   `thread_at_kernel_exit_no_signals()`), with the frame pushed on the thread's iframe stack so that a signal
   handler's frame goes into it. Removes the spurious `B_INTERRUPTED` of first waits.
@@ -133,6 +133,10 @@ All on the Pi, `gb-stage6-a.img` network sessions, `scripts/stk-hang-hunt.sh` (2
 
 At the bench's rate (5 in ~15) or the hunt's (1 in 4), 25 clean starts by chance: 0.004–0.08 %.
 `rw_lock_interrupt_test`: unfixed libroot FAIL/FAIL 3 of 3, fixed PASS/PASS 3 of 3 (same boot, `LIBRARY_PATH`).
+(The committed test starts and joins a thread first, so that the writers get a reused stack whatever the order;
+the binary run on the Pi had a first thread that measured an `acquire_sem_etc()`, which exited the same way.
+Not re-run on the Pi: `rw_lock_probe7` is that experiment. The libroot and kernel on the branch are byte-identical
+to the ones tested.)
 
 With the fixed kernel (same boot as its 25 starts): `rw_lock_probe7`'s seven situations all `B_OK` after
 200 ms (a new thread's first wait is no longer interrupted, also on a reused stack); `rw_lock_interrupt_test`
