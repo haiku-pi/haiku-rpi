@@ -15,7 +15,8 @@
 # (artifacts/uart/<ts>-session-<label>.log); HDMI frames every 5 minutes.
 # The key: artifacts/pi-session/id_ed25519, made on the first start (never in git).
 # A Pi that has been off for a while can freeze in its first minutes (KNOWN-ISSUES C10, ~1 in 3): when ssh does
-# not answer within 300 s, the cycle is ended and the session started once more (the next boot works);
+# not answer within 300 s (counted once the cycle has the bench lock), the cycle is ended and the session started
+# once more (the next boot works);
 # --no-retry: not (a trial whose freeze is the measurement).
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
@@ -34,6 +35,12 @@ wait_up() {
 	. "$state"
 	for ((t = 0; t < max; t += 5)); do
 		kill -0 "$pid" 2>/dev/null || { tail -n 5 "$dir/cycle.out" >&2; echo "pi-session: the cycle ended" >&2; exit 1; }
+		# the time counts from when the cycle has the bench (another cycle may hold it for long)
+		if tail -n 1 "$dir/cycle.out" 2>/dev/null | grep -q 'waiting for the bench lock'; then
+			sleep 5
+			t=$((t - 5))
+			continue
+		fi
 		ulog=$(ls -t "$HAIKU_RPI_ROOT"/artifacts/uart/*-"$label".log 2>/dev/null | head -n 1) || true
 		ip=$([ -n "$ulog" ] && grep -a -o 'PIS sshd: exit 0, inet addr: [0-9.]*' "$ulog" | tail -n 1 | awk '{ print $NF }') || true
 		if [ -n "$ip" ] && ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
