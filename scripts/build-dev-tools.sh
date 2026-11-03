@@ -39,6 +39,9 @@ gen="$root/sources/haiku/generated.arm64"
 sysroot="$root/artifacts/sysroot-arm64"
 tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
+# extracted package trees: the build tools' rm_attrs, not rm (their attribute emulation keys attributes by
+# inode; a stale entry attaches itself to the next file with that inode — WEEK-2026-W43 10-24, W45 11-03)
+rmAttrs() { [ ! -e "$1" ] || LD_LIBRARY_PATH="$gen/objects/linux/lib" "$gen/objects/linux/x86_64/release/tools/rm_attrs" -rf "$1"; }
 ports="$root/sources/haikuports"
 recipes="$root/tools/recipes"
 cross="$root/scripts/cross-port.sh"
@@ -228,7 +231,7 @@ if want check; then
 		setuptools_python3.14-84.2.1-1-any wheel_python3.14-0.48.0-1-any cython_python3.14-3.3.1-1-any
 		meson_python_python3.14-0.22.1-1-any pyproject_metadata_python3.14-0.12.1-1-any)
 	check="$root/artifacts/cross-ports/dev-tools-check"
-	rm -rf "$check"
+	rmAttrs "$check"
 	mkdir -p "$check/x"
 	for p in "${pkgs[@]}"; do
 		[ -f "$packages/$p.hpkg" ] || { echo "build-dev-tools: $p.hpkg missing" >&2; exit 1; }
@@ -278,5 +281,5 @@ if want check; then
 		echo "== $p.hpkg ($(stat -c %s "$packages/$p.hpkg") bytes)"
 		"$pkgtool" list -i "$packages/$p.hpkg" | sed -n 's/^\t\(provides\|requires\): /  \1 /p'
 	done
-	rm -rf "$check"
+	rmAttrs "$check"
 fi

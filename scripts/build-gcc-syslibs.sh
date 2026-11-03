@@ -87,6 +87,9 @@ done
 cross="$crossTools/bin"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 pkg() { LD_LIBRARY_PATH="$gen/objects/linux/lib" "$pkgtool" "$@"; }
+# extracted package trees: the build tools' rm_attrs, not rm (their attribute emulation keys attributes by
+# inode; a stale entry attaches itself to the next file with that inode — WEEK-2026-W43 10-24, W45 11-03)
+rmAttrs() { [ ! -e "$1" ] || LD_LIBRARY_PATH="$gen/objects/linux/lib" "$gen/objects/linux/x86_64/release/tools/rm_attrs" -rf "$1"; }
 gccVersion="${portVersion%%_*}"
 if [ -z "$patchset" ]; then
 	patchset="$(ls "$root/patches/gcc_syslibs/gcc-$gccVersion"_*.patchset 2>/dev/null | tail -n 1)"
@@ -126,7 +129,7 @@ fi
 #    for the native compiler's link; --full builds no more than the target libraries and keeps 13.3's
 #    C++ headers out of the way)
 if [ ! -f "$sysroot/.done" ]; then
-	rm -rf "$sysroot"; mkdir -p "$sysroot/boot/system"
+	rmAttrs "$sysroot"; mkdir -p "$sysroot/boot/system"
 	sysrootPackages=("$gen/objects/haiku/arm64/packaging/packages/haiku.hpkg"
 		"$gen/objects/haiku/arm64/packaging/packages/haiku_devel.hpkg")
 	$full || sysrootPackages+=("$base" "$baseDevel")
@@ -216,7 +219,7 @@ if $symbolic; then
 fi
 
 # 7. Compare with the shipped libraries
-rm -rf "$work/old"; mkdir -p "$work/old"
+rmAttrs "$work/old"; mkdir -p "$work/old"
 pkg extract -C "$work/old" "$base"
 defined() { "$re" --dyn-syms -W "$1" | awk 'NR > 3 && $7 != "UND" && $8 != "" { print $8, $4, $5, $6 }' | sort; }
 exported() { "$re" --dyn-syms -W "$1" | awk 'NR > 3 && $7 != "UND" && $4 != "SECTION" && $8 != "" { print $8 }' | LC_ALL=C sort -u; }
