@@ -21,7 +21,8 @@ cd /tmp
 loc=$(python3.14 -c 'import numpy; print(numpy.__version__, numpy.__file__)' 2>&1)
 case "$loc" in 2.5.4\ /boot/system/non-packaged/*) r=0 ;; *) r=1 ;; esac
 check import $r "$loc"
-cfg=$(python3.14 -c 'import numpy; c = numpy.show_config(mode="dicts"); print(c["Compilers"]["c"]["name"], c["Compilers"]["c"]["version"], "cross", c["Machine Information"]["cross-compiled"])' 2>&1)
+# (NumPy leaves a false "cross-compiled" out of the dict)
+cfg=$(python3.14 -c 'import numpy; c = numpy.show_config(mode="dicts"); print(c["Compilers"]["c"]["name"], c["Compilers"]["c"]["version"], "cross", c["Machine Information"].get("cross-compiled", False))' 2>&1)
 case "$cfg" in gcc\ 16.2.0\ cross\ False) r=0 ;; *) r=1 ;; esac
 check config $r "$cfg"
 calc=$(python3.14 -c "import numpy as np; r = np.random.default_rng(0); a = r.random((300, 300)); \
@@ -33,5 +34,7 @@ extra_argv=['-p', 'no:cacheprovider', '-rfE', '-q'], tests=['numpy._core.tests.t
 'numpy._core.tests.test_umath', 'numpy._core.tests.test_longdouble', 'numpy.linalg.tests.test_linalg', 'numpy.fft', \
 'numpy.random']))" > "$here/numpy-native-subset.txt" 2>&1
 r=$?
-check subset $r "$(grep -a -E '[0-9]+ (passed|failed)' "$here/numpy-native-subset.txt" | tail -n 1)"
+# -q prints no summary line: count the progress characters (. passed, s skipped, x xfail, F failed, E error)
+check subset $r "$(grep -a -E '^[.sxXFE]+ +\[ *[0-9]+%\]$' "$here/numpy-native-subset.txt" | cut -d' ' -f1 | tr -d '\n' \
+	| awk '{ n = split($0, c, ""); for (i = 1; i <= n; i++) k[c[i]]++ } END { printf "%d passed, %d skipped, %d xfail, %d failed, %d errors", k["."], k["s"], k["x"] + k["X"], k["F"], k["E"] }')"
 echo "NPN end $ok/$n"

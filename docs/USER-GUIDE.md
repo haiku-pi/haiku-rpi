@@ -643,7 +643,8 @@ python3.14
   `zstd`, `decimal`, `json`, sockets, `subprocess`, threads. `sum(range(10**7))` takes 1.3 s.
 - **pip and numpy** are in the package repository: `pkgman install pip_python3.14 numpy_python3.14` (numpy 2.5.4;
   2.5.4-2 needs image-2026-11-03 or later). numpy's fast test suite passes on the Pi (the f2py and run-time compile
-  tests need the native compiler below).
+  tests need the native compiler below). With the compiler (11.3) numpy also builds on the Pi itself, from its
+  source with our Haiku patch: `pip install --no-build-isolation` takes about 24 minutes (docs/design/numpy.md).
 
 ### 11.3 Developing programs
 

@@ -155,14 +155,28 @@ numpy 2.5.4-2, built against a libroot with `strtold_l()` (haiku 46a18aecb4; `HA
 the same fast suite gives **0 failed** (the six longdouble failures are gone) and the 8 `test_mem_policy` errors
 (meson at run time, H18). 2.5.4-2 needs that libroot: it is published with the first release image that has it.
 
+## Native build on the Pi (2026-11-03)
+
+`tools/pi-tests/numpy-native.sh` on the 16.2 test image (hrev60299+259) in a network session
+(`artifacts/numpy-native/run.sh`): `pkgman install` of gcc 16.2, gcc_syslibs_devel, the image's haiku_devel, binutils,
+ninja, meson, pkgconf, python3.14_devel, pip, Cython, meson-python, pyproject-metadata, packaging and the pytest set;
+then `python3.14 -m pip install --no-build-isolation --no-deps ./numpy-2.5.4` of the sdist with the patch above:
+- **built in 1419 s** (23.7 min, 343 ninja steps on 4 cores; 487 warning lines, NumPy's own as on Linux); meson:
+  `cc (gcc 16.2.0 "cc (2026_11_01) 16.2.0")`, `c++` the same, `cython 3.3.1`, host `aarch64`; no BLAS/LAPACK found
+  (lapack_lite, as the package); installed in `/boot/system/non-packaged/lib/python3.14/site-packages`;
+- imports from there (2.5.4); `np.linalg`/`np.fft` give the package's values; `finfo(longdouble).precision` 33 (the
+  113-bit long double, with strtold_l);
+- the fast subset (test_multiarray, test_umath, test_longdouble, linalg, fft, random): **20969 passed, 89 skipped,
+  1 xfail, 0 failed**; CPU features as the package (NEON, NEON_FP16, NEON_VFPV4, ASIMD).
+
+(The check script's first version asked `show_config()` for `cross-compiled`, which NumPy leaves out when it is
+false — fixed; and `-q` prints no summary line, so it now counts the progress characters.)
+
 ## Open
 
-- **Native build on the Pi** (the other half of H19): needs H18's packages (gcc, ninja, meson,
-  pkgconfig) plus Cython and meson-python as `_python3.14` packages, and **pip**: our python3.14
-  is built `--with-ensurepip=no`, so there is no pip on the Pi yet. pip, meson-python, Cython (has a
-  pure-Python wheel) and pyproject-metadata can be packaged with `scripts/package-python-wheel.py`
-  the same way as pytest. NumPy's sdist builds natively with `pip install --no-build-isolation numpy`
-  once they are there (`numpy-2.5.4.tar.gz`; the Haiku patch above is needed natively too).
+- **`pip install numpy` straight from PyPI** (build isolation on) needs network access from the Pi and builds the
+  sdist without our patch, which the cross build needed for `string_buffer.h` (Haiku's `<ctype.h>` macros): expected
+  to stop there the same way until that is fixed in Haiku (not tried natively).
 - **OpenBLAS**: not attempted (a sizeable port: its own build system, Fortran-free LAPACK needs
   `NOFORTRAN`/C LAPACK); `numpy.linalg` uses lapack_lite meanwhile.
 - **Runtime CPU detection on Haiku**: on a CPU with ASIMDHP/DotProd/SVE (not the Pi 4) NumPy would
