@@ -24,7 +24,7 @@ sys="--sysroot=artifacts/sysroot-arm64"
 "$g-gcc" $sys -O2 -I artifacts/sysroot-arm64/boot/system/develop/headers/os/opengl -o "$bin/eglterm" \
 	tools/gl-tests/eglterm.c -lEGL
 "$g-gcc" $sys -O2 -I artifacts/sysroot-arm64/boot/system/non-packaged/develop/headers -o "$bin/vkf32" \
-	tools/gl-tests/vkf32.c artifacts/sysroot-arm64/boot/system/lib/libvulkan.so.1
+	tools/gl-tests/vkf32.c "$(ls artifacts/sysroot-arm64/boot/system/lib/libvulkan.so.1 artifacts/sysroot-arm64/boot/system/non-packaged/lib/libvulkan.so.1 2>/dev/null | head -n 1)"
 "$g-g++" $sys -O2 -I sources/haiku/headers/private/interface -o "$bin/launchtime" \
 	tools/haiku-tests/launchtime.cpp -lbe
 scripts/pi-session.sh start --minutes 60 --image "$img" --label "relcheck-$label"
