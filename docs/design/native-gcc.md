@@ -122,8 +122,8 @@ projects, `pip install` of a pure and of a Cython package compiled by gcc 16.2).
   log artifacts/qemu/20261103-074747-virt.log) (2026-11-03).
 - **haiku_devel in the repository**: programs that use Haiku's headers and libraries (`libroot`, `libbe`, every C program's
   `<stdio.h>`) need the `haiku_devel` package of the same build as the running system (`haiku_devel` requires `haiku ==`
-  its own version). Published with each release from image-2026-11-03b (hrev60299+262) on (docs/RELEASING.md); the
-  development image has it built in.
+  its own version). Published with each release from image-2026-11-03b on, the newest release's only
+  (a repository holds one version per package; docs/RELEASING.md); the development image has it built in.
 
 ## Known gaps
 

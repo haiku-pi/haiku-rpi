@@ -26,11 +26,11 @@ work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNE
 ## Quick start
 
 **Download** the SD card image (unofficial, built from these sources):
-[releases/image-2026-11-03b](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-03b) — 341 MB,
-`haiku-pi4-2026-11-03b.img.xz`, for an 8 GB or larger card:
+[releases/image-2026-11-03c](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-03c) — 341 MB,
+`haiku-pi4-2026-11-03c.img.xz`, for an 8 GB or larger card:
 
 ```sh
-xz -dc haiku-pi4-2026-11-03b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dc haiku-pi4-2026-11-03c.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Or build the image yourself on an x86-64 Linux host and write it to a microSD card:
@@ -68,7 +68,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop in about 75 s. Over the network (the boot volume served by the build host): about 55 s |
 | CPU | 4 × Cortex-A72 (SMP). The clock follows the load from 600 to 1500 MHz. Temperature, throttling and clocks are in `/dev/power/bcm2835_thermal/0` |
 | Display | HDMI at the monitor's native mode (1920×1080 on the bench), with lower modes scaled by the firmware. Hardware cursor and 60 Hz retrace |
-| GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows; the GPU's binning, rendering, texture and compute queues run concurrently (from image-2026-11-03b) |
+| GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows; the GPU's binning, rendering, texture and compute queues run concurrently (from image-2026-11-03b); full-screen GL and MediaPlayer's video are shown on display planes, flipped without tearing (from image-2026-11-03c) |
 | Games | QuakeSpasm 56–70 fps at 1280×720 · Yamagi Quake II 81–89 fps · vkQuake (Vulkan) 52 fps · OpenArena 46 fps · SuperTuxKart 1.5 28–38 fps |
 | Video | ffmpeg 6.1 codecs in the media kit. **HEVC is decoded by the SoC's decoder block**: 1080p at about 115 fps (bit-exact), 4K at about 38 fps |
 | Audio | HDMI (48 kHz stereo, from image-2026-10-24e) and the 3.5 mm headphone jack (44.1 kHz stereo), through the media kit |

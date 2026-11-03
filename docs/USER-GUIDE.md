@@ -216,6 +216,11 @@ HAIKU_VK_FPS=1 ./vkquake ...                                 # Vulkan programs
 `V3D_DEBUG=perf` makes Mesa's V3D driver report where it waits (for example "Blocking on resource BO
 for bo map").
 
+From image-2026-11-03c a full-screen OpenGL program's frames are flipped on a display plane instead of copied
+(MediaPlayer's video too). With `HAIKU_EGL_FPS=1` the frame-rate lines also count the flips, missed flips and
+dropped frames. `HAIKU_EGL_OVERLAY=0` turns the planes off for one program (frames are copied as before);
+`HAIKU_EGL_OVERLAY=1` uses them for windows too, not only full screen.
+
 ## 6. Games
 
 ### 6.1 What exists
@@ -656,8 +661,9 @@ python3.14
   (`gcc`, `g++`, `gfortran`; LTO, OpenMP, precompiled headers, gcov). Checked on the Pi: 24 of 24 compiler checks, and
   the make/CMake/Meson/pip checks above built with it (docs/design/native-gcc.md). Compiling against Haiku's own
   headers (every C program's `<stdio.h>`, the Haiku API) also needs the `haiku_devel` package of your image's build:
-  on image-2026-11-03b and later `pkgman install haiku_devel` gets the one of your image (each release publishes its
-  own); the development image has it already. So, on a release image: `pkgman install gcc gcc_fortran binutils
+  `pkgman install haiku_devel` gets the one of the newest release (the repository holds one version per package,
+  so only the newest release image has its own; on an older image, update to the newest release first); the
+  development image has it already. So, on a release image: `pkgman install gcc gcc_fortran binutils
   haiku_devel make`. On an older image, installing gcc also updates gcc_syslibs to 16.2 (checked: that image's
   programs keep working), but no matching haiku_devel is published for it.
 - **The development image** (`-sHAIKU_PI_DEV=1`, see `tools/build/UserBuildConfig`) has the compiler, binutils, make,

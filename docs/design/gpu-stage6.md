@@ -570,7 +570,7 @@ overlays), no panic. The Haiku parts are built with the GCC 13.3 cross tools now
   YCbCr output from the ffmpeg plugin when the consumer offers overlays; the rpivid SAND probe and
   `RPIVID_PICTURE_SCANOUT` (§5); KDL hiding planes is not needed with keying (the opaque palette).
 
-## 10. Games-bench A/B and the merge (prepared 2026-11-03, not landed)
+## 10. Games-bench A/B and the merge (landed 2026-11-03 19:20: haiku rpi4 db79f7850d + 461104856d, mesa/libglvnd rpi4 = stage6-merge; in image-2026-11-03c)
 
 Pi run 3 (gs6-b3): flip-vsync 60.00 fps, every overlay line 0/0/0/0; **flip-free 130.42 fps** (351
 superseded per 300 flips); flip-cover 60.00; flip-window 124.14; 0 panics — stage 6 passes.

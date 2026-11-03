@@ -58,6 +58,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 | Modes | same | ✅ | every mode up to the native one; `screenmode -l` lists 40+; a smaller mode is scaled up by the firmware's primary plane, aspect kept (10-19). SDL full screen switches modes: OpenArena at 1280×720, 46.8 fps (10-20) | The HDMI link stays at the native mode; smaller modes are scaled, not set on the link |
 | Vertical retrace | same, `tools/overlays/haiku-fkms.dts` (image default) | ✅ | SMI interrupt (144): 60.00 Hz, gaps 16659–16668 µs (10-19) | Without the `haiku-fkms` overlay the firmware raises no SMI interrupt, and the driver falls back to a thread on the blocking `SET_VSYNC` call, which holds the mailbox ~16 ms per frame |
 | Hardware cursor | same (firmware plane 7, 64×64 ARGB) | ✅ | scripted moves, corners (clipped), scaled modes, seen on HDMI (10-19); used with a real mouse by hand (owner, 10-25) | — |
+| Overlay planes (GPU stage 6) | same (firmware planes 1–6, keyed by the desktop's alpha) | ✅ | from image-2026-11-03c: full-screen GL flipped on a plane (vsync 60.00 fps, 0 missed flips; unsynced ~130 fps), MediaPlayer's video on a YCbCr plane (356 updates in 356 vblanks); games bench: off-plane cases within ±1 %, Quake II 1080p +3 %, QuakeSpasm/OpenArena 1080p −1…−2 % (11-03) | After a mode change an overlay stays black until shown again; YCbCr422 shows black (KNOWN-ISSUES F2) |
 | Kernel debugger on HDMI | upstream `frame_buffer_update` | ✅ | KDL draws in the current mode after a mode change (10-19) | — |
 
 ## 5. GPU (V3D 4.2)
