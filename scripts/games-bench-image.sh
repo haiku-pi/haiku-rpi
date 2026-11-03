@@ -21,6 +21,9 @@
 # To /boot/system/packages: Wine (wine, wine_data, wine_directx, wine_x86, wine_x86_64, wine_mono) and what
 # it needs that a release image lacks (wayland, wayland_server, libxkbcommon, xkeyboard_config), and
 # SuperTuxKart — the newest of each in artifacts/packages. The UserBootscript is games-bench.sh.
+# The screen saver and DPMS are off (tools/build/data/bench/ScreenSaver_settings: timeflags 0): Haiku's default
+# saver starts after 15 minutes without input — during the Wine tests — and a window behind it is never
+# shown, so its frame rate is the application's alone (2026-11-03: 13-19 % higher than on screen).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -ge 2 ] || { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -46,6 +49,7 @@ for name in wine wine_data wine_directx wine_x86 wine_x86_64 wine_mono wayland w
 	[ -n "$f" ] || { echo "games-bench-image: no package $name in artifacts/packages" >&2; exit 1; }
 	pkgs+=("$f:/boot/system/packages/$(basename "$f")")
 done
+pkgs+=("$root/tools/build/data/bench/ScreenSaver_settings:/boot/home/config/settings/ScreenSaver_settings")
 
 "$root/scripts/mkimage-pi4.sh" --in "$base" --out "$out.base" --add-tree "$stage" \
 	--bootscript "$root/tools/pi-tests/games-bench.sh"
