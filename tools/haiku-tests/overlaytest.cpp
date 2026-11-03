@@ -7,6 +7,10 @@
  * moved partly off the screen (the overlay is clipped), and the last frame held for a snapshot.
  * Prints "OVL " lines; grade the HDMI capture: bars in the right colors and order (white, yellow,
  * cyan, green, magenta, red, blue, black), the yellow window over them.
+ * The front buffer's alpha (app_server keys overlays by it on the Raspberry Pi, only while one is
+ * shown) is read back (BScreen::ReadBitmap()) next to a probe window that draws pixels with alpha 0:
+ * before the first overlay (not keyed: the probe's pixels as drawn), while it is shown (keyed: no
+ * pixel outside the overlay may be other than opaque) and after it was hidden (not keyed again).
  *
  *   overlaytest [-s rgb32|ycbcr422|yuv420] [-f FLIPS] [-h SECONDS]   (default: all three spaces)
  *
@@ -134,6 +138,77 @@ fill(BBitmap* bitmap, int frame)
 }
 
 
+/*!	A window whose B_RGB32 bitmap has alpha 0: app_server copies its pixels as they are */
+class ProbeView : public BView {
+public:
+	ProbeView(BRect frame)
+		:
+		BView(frame, "probe", B_FOLLOW_ALL, B_WILL_DRAW),
+		fBitmap(BRect(0, 0, 63, 63), B_RGB32)
+	{
+		uint8* bits = (uint8*)fBitmap.Bits();
+		for (size_t i = 0; i < (size_t)fBitmap.BitsLength(); i += 4) {
+			bits[i] = 200;
+			bits[i + 1] = 100;
+			bits[i + 2] = 50;
+			bits[i + 3] = 0;
+		}
+		SetViewColor(B_TRANSPARENT_COLOR);
+	}
+
+	void Draw(BRect) override
+	{
+		SetDrawingMode(B_OP_COPY);
+		DrawBitmap(&fBitmap, BPoint(0, 0));
+	}
+
+private:
+	BBitmap fBitmap;
+};
+
+
+static const BRect kProbeFrame(800, 100, 863, 163);
+static const int kProbePixels = 64 * 64;
+
+
+/*!	The front buffer's pixels: those not opaque outside \a overlay (screen coordinates), and the
+	transparent ones (0x00000000: keyed) in it; \a probe: those not opaque in the probe window.
+	-1 if the screen cannot be read.
+*/
+static void
+alpha_census(const char* name, const char* when, BRect overlay, int& outside, int& keyed,
+	int& probe)
+{
+	BScreen screen;
+	BBitmap shot(screen.Frame(), B_RGB32);
+	outside = keyed = probe = -1;
+	if (shot.InitCheck() != B_OK || screen.ReadBitmap(&shot) != B_OK) {
+		SAY("%s alpha %s: cannot read the screen", name, when);
+		return;
+	}
+	outside = keyed = probe = 0;
+	const uint8* bits = (const uint8*)shot.Bits();
+	const int32 bpr = shot.BytesPerRow();
+	const int32 width = shot.Bounds().IntegerWidth() + 1;
+	const int32 height = shot.Bounds().IntegerHeight() + 1;
+	for (int32 y = 0; y < height; y++) {
+		const uint32* row = (const uint32*)(bits + y * bpr);
+		for (int32 x = 0; x < width; x++) {
+			if (overlay.Contains(BPoint(x, y))) {
+				if (row[x] == 0)
+					keyed++;
+			} else if ((row[x] >> 24) != 0xff) {
+				outside++;
+				if (kProbeFrame.Contains(BPoint(x, y)))
+					probe++;
+			}
+		}
+	}
+	SAY("%s alpha %s: %d pixels not opaque outside the overlay (%d of the probe's %d), %d "
+		"transparent in it", name, when, outside, probe, kProbePixels, keyed);
+}
+
+
 static const char*
 space_name(color_space space)
 {
@@ -184,7 +259,17 @@ test_space(color_space space)
 	BView* view = new BView(window->Bounds(), "overlay", B_FOLLOW_ALL, B_WILL_DRAW);
 	window->AddChild(view);
 	window->Show();
+	BWindow* probe = new BWindow(kProbeFrame, "alpha probe", B_NO_BORDER_WINDOW_LOOK,
+		B_FLOATING_ALL_WINDOW_FEEL, B_NOT_MOVABLE | B_AVOID_FOCUS);
+	ProbeView* probeView = new ProbeView(probe->Bounds());
+	probe->AddChild(probeView);
+	probe->Show();
 	snooze(300000);
+	window->Lock();
+	const BRect overlayRect = view->ConvertToScreen(view->Bounds());
+	window->Unlock();
+	int outside, keyed, before;
+	alpha_census(name, "before", overlayRect, outside, keyed, before);
 
 	window->Lock();
 	rgb_color key;
@@ -201,8 +286,19 @@ test_space(color_space space)
 		sFailures++;
 		window->Lock();
 		window->Quit();
+		probe->Lock();
+		probe->Quit();
 		return;
 	}
+
+	// keyed: the front buffer was made opaque before the overlay showed, the key is transparent
+	snooze(300000);
+	int probed;
+	alpha_census(name, "shown", overlayRect, outside, keyed, probed);
+	const bool keyedOk = outside == 0 && keyed > 0;
+	SAY("%s keyed front buffer %s", name, keyedOk ? "ok" : "BAD");
+	if (!keyedOk)
+		sFailures++;
 
 	// a flip per vertical blank; the square moves
 	BScreen screen(window);
@@ -256,6 +352,20 @@ test_space(color_space space)
 	window->Quit();
 	delete bitmaps[0];
 	delete bitmaps[1];
+
+	// not keyed again (app_server stops keying 100 ms after the last overlay went): the probe drawn
+	// again comes out as before
+	snooze(500000);
+	probe->Lock();
+	probeView->Invalidate();
+	probe->Unlock();
+	snooze(300000);
+	alpha_census(name, "after", overlayRect, outside, keyed, probed);
+	SAY("%s after the overlay: %s", name, before < kProbePixels
+		? "(the probe's alpha was not drawn as it is: no check)"
+		: probed == kProbePixels ? "not keyed ok" : "still keyed (opaque writes)");
+	probe->Lock();
+	probe->Quit();
 	SAY("%s done", name);
 }
 

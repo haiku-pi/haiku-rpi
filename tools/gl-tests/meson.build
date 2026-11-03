@@ -26,7 +26,11 @@ executable('cursor-move', 'cursor-move.cpp', dependencies : [dep_be], install : 
 # the cost of each step of presenting a frame: CPU copies, SYNC_BO, app_server's DrawBitmap
 # (docs/design/gpu-present.md)
 dep_drm = dependency('libdrm')
-executable('present-bench', 'present-bench.cpp', dependencies : [dep_be, dep_drm], install : true)
+# app_server's keyed row writers at app_server's -O2 (-O3 turns the old one into another loop)
+lib_keying = static_library('present-bench-keying', 'present-bench-keying.cpp',
+  override_options : ['optimization=2'])
+executable('present-bench', 'present-bench.cpp', dependencies : [dep_be, dep_drm],
+  link_with : lib_keying, install : true)
 
 # headless Vulkan: the Khronos loader (scripts/build-gl-stack.sh "vulkan") and V3DV
 dep_vulkan = dependency('vulkan')
