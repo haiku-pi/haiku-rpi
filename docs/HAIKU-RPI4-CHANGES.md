@@ -7,12 +7,12 @@ apply beyond this board.
 The fork is [haiku-pi/haiku](https://github.com/haiku-pi/haiku), branch `rpi4` (cloned into
 `sources/haiku` by `scripts/bootstrap.sh`). Its remote `upstream` is official Haiku and `origin` is
 haiku-pi/haiku. The branch starts from upstream **hrev60262** (committed 2026-10-17). Upstream was
-merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits) and on 2026-10-24 (`2a0cb4ac45`,
-20 more), so the merge base is now **hrev60295** (`660ea78079`). Upstream is merged again every
-weekend; see [log/](log/).
+merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 (`2a0cb4ac45`, 20 more)
+and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
+Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **163 commits of its own** (2026-10-18 to 2026-10-24). To list
-them, in `sources/haiku`:
+On top of that base the fork carries **254 commits of its own** (2026-10-18 to 2026-11-03; counted
+2026-11-04 at `rpi4` 83db805485). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -23,7 +23,7 @@ are the 10-character short hashes from that list.
 
 ## Scope
 
-The raw diff against the merge base is **229 files, +37 720 / −1 177 lines**. Three blocks in it were
+The raw diff against the merge base is **363 files, +51 345 / −1 624 lines** (2026-11-04). Three blocks in it were
 not written here:
 
 | excluded | lines | what it is |
@@ -32,10 +32,12 @@ not written here:
 | `drivers/network/wlan/broadcomfmac/dev/` | ~+6 400 | OpenBSD's bwfm driver, ported (the Haiku glue around it is ours) |
 | `libroot/posix/string/arch/arm64/arm-optimized-routines/` | +2 488 | Arm Optimized Routines' memory and string functions, vendored unmodified with their licence (`2c93aeea48`) |
 
-The hand-written surface is therefore roughly **25 000 lines**, most of it new drivers in new
-directories. Of the 163 commits, 25 are changes to the list of binary packages the arm64 build uses
-(`build/jam/repositories/HaikuPorts/arm64`), 24 of them changing nothing else; they are collected in
-one table at the end.
+The hand-written surface is therefore roughly **39 000 lines**, most of it new drivers in new
+directories. Of the 254 commits, 37 change the list of binary packages the arm64 build uses
+(`build/jam/repositories/HaikuPorts/arm64`), 34 of them changing nothing else; they are collected in
+one table at the end. The GCC 16.2 work (§13) appears twice in `git log`: its branch was merged once
+and its four build fixes were also rebased onto rpi4 (`3c641a2b01`/`775c2e8a5e` and so on), the same
+changes under two hashes.
 
 The changes fall into three kinds:
 
@@ -244,6 +246,7 @@ spin-waits, and removed the watchdog and its diagnostics.** What survives:
 
 | commit | change | what and why |
 |---|---|---|
+| `fdf54ce592` | Early page-table allocations traced only on request | 43 lines per boot on the Pi 4, printed with interrupts off before anything else ran; behind `TRACE_ARCH_VM_TRANSLATION_MAP` now. |
 | `f5650324d6` ★ | PL011: keep the firmware's line settings | The constructor's loopback test sets IBRD=1, FBRD=0 and LCRH=0 (5 data bits, no FIFO). Nothing restored them unless `InitPort()` ran, which needs the clock. Everything printed was garbage. |
 | `b3a08271be` ★ | Fix reading the arm64 debug serial port | `arch_debug_serial_try_getchar()` went through a function returning `char`, so −1 became 255 and KDL read endless 0xff. The blocking variant did not block. |
 | `8eca4824c9` ★ | Emergency keys on the serial console | Three Ctrl-] followed by a key act as Alt-SysRq+key, so `d` enters KDL on a board with no working keyboard. On by default on arm, arm64 and riscv64; the `serial_emergency_keys` setting overrides it. |
@@ -296,6 +299,7 @@ Pi-specific.
 
 | commit | change | what and why |
 |---|---|---|
+| `d20bc8fa87` ★ | No ACPI without a root pointer outside x86; ps2_hid only on x86 | On a device-tree machine the loader passes no ACPI root pointer and the bus manager initialised ACPICA anyway ("AcpiInitializeTables failed AE_NOT_FOUND", "Could not remove SCI handler" at every boot); only x86 can find the tables by scanning memory, so elsewhere the module declines. ps2_hid is packaged for x86 only, like its bus manager. |
 | `1c9c78289e` ★ | FDT: translate `reg` through the parent buses' `ranges` | `get_reg()` returned the node's address as written, which is a CPU physical address only directly under the root. On the Pi 4, `/soc` maps 0x7exxxxxx to 0xfexxxxxx, and `emmc2bus` and `/scb` have their own windows. A bus without `ranges` (I2C, say) is not memory-mapped, and its children's addresses are returned unchanged. |
 | `08e65e6449` ★ | FDT: `get_dma_window()` | From the nearest `dma-ranges`: the offset between physical and DMA addresses and the end of reachable RAM. VideoCore-bus devices see the first GiB of RAM at 0xc0000000. |
 | `f2e5b2fab8` ★ | `get_dma_window()`: the RAM window, not the first one | `/scb` lists the peripheral window first, so its devices got a 56 MiB window. RAM's window is the largest one; use that. |
@@ -361,6 +365,7 @@ WPA join path in `openbsd_wlan`/net_server are ★ and apply to any board.
 
 | commit | change | what and why |
 |---|---|---|
+| `d6a85764d9` | `broadcomfmac` built without `BWFM_DEBUG` | The bring-up debug output (core list, bus states, firmware checks) went to the serial console at every boot; errors and the MAC address still print. |
 | `4ff857683f` | `drivers/network/ether/genet`: Broadcom GENET v5 + BCM54213PE PHY (RGMII) | One RX and one TX ring of 256 descriptors, interrupt-driven with timeouts as a backstop. MDIO through the UniMAC, link polling with speed/duplex reprogrammed on change. MAC address from the device tree, the UniMAC registers or the firmware. A device-manager driver publishing `net/genet/<n>`, because the FreeBSD compat layer cannot attach to device tree nodes. Register sequences follow Linux's bcmgenet/bcmmii/broadcom/mdio-bcm-unimac. Deliberately without status blocks, PHY low-power modes or EEE, after an earlier Pi 4 driver traced gigabit receive losses and dropped first frames to them. See [design/genet-driver.md](design/genet-driver.md). |
 | `06356adcc0` | GENET: cacheable receive buffers, invalidated per frame | Copying out of non-cacheable buffers capped receive at 250 Mbit/s. The CPU never writes RX buffers, so they hold no dirty lines; each frame is invalidated before the copy. TX stays write-combining. TCP download 250 → 735 Mbit/s (918 after `18e0d2a9db`). |
 | `fb1b33e488` | NFSv4 client in the arm64 minimum image | The Pi has only SD and USB storage. The NFSv4 client and its idmapper make shares reachable over GENET. |
@@ -407,7 +412,7 @@ change. The Mesa side lives in the haiku-pi/mesa fork, outside this repository. 
 
 | commit | change | what and why |
 |---|---|---|
-| `118e315497`, `5c2aaee784` | **A job queue per unit, concurrent by default** | One queue for everything and one job on the GPU at a time became a queue per unit (binner, renderer, TFU, CSD, CPU), each one job at a time in order, as Linux v3d (credit_limit 1): the binner works on job N+1 while the renderer draws job N. Linux's dependency rules (in_sync_bcl/rcl, implicit buffer fences), a watchdog per running job, a reset restarts the others once. `queues serial` in the v3d driver settings restores one job at a time. Pi: v3dtest 59/59 both modes, 30 min Quake + glmark2 with 0 GPU resets, glmark2/QuakeSpasm +1-3 %. |
+| `b1e9782267`, `ec706b6a3b`, `118e315497`, `5c2aaee784` | **A job queue per unit, concurrent by default** (`v3dtest`: burst, overlap and restart tests) | One queue for everything and one job on the GPU at a time became a queue per unit (binner, renderer, TFU, CSD, CPU), each one job at a time in order, as Linux v3d (credit_limit 1): the binner works on job N+1 while the renderer draws job N. Linux's dependency rules (in_sync_bcl/rcl, implicit buffer fences), a watchdog per running job, a reset restarts the others once. `queues serial` in the v3d driver settings restores one job at a time. Pi: v3dtest 59/59 both modes, 30 min Quake + glmark2 with 0 GPU resets, glmark2/QuakeSpasm +1-3 %. |
 | `978d166f24` ★ | An import whose pages are not mapped fails instead of panicking | `IMPORT_MEMORY` of a range the kernel had not mapped (a clone of a contiguous area) reached `get_memory_map()`, which panics: any program could panic the kernel. It now returns B_BAD_ADDRESS. |
 | `cb92912c6b` | Power on and identify the GPU | Attaches via the device tree and finds the power-management block that provides the GPU's power domain. The first `open()` powers it on: QPU enable, power domain and clock through the mailbox. The clock is trusted only once the firmware reports it on, because an access to an unclocked V3D never completes. Then the reset line and the two bus bridges. The firmware allows the clock only when its device tree enables the V3D node. 500 MHz. |
 | `e01ad66e7c` | GPU memory, jobs and synchronisation (Linux v3d interface) | One 4 MiB page table for the 4 GiB GPU address space, plus a scratch page for stray accesses. Buffer objects are wired, zeroed and write-combining; `MMAP_BO` clones them into the caller, and freed pages are quarantined until every earlier job completes. `SUBMIT_CL` with per-job cache/TLB maintenance, run one at a time in order by a worker thread. The IRQ handler serves binner memory from a pre-staged pool and has storm guards. `WAIT_BO`, syncobjs, a watchdog and a full GPU reset. Per-client handles, so a dying client leaks nothing. Test program `v3dtest`: 41/41 checks. |
@@ -499,6 +504,8 @@ Changes of their own:
 
 | commit | change | what and why |
 |---|---|---|
+| `3c641a2b01`/`775c2e8a5e`, `f21e11d138`/`271cec9635`, `2d0aac976e`/`b0ac75ce1f`, `29a820de6e`/`5c7f4579c5` ★ | **Build with GCC 16** ([design/gcc16.md](design/gcc16.md)) | GCC 16 defaults to C++20 and C23: C++ is pinned to `-std=gnu++17` (C++20 breaks enum arithmetic, `++` on volatiles, implicit `this` capture, reversed comparison operators, mixed designated initialisers, `requires` as a name: ~420 failed compiles of the minimum image); the kernel's and loader's zlib (K&R definitions) as `-std=gnu17`; structs with member functions named for linkage (`-Wnon-c-typedef-for-linkage`: elf.h, USB video descriptors, mmc_disk; ABI unchanged); FileTypes' `_Frame()` static (it ran on an unconstructed object). Every architecture. |
+| `2df3b18b92` | Optional `HAIKU_PACK_RELATIVE_RELOCS` | Links userland with `-z pack-relative-relocs` (DT_RELR) when set; off by default (needs the binutils option for the target and a runtime loader with DT_RELR). |
 | `b258d90d71` | arm64 images use the haiku-pi package repository | Haiku's servers carry no arm64 HaikuPorts repository. `RepositoryRules` now takes an architecture's own repository-info template where there is one (`src/data/repository_infos/haikuports_arm64`, pointing at <https://haiku-pi.github.io/packages>, which [../scripts/publish-repo.sh](../scripts/publish-repo.sh) publishes). `pkgman refresh` and `install` work out of the box over HTTPS. The mechanism is generic; the URL is the fork's. |
 | `59b38453cc` | `libmidi.so` in the regular image only with fluidlite | As in the test image already. (The same commit lists the audio packages; see the table below.) |
 | `18e0d2a9db` | `KDEBUG_LEVEL` 1 | See section 2. |
@@ -526,6 +533,7 @@ the packages staged in `download/`. [TRY-IT.md](TRY-IT.md) has the build steps.
 
 | commit | change | what and why |
 |---|---|---|
+| `e30b8928d6`, `4539cd2f00` ★ | **DT_RELR in the runtime loader** | Packed relative relocations (`-z pack-relative-relocs`) store relative relocations as addresses and bitmaps, 1–2 % of their RELA size (libxul: 492 734 entries, 11.8 MB as RELA); applied before the image's other relocations, for every architecture. elf.h gains DT_RELR/DT_RELRSZ/DT_RELRENT/SHT_RELR. |
 | `2c93aeea48` ★ | Memory and string routines from Arm Optimized Routines | libroot on arm64 used generic C for memcpy and memset (8 bytes per iteration, one byte when source and destination are not aligned alike) and musl's or Haiku's C versions of the rest. It now uses the Armv8.0 + Advanced SIMD routines, vendored unmodified with their licence (MIT OR Apache-2.0 WITH LLVM-exception) and built under libroot's names: memcpy, memmove, memset, memchr, memrchr, memcmp, strchr, strchrnul, strrchr, strcmp, strncmp, strlen, strnlen, strcpy and stpcpy. The C versions are left out of libroot and the runtime loader on arm64; the kernel and the boot loader keep the generic ones (no SIMD there). MB/s: memcpy 1 KiB 5280 → 11 223, memcpy from source + 1 731 → 9036, memset 4 KiB 5805 → 11 598, strlen 4256 → 8091, memchr 2908 → 6419. app_server bitmap drawing 162 → 181 frames/s. 3.8 million checks against reference versions (every length up to 300, every alignment up to 16, strings ending at an unmapped page) pass. |
 | `2bf2f773ba` ★ | **`rw_lock`: wait again after an interrupted block** | The waiter has a queued flag and a status set by whoever dequeues it (with the lock's mutex held) and blocks again with a fresh wait status until then, as `pthread_rwlock` does. Before, an interrupted wait spun and a hand-off to it was lost: the lock stayed held for ever (BLooperList: SuperTuxKart froze with an empty window in ~1 of 4 starts on images 10-29b to 11-03). Adds `rw_lock_interrupt_test`. |
 | `076da9813a` ★ | `__tls_get_addr()` without the runtime loader | Every access to a thread-local variable of a shared library (general-dynamic TLS: all `-fPIC` code) called the runtime loader's `get_tls_address()`, and a busy python3 spent a third of its time there. The runtime loader now publishes its TLS generation (the count of unloaded TLS images) in `rld_export`, and `__tls_get_addr()` returns the address directly when the thread's dynamic thread vector is of that generation and already holds the block. Anything else still goes through `get_tls_address()`. A TLS access in a shared library 35 → 17.4 ns (a global: 7.3 ns); `python3 -m timeit "sum(i*i for i in range(1000000))"` 521 → 391 ms. A test reloading two TLS libraries that reuse one module ID 500 times, with a second thread, passes. |
@@ -588,6 +596,14 @@ repo builds and publishes. The notes say what a bump fixed, where it fixed somet
 | `461104856d` | mesa 26.2.6-2 (GCC 16.2) | GPU stage 6: full-screen GL frames flipped on an overlay plane (vsync'd flips with swap interval 1, a mailbox of four buffers with 0) and libglvnd's `hgl_native_window_shows_overlays()` ([design/gpu-stage6.md](design/gpu-stage6.md)). |
 | `bb0cbab1f7` | mesa 26.2.0-6, glu 9.0.3-6, openarena 0.8.8-4 | mesa: the EGL driver's presenter thread no longer ends on an interrupted semaphore wait (a program whose signal handler ran on that thread then waited for it at its next frame for ever). openarena: ioq3's SIGTERM handler returns instead of running on into `Sys_Error()`. |
 | `cb96327eec` | mesa 26.2.5-1 | |
+| `f16c822de5` | mesa 26.2.5-3 | The on-disk shader cache (a GL program's shaders compile once, not at every start). |
+| `45785f05b0` | mesa 26.2.5-4 | `eglTerminate()` with a context still current no longer crashes. |
+| `cf29e72177` | mesa 26.2.5-5 | V3DV partial-supertile stores fixed; faster GL presents. |
+| `92f6a1d35e` | mesa 26.2.5-6 | V3D compiler: vector movs copied whole (an upstream bug); BGLView draws asynchronously. |
+| `c1b67144b7` | mesa 26.2.5-7 | V3D compiler: 3.6× faster compiles of large shaders. |
+| `b97baf3706` | gcc_syslibs 13.3.0 bootstrap-2 | Rebuilt with GNU hash tables and `-Bsymbolic-functions`. |
+| `821aaf239d` | mesa 26.2.6-1 | Mesa 26.2.6. |
+| `d2fd8ddf8b` | gcc_syslibs 16.2.0 | The GCC 16.2 C++ runtime (libstdc++ 6.0.36), a superset of 13.3's. |
 | `d7d6924a6e` | firefox 157.0.1-5 | getentropy() for random bytes, GNU hash tables |
 
 `e98b67a5bd` and `be395e19f4` (section 8) also bump ffmpeg6, to 6.1.6-2 and 6.1.6-3.
