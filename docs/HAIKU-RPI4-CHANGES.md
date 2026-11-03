@@ -160,7 +160,7 @@ all) and a U-Boot pool page on a network boot (U-Boot patch 0005 clears EFI page
 with a U-Boot that fills RAM with random data before booting and a page bisect: warm boots froze 3 of 3, alive 3 of
 3 with the kernel fix alone. `a46a16641e`, `80a6e1f2fb`, the `debug_heartbeat` setting (`775c21f7fb`) and the
 brcmstb link options (`9cb5647ea4`) were written while hunting it; `a8daa2c23b` (the cpufreq driver's request
-order) was taken for a fix and is not one. The hunt: [log/WEEK-2026-W44.md](log/WEEK-2026-W44.md), 10-29 to 11-02.
+order) was taken for a fix and is not one. The hunt: [log/WEEK-2026-W44.md](log/WEEK-2026-W44.md), 10-29 to 11-02. Confirmed 11-03: 10 of 10 boots of image-2026-11-03 from the card after 30 minutes off each, alive (before the fixes up to 2 in 3 froze).
 
 ---
 
