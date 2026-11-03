@@ -3,8 +3,8 @@
 Status: research note, 2026-10-24. No code exists yet. Target: a Haiku hmulti driver
 `bcm2711_hdmi_audio` for HDMI0, reusing the DMA model of `drivers/audio/bcm2711_pwm`.
 
-Sources. Hardware facts come from the Raspberry Pi Linux tree at
-`/home/houp/phoenix-rpi/external/linux` (branch rpi-6.18.y, HEAD `57083d8cf8f0`). That code is GPL.
+Sources. Hardware facts come from
+a clone of the Raspberry Pi Linux kernel (raspberrypi/linux, branch rpi-6.18.y, HEAD `57083d8cf8f0`). That code is GPL.
 This note restates facts (offsets, bits, values, order of operations) in its own words and contains
 no Linux code. Paths below are relative to that tree unless they start with `sources/` (the Haiku
 fork) or `tools/`/`scripts/` (this repository). Other sources:

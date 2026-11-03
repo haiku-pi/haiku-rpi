@@ -351,9 +351,9 @@ Build (host, separate output directories; the main `generated.arm64`, `artifacts
 ```sh
 # Haiku: a configured output directory in the worktree, the main tree's cross tools, download/ hard-linked
 cd sources/haiku-stage6 && mkdir generated.arm64 && cd generated.arm64
-../configure --cross-tools-prefix /home/houp/haiku-rpi/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-
+../configure --cross-tools-prefix $PWD/../../haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-
 cp -al ../../haiku/generated.arm64/download download
-cd /home/houp/haiku-rpi
+cd ../../..
 scripts/build.sh --generated sources/haiku-stage6/generated.arm64 bcm2711_display bcm2711_display.accelerant app_server
 # libglvnd, Mesa, the GL tests: meson with build-gl-stack.sh's options into artifacts/stage6/build/<name>
 #   (the shared sysroot only read, nothing installed into it); Mesa: ninja ... src/egl/libEGL_mesa.so.0.0.0
@@ -366,7 +366,7 @@ tools/pi-tests/gpu-stage6-image.sh --stage                              # artifa
 Images from the release candidate that is `rpi4` 46a18aecb4, the branches' base (no image build):
 
 ```sh
-cd /home/houp/haiku-rpi
+# in this repository's top directory
 tools/pi-tests/gpu-stage6-image.sh artifacts/stage6/base-rpi4-38bc4de5d7.img artifacts/images/gpu-stage6-b.img b
 tools/pi-tests/gpu-stage6-image.sh artifacts/stage6/base-rpi4-38bc4de5d7.img artifacts/images/gpu-stage6-a.img a
 scripts/netboot-cycle.sh --image artifacts/images/gpu-stage6-b.img --secs 420 --label gs6-b \
@@ -526,7 +526,7 @@ on the console show which games took a plane.
 **Landing** (after the A/B; every step a fast-forward or a copy):
 
 ```sh
-cd /home/houp/haiku-rpi
+# in this repository's top directory
 # 1. sources: rpi4 fast-forwards to the merge branches
 git -C sources/haiku fetch origin && git -C sources/haiku merge --ff-only origin/stage6-merge && git -C sources/haiku push origin rpi4
 git -C sources/mesa fetch haiku-pi && git -C sources/mesa merge --ff-only haiku-pi/stage6-merge && git -C sources/mesa push haiku-pi rpi4

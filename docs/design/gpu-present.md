@@ -265,7 +265,7 @@ and link lines; libGL.so.1 from libglvnd `rpi4-present2`; glmark2-es2-async from
 `--extra-patches patches/glmark2-async`; present-bench, bitmapcheck, glview, vkcube).
 
 ```sh
-cd /home/houp/haiku-rpi; g=artifacts/gpu-present2
+g=artifacts/gpu-present2   # in this repository's top directory
 files=( $g/present-bench:/boot/home/present2/present-bench
   $g/bitmapcheck:/boot/home/present2/bitmapcheck
   $g/glview:/boot/home/present2/glview  $g/vkcube:/boot/home/present2/vkcube

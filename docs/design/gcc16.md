@@ -166,7 +166,7 @@ A run on 10-28.
 ## Step 3 (11-02): a complete 16.2 build in a parallel tree
 
 So that the main build (13.3) keeps working while the packages are rebuilt, step 3 ran in a **second checkout**,
-`/home/houp/haiku-rpi-gcc16` on the build host (every script finds its paths from its own location, so nothing in
+`../haiku-rpi-gcc16` (next to this checkout; retired 11-03, below) (every script finds its paths from its own location, so nothing in
 them changed for that):
 
 | Path | What |
@@ -270,7 +270,7 @@ The main tree builds with GCC 16.2 since 2026-11-03 01:00, after the Pi queue's 
 
 | What | Now |
 |---|---|
-| Cross tools | `generated.arm64/cross-tools-arm64` = `aarch64-unknown-haiku-gcc (GCC) 16.2.0`, binutils 2.46.1: `configure --build-cross-tools arm64 --cross-tools-source /home/houp/haiku-rpi-gcc16/sources/buildtools -j12` (~3 min), buildtools **`gcc16` c2213226f9** (with the `<bitset>` fix). `sources/buildtools` itself stays on `master` fc2ad25b8b: it has build residue (`missing`, `.info` files) and `gcc16` is checked out in the parallel tree's worktree, so git cannot switch it; until that tree is retired, the cross tools' source is that worktree (manifests record `sources/buildtools` as master — see the note in `manifests/2026-11-03-gcc16-main-switch.md`) |
+| Cross tools | `generated.arm64/cross-tools-arm64` = `aarch64-unknown-haiku-gcc (GCC) 16.2.0`, binutils 2.46.1: `configure --build-cross-tools arm64 --cross-tools-source ../haiku-rpi-gcc16/sources/buildtools -j12` (~3 min), buildtools **`gcc16` c2213226f9** (with the `<bitset>` fix). `sources/buildtools` `master` = `gcc16` since 2026-11-03 (fast-forwarded and pushed to haiku-pi/buildtools; a fresh `scripts/bootstrap.sh` clone gets the 16.2 sources; the parallel tree retired) |
 | 13.3 tools | renamed to `generated.arm64/cross-tools-arm64-gcc13` (13.3.0, unchanged); tags **`gcc13-baseline`**: buildtools fc2ad25b8b, haiku 46a18aecb4 (rpi4 just before the merge), both on origin |
 | gcc_syslibs | `gcc_syslibs` / `gcc_syslibs_devel` 16.2.0_2026_11_01-1 in `generated.arm64/download/` (from `artifacts/gcc-syslibs/16.2/`); the three 13.3 packages (`gcc_syslibs` bootstrap-1 and -2, `gcc_syslibs_devel` bootstrap-1) moved to **`artifacts/gcc-syslibs/13.3/`**; stale `build_packages/gcc_syslibs*13.3*` extractions deleted. **`artifacts/packages/` is unchanged** (still the published 13.3 `gcc_syslibs-…bootstrap-2`, no 16.2 package): the 16.2 runtime is published only after its check on a 13.3 image (above) |
 | Haiku | rpi4 **38bc4de5d7** = merge of `gcc16` (d2fd8ddf8b) into 46a18aecb4; clean (rpi4 already had the four source fixes as cherry-picks and the loader fix eb4bdd0ea4, so the merge only adds the repository definition's gcc_syslibs bump); pushed |
@@ -301,9 +301,10 @@ no panic (`artifacts/qemu/20261103-010623-virt.{log,png}`).
 **Still to do**: the Pi gates on the 16.2 regular image (boot bench, the gpu-it equivalents, mega-smoke,
 `tools/pi-tests/gcc-syslibs.sh`); `gcc_syslibs` 16.2 published after its check on a 13.3 image; `scripts/release-check.sh`
 now compiles with the 16.2 tools (it uses `cross-tools-arm64`), so checking a 13.3 release image needs
-`cross-tools-arm64-gcc13` and a 13.3 sysroot; the native compiler (H18 part 2); retiring the parallel tree
-(`/home/houp/haiku-rpi-gcc16`, 33 GB) once the buildtools source has another home (a `sources/buildtools` cleaned of
-its build residue and switched to `gcc16`).
+`cross-tools-arm64-gcc13` and a 13.3 sysroot; the native compiler (H18 part 2: done 11-03, published); retiring the parallel tree: **done 11-03** —
+`sources/buildtools` cleaned of its build residue (8 regenerated `missing`/`.info` files) and its `master`
+fast-forwarded to `gcc16` c2213226f9 (pushed); the parallel tree's worktrees removed (their branches stay in the
+repositories), its build/LTO/glmark2/python logs kept in `artifacts/gcc16-tree/`, the tree deleted (31 GB).
 
 ## Next steps
 
@@ -375,7 +376,7 @@ not against old numbers.
 
 **The two images** (same Haiku commit f593b2ae43, same profile, size and test content; only the compiler differs):
 
-- 16.2: `/home/houp/haiku-rpi-gcc16/artifacts/images/gb-gcc16.img` (step 3).
+- 16.2: `../haiku-rpi-gcc16/artifacts/images/gb-gcc16.img` (step 3).
 - 13.3: made in the main tree, at haiku `rpi4` f593b2ae43 (release-image-2026-11-02; if `rpi4` has moved on, build the
   16.2 image again from the same commit instead), with the same commands:
 

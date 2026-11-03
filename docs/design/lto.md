@@ -13,16 +13,16 @@ add-ons and boot loader are left without LTO. The comparison image `gb-gcc16-lto
 
 ## Where it was built
 
-In the GCC 16.2 tree (`/home/houp/haiku-rpi-gcc16`, see [gcc16.md](gcc16.md) step 3), Haiku at de1a4a439d (= the
+In the GCC 16.2 tree (`../haiku-rpi-gcc16`, see [gcc16.md](gcc16.md) step 3), Haiku at de1a4a439d (= the
 `gb-gcc16.img` build), in a **separate output directory** so that `generated.arm64` (and `gb-gcc16.img`) stay as
 they are:
 
 ```
-cd /home/houp/haiku-rpi-gcc16/sources/haiku
+cd ../haiku-rpi-gcc16/sources/haiku
 mkdir generated.arm64-lto && cd generated.arm64-lto
-../configure --cross-tools-prefix /home/houp/haiku-rpi-gcc16/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-
+../configure --cross-tools-prefix $PWD/../generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-
 cp -al ../generated.arm64/download download                       # the same packages (hard links)
-cp /home/houp/haiku-rpi/tools/build/UserBuildConfig.lto UserBuildConfig
+cp $HAIKU_RPI/tools/build/UserBuildConfig.lto UserBuildConfig   # HAIKU_RPI: the main checkout
 ```
 
 The resulting `BuildConfig` equals `generated.arm64`'s except for its own paths (same 16.2 cross tools).
@@ -124,15 +124,15 @@ musl internals). The versioned exports (`@@LIBBE_*`, libroot's) are all present.
 
 ## The comparison image
 
-`/home/houp/haiku-rpi-gcc16/artifacts/images/gb-gcc16-lto.img` — 3 707 764 736 bytes (1.3 GB on disk), sha256
+`../haiku-rpi-gcc16/artifacts/images/gb-gcc16-lto.img` — 3 707 764 736 bytes (1.3 GB on disk), sha256
 4d6a6813…a6ff2c968f. Made exactly as `gb-gcc16.img` (gcc16.md "Performance comparison"), from the same game trees,
 packages and test binaries (none changed since `gb-gcc16.img` was made, 07:05):
 
 ```
-cd /home/houp/haiku-rpi-gcc16
-PI_IMAGE_OUT=/home/houp/haiku-rpi-gcc16/artifacts/images/lto-regular-3500.img \
+cd ../haiku-rpi-gcc16
+PI_IMAGE_OUT=$PWD/artifacts/images/lto-regular-3500.img \
     scripts/build.sh --generated sources/haiku/generated.arm64-lto -sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=3500 @pi-mmc
-S=/home/houp/haiku-rpi/artifacts/gcc-syslibs/16.2
+S=$HAIKU_RPI/artifacts/gcc-syslibs/16.2
 scripts/games-bench-image.sh artifacts/images/lto-regular-3500.img artifacts/images/gb-gcc16-lto.img \
     artifacts/packages/glmark2-2023.01-2-arm64.hpkg:/boot/system/packages/glmark2-2023.01-2-arm64.hpkg \
     $S/launchtime:/boot/home/launchtime $S/cxxrt:/boot/home/cxxrt $S/cxxrt-rootfirst:/boot/home/cxxrt-rootfirst
@@ -150,7 +150,7 @@ launch, Tracker and Python's libroot-bound start-up are where to look.
 ## Pi A/B plan (part 2, the main session runs it)
 
 Same procedure as gcc16.md's comparison: A = `gb-gcc16.img`, B = `gb-gcc16-lto.img` (both in
-`/home/houp/haiku-rpi-gcc16/artifacts/images/`), from the main tree, network boot, alternating **A → B → A → B → A →
+`../haiku-rpi-gcc16/artifacts/images/`), from the main tree, network boot, alternating **A → B → A → B → A →
 B** (three of each), same card, cooling, firmware; median reported. If the 13.3-vs-16.2 series is still running, the
 LTO runs can join it as a third image in the same rotation (13 → 16 → LTO), so the 16.2 runs serve both comparisons.
 
