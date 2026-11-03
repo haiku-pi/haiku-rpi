@@ -137,11 +137,17 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
   the frame needed: it was ready, the flip came a blank late), starved (blanks the GPU's frame was
   not ready for), late (a flip that returned within 3 ms of the predicted next blank: it may latch
   a frame late), dropped.
-- Buffers: 3 (on screen, pending, rendering). Vsynced: 60 fps if the GPU keeps up. Unsynced: a
-  bitmap comes back at most once per vblank per flip in flight, i.e. up to ~120 frames/s shown
-  attempts with 3 bitmaps (**estimated**); enough for "> 60". Recognising flips that were superseded
-  before they latched (free at once, "mailbox" behaviour) is a follow-up that needs the Pi's timing
-  measured first.
+- Vsynced (swap interval 1): 3 bitmaps (on screen, flipped, rendering), the render thread hands each
+  frame to the presenter and waits for the previous one's flip: 60 fps if the GPU keeps up.
+- Unsynced (swap interval 0): a **mailbox** of 4 bitmaps — on screen, flipped (waiting for the update
+  point), the newest finished frame, the one being rendered. The render thread puts each finished
+  frame into the mailbox and goes on; a frame still in the mailbox is replaced (`superseded`: never
+  flipped, never scanned out, free at once — the GPU writes it again only in a later job). The
+  presenter waits for each vertical blank (from 3 ms after its last flip), then flips the newest
+  mailbox frame: one flip per blank, so the retire rule of §0.6 holds unchanged, and the display
+  shows 60 frames/s while the render thread runs at the GPU's rate. The first Pi run of the earlier
+  design (each swap waited for the bitmap a flip had replaced) ran unsynced at exactly 60.00 fps
+  with 3 bitmaps: every frame needed one vertical blank to free a bitmap (**measured**, gs6-b2).
 
 ### 2.3 BGLView (libglvnd `src/HGL/GLView.cpp`)
 
@@ -330,6 +336,9 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
 | | 80beae9619 | bcm2711_display: overlay buffers are physical mappings of the contiguous memory (fully mapped clones, write-combining); freed buffers keep their memory while the device is open |
 | haiku-pi/libglvnd `stage6` (from `rpi4` 7cc03c3) | be20124 | BGLView: overlay flips in `SetBitmap()`, leaving overlay mode, `hgl_native_window_shows_overlays()`, `SwapBuffers(vSync)` → `eglSwapInterval` |
 | haiku-pi/mesa `stage6` (from `rpi4` f64c84cae97) | 3f1ab3f8289 | egl/haiku: overlay bitmaps for full-screen surfaces, area-clone import, retirement rule, vsync presenter, swap interval, statistics |
+| | f56bf64ac2b | egl/haiku: the mailbox for swap interval 0 |
+| haiku `stage6` | fb313a10c5 | bcm2711_display: four reserved overlay buffers (the mailbox) |
+| haiku `stage6-rpi4` | 9c0002fe2b … 18e9f01b0b | the 12 haiku commits rebased onto `rpi4` 38bc4de5d7 (GCC 16.2), no conflicts; builds with 16.2 (kernel, drivers, accelerant, app_server) |
 | haiku-rpi (this repo) | — | `tools/gl-tests/glflip.cpp`, `tools/haiku-tests/overlaytest.cpp`, `tools/haiku-tests/sandprobe.cpp`, `tools/haiku-tests/host-overlay-keying/` (host test of the keyed copy), `present-bench` rows "alpha forced"/"keyed", `tools/pi-tests/gpu-stage6.sh` (bootscript), `tools/pi-tests/gpu-stage6-image.sh` (images) |
 
 The v3d driver is not touched: import (`DRM_V3D_HAIKU_IMPORT_MEMORY` of the area clone) and the fence
@@ -358,14 +367,14 @@ Images from the release candidate that is `rpi4` 46a18aecb4, the branches' base 
 
 ```sh
 cd /home/houp/haiku-rpi
-tools/pi-tests/gpu-stage6-image.sh artifacts/images/haiku-pi4-2026-11-03.img artifacts/images/gpu-stage6-b.img b
-tools/pi-tests/gpu-stage6-image.sh artifacts/images/haiku-pi4-2026-11-03.img artifacts/images/gpu-stage6-a.img a
+tools/pi-tests/gpu-stage6-image.sh artifacts/stage6/base-rpi4-38bc4de5d7.img artifacts/images/gpu-stage6-b.img b
+tools/pi-tests/gpu-stage6-image.sh artifacts/stage6/base-rpi4-38bc4de5d7.img artifacts/images/gpu-stage6-a.img a
 scripts/netboot-cycle.sh --image artifacts/images/gpu-stage6-b.img --secs 420 --label gs6-b \
   --hdmi-every 5 --until 'GS6 end' --retry-wedge
 scripts/netboot-cycle.sh --image artifacts/images/gpu-stage6-a.img --secs 420 --label gs6-a \
   --hdmi-every 10 --until 'GS6 end' --retry-wedge
 # only if B's HDMI frames show no overlay, a tinted or garbled desktop: overlays above the desktop
-tools/pi-tests/gpu-stage6-image.sh artifacts/images/haiku-pi4-2026-11-03.img artifacts/images/gpu-stage6-c.img c
+tools/pi-tests/gpu-stage6-image.sh artifacts/stage6/base-rpi4-38bc4de5d7.img artifacts/images/gpu-stage6-c.img c
 scripts/netboot-cycle.sh --image artifacts/images/gpu-stage6-c.img --secs 420 --label gs6-c \
   --hdmi-every 5 --until 'GS6 end' --retry-wedge
 ```
@@ -379,7 +388,7 @@ Read: `grep -a -E 'GS6|bcm2711_display: (plane|overlays|vertical)' artifacts/uar
 | bitmapcheck | the same 12 `BMC` hashes on A and B | reference |
 | overlay | `OVL rgb32: overlays` (and ycbcr422, yuv420); per space `bitmap 0/1: No error`, `filled ok` (user code wrote the kernel-area buffer), `SetViewOverlay: No error, key 0,80,0,0`, `240 flips ... 0 failed`, `end: PASS`. HDMI: bars in order (white, yellow, cyan, green, magenta, red, blue, black) scaled 2× in the window, the white square moving, the yellow window over the bars, the bars cut at the left edge after the move. YCbCr422 (type 45) is the one nobody ran before: wrong colours there = byte order (try `B_YCbCr422` → 47 UYVY / 46 YVYU) | `no overlays` ×3, `end: FAIL` (allocation refused) |
 | flip-vsync | **the stage 6 exit, all four:** `GLF frames 1200 in 20.0x s = 59.9x–60.0x fps` (`0 over 1.5x the median`); every `egl_haiku: overlay: ... 0 missed, 0 starved, 0 late, 0 dropped (swap interval 1, vblank 16.6xx ms)` (`starved` counts GPU-late frames, which also break 60.00); driver `plane 1: N updates in N vblanks, 0 late, 0 gaps, 0 superseded` | no `overlay:` lines; the rate of the window path (~74–110 fps at 1080p, unsynced: A has no vsync) |
-| flip-free | `GLF ... fps` > 60 (estimated ~100–120: two flips per blank with three bitmaps); driver `superseded` > 0 possible | window path rate |
+| flip-free | `GLF ... fps` > 60 (the render rate: the GPU's, a light scene **estimated** in the hundreds); `egl_haiku: overlay: ~300 flips ... N superseded` per 5 s (flips = shown, superseded = rendered, not shown); driver `plane 1: N updates in N vblanks, 0 superseded` (one flip per blank by design: superseding happens in Mesa's mailbox, not in the firmware) | window path rate |
 | flip-cover | as flip-vsync; HDMI: the yellow window over the triangle while it is shown (keying) | — |
 | flip-window | `HAIKU_EGL_OVERLAY=0`: the stage-5 rate at 1080p, for comparison with flip-free | same |
 | glview | `PASS` (a 512² window: not full screen, no overlay) | `PASS` |
@@ -391,6 +400,17 @@ scales on the plane. The kernel debugger's opaque palette (500159a1cd) is only c
 release's kernel, so KDL over a plane needs an image built from `stage6`.
 
 ## 9. Status
+
+### 2026-11-03 (01:30): Pi run 2 — exit met for vsync; unsynced fixed by a mailbox; rebased on 16.2
+
+gs6-b2 (Pi): **flip-vsync 1200 frames in 20.000 s = 60.00 fps, every overlay line 0 missed/0 starved/
+0 late/0 dropped, driver 601 updates in 601 vblanks, 0 late, 0 gaps** — the stage 6 exit for vsync;
+overlaytest PASS in the three spaces at 60 flips/s. flip-free also ran at exactly 60.00 fps (median
+swap 16.666 ms): with three bitmaps every swap waited for the bitmap the last flip had replaced, i.e.
+for a vertical blank. Fixed with the mailbox of §2.2 (mesa f56bf64ac2b, four reserved buffers
+fb313a10c5). Image B is now built from the GCC 16.2 `rpi4` (38bc4de5d7) regular image
+(`artifacts/stage6/base-rpi4-38bc4de5d7.img`, frozen copy) with everything built by 16.2 from
+`stage6-rpi4`; QEMU: the same 12 bitmapcheck hashes as before, glview PASS, glflip runs, no panic.
 
 ### 2026-11-03: first Pi run of image B — overlays work, glflip's import panicked; fixed
 
@@ -446,6 +466,6 @@ overlays), no panic. The Haiku parts are built with the GCC 13.3 cross tools now
   fallback. A program that renders in its window thread while holding the looper lock > 50 ms gets
   dropped flips (counted).
 - QEMU proves only the keying-off path; keying, planes, EL0 access, the retire rule: Pi only.
-- Follow-ups: mailbox-style unsynced flips (recognise flips superseded before their update point);
+- Follow-ups:
   YCbCr output from the ffmpeg plugin when the consumer offers overlays; the rpivid SAND probe and
   `RPIVID_PICTURE_SCANOUT` (§5); KDL hiding planes is not needed with keying (the opaque palette).

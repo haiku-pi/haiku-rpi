@@ -19,9 +19,8 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 g="$root/artifacts/gpu-stage6"
-# the release images' compiler (GCC 13.3; the main tree keeps it there after its switch to 16.2)
-tools="$root/sources/haiku/generated.arm64/cross-tools-arm64-gcc13/bin/aarch64-unknown-haiku"
-[ -x "$tools-strip" ] || tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
+# binutils for stripping (any of the cross tools' do)
+tools="${CROSS_TOOLS:-$root/sources/haiku/generated.arm64/cross-tools-arm64}/bin/aarch64-unknown-haiku"
 
 if [ "${1:-}" = --stage ]; then
 	gen="${HAIKU_GEN:-$root/sources/haiku-stage6/generated.arm64}"
@@ -57,7 +56,7 @@ if [ "${1:-}" = --stage ]; then
 	{
 		echo "# staged $(date -u +%Y-%m-%dT%H:%MZ)"
 		for r in haiku-stage6 mesa-stage6 libglvnd-stage6; do
-			printf '%s %s\n' "$r" "$(git -C "$root/sources/$r" describe --always --dirty)"
+			printf '%s %s\n' "$r" "$(git -C "$root/sources/$r" describe --always --dirty --all --long)"
 		done
 	} > "$g/versions.txt"
 	ls -l "$g"
