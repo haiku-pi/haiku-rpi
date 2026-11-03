@@ -1,8 +1,8 @@
 # GPU stage 6: scan-out planes for full-screen GL and video overlays (KNOWN-ISSUES F2)
 
-Status: 2026-11-02 — design, and the host side implemented on branches `stage6` (haiku-pi/haiku,
-haiku-pi/libglvnd, haiku-pi/mesa); built with the real flags, QEMU no-regression check done. **Nothing
-has run on the Pi yet** (the bench was busy); §8 is the Pi test, ready to run. Numbers are marked
+Status: **landed 2026-11-03** (haiku rpi4 db79f7850d + 461104856d, mesa/libglvnd rpi4; in release
+image-2026-11-03c): Pi checks and the games A/B in §9–§10. MediaPlayer's video goes on a plane as B_RGB32 (its
+ffmpeg plugin converts to RGB on the CPU); YCbCr overlays from MediaPlayer remain a follow-up. Numbers are marked
 **measured** (with the source) or **estimated**.
 
 Goal (`gpu-v3d.md` §3, stage 6): present tier P3 — the GPU stores a frame into a buffer the display

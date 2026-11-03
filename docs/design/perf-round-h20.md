@@ -597,7 +597,7 @@ really gone the numbers are back to the fresh ones (below). Areas, semaphores, p
 applications quit are back within a few % of the fresh counts (areas 1705 → 1795, sems 977 → 995): nothing left
 behind matters here.
 
-**Fix (haiku `startcost` 83db805485, `bcm2835_cpufreq: follow the CPUs' total load as well`; pushed, not merged
+**Fix (haiku `startcost` 83db805485, `bcm2835_cpufreq: follow the CPUs' total load as well`; pushed; merged into rpi4 2026-11-03 (fast-forward)
 into rpi4):** the clock thread also adds up the CPUs' active time (`cpu_get_active_time()`) over its 50 ms interval
 and asks for the maximum when the total reaches 55 % of one CPU (the scheduler's target load for one CPU); the
 per-CPU levels and the lowering hysteresis are unchanged. Image `artifacts/images/h20-startcost.img` (release build
