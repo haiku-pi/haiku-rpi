@@ -76,7 +76,7 @@ to the desktop **6.4–6.6 s**, of which the Haiku loader to the desktop 5.4–5
 the network first (below), so U-Boot starts ~58 s after power-on and the desktop appears **about 64 s** after
 power-on. With the factory boot order (SD card first) that wait does not happen; we have not timed that path.
 On the **first boot** of a freshly written card the package daemon processes the packages once; in these four
-boots it made no measurable difference (first boots 6.46 and 6.63 s, later boots 6.43 s). There is no language
+boots it cost at most 0.2 s (U-Boot to the desktop: first boots 6.46 and 6.63 s, later boots 6.43 s). There is no language
 prompt: the image ships English locale settings, so the first boot goes straight to the desktop.
 
 **Boot order.** If the Pi's EEPROM boot order tries the network before the SD card and nothing
@@ -173,7 +173,7 @@ layouts are untested on the Pi.
 
 ### 5.1 What the GPU offers
 
-The Pi 4's GPU, the **V3D 4.2**, is driven by this port's kernel driver and **Mesa 26.2.0**:
+The Pi 4's GPU, the **V3D 4.2**, is driven by this port's kernel driver and **Mesa 26.2.6** (package 26.2.6-2 from image-2026-11-03c):
 
 | API | Version | Notes |
 |---|---|---|

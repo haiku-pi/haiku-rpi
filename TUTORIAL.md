@@ -160,7 +160,7 @@ system partition (BFS).
      bench Pi), the firmware waits about a minute for an answer before it boots the card: there the desktop
      appears about 64 seconds after power-on. With the factory boot order (SD card first) that wait does not
      happen; we have not timed that path. On the first boot the package daemon processes the packages once;
-     on the bench that made no measurable difference.
+     on the bench that cost at most 0.2 s (2026-11-03).
 3. If a serial adapter is connected, the kernel log scrolls by at 115200 baud.
 
 Nothing on the screen? Then go to [section 8](#8-troubleshooting).

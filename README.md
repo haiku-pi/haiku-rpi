@@ -69,7 +69,7 @@ These numbers were measured on the bench Pi (4 GB) between 2026-10-18 and 2026-1
 
 | Area | State |
 |---|---|
-| Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop: U-Boot to desktop 6.4–6.6 s (2026-11-03); on the bench Pi, whose firmware tries the network first, ~64 s from power-on. Over the network (the boot volume served by the build host): ~46 s from power-on. 10 of 10 cold boots after 30 minutes off |
+| Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop: U-Boot to desktop 6.4–6.6 s (2026-11-03); on the bench Pi, whose firmware tries the network first, ~64 s from power-on. Over the network (the boot volume served by the build host): ~46 s from power-on. 10 of 10 cold boots of image-2026-11-03 after 30 minutes off |
 | CPU | 4 × Cortex-A72 (SMP). The clock follows the load from 600 to 1500 MHz. Temperature, throttling and clocks are in `/dev/power/bcm2835_thermal/0` |
 | Display | HDMI at the monitor's native mode (1920×1080 on the bench), with lower modes scaled by the firmware. Hardware cursor and 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows; the GPU's binning, rendering, texture and compute queues run concurrently (from image-2026-11-03b); full-screen GL and MediaPlayer's video are shown on display planes, flipped without tearing (from image-2026-11-03c) |

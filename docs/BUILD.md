@@ -448,7 +448,7 @@ operating system, select `artifacts/images/haiku-pi4-regular.img`, pick the card
    on.
 2. The firmware's rainbow screen, U-Boot and Haiku's boot screen pass by; **the desktop appears about
    6.5 seconds after U-Boot starts** (2026-11-03, release images; on the first boot the package daemon
-   processes the packages once, which made no measurable difference there). On a Pi whose boot order tries
+   processes the packages once, which cost at most 0.2 s there). On a Pi whose boot order tries
    the network first, that is about 64 seconds after power-on (below).
 3. On a 3.3 V USB-serial adapter on GPIO 14/15 (115200 8N1) you see U-Boot, the loader and the kernel's
    log.
