@@ -306,6 +306,13 @@ now compiles with the 16.2 tools (it uses `cross-tools-arm64`), so checking a 13
 fast-forwarded to `gcc16` c2213226f9 (pushed); the parallel tree's worktrees removed (their branches stay in the
 repositories), its build/LTO/glmark2/python logs kept in `artifacts/gcc16-tree/`, the tree deleted (31 GB).
 
+## First release (2026-11-03)
+
+**image-2026-11-03b** is the first release built with GCC 16.2 (haiku rpi4 5d9132a49c, hrev60299+262): release checks
+0 problems on 24 launch cycles; gcc_syslibs 16.2 in the image; `gcc`/`gcc_fortran` 16.2 and its `haiku_devel` in the
+package repository. A SuperTuxKart start hang seen only on 16.2 images in the games bench (5 of ~15 runs) turned out
+not to be the compiler's: thread-stack reuse (ecab951764) exposed two older bugs (design/stk-start-hang.md).
+
 ## Next steps
 
 1. ~~Haiku source fixes~~ — done (step 2), branch `gcc16`.

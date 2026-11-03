@@ -656,8 +656,10 @@ python3.14
   (`gcc`, `g++`, `gfortran`; LTO, OpenMP, precompiled headers, gcov). Checked on the Pi: 24 of 24 compiler checks, and
   the make/CMake/Meson/pip checks above built with it (docs/design/native-gcc.md). Compiling against Haiku's own
   headers (every C program's `<stdio.h>`, the Haiku API) also needs the `haiku_devel` package of your image's build:
-  the development image has it, and it is published with each release from the first GCC 16.2 release on. On an
-  older image, installing gcc also updates gcc_syslibs to 16.2 (checked: that image's programs keep working).
+  on image-2026-11-03b and later `pkgman install haiku_devel` gets the one of your image (each release publishes its
+  own); the development image has it already. So, on a release image: `pkgman install gcc gcc_fortran binutils
+  haiku_devel make`. On an older image, installing gcc also updates gcc_syslibs to 16.2 (checked: that image's
+  programs keep working), but no matching haiku_devel is published for it.
 - **The development image** (`-sHAIKU_PI_DEV=1`, see `tools/build/UserBuildConfig`) has the compiler, binutils, make,
   Python 3.10, haikuporter and haiku_devel. The regular image has no compiler.
 - **Cross-compiling from Linux**: the build tree's arm64 cross gcc builds Haiku programs. C++

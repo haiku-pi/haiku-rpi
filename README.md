@@ -26,11 +26,11 @@ work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNE
 ## Quick start
 
 **Download** the SD card image (unofficial, built from these sources):
-[releases/image-2026-11-03](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-03) — 340 MB,
-`haiku-pi4-2026-11-03.img.xz`, for an 8 GB or larger card:
+[releases/image-2026-11-03b](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-03b) — 341 MB,
+`haiku-pi4-2026-11-03b.img.xz`, for an 8 GB or larger card:
 
 ```sh
-xz -dc haiku-pi4-2026-11-03.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dc haiku-pi4-2026-11-03b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Or build the image yourself on an x86-64 Linux host and write it to a microSD card:
@@ -68,7 +68,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Boot | SD card → U-Boot → Haiku's EFI loader → kernel → desktop in about 75 s. Over the network (the boot volume served by the build host): about 55 s |
 | CPU | 4 × Cortex-A72 (SMP). The clock follows the load from 600 to 1500 MHz. Temperature, throttling and clocks are in `/dev/power/bcm2835_thermal/0` |
 | Display | HDMI at the monitor's native mode (1920×1080 on the bench), with lower modes scaled by the firmware. Hardware cursor and 60 Hz retrace |
-| GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows |
+| GPU | V3D 4.2 through Mesa 26.2: OpenGL 2.1, OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows; the GPU's binning, rendering, texture and compute queues run concurrently (from image-2026-11-03b) |
 | Games | QuakeSpasm 56–70 fps at 1280×720 · Yamagi Quake II 81–89 fps · vkQuake (Vulkan) 52 fps · OpenArena 46 fps · SuperTuxKart 1.5 28–38 fps |
 | Video | ffmpeg 6.1 codecs in the media kit. **HEVC is decoded by the SoC's decoder block**: 1080p at about 115 fps (bit-exact), 4K at about 38 fps |
 | Audio | HDMI (48 kHz stereo, from image-2026-10-24e) and the 3.5 mm headphone jack (44.1 kHz stereo), through the media kit |
@@ -77,7 +77,7 @@ and limits, is [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md).
 | Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching, discovery and pairing by PIN. Bluetooth keyboards, mice and audio are untested |
 | Web | WebPositive (HaikuWebKit, JavaScript JIT) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback |
 | Windows programs | **Wine 11.21** with x86 translation: 32-bit x86 programs through Box64, x86-64 programs through FEX (`pkgman install wine wine_x86 wine_x86_64`). Heroes III, StarCraft, SimCity 3000, Half-Life (also full screen; a game's display mode becomes the screen's, scaled by the display hardware), Chocolate Doom and OpenTTD (x86-64) play; Direct3D 9 on the V3D |
-| Software | Python 3.14, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
+| Software | The system is built with **GCC 16.2**; the same compiler runs on the Pi (`pkgman install gcc gcc_fortran binutils`: C, C++, Fortran) with make, CMake, Ninja and Meson. Python 3.14 with pip and numpy, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
 
 Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a
 monitor connected at boot, and video in Firefox drops frames for the first seconds after the browser starts. The USB keyboard and mouse and everyday desktop use
