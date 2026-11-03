@@ -457,6 +457,13 @@ missed/late/dropped (one window with 1 starved, the GPU's); flip-free 131.6 fps;
 125; glview PASS; 0 panics. HDMI as in gs6-b3 (bars, the yellow window over them, the bars cut at the left
 edge) — including YCbCr422 (type 45) showing black, as it did in gs6-b3 already: packed YUYV does not scan
 on this firmware (open, experimental as §3.2 says).
+Mode change under a shown overlay (`gs6k-mode`: overlaytest flipping while `screenmode` goes to 1280×720
+and back; `20261103-184823-gs6k-mode`): no panic, the desktop redrawn intact in both modes, the overlay's
+flips go on without error and the next overlaytest (3 spaces) PASSes with the census — but the overlay
+stays black after the mode change: the driver shows the resumed buffer for one update and then nothing.
+The same with the `stage6-rpi4b` app_server (`20261103-191720-gs6b-mode`): pre-existing, open (resume path
+of SuspendOverlays, not keying). Not tested: a workspace switch with an overlay, KDL over a plane (these
+images carry the release kernel).
 
 **Games A/B** (`gb-stage6-a` = A; B = `gb-stage6-k.img`: gb-stage6-b with the stage6-keying app_server;
 C = B with mesa 26.2.6-1 (GCC 13.3), the app_server alone; D = C with the `rpi4` GL stack (no stage 6)
