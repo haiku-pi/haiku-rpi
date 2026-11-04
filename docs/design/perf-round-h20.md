@@ -654,7 +654,9 @@ their settings (and break the BeOS API meaning): not done. Two changes therefore
    frame — app_server copies a window's frame when it arrives, not at a blank, so waiting before the present would
    only show it later; the program samples its input and renders right after a blank. A frame that took longer than
    a refresh is not held back for another blank (no wait when a blank went by since the last frame, predicted from
-   the blanks woken for before: late swap tearing, so a 45 fps program stays at 45, not 30). No retrace semaphore,
+   the blanks woken for before: late swap tearing, so a 45 fps program stays at 45, not 30). Since the wait comes
+   after the present, a fast frame right after a late one is presented before its wait: two frames in one refresh
+   interval at each late → fast change (not seen in the cases below: 0 late frames at 60 fps). No retrace semaphore,
    or no blank within two periods (display off): a timer at the measured period. Every window surface of a hardware
    screen gets the `BScreen`; overlay bitmaps stay BGLView-only (`hgl_native_window_shows_overlays`). Interval 0
    and the overlay path are unchanged. New: `HAIKU_EGL_SWAP_INTERVAL=0|1` overrides the program's interval
@@ -696,8 +698,8 @@ for the CPUs' busy share (the two tools agree: program + app_server = 4 × busy 
 Findings:
 
 - **SuperTuxKart's menu with both changes: 132 → 60 fps, the game 81 → 29 % of a core, app_server 45 → 12 %, the
-  four CPUs 32.7 → 11.2 % busy** — ~1.26 cores → ~0.41 cores, and the ARM clock drops from 1555 to ~1357 MHz on
-  average. (C0 derived ~190 fps from the copy cost; measured here it is 132 at 1024×576 on this image.) With the
+  four CPUs 32.7 → 11.2 % busy** — ~1.26 cores → ~0.41 cores (pmustat's cycles per busy time, not the clock,
+  1555 → 1357 MHz: the governor runs the lighter load lower part of the time). (C0 derived ~190 fps from the copy cost; measured here it is 132 at 1024×576 on this image.) With the
   Mesa change alone (packaged libSDL2) nothing changes for it; with the SDL2 change alone (Mesa A) neither: both are
   needed.
 - GLTeapot is not a consumer: it limits itself to 60 fps (its own timer), so it ran at 60.0 in every case, and with
