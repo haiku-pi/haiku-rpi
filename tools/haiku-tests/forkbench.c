@@ -4,7 +4,8 @@
  *
  *   forkbench [N] [PROGRAM]      (default N 200, PROGRAM /bin/true)
  *
- * Prints "FORKBENCH <case> <us> us/op".
+ * Prints "FORKBENCH <case> <us> us/op" (flushed at once: written to a file, the lines after the first were
+ * lost on Haiku).
  *
  * Build (cross):
  *   g=sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-gcc
@@ -53,6 +54,7 @@ main(int argc, char** argv)
 		pthread_join(thread, NULL);
 	}
 	printf("FORKBENCH thread %.0f us/op\n", (now_us() - start) / n);
+	fflush(stdout);
 
 	start = now_us();
 	for (i = 0; i < n; i++) {
@@ -62,6 +64,7 @@ main(int argc, char** argv)
 		waitpid(pid, &status, 0);
 	}
 	printf("FORKBENCH fork+exit %.0f us/op\n", (now_us() - start) / n);
+	fflush(stdout);
 
 	start = now_us();
 	for (i = 0; i < n; i++) {
@@ -73,6 +76,7 @@ main(int argc, char** argv)
 		waitpid(pid, &status, 0);
 	}
 	printf("FORKBENCH fork+exec %.0f us/op\n", (now_us() - start) / n);
+	fflush(stdout);
 
 	start = now_us();
 	for (i = 0; i < n; i++) {
@@ -84,5 +88,6 @@ main(int argc, char** argv)
 		waitpid(pid, &status, 0);
 	}
 	printf("FORKBENCH posix_spawn %.0f us/op\n", (now_us() - start) / n);
+	fflush(stdout);
 	return 0;
 }

@@ -4,9 +4,10 @@
 #
 #   scripts/qemu-x86.sh [--image IMG] [--fw uefi|bios] [--machine q35|pc]
 #                       [--disk ahci|nvme|virtio-scsi|usb|ide|cdrom] [--smp N] [--topo cores=2,threads=2]
-#                       [--mem 4G] [--nic virtio|e1000|rtl8139|none] [--scratch IMG] [--sd IMG] [--audio]
+#                       [--mem 4G] [--nic virtio|e1000|rtl8139|none] [--legacy-virtio] [--scratch IMG] [--sd IMG] [--audio]
 #                       [--bootscript FILE] [--add FILE:PATH]... [--desktop] [--bfs-shell PATH]
 #                       [--secs N] [--until REGEX] [--shot-every N] [--label L] [--vnc] [--gdb] [--keep]
+#                       [--serial-sock]
 #                       [-- extra qemu args]
 #
 # IMG defaults to sources/haiku-x86/generated.x86_64/haiku-nightly-anyboot.iso; it is never written: the
@@ -19,6 +20,7 @@
 # Machine: q35 (ICH9 AHCI) by default; --disk ide selects -machine pc (PIIX IDE). UEFI = QEMU's
 # edk2-x86_64-code.fd + a per-run copy of edk2-i386-vars.fd (OVMF_CODE/OVMF_VARS in local.conf override);
 # BIOS = SeaBIOS. virtio-blk is not offered: x86_64 images have no virtio_block driver (packages/Haiku).
+# --legacy-virtio: virtio-scsi and virtio-net as legacy devices (disable-modern=on: I/O-port BARs).
 # xHCI with a USB keyboard and tablet, std VGA, user-mode networking, SMP 4, 4 GB.
 #
 # Output in artifacts/qemu-x86/: <ts>-<label>.log (COM1), <ts>-<label>-tNNN.png every --shot-every s (default
@@ -26,6 +28,8 @@
 # serial log matches --until REGEX, or after --secs N (0 = no limit); then the summary: the end reason, the
 # time, PANIC / KDL / page-fault lines. A QMP socket (scripts/qmp-hmp.py, qmp-screendump.py) is in the run
 # directory, printed at the start; the run directory (overlay, vars) is removed afterwards unless --keep.
+# --serial-sock: COM1 is also a unix socket, <run dir>/serial.sock (the log is kept as before): type kernel
+# debugger commands into it (scripts/kdl-x86.py) after the guest enters KDL.
 # Exit status: 0 = powered off or --until matched, 1 = --secs ran out first, 2 = usage.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,8 +37,8 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$root/local.conf" ] && . "$root/local.conf"
 img="$root/sources/haiku-x86/generated.x86_64/haiku-nightly-anyboot.iso"
 bfs="$root/sources/haiku-x86/generated.x86_64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
-fw=uefi machine="" disk=ahci smp=4 topo="" mem=4G nic=virtio scratch="" sd="" audio=0
-bootscript="" adds=() desktop=0 secs=0 until="" every=20 label=x86 display=(-display none) gdb=() keep=0
+fw=uefi machine="" disk=ahci smp=4 topo="" mem=4G nic=virtio scratch="" sd="" audio=0 legacy=""
+serialsock=0 bootscript="" adds=() desktop=0 secs=0 until="" every=20 label=x86 display=(-display none) gdb=() keep=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--image) img="$2"; shift 2 ;;
@@ -48,6 +52,7 @@ while [ $# -gt 0 ]; do
 	--scratch) scratch="$(realpath "$2")"; shift 2 ;;
 	--sd) sd="$(realpath "$2")"; shift 2 ;;
 	--audio) audio=1; shift ;;
+	--legacy-virtio) legacy=",disable-modern=on"; shift ;;
 	--bootscript) bootscript="$(realpath "$2")"; shift 2 ;;
 	--add) adds+=("$2"); shift 2 ;;
 	--desktop) desktop=1; shift ;;
@@ -59,6 +64,7 @@ while [ $# -gt 0 ]; do
 	--vnc) display=(-vnc :8); shift ;;
 	--gdb) gdb=(-s -S); shift ;;
 	--keep) keep=1; shift ;;
+	--serial-sock) serialsock=1; shift ;;
 	--) shift; break ;;
 	*) echo "qemu-x86: unknown option $1" >&2; exit 2 ;;
 	esac
@@ -110,7 +116,7 @@ else
 	case "$disk" in
 	ahci|ide) cmd+=(-device ide-hd,drive=hd0,bus=ide.0,bootindex=0) ;;
 	nvme) cmd+=(-device nvme,drive=hd0,serial=h22,bootindex=0) ;;
-	virtio-scsi) cmd+=(-device virtio-scsi-pci,id=vs -device scsi-hd,drive=hd0,bus=vs.0,bootindex=0) ;;
+	virtio-scsi) cmd+=(-device "virtio-scsi-pci,id=vs$legacy" -device scsi-hd,drive=hd0,bus=vs.0,bootindex=0) ;;
 	usb) cmd+=(-device usb-storage,bus=xhci.0,drive=hd0,bootindex=0) ;;
 	*) echo "qemu-x86: --disk ahci|nvme|virtio-scsi|usb|ide|cdrom" >&2; exit 2 ;;
 	esac
@@ -119,12 +125,18 @@ fi
 [ -n "$sd" ] && cmd+=(-drive "file=$sd,if=none,format=raw,id=sd0" -device sdhci-pci -device sd-card,drive=sd0)
 [ "$audio" = 1 ] && cmd+=(-audiodev none,id=snd -device intel-hda -device hda-duplex,audiodev=snd)
 case "$nic" in
-virtio) cmd+=(-nic user,model=virtio-net-pci) ;;
+virtio) if [ -n "$legacy" ]; then cmd+=(-netdev user,id=n0 -device "virtio-net-pci,netdev=n0$legacy")
+	else cmd+=(-nic user,model=virtio-net-pci); fi ;;
 e1000|rtl8139) cmd+=(-nic "user,model=$nic") ;;
 none) cmd+=(-nic none) ;;
 *) echo "qemu-x86: --nic virtio|e1000|rtl8139|none" >&2; exit 2 ;;
 esac
-cmd+=(-vga std "${display[@]}" -serial "file:$log" -monitor none -qmp "unix:$run/qmp.sock,server,nowait"
+if [ "$serialsock" = 1 ]; then
+	serial=(-chardev "socket,id=com1,path=$run/serial.sock,server=on,wait=off,logfile=$log" -serial chardev:com1)
+else
+	serial=(-serial "file:$log")
+fi
+cmd+=(-vga std "${display[@]}" "${serial[@]}" -monitor none -qmp "unix:$run/qmp.sock,server,nowait"
 	"${gdb[@]}" "$@")
 echo "qemu-x86: ${cmd[*]}" >&2
 echo "qemu-x86: serial $log, QMP $run/qmp.sock" >&2

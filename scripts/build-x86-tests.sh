@@ -8,9 +8,10 @@
 #
 # OUTDIR/<test> for the single programs; OUTDIR/tls (scripts/build-tls-tests.sh --arch x86_64), OUTDIR/relr
 # (relrtest + its libraries, linked with -z pack-relative-relocs), OUTDIR/dbg (dbgtarget C -O0 and C++ -O2,
-# each with DWARF 4 and 5). Every program is tried; the failed ones are listed at the end (exit 1).
-# Not built for x86_64: armdbg.c, kernel-tests/id-regs.c (arm64 only); strtold.c until it has an x87
-# (LDBL_MANT_DIG 64) expected-value table.
+# each with DWARF 4 and 5), OUTDIR/rw_lock_interrupt_test (copied from sources/haiku-x86's jam build:
+# scripts/build-x86.sh build rpi4 rw_lock_interrupt_test; it links libroot's private rw_lock, which upstream's
+# libroot exports too). Every program is tried; the failed ones are listed at the end (exit 1).
+# Not built for x86_64: armdbg.c, kernel-tests/id-regs.c (arm64 only).
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 sysroot="$root/artifacts/sysroot-x86_64"
@@ -37,6 +38,8 @@ try threadstress cc -O2 -o "$out/threadstress" "$t/threadstress.c"
 try threadbench cc -O2 -o "$out/threadbench" "$t/threadbench.c"
 try forkbench cc -O2 -o "$out/forkbench" "$t/forkbench.c"
 try exitthread cc -O2 -o "$out/exitthread" "$t/exitthread.c"
+rwl="$root/sources/haiku-x86/generated.x86_64/objects/haiku/x86_64/release/tests/system/libroot/os"
+try rw_lock_interrupt_test cp "$rwl/rw_lock_interrupt_test" "$out/"
 try kill_race2 cxx -O2 -o "$out/kill_race2" "$t/killrace.cpp"
 try spread cc -O2 -o "$out/spread" "$t/spread.c"
 # LIBC
@@ -44,6 +47,8 @@ try strtest cc -O1 -fno-builtin -o "$out/strtest" "$t/strtest.c"
 try polltest cc -O2 -o "$out/polltest" "$t/polltest.c"
 try usercopy cc -O2 -o "$out/usercopy" "$t/usercopy.c"
 try membarrier cc -O2 -o "$out/membarrier" "$t/membarrier.c" -lgnu
+try strtold cc -O2 -o "$out/strtold" "$t/strtold.c"
+try setrlimit cc -O2 -o "$out/setrlimit" "$t/setrlimit.c"
 try castest-header cc -O2 -DCASTEST_HEADER_ONLY -c -o "$out/castest-header.o" "$t/castest.c"
 try castest cc -O2 -o "$out/castest" "$t/castest.c" "$out/castest-header.o"
 rm -f "$out/castest-header.o"
@@ -65,6 +70,7 @@ try drawbench cxx -O2 -o "$out/drawbench" "$t/drawbench.cpp" -lbe
 try pmexit cxx -O2 -I "$priv/storage" -o "$out/pmexit" "$t/pmexit.cpp" -lbe
 try keyinject cxx -O2 -I "$priv/app" -o "$out/keyinject" "$t/keyinject.cpp" -lbe
 try tswatch cxx -O2 -o "$out/tswatch" "$t/tswatch.cpp" -lmedia -lbe
+try systime cc -O2 -o "$out/systime" "$t/systime.c"
 try dlopentime cc -O2 -o "$out/dlopentime" "$t/dlopentime.c"
 try resolvetime cc -O2 -o "$out/resolvetime" "$t/resolvetime.c" -lnetwork
 # DBG

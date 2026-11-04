@@ -531,8 +531,10 @@ installed).
 - [ ] Phase 2b (optional): GCC 16.2 x86-64 build of rpi4
 - [x] Phase 3 tooling: `qemu-x86.sh`, `image-add.sh --bfs-shell`, `haiku-sysroot.sh --arch x86_64`,
   `build-x86-tests.sh`, `spread.c` pause; §4.4 step 1 (smoke) done (§8.5)
-- [ ] Phase 3: strtold x87 table, `tools/x86-tests/*.sh` bootscripts, `x86-grade.sh`; §4.4 steps 2–6
-- [ ] Phase 4: fixes on rpi4 (arm64 still green), report §6, KNOWN-ISSUES, HAIKU-RPI4-CHANGES
+- [x] Phase 3: strtold x87 table, `tools/x86-tests/*.sh` bootscripts, `x86-grade.sh`; §4.4 steps 2–6 (§9; SD, USB data
+  disk, RNG, MEDIA, DBG not run)
+- [x] Phase 4 (part): four fixes on branch `x86-fix` (§9.4), arm64 compile-checked, pushed, not merged
+- [ ] Phase 4 rest: arm64 runtime check, merge into rpi4, KNOWN-ISSUES, HAIKU-RPI4-CHANGES column
 
 ## 8. Phase 2 results (2026-11-04)
 
@@ -700,3 +702,281 @@ all ours.
 4. Timing A/B (§4.6): rpi4 against `haiku-x86-up-kd1`, alternating, 5 boots each, under `$HEAVY_BUILD_LOCK` so that
    no build runs beside them.
 5. Optional 2b (GCC 16.2 build of rpi4): there is disk for it (≈ 4 GB by this phase's numbers).
+
+## 9. Phase 3 results (2026-11-04, KVM) and phase 4 fixes
+
+All runs: KVM on the AMD host, QEMU 11.0, `-cpu host`, q35 unless noted, 4 GB, SMP 4, virtio-net (user mode), a
+fresh qcow2 overlay per run (so every boot 1 is a first boot), UEFI = QEMU's edk2. Logs, screenshots and the row
+file are in `artifacts/qemu-x86/` (`results.tsv`: one row per test and run; `perf.tsv`: the timing runs).
+**No Pi time was used.**
+
+| image | what |
+|---|---|
+| **ours** | `sources/haiku-x86` = rpi4 **a779571e90** (copy kept as `artifacts/x86-images/rpi4-a779571e90.iso`) |
+| **up** | `sources/haiku-x86-up` = hrev60314, `KDEBUG_LEVEL` 2 as shipped: the functional baseline |
+| **kd1** | `sources/haiku-x86-up-kd1` = hrev60314 at `KDEBUG_LEVEL` 1: the timing baseline only |
+| **fix** | `sources/haiku-x86-fix` = branch **`x86-fix`** (a779571e90 + the four phase-4 commits, §9.4) |
+
+### 9.1 Harness (committed with this section)
+
+- `tools/x86-tests/*.sh` — one UserBootscript per group: `boot`, `pwr`, `net`, `nodns`, `core` (THR+TLS+LIBC+VM),
+  `core2` (the part of core an image without our fixes never reaches), `libc`, `fs`, `pc1`/`pc2` (power cut),
+  `bootio` (write integrity on the boot disk itself), `app`, `perf`; `lib.sh` holds the helpers. Each test runs as
+  `timeout -k 5 SECS prog > file; rc=$?` — the exit status is taken **before** any filter — and prints
+  `X86T <group> result <test> PASS|FAIL|N/A rc=<n> …`, the group ends with `X86T <group> end` and `shutdown -q`.
+- `scripts/x86-test.sh GROUP IMAGE [qemu-x86 options]` (puts the cross-built tests, `lib.sh`, a debug_server
+  `default_action kill` and the bootscript into the image), `scripts/x86-grade.sh LOG` (PASS/FAIL/N/A per test; a
+  group without its end line is INCOMPLETE; PANIC/KDL; debugger entries and user faults; pmexit-window faults),
+  `scripts/x86-matrix.sh` (BOOT configurations), `scripts/x86-powercut.sh`, `scripts/x86-perf.sh` +
+  `scripts/x86-perf-table.py` (timing under the heavy-build lock), `scripts/kdl-x86.py` + `qemu-x86.sh
+  --serial-sock` (type KDL commands into COM1), `qemu-x86.sh --legacy-virtio`,
+  `scripts/arm64-compile-check.sh` (compile a worktree's files with the arm64 build's exact flags).
+- Tests: `strtold.c` now has an x87 branch (padding bytes masked, `%.21Lg` round trips, the explicit integer bit
+  set exactly for normal random values, a table from x86_64 glibc 2.43 plus x87 limit cases) and checks of
+  values that overflow only by rounding; new `setrlimit.c`, `systime.c`; `rw_lock_interrupt_test` comes from the
+  x86 jam build; `forkbench.c` flushes each line (written to a file on Haiku, its lines after the first were lost
+  on both images — not investigated further).
+- Harness limits seen: two runs **started in the same second** sometimes lose one run's image-add (one
+  upstream power cut and one rpi4 SMP-1 boot were lost that way and re-run); `qemu-x86.sh` must not be edited
+  while a run uses it (one upstream core run was lost so).
+
+### 9.2 Matrix: ours vs upstream
+
+**BOOT** (`scripts/x86-matrix.sh rpi4 up`; desktop = Tracker and Deskbar running, then ACPI power-off):
+
+| configuration | ours | up | note |
+|---|---|---|---|
+| UEFI, AHCI (q35) | PASS | PASS | |
+| UEFI, **NVMe** | **FAIL**: desktop up, then `shutdown` never powers off | PASS | regression R1 (§9.4); **fix: PASS** (3 boots + `bootio`) |
+| UEFI, virtio-scsi | PASS | PASS | |
+| UEFI, virtio-scsi + virtio-net **legacy** (`disable-modern=on`, I/O BARs) | PASS | PASS | the `cafef4f9bb` I/O-BAR risk: none |
+| UEFI, USB boot disk (usb-storage on xHCI) | PASS, but the kernel **waits** for the boot device | PASS, no wait | expected from `afb2823bb5` + `bce76d6e73` (§9.4 R4) |
+| BIOS, AHCI (q35) | PASS | PASS | |
+| BIOS, IDE (`-machine pc`) | PASS | PASS | |
+| BIOS, CD (El Torito) | boots to the installer's Welcome window (bootscript not run on a CD) | same | both by screenshot, no panic |
+| UEFI, SMP 1 | PASS | PASS | |
+| UEFI, 512 MB | PASS | PASS | the 128 kB bounce buffers / 512 kB loader cache fit |
+| UEFI, `-smp 4` as 2 cores × 2 threads | PASS | PASS | |
+| UEFI, e1000 / rtl8139 (FreeBSD-compat driver) | PASS / PASS | PASS / PASS | |
+
+Kernel module sets (`listimage 1`) and `listdev` device counts are the same on both for UEFI AHCI/NVMe/virtio-scsi and
+BIOS AHCI/IDE; the USB boot differs only in `usb_raw` being loaded on ours by then. No panic, no KDL in any BOOT run.
+
+**Functional groups** (UEFI, AHCI, SMP 4; "fix" = the `x86-fix` image):
+
+| group | test | ours | up | fix | evidence (up) |
+|---|---|---|---|---|---|
+| PWR | `shutdown -r`, `shutdown -q -r`, `shutdown` (3 boots, power-off), UEFI and BIOS | PASS ×2 | PASS ×2 | — | |
+| NET | DHCP, ping 10.0.2.2, DNS, HTTPS (curl), `pkgman refresh` | PASS | PASS | PASS | |
+| NET | net_server restarted: the interface gets DHCP again | **FAIL** | PASS | PASS | regression R2 (§9.4) |
+| NET | resolve own host name, `--nic none` (no name server) | PASS (3 ms) | **FAIL** (gethostbyname 7.0 s, getaddrinfo 28.0 s, both fail) | — | ★32 |
+| THR | threadstress 1000 | PASS | **FAIL**: hangs (900 s timeout); `user: stack … not in the user's …+131072`, `did not run` | PASS | `dbae37b2cb` |
+| THR | rw_lock_interrupt_test ×20 | PASS 20/20 | **FAIL 0/20**: `interrupted by a signal: FAIL (the writer never got the lock)` | PASS | ★41 |
+| THR | killrace ×30 | PASS 0 faults | **FAIL 30/30** `Segment violation` | PASS | ★43 |
+| THR | castest (3 variants) | PASS | PASS | PASS | x86 CAS is strong anyway |
+| THR | threadbench, forkbench, spread | ran | ran | ran | timing in §9.3 |
+| TLS | tlsstatic, and with `LD_PRELOAD_ADDONS` | PASS | **FAIL** `library aligned address % 64: 16, expected 0` | PASS | ★52 |
+| TLS | tlsreload | PASS | **FAIL** `round 1: read 0 after setting 1234` | PASS | ★33 |
+| TLS | tlsunload 200 | PASS | PASS | PASS | ★33's other case does not show on x86 |
+| TLS | tlsbench | ran | ran | ran | §9.3 |
+| LIBC | strtold (x87 table, 266 checks) | **FAIL**: 4 ERANGE checks (values that overflow by rounding) | **FAIL**: dozens (double precision, `inf` for 1e4000, lost signs) | PASS | ★38; ours: R3 (§9.4) |
+| LIBC | strtod/strtof checks | **FAIL**: rounding overflow without ERANGE | **FAIL**: `-0`, `-nan`, `nan(0x123)`, `0x1p-1075`, rounding overflow | PASS | ★39 + R3 |
+| LIBC | setrlimit (current value of a fixed limit) | PASS | **FAIL** EINVAL ×6 (coreutils `timeout` prints `disabling core dumps failed`) | PASS | ★40 |
+| LIBC | strtest | PASS | PASS | PASS | |
+| LIBC | polltest | PASS | **FAIL** `events unchanged … (0x1085)` | PASS | `127fb34239` |
+| LIBC | usercopy | PASS | **kernel PANIC** `VMArea::Unwire(…, 0x1000, 1): no such range` (5 of 5 runs that reached it) | PASS | ★20 |
+| LIBC | relrtest (DT_RELR) | PASS | FAIL (crashes, rc 149) | PASS | feature `4539cd2f00` (upstream has no DT_RELR) |
+| LIBC | membarrier | PASS | N/A (no `_kern_team_memory_barrier`) | PASS | feature `1582c223b0` |
+| VM | mmap-shared-mprotect | PASS | **FAIL** `after mprotect() of a new mapping … BROKEN` | PASS | ★21 |
+| VM | fault-signal-blocked | PASS | **FAIL** `still faulting after 10 s` (both cases) | PASS | ★22 |
+| VM | mprotect-unprotect-retry | PASS | PASS | PASS | arm64-only problem |
+| FS | bfsmeta 4000 files on a scratch BFS | PASS, **74 µs/file** | PASS, **1527 µs/file** | — | ★45 (one run each, run side by side) |
+| FS | copy apps+lib (2277 files, 613 MiB), MD5; unmount + mount, MD5 | PASS | PASS | — | |
+| FS | fragwrite (30 MB in ~7500 holes) | PASS | PASS | — | |
+| FS | checkfs: 0 not allocated, 0 already set | PASS (28 "could be freed") | PASS (28) | — | same count on both; bfsbits S−U = 0 |
+| FS | power cut (QMP quit after 20000 files of `bfsmeta --loop`), mount, checkfs, bfsbits, write | PASS 3/3 | PASS 3/3 | — | |
+| FS | boot-disk write integrity (80 MB copy, MD5, restart, MD5), NVMe and AHCI | NVMe: hangs (R1) | PASS (NVMe) | PASS (NVMe, AHCI) | |
+| APP | launch Terminal, StyledEdit, ShowImage, DeskCalc, Devices, FileTypes, MediaPlayer, WebPositive | PASS | PASS | — | |
+| APP | bitmapcheck (13 screen hashes) | identical | identical | — | |
+| APP | drawbench | ran | ran | — | |
+| APP | pmexit ×400 with path churn | 0 bad, 0 faults | 0 bad, 0 faults | — | ★53 does not reproduce on x86-64 |
+
+The "up" column of THR/TLS/LIBC/VM comes from `core` (it panics in usercopy), `core2` and `libc` runs
+(`20261104-180704-core-up`, `-185613-core2-up`, `-184138-libc-up` in `artifacts/qemu-x86/`). The fix image ran the
+full `core` group (twice: before and after R5), `libc`, `net`, `fs`, `bootio` and the BOOT subset (AHCI, NVMe, BIOS
+AHCI, BIOS IDE, USB): all PASS except the USB wait (R4).
+
+### 9.3 Timing: ours vs upstream at `KDEBUG_LEVEL` 1
+
+`scripts/x86-perf.sh 5 rpi4 kd1` under the heavy-build lock (`/tmp/phoenix-heavy-build.lock`), nothing else running on
+the VM side, images alternated A, B, A, B (10 fresh-overlay runs, 19:06–19:20). Per run (`tools/x86-tests/perf.sh`):
+boot 1 (a first boot) and boot 2 (after `shutdown -r`) times, then each application launched cold and warm, forkbench,
+threadbench, tlsbench, dlopentime ×20. Two clocks for the boot: the kernel's `system_time()` at the desktop marker
+(Tracker and Deskbar running), and the host's time from QEMU start (firmware and loader included) to that line in
+the serial log, polled every 0.1 s. Rows: `artifacts/qemu-x86/perf.tsv`; table: `scripts/x86-perf-table.py rpi4 kd1`.
+
+**KVM is not bare metal**, and "ours" is all 275 commits at once (same `KDEBUG_LEVEL` 1): the table says the tree
+is faster, not which commit makes it so.
+
+| metric | rpi4 median [min–max] (runs) | kd1 median [min–max] (runs) | kd1 / rpi4 |
+|---|---|---|---|
+| boot 1 (first boot), QEMU start to desktop, host s | 6.92 [6.81–10.38] (5) | 8.28 [8.18–8.28] (5) | 1.20 |
+| boot 1 (first boot), kernel start to desktop, s | 4.51 [4.43–7.83] (5) | 5.47 [5.36–5.53] (5) | 1.21 |
+| boot 2, kernel start to desktop, s | 4.34 [4.30–4.38] (5) | 5.23 [5.21–5.28] (5) | 1.21 |
+| launch Terminal cold, ms | 35.00 [34.00–40.00] (5) | 37.00 [33.00–40.00] (5) | 1.06 |
+| launch Terminal warm, ms | 25.00 [24.00–26.00] (5) | 28.00 [28.00–28.00] (5) | 1.12 |
+| launch StyledEdit cold, ms | 26.00 [25.00–32.00] (5) | 29.00 [28.00–30.00] (5) | 1.12 |
+| launch StyledEdit warm, ms | 24.00 [19.00–25.00] (5) | 28.00 [27.00–29.00] (5) | 1.17 |
+| launch ShowImage cold, ms | 23.00 [22.00–27.00] (5) | 27.00 [26.00–34.00] (5) | 1.17 |
+| launch ShowImage warm, ms | 25.00 [21.00–25.00] (5) | 30.00 [25.00–30.00] (5) | 1.20 |
+| launch DeskCalc cold, ms | 10.00 [10.00–15.00] (5) | 11.00 [11.00–11.00] (5) | 1.10 |
+| launch DeskCalc warm, ms | 8.00 [8.00–9.00] (5) | 10.00 [9.00–10.00] (5) | 1.25 |
+| launch Devices cold, ms | 41.00 [40.00–47.00] (5) | 51.00 [48.00–58.00] (5) | 1.24 |
+| launch Devices warm, ms | 24.00 [23.00–30.00] (5) | 30.00 [29.00–40.00] (5) | 1.25 |
+| launch MediaPlayer cold, ms | 21.00 [21.00–22.00] (5) | 30.00 [29.00–31.00] (5) | 1.43 |
+| launch MediaPlayer warm, ms | 18.00 [18.00–19.00] (5) | 25.00 [24.00–25.00] (5) | 1.39 |
+| launch WebPositive cold, ms | 436 [418–454] (5) | 546 [534–560] (5) | 1.25 |
+| launch WebPositive warm, ms | 129 [128–137] (5) | 168 [163–174] (5) | 1.30 |
+| forkbench thread, us | 41.00 [37.00–43.00] (5) | 45.00 [44.00–47.00] (5) | 1.10 |
+| forkbench fork+exit, us | 140 [133–148] (5) | 149 [145–161] (5) | 1.06 |
+| forkbench fork+exec, us | 660 [616–670] (5) | 690 [661–752] (5) | 1.05 |
+| forkbench posix_spawn, us | 574 [522–616] (5) | 578 [572–596] (5) | 1.01 |
+| threadbench pthread, us | 39.60 [38.90–42.50] (5) | 41.90 [41.10–43.30] (5) | 1.06 |
+| threadbench pthread-stack64k, us | 39.20 [38.90–39.90] (5) | 47.60 [46.70–49.70] (5) | 1.21 |
+| threadbench spawn_thread, us | 39.70 [39.20–40.90] (5) | 43.00 [41.30–45.90] (5) | 1.08 |
+| tlsbench global, ns | 2.01 [1.99–2.03] (5) | 1.99 [1.51–2.10] (5) | 0.99 |
+| tlsbench thread-local (linked library), ns | 9.96 [9.44–10.37] (5) | 8.23 [7.88–8.43] (5) | 0.83 |
+| tlsbench thread-local (dlopened), ns | 9.72 [9.25–9.78] (5) | 8.00 [7.97–8.51] (5) | 0.82 |
+| dlopen libbe.so first, ms | 3.55 [3.46–6.31] (5) | 5.79 [5.48–7.99] (5) | 1.63 |
+| dlopen libtracker.so first, ms | 4.94 [4.21–5.65] (5) | 8.13 [7.42–9.86] (5) | 1.65 |
+| dlopen libtracker.so warm (median of the rest), ms | 0.88 [0.86–0.93] (5) | 2.56 [2.51–2.72] (5) | 2.91 |
+| dlopen PNGTranslator first, ms | 4.29 [4.08–4.72] (5) | 6.74 [6.48–7.12] (5) | 1.57 |
+| dlopen PNGTranslator warm (median of the rest), ms | 0.28 [0.26–0.29] (5) | 0.39 [0.35–0.41] (5) | 1.39 |
+
+(`dlopen libbe.so` after the first round is 0.00 ms on both: libbe stays loaded after `dlclose()`; left out.)
+
+- **Boot**: ours reaches the desktop ≈ 0.9 s earlier from the kernel's start (boot 2: 4.34 vs 5.23 s, spreads
+  0.08 s and 0.07 s, no overlap); the host clock agrees (6.92 vs 8.28 s for boot 1). One ours run had a slow first
+  boot (7.83 s kernel, 10.38 s host; round 5) — kept in the min–max.
+- **Application starts**: upstream takes 6–43 % longer at the median, warm and cold; most ranges do not overlap
+  (Terminal cold does). WebPositive cold 436 vs 546 ms, warm 129 vs 168 ms.
+- **Libraries**: dlopen of libtracker 1.65× (first) and 2.9× (warm) faster, a translator 1.4–1.6×, libbe 1.6×
+  (first). Candidates: `-Bsymbolic-functions` (`3e8577af06`; calls inside a library bind locally) and
+  `--hash-style=both` (`91012322ef`; DT_GNU_HASH lookups). This is the only evidence for those two — no per-commit A/B.
+- **fork/threads**: upstream's thread creation takes 6–21 % longer (pthread with a 64 kB stack 47.6 vs 39.2 µs: the
+  stack reuse of `ecab951764`); fork+exit/exec 5–6 % (ranges overlap), posix_spawn equal.
+- **TLS: ours was slower** — a library's thread-local access 9.96 vs 8.23 ns (+21 %, no overlap). Root cause and fix
+  in §9.4 R5; with it, 8.1 ns (A/B below).
+
+TLS A/B after the R5 fix (`tools/x86-tests/tlsperf.sh`: tlsbench ×5 per boot, 2 boots per image, alternated, under the
+heavy-build lock; medians of 10 [min–max]):
+
+| image | thread-local, linked library | thread-local, dlopened |
+|---|---|---|
+| ours a779571e90 | 10.09 [9.65–10.40] ns | 9.83 [9.11–10.09] ns |
+| fix a2cf89efd1 | **8.12** [7.48–8.36] ns | **8.06** [7.28–8.25] ns |
+| hrev60314 at KDEBUG 1 | 8.22 [7.17–8.59] ns | 8.13 [7.45–8.55] ns |
+
+### 9.4 Regressions found, and the fixes (phase 4)
+
+Branch **`x86-fix`** in `sources/haiku` (worktree `sources/haiku-x86-fix`), off rpi4 a779571e90, pushed to origin,
+**not merged**. Each fix was compiled for arm64 with the arm64 build's own flags (`scripts/arm64-compile-check.sh`,
+`-Werror`): ok. arm64 runtime (QEMU virt, Pi) was **not** tested.
+
+**R1 — NVMe writes hang (our `8edea64c6b`, DMA bounce buffers 16 → 128 kB). Fixed: `3a0be104e3`.**
+- Symptom: ours boots from NVMe, but the first larger write (a 13 MB `dd`, the BFS log flush, `sync`, `shutdown`)
+  never finishes; 7 of 7 boots. Upstream and AHCI/virtio-scsi/IDE fine. Reverting the bounce size alone cured it.
+- Found with KDL over the serial socket (`kdl-x86.py`): `sync` waits in `IORequest::Wait()` under
+  `vfs_write_pages()` (BFS `_WriteTransactionToLog`); the kernel log says `nvme_disk: attempt to queue write I/O at
+  LBA … of 256 blocks failed!`; a probe showed the request's one vec as `0x…+0x0`.
+- Root cause: `IOOperation` saves and restores the vec it shortens for a partial write's read phase in
+  `uint16 fSavedVecLength`. A 128 kB bounce vec came back as length 0. (16 kB vecs fitted, so upstream never hit it.)
+- Fix: `fSavedVecLength` is `generic_size_t`, `fSavedVecIndex` `uint32`. NVMe boot: 5/5 finish and power off, `bootio` MD5s
+  equal across a restart on NVMe and AHCI; `core` all PASS on the fix image.
+- Left alone, deliberately: `nvme_disk_bounced_io()` notifies a request whose status is still "in progress" when
+  queueing fails, so an I/O error becomes a hang instead of EIO (upstream code). And: the Pi's SD path uses the same
+  128 kB bounce buffers, so a partial-block write there could have been shortened the same way — worth an FS run on
+  the Pi with the fix.
+
+**R2 — net_server leaves a DHCP interface unmanaged after a restart (our `cb0f2f9884`). Fixed: `444704d5f1`.**
+- `_IsBootInterface()` skipped every interface with an IPv4 address, at every net_server start. After
+  `launch_roster stop/start x-vnd.haiku-net_server` on a disk boot the syslog said
+  `/dev/net/virtio/0 was configured for the network boot, leaving it as it is` and no DHCP client ran (lease never
+  renewed); upstream re-ran DHCP (DISCOVER/OFFER/REQUEST/ACK).
+- Fix: skip only when `/boot` is on `/dev/disk/virtual/remote_disk/`. Fix image: DHCP exchange after the restart.
+  The network-boot branch is untested (no x86 network boot; no Pi run).
+
+**R3 — x87 `strtold()`: no ERANGE for values that overflow by rounding (shows through our `12eb998a63`). Fixed:
+`c8c59043a7`.**
+- `round_and_return()` returned infinity with ERANGE only for `exponent > MAX_EXP`; at `== MAX_EXP` (a carry out of
+  the largest mantissa, or a hex input) `MPN2FLOAT()` built infinity's bits without ERANGE. Upstream's own `strtod`
+  and `strtof` have the same bug (both images fail `strtod("1.7976931348623159e308")` and
+  `strtof("3.4028236e38")`), so the fix helps upstream code too. Now `exponent >= MAX_EXP` is the overflow, as in
+  glibc. Fix image: strtold 268/268, strtod/strtof all pass.
+
+**R5 — a library's thread-local access 21 % slower on x86-64 (our `c6cab6cc9e`, static TLS block). Fixed:
+`a2cf89efd1`.**
+- Found by the timing A/B (§9.3), not by a functional test. `get_tls_address()` looked the module up in the static
+  TLS block on every call (a `TLS_STATIC_MODULE` test, then `TLSBlockTemplates::GetStaticOffset()`). Only arm64 has a
+  static block, and there libroot's `__tls_get_addr()` reads the thread vector itself; x86_64's `__tls_get_addr()`
+  calls the runtime loader for every access, and no module is ever static there.
+- Fix: the lookup only where `TLS_STATIC_BLOCK` is defined (a constant, so arm64 compiles the same code as
+  before). x86-64: 10.09 → 8.12 ns (upstream 8.22), §9.3; `core` all PASS on the fix image, TLS tests included.
+
+**R4 — USB boot disk: the kernel waits for the boot device (our `afb2823bb5` + `bce76d6e73`). Not changed.**
+- A new USB bus is explored in the explore thread now, so the usb_disk appears after the kernel first looks for
+  the boot volume; `bce76d6e73` then waits (≤ 10 s) and finds it — the serial log has `get_boot_partitions(): waiting
+  for the boot device` followed by `Mounted boot partition: /dev/disk/usb/0/0/0` two lines on. Boots fine on both;
+  the delay is short but was not measured. It is the designed behaviour, not a failure.
+
+### 9.5 Our fixes that help x86-64 (for general use)
+
+Each: upstream hrev60314 fails on x86-64 under KVM, our tree passes (same test binary).
+
+1. **★20 `6f810ed2d7` lock_memory_etc() unwire on failure** — any user program panics the upstream x86-64 kernel:
+   `usercopy` (a `read()` into a buffer running into a PROT_NONE page) → `PANIC: VMArea::Unwire(…): no such range`,
+   in all 5 upstream runs that reached it. Ours: PASS.
+2. **★21 `894c4abe7f` MAP_SHARED survives mprotect()** — `mmap-shared-mprotect` BROKEN upstream after fork + mprotect.
+3. **★22 `6e517bb52c` a fault with SIGSEGV blocked ends the team** — upstream still faulting after 10 s, both cases.
+4. **`dbae37b2cb` caller-provided stack placement** — upstream threadstress: `user: stack … not in the user's …`
+   then a hang (every threadstress test, 900 s / 180 s timeouts).
+5. **★41 `2bf2f773ba` rw_lock waits again after an interrupted block** — upstream 0/20, the writer never gets the lock.
+6. **★43 `e09cfa1d9e` dying team keeps exited threads' stacks** — upstream killrace 30/30 segment violations; ours 0/30.
+7. **★52 `4d433669a8` TLS block alignment** — upstream `% 64: 16, expected 0` (with and without a preloaded add-on).
+8. **★33 `5db923abc6` new thread's TLS vector at the current generation** — upstream tlsreload `read 0 after setting
+   1234` (tlsunload passes upstream on x86).
+9. **★38 `12eb998a63` real `strtold()`** (x87: 64-bit mantissa, range to 1e4932) — upstream had double precision.
+   **With R3's fix `c8c59043a7`**, which also fixes upstream's strtod/strtof rounding-overflow errno.
+10. **★39 `73ba44df00`, `69c0374b42` strtod edge cases** — upstream loses the sign of `-0`/`-nan`, ends `nan(0x123)`
+    early, rounds `0x1p-1075` up.
+11. **★40 `f0a1d5f5cf` setrlimit() of a fixed limit to its current value** — upstream EINVAL for 5 limits; visible
+    even in coreutils (`timeout: warning: disabling core dumps failed`).
+12. **`127fb34239` poll() keeps the caller's events** — upstream writes 0x1085 into `events`.
+13. **★32 `25c9881600`, `58022c954a` own host name without DNS** — upstream: own name fails after 7 s
+    (gethostbyname) / 28 s (getaddrinfo); ours 3 ms.
+14. **★45 `a9db442988` block cache sub-transactions** — bfsmeta 74 vs 1527 µs per file (≈ 20×; one run each, side by
+    side; the timing set did not repeat it).
+15. Features x86-64 gains and upstream lacks: **DT_RELR** (`4539cd2f00`; upstream crashes on a DT_RELR binary) and
+    the **team memory barrier** syscall (`1582c223b0`; N/A upstream).
+
+16. **Speed, the tree as a whole** (§9.3, 5 runs each against upstream at the same `KDEBUG_LEVEL`): desktop ≈ 0.9 s
+    sooner after the kernel starts; application starts and dlopen faster (dlopen of libtracker 1.65×, warm 2.9×;
+    likely `-Bsymbolic-functions`/`--hash-style=both`); thread creation with stacks faster (`ecab951764`). Not
+    attributed to single commits.
+
+**Did not reproduce on x86-64** (no evidence either way for x86 users): ★53 pmexit (0/400 on both), tlsunload (★33's
+other case), mprotect-unprotect-retry (★26 is arm64), castest (x86 CAS is strong), bitmapcheck (identical).
+
+**Not run on x86-64** (still only arm64 evidence, or none): USB data disk on EHCI and the 1 GB USB copy (USB was
+only a boot disk), SD (`--sd`, sdhci-pci), RNG statistics, MEDIA (intel-hda, tswatch), DBG (Debugger CLI, DWARF 5,
+`profile`), the xHCI ring changes beyond booting from and typing on xHCI, WiFi, Bluetooth, real hardware of any kind,
+an x86 network boot (R2's other branch), the GCC 16.2 x86-64 build (phase 2b).
+
+### 9.6 Checklist state
+
+- [x] strtold x87, bootscripts per group, `x86-grade.sh` (exit status before any pipe)
+- [x] §4.4 steps 2–5 (BOOT/PWR/NET, THR/TLS/LIBC/VM, FS, APP) on ours and upstream; USB as boot disk only
+- [x] step 6 timing (§9.3)
+- [x] phase 4: four fixes on `x86-fix` (pushed, not merged), arm64 compile-checked
+- [ ] not run: SD, USB data disk, RNG, MEDIA, DBG (§9.5)
+- [ ] merge `x86-fix` into rpi4 after an arm64 run (QEMU virt + a Pi FS run for R1)

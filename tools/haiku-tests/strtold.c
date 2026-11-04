@@ -1,20 +1,25 @@
 /*
  * strtold.c — long double conversions of libroot: strtold(), wcstold(), sscanf("%Lf"/"%Lg") and
- * printf("%Lg"/"%Le"/"%Lf") against expected values taken from glibc (the table below), for
- * IEEE 754 binary128 long double (arm64, riscv64); plus a round trip printf("%.36Lg") -> strtold()
- * and printf("%La") -> strtold() of 20000 pseudo-random finite values (normal and subnormal), and
- * strtod()/strtof() spot checks with their own round trip.
+ * printf("%Lg"/"%Le"/"%Lf") against expected values taken from glibc (the tables below), for
+ * IEEE 754 binary128 long double (arm64, riscv64) and for the x87 80-bit extended format (x86_64:
+ * 10 value bytes in a 16-byte long double, the 6 padding bytes masked off); plus a round trip
+ * printf("%.36Lg") (x87: "%.21Lg") -> strtold() and printf("%La") -> strtold() of 20000
+ * pseudo-random finite values (normal and subnormal), and strtod()/strtof() spot checks with their
+ * own round trip.
  *
  *   strtold [-v]       prints "strtold: ok (N checks)" or one "strtold: FAIL ..." line per failure
  *                      and "strtold: N failures"; exit 0 when ok. -v: every case.
  *   strtold --gen      prints the expected-value table rows from this libc (generate on a reference:
- *                      aarch64 Linux glibc, e.g. under qemu-aarch64 -L /usr/aarch64-linux-gnu)
+ *                      aarch64 Linux glibc, e.g. under qemu-aarch64 -L /usr/aarch64-linux-gnu, for
+ *                      binary128; x86_64 Linux glibc for x87)
  *
  * Whether errno is ERANGE after an underflow is implementation-defined (C11 7.22.1.3): it must be 0 or
  * ERANGE; after an overflow it must be ERANGE.
  *
  * Build: aarch64-unknown-haiku-gcc --sysroot=artifacts/sysroot-arm64 -O2 -o strtold strtold.c
  *        aarch64-linux-gnu-gcc -O2 -static -o strtold-linux strtold.c    (the reference)
+ *        x86_64-unknown-haiku-gcc --sysroot=artifacts/sysroot-x86_64 -O2 -o strtold strtold.c
+ *        gcc -O2 -o strtold-linux strtold.c                              (x87 reference, x86_64 host)
  */
 #include <errno.h>
 #include <float.h>
@@ -25,8 +30,17 @@
 #include <string.h>
 #include <wchar.h>
 
-#if LDBL_MANT_DIG != 113
-#	error "this test expects IEEE 754 binary128 long double"
+#if LDBL_MANT_DIG == 113
+	/* binary128: hi = sign, 15-bit exponent, top 48 fraction bits; lo = low 64 fraction bits */
+#	define LD_HI_MASK 0xffffffffffffffffULL
+#	define LD_DIG "36"		/* decimal digits that round-trip every value */
+#elif LDBL_MANT_DIG == 64
+	/* x87: lo = the 64-bit significand with its explicit integer bit; hi = sign and 15-bit exponent
+	   in the low 16 bits, the rest is padding */
+#	define LD_HI_MASK 0xffffULL
+#	define LD_DIG "21"
+#else
+#	error "this test expects binary128 or x87 extended long double"
 #endif
 
 static int sFailures, sChecks, sVerbose;
@@ -42,7 +56,7 @@ ld_bits(long double x)
 	uint64_t w[2];
 	memcpy(w, &x, sizeof(w));
 	b.lo = w[0];
-	b.hi = w[1];
+	b.hi = w[1] & LD_HI_MASK;
 	return b;
 }
 
@@ -77,7 +91,6 @@ check(int ok, const char *what, const char *fmt, ...)
 	printf("\n");
 }
 
-/* Expected values: generated with "strtold --gen" from aarch64 glibc 2.43. */
 enum { E_NONE = 0, E_RANGE = 1, E_UNDERFLOW = 2 };
 
 struct strtold_case {
@@ -87,6 +100,8 @@ struct strtold_case {
 	int err;			/* E_RANGE: errno must be ERANGE; E_UNDERFLOW: report errno */
 };
 
+#if LDBL_MANT_DIG == 113
+/* Expected values: generated with "strtold --gen" from aarch64 glibc 2.43. */
 static const struct strtold_case kCases[] = {
 	{ "1.2", 0x3fff333333333333ULL, 0x3333333333333333ULL, 3, E_NONE },
 	{ "1.0000000000000000000000000000000002", 0x3fff000000000000ULL, 0x0000000000000001ULL, 36, E_NONE },
@@ -138,6 +153,73 @@ static const struct strtold_case kCases[] = {
 	{ "9007199254740993", 0x4034000000000000ULL, 0x0800000000000000ULL, 16, E_NONE },
 	{ "10384593717069655257060992658440193", 0x4070000000000000ULL, 0x0000000000000000ULL, 35, E_NONE },
 };
+#else
+/* Expected values: generated with "strtold --gen" from x86_64 glibc 2.43. */
+static const struct strtold_case kCases[] = {
+	{ "1.2", 0x0000000000003fffULL, 0x999999999999999aULL, 3, E_NONE },
+	{ "1.0000000000000000000000000000000002", 0x0000000000003fffULL, 0x8000000000000000ULL, 36, E_NONE },
+	{ "1.0000000000000000000000000000000001", 0x0000000000003fffULL, 0x8000000000000000ULL, 36, E_NONE },
+	{ "0.1", 0x0000000000003ffbULL, 0xcccccccccccccccdULL, 3, E_NONE },
+	{ "-0.1", 0x000000000000bffbULL, 0xcccccccccccccccdULL, 4, E_NONE },
+	{ "3.141592653589793238462643383279502884197", 0x0000000000004000ULL, 0xc90fdaa22168c235ULL, 41, E_NONE },
+	{ "2.718281828459045235360287471352662497757", 0x0000000000004000ULL, 0xadf85458a2bb4a9bULL, 41, E_NONE },
+	{ "123456789012345678901234567890123456789", 0x000000000000407dULL, 0xb9c1d34ac02bfd8bULL, 39, E_NONE },
+	{ "1e4000", 0x00000000000073e6ULL, 0xd1ba8323fe558c61ULL, 6, E_NONE },
+	{ "-1e4000", 0x000000000000f3e6ULL, 0xd1ba8323fe558c61ULL, 7, E_NONE },
+	{ "1e-4950", 0x0000000000000000ULL, 0x0000000000000003ULL, 7, E_UNDERFLOW },
+	{ "1e4932", 0x0000000000007ffeULL, 0xd72cb2a95c7ef6cdULL, 6, E_NONE },
+	{ "1e4933", 0x0000000000007fffULL, 0x8000000000000000ULL, 6, E_RANGE },
+	{ "-1e5000", 0x000000000000ffffULL, 0x8000000000000000ULL, 7, E_RANGE },
+	{ "1e-5000", 0x0000000000000000ULL, 0x0000000000000000ULL, 7, E_UNDERFLOW },
+	{ "1e-4966", 0x0000000000000000ULL, 0x0000000000000000ULL, 7, E_UNDERFLOW },
+	{ "-1e-4966", 0x0000000000008000ULL, 0x0000000000000000ULL, 8, E_UNDERFLOW },
+	{ "-1e-5000", 0x0000000000008000ULL, 0x0000000000000000ULL, 8, E_UNDERFLOW },
+	{ "-0x1p-16495", 0x0000000000008000ULL, 0x0000000000000000ULL, 11, E_UNDERFLOW },
+	{ "4e-4966", 0x0000000000000000ULL, 0x0000000000000000ULL, 7, E_UNDERFLOW },
+	{ "6.475175119438025110924438958227646552e-4966", 0x0000000000000000ULL, 0x0000000000000000ULL, 44, E_UNDERFLOW },
+	{ "3.3621031431120935062626778173217526e-4932", 0x0000000000000001ULL, 0x8000000000000000ULL, 42, E_NONE },
+	{ "1.18973149535723176508575932662800702e4932", 0x0000000000007fffULL, 0x8000000000000000ULL, 42, E_RANGE },
+	{ "1.18973149535723176508575932662800703e4932", 0x0000000000007fffULL, 0x8000000000000000ULL, 42, E_RANGE },
+	{ "inf", 0x0000000000007fffULL, 0x8000000000000000ULL, 3, E_NONE },
+	{ "-Infinity", 0x000000000000ffffULL, 0x8000000000000000ULL, 9, E_NONE },
+	{ "nan", 0x0000000000007fffULL, 0xc000000000000000ULL, 3, E_NONE },
+	{ "-nan", 0x000000000000ffffULL, 0xc000000000000000ULL, 4, E_NONE },
+	{ "nan(0x123)", 0x0000000000007fffULL, 0xc000000000000123ULL, 10, E_NONE },
+	{ "0x1.8p1", 0x0000000000004000ULL, 0xc000000000000000ULL, 7, E_NONE },
+	{ "0x1p-16494", 0x0000000000000000ULL, 0x0000000000000000ULL, 10, E_UNDERFLOW },
+	{ "0x1p-16495", 0x0000000000000000ULL, 0x0000000000000000ULL, 10, E_UNDERFLOW },
+	{ "0x1.ffffffffffffffffffffffffffffp16383", 0x0000000000007fffULL, 0x8000000000000000ULL, 38, E_RANGE },
+	{ "0x1.ffffffffffffffffffffffffffff8p0", 0x0000000000004000ULL, 0x8000000000000000ULL, 35, E_NONE },
+	{ "0x1.ffffffffffffffffffffffffffff7p0", 0x0000000000004000ULL, 0x8000000000000000ULL, 35, E_NONE },
+	{ "0x1.0000000000000000000000000000ep0", 0x0000000000003fffULL, 0x8000000000000000ULL, 35, E_NONE },
+	{ "  +12.5e-1xyz", 0x0000000000003fffULL, 0xa000000000000000ULL, 10, E_NONE },
+	{ "1e", 0x0000000000003fffULL, 0x8000000000000000ULL, 1, E_NONE },
+	{ "0x", 0x0000000000000000ULL, 0x0000000000000000ULL, 1, E_NONE },
+	{ ".5", 0x0000000000003ffeULL, 0x8000000000000000ULL, 2, E_NONE },
+	{ "-.5e+2,", 0x000000000000c004ULL, 0xc800000000000000ULL, 6, E_NONE },
+	{ "abc", 0x0000000000000000ULL, 0x0000000000000000ULL, 0, E_NONE },
+	{ "0", 0x0000000000000000ULL, 0x0000000000000000ULL, 1, E_NONE },
+	{ "-0", 0x0000000000008000ULL, 0x0000000000000000ULL, 2, E_NONE },
+	{ "1e-400", 0x0000000000003aceULL, 0x95fe7e07c91efafaULL, 6, E_NONE },
+	{ "1e400", 0x000000000000452fULL, 0xda763fc8cb9ff9e6ULL, 5, E_NONE },
+	{ "0.30000000000000000000000000000000001", 0x0000000000003ffdULL, 0x999999999999999aULL, 37, E_NONE },
+	{ "9007199254740993", 0x0000000000004034ULL, 0x8000000000000400ULL, 16, E_NONE },
+	{ "10384593717069655257060992658440193", 0x0000000000004070ULL, 0x8000000000000000ULL, 35, E_NONE },
+	{ "0x1p-16445", 0x0000000000000000ULL, 0x0000000000000001ULL, 10, E_UNDERFLOW },
+	{ "0x1p-16446", 0x0000000000000000ULL, 0x0000000000000000ULL, 10, E_UNDERFLOW },
+	{ "0x1.8p-16446", 0x0000000000000000ULL, 0x0000000000000001ULL, 12, E_UNDERFLOW },
+	{ "3.64519953188247460253e-4951", 0x0000000000000000ULL, 0x0000000000000001ULL, 28, E_UNDERFLOW },
+	{ "3.36210314311209350626e-4932", 0x0000000000000001ULL, 0x8000000000000000ULL, 28, E_NONE },
+	{ "1.18973149535723176502e4932", 0x0000000000007ffeULL, 0xffffffffffffffffULL, 27, E_NONE },
+	{ "1.18973149535723176508e4932", 0x0000000000007fffULL, 0x8000000000000000ULL, 27, E_RANGE },
+	{ "0x1.fffffffffffffffep16383", 0x0000000000007ffeULL, 0xffffffffffffffffULL, 26, E_NONE },
+	{ "0x1.fffffffffffffffep0", 0x0000000000003fffULL, 0xffffffffffffffffULL, 22, E_NONE },
+	{ "0x1.ffffffffffffffffp0", 0x0000000000004000ULL, 0x8000000000000000ULL, 22, E_NONE },
+	{ "0x1.fffffffffffffffe8p0", 0x0000000000003fffULL, 0xffffffffffffffffULL, 23, E_NONE },
+	{ "1.0000000000000000001", 0x0000000000003fffULL, 0x8000000000000001ULL, 21, E_NONE },
+	{ "18446744073709551617", 0x000000000000403fULL, 0x8000000000000000ULL, 20, E_NONE },
+};
+#endif
 
 static const char *const kInputs[] = {
 	"1.2",
@@ -189,6 +271,22 @@ static const char *const kInputs[] = {
 	"0.30000000000000000000000000000000001",
 	"9007199254740993",
 	"10384593717069655257060992658440193",
+#if LDBL_MANT_DIG == 64
+	/* the x87 format's own limits and rounding */
+	"0x1p-16445",
+	"0x1p-16446",
+	"0x1.8p-16446",
+	"3.64519953188247460253e-4951",
+	"3.36210314311209350626e-4932",
+	"1.18973149535723176502e4932",
+	"1.18973149535723176508e4932",
+	"0x1.fffffffffffffffep16383",
+	"0x1.fffffffffffffffep0",
+	"0x1.ffffffffffffffffp0",
+	"0x1.fffffffffffffffe8p0",
+	"1.0000000000000000001",
+	"18446744073709551617",
+#endif
 };
 
 static void gen_printf(void);
@@ -215,13 +313,16 @@ gen(void)
 	gen_printf();
 }
 
-/* Expected printf output: generated from aarch64 glibc. */
 struct printf_case {
 	const char *format;
 	const char *input;	/* through strtold() */
 	const char *output;
 };
 
+#if LDBL_MANT_DIG == 113
+/* Expected printf output: generated from aarch64 glibc. */
+#	define LD_THIRD "0.333333333333333333333333333333333317"
+#	define LD_ONE_EPS "1.00000000000000000000000000000000019"
 static const struct printf_case kPrintfCases[] = {
 	{ "%.36Lg", "0.1", "0.100000000000000000000000000000000005" },
 	{ "%.36Lg", "1.2", "1.19999999999999999999999999999999996" },
@@ -237,6 +338,24 @@ static const struct printf_case kPrintfCases[] = {
 	{ "%.3Lf", "-2.0005", "-2.000" },
 	{ "%.33Lf", "0.1", "0.100000000000000000000000000000000" },
 };
+#else
+/* Expected printf output: generated from x86_64 glibc. */
+#	define LD_THIRD "0.333333333333333333342"
+#	define LD_ONE_EPS "1.00000000000000000011"
+static const struct printf_case kPrintfCases[] = {
+	{ "%.21Lg", "0.1", "0.100000000000000000001" },
+	{ "%.21Lg", "1.2", "1.20000000000000000004" },
+	{ "%.40Le", "3.141592653589793238462643383279502884197", "3.1415926535897932385128089594061862044327e+00" },
+	{ "%Lf", "1e30", "1000000000000000000024696061952.000000" },
+	{ "%.21Lg", "1e4000", "9.99999999999999999997e+3999" },
+	{ "%.21Lg", "0x1p-16445", "3.64519953188247460253e-4951" },
+	{ "%.21Lg", "1.18973149535723176502e4932", "1.18973149535723176502e+4932" },
+	{ "%Lg", "-1e-4950", "-1.09356e-4950" },
+	{ "%Lg", "inf", "inf" },
+	{ "%.3Lf", "-2.0005", "-2.001" },
+	{ "%.33Lf", "0.1", "0.100000000000000000001355252715607" },
+};
+#endif
 
 static void
 gen_printf(void)
@@ -247,10 +366,10 @@ gen_printf(void)
 		printf("\t{ \"%s\", \"%s\", \"%s\" },\n", kPrintfCases[i].format,
 			kPrintfCases[i].input, buf);
 	}
-	snprintf(buf, sizeof(buf), "%.36Lg", 1.0L / 3.0L);
-	printf("1/3: %s\n", buf);
-	snprintf(buf, sizeof(buf), "%.36Lg", 1.0L + LDBL_EPSILON);
-	printf("1+eps: %s\n", buf);
+	snprintf(buf, sizeof(buf), "%." LD_DIG "Lg", 1.0L / 3.0L);
+	printf("#\tdefine LD_THIRD \"%s\"\n", buf);
+	snprintf(buf, sizeof(buf), "%." LD_DIG "Lg", 1.0L + LDBL_EPSILON);
+	printf("#\tdefine LD_ONE_EPS \"%s\"\n", buf);
 }
 
 static void
@@ -320,12 +439,11 @@ test_printf(void)
 			c->format, c->input, buf, c->output);
 	}
 	/* a value strtold() cannot produce wrong: arithmetic */
-	snprintf(buf, sizeof(buf), "%.36Lg", 1.0L / 3.0L);
-	check(strcmp(buf, "0.333333333333333333333333333333333317") == 0, "printf",
-		"%%.36Lg of 1.0L/3 -> \"%s\"", buf);
-	snprintf(buf, sizeof(buf), "%.36Lg", 1.0L + LDBL_EPSILON);
-	check(strcmp(buf, "1.00000000000000000000000000000000019") == 0, "printf",
-		"%%.36Lg of 1+LDBL_EPSILON -> \"%s\"", buf);
+	snprintf(buf, sizeof(buf), "%." LD_DIG "Lg", 1.0L / 3.0L);
+	check(strcmp(buf, LD_THIRD) == 0, "printf", "%%." LD_DIG "Lg of 1.0L/3 -> \"%s\"", buf);
+	snprintf(buf, sizeof(buf), "%." LD_DIG "Lg", 1.0L + LDBL_EPSILON);
+	check(strcmp(buf, LD_ONE_EPS) == 0, "printf", "%%." LD_DIG "Lg of 1+LDBL_EPSILON -> \"%s\"",
+		buf);
 }
 
 static uint64_t sRandom = 0x2545f4914f6cdd1dULL;
@@ -349,15 +467,25 @@ test_round_trip(void)
 		uint64_t hi = next_random(), lo = next_random();
 		/* exponent field 0..0x7ffe: finite values, about 1 in 16 subnormal */
 		uint64_t exponent = (i % 16 == 0) ? 0 : next_random() % 0x7fff;
+#if LDBL_MANT_DIG == 113
 		hi = (hi & 0x8000ffffffffffffULL) | (exponent << 48);
+#else
+		/* the explicit integer bit is set exactly for normal values (no pseudo-denormals or
+		   unnormals: strtold() never returns those) */
+		hi = (hi & 0x8000ULL) | exponent;
+		if (exponent != 0)
+			lo |= 1ULL << 63;
+		else
+			lo &= ~(1ULL << 63);
+#endif
 		long double x = ld_from_bits(hi, lo);
 
-		snprintf(buf, sizeof(buf), "%.36Lg", x);
+		snprintf(buf, sizeof(buf), "%." LD_DIG "Lg", x);
 		long double y = strtold(buf, NULL);
 		bits128 b = ld_bits(y);
 		if (b.hi != hi || b.lo != lo) {
 			if (bad++ < 5) {
-				check(0, "round trip %.36Lg", "%016llx%016llx -> \"%s\" -> %016llx%016llx",
+				check(0, "round trip %." LD_DIG "Lg", "%016llx%016llx -> \"%s\" -> %016llx%016llx",
 					(unsigned long long)hi, (unsigned long long)lo, buf,
 					(unsigned long long)b.hi, (unsigned long long)b.lo);
 			}
@@ -374,7 +502,7 @@ test_round_trip(void)
 			}
 		}
 	}
-	check(bad == 0, "round trip %.36Lg", "%d of %d values differ", bad, n);
+	check(bad == 0, "round trip %." LD_DIG "Lg", "%d of %d values differ", bad, n);
 	check(badHex == 0, "round trip %La", "%d of %d values differ", badHex, n);
 }
 
@@ -416,6 +544,15 @@ test_double_float(void)
 	errno = 0;
 	double d = strtod("1e400", NULL);
 	check(d == HUGE_VAL && errno == ERANGE, "strtod", "\"1e400\" -> %g errno %d", d, errno);
+	/* values that overflow only when rounded (above the half-way point to 2^MAX_EXP) */
+	errno = 0;
+	d = strtod("1.7976931348623159e308", NULL);
+	check(d == HUGE_VAL && errno == ERANGE, "strtod", "\"1.7976931348623159e308\" (rounds to "
+		"overflow) -> %g errno %d (want inf, ERANGE)", d, errno);
+	errno = 0;
+	float f = strtof("3.4028236e38", NULL);
+	check(f == HUGE_VALF && errno == ERANGE, "strtof", "\"3.4028236e38\" (rounds to overflow) -> %g "
+		"errno %d (want inf, ERANGE)", f, errno);
 
 	static const struct {
 		const char *input;
