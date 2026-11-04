@@ -3,8 +3,9 @@
 2026-11-04 07:05–07:55. **Answer: our USB stack.** The bench's USB stick reads and writes correctly under Linux
 on the same Pi and port. Haiku moved wrong data in both directions because the xHCI driver did no cache
 maintenance for usb_disk's transfers, which DMA straight into and out of ordinary cacheable pages, and the VL805
-does not snoop the CPU caches. **Fix: haiku `usb-dma-coherency` eabad7a921** (`xhci: cache maintenance for
-physical transfers on arm64`; pushed, not merged into `rpi4`). With it, Haiku reads exactly what Linux reads
+does not snoop the CPU caches. **Fix: haiku branch `usb-dma-coherency`** (pushed, not merged into `rpi4`):
+eabad7a921 `xhci: cache maintenance for physical transfers on arm64` and b90cb3f0d4 `usb_disk: keep buffers
+cache-line aligned on arm64`. With it, Haiku reads exactly what Linux reads
 (the same SHA-256 over four 64 MiB regions), a pattern Haiku writes reads back under Linux with 0 differing
 bytes, and a BFS made on the stick mounts, keeps 329 MB of files intact across a remount and passes `checkfs`.
 
@@ -104,6 +105,25 @@ driver in `/boot/system/non-packaged/add-ons/kernel/busses/usb/xhci` and the pac
 (`/boot/system/settings/packages` `BlockedEntries`), via `pi-session.sh --add`. The binary of the last round is
 the committed source (md5 `2056544e43def0a165c616f0cc08a066` on the Pi).
 
+## Second commit: cache-line alignment (b90cb3f0d4)
+
+Cache maintenance works on whole 64-byte lines. usb_disk's `DMAResource` had no alignment requirement, so a
+buffer that does not start or end on a line boundary shares its edge lines with other data; if the CPU writes
+that data while the device fills the buffer, the line (written back, or invalidated, around the transfer) loses
+one side's bytes. `tools/haiku-tests/usbalign.c` reads 64 KiB into a buffer starting 16 bytes into a line while a
+second thread keeps writing the 16 bytes before and after it, 300 rounds, compared with an aligned read:
+
+| Haiku | wrong reads | wrong bytes |
+|---|---|---|
+| xHCI fix only (sessions `usbalignA`, `usbalignB` with the stock usb_disk) | **300 / 300**, twice | 17 480 in 300 rounds: ≤ 64 per round, i.e. the edge lines (the neighbour's bytes survived) |
+| xHCI fix + b90cb3f0d4 (`usbalignB`, both drivers non-packaged) | **0 / 300**, twice | 0 |
+
+b90cb3f0d4 sets `restrictions.alignment = 64` on arm64, so the `DMAResource` bounces such buffers (lengths are
+multiples of the 512-byte block, so the end is aligned once the start is). Block cache, file cache and large
+`malloc` buffers are page-aligned and go directly as before. With both commits, the same session repeated the
+raw reads (identical, equal to Linux's SHA of the regions at 1024 and 20 000 MiB), 39–81 MB/s, and the BFS cycle
+(clean): `artifacts/usb-integrity/haiku-final-both.txt`.
+
 ## Haiku with the fix
 
 Sessions `usbfix2` (07:43) and `usbfix3` (07:50), `artifacts/usb-integrity/haiku-read-fix1.txt`,
@@ -142,6 +162,11 @@ Sessions `usbfix2` (07:43) and `usbfix3` (07:50), `artifacts/usb-integrity/haiku
 4. Linux reads this stick at 43 MB/s (256 KiB commands, one `dd` request at a time), Haiku at 60–81 MB/s after the
    first read (128 KiB commands). Not investigated; Haiku's numbers now come with correct data.
 
+5. **Bench state after this work**: the stick's first 16 MiB are zeros (wiped from Linux at 07:54 and again
+   after the last BFS cycle), so it holds no file system. The 64 MiB test patterns at 1024, 2048 and 20 000 MiB
+   remain (harmless). Do not make a file system on it from an image without these commits: a stock image would
+   write it wrong, and a later fixed (or Linux) boot may then find a corrupt BFS (side finding 1).
+
 ## Not explained
 
 The stall of `…064008-session-n6-basepc3.log` (lines ~236–250: "transfer error on slot 5 endpoint 4: USB
@@ -157,7 +182,7 @@ errors; none of the 7 boots here did. Open; a separate item if it recurs.
 - **KNOWN-ISSUES C13**: root cause found — the xHCI driver did no cache maintenance for USB mass-storage data,
   so reads returned stale data and writes stored stale memory, on every USB disk, silently (no error in the log);
   the stick itself is fine (Linux, same Pi and port: consistent reads, correct write-back, no errors). Fixed by
-  haiku eabad7a921 (branch `usb-dma-coherency`); until a release carries it: **do not write to, or trust data
+  haiku eabad7a921 + b90cb3f0d4 (branch `usb-dma-coherency`); until a release carries it: **do not write to, or trust data
   read from, USB disks on images up to 2026-11-04**. Move to resolved when a release includes the fix. A USB disk
   that such an image wrote may hold a corrupt BFS that the fixed system then panics on at boot (side finding 1).
 - **HARDWARE-SUPPORT §9, USB mass storage**: 🟡 (data corrupted) on released images; with the fix ✅ — "raw
@@ -177,6 +202,7 @@ scripts/pi-ssh.sh put tools/pi-tests/usb-integrity.sh tools/pi-tests/usb-bfs.sh 
 scripts/pi-ssh.sh 'sh /boot/home/usb-integrity.sh read'                  # then usb-pattern.py cmp on the saved regions
 scripts/pi-ssh.sh 'sh /boot/home/usb-integrity.sh write 20000'           # after: put patN.bin in /boot/home/usbint/
 scripts/pi-ssh.sh 'sh /boot/home/usb-bfs.sh'                             # destroys the stick's contents
+scripts/pi-ssh.sh '/boot/home/usbalign /dev/disk/usb/0/0/raw 1024 300'   # tools/haiku-tests/usbalign.c, cross-built
 scripts/pi-session.sh stop
 scripts/sd-cycle.sh --script tools/flashlane/usb-verify.sh --script-file usb-verify.txt --script-file pat20000.bin
     # usb-verify.txt: "check 20000 pat20000.bin", "sum MIB", "dump KIB", "wipe MIB"
