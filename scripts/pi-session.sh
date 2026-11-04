@@ -4,14 +4,15 @@
 # run again in seconds (scripts/pi-ssh.sh).
 #
 #   scripts/pi-session.sh start [--minutes N] [--image IMG] [--keep-disk] [--add FILE:PATH]... [--label L] [--no-retry]
-#   scripts/pi-session.sh wait | status | stop
+#   scripts/pi-session.sh wait | status | stop [--no-sync]
 #
 # start: a network boot (scripts/netboot-cycle.sh, in the background) of IMG (default the regular image) with
 # tools/pi-tests/session.sh as its bootscript, the openssh package (installed by it) and the session's public key
 # on the disk;
 # returns once ssh answers. The cycle holds the bench lock (shared with the other project) for the whole
 # session, so a session ends by itself after N minutes (default 480); `stop` ends it earlier (the Pi is
-# powered off and the other project's netboot server restored). The serial log is the cycle's
+# powered off and the other project's netboot server restored; --no-sync: without syncing the Pi's disk
+# first, a power cut for crash-consistency tests). The serial log is the cycle's
 # (artifacts/uart/<ts>-session-<label>.log); HDMI frames every 5 minutes.
 # The key: artifacts/pi-session/id_ed25519, made on the first start (never in git).
 # The login is "user"; the minimum/development image has only "baron": PI_SSH_USER=baron (also for pi-ssh.sh).
@@ -115,7 +116,11 @@ stop)
 	[ -n "$p" ] || { echo "pi-session: none"; exit 0; }
 	# the disk's block cache first: the Pi is powered off, and what was written last (a package just
 	# installed) is otherwise lost — on 10-22 the last 163 kB of a 66 MB package, which then did not activate
-	timeout 60 "$HAIKU_RPI_ROOT/scripts/pi-ssh.sh" sync || echo "pi-session: no sync (the Pi did not answer)"
+	if [ "${2:-}" = --no-sync ]; then
+		echo "pi-session: power cut (no sync)"
+	else
+		timeout 60 "$HAIKU_RPI_ROOT/scripts/pi-ssh.sh" sync || echo "pi-session: no sync (the Pi did not answer)"
+	fi
 	kill -TERM "$p"
 	while kill -0 "$p" 2>/dev/null; do sleep 1; done
 	rm -f "$state"
