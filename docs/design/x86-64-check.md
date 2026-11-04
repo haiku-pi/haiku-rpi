@@ -54,7 +54,7 @@ repository-info template only where `src/data/repository_infos/haikuports_<arch>
 
 | ID | what (details in §4) |
 |---|---|
-| BOOT | boot to the desktop, UEFI and BIOS, virtio-blk / AHCI / NVMe, SMP 4; serial log clean; screendump |
+| BOOT | boot to the desktop, UEFI and BIOS, AHCI / NVMe / virtio-scsi / IDE, SMP 4; serial log clean; screendump |
 | USB | boot from `usb-storage` on `qemu-xhci`; a data disk on `usb-ehci`; 1 GB copy + MD5; keyboard and tablet |
 | SD | `sdhci-pci` + `sd-card` data disk: mount, 200 MB copy + MD5 |
 | NET | virtio-net and e1000: DHCP, ping, DNS, HTTPS fetch, `pkgman refresh`, net_server restart, resolver without DNS |
@@ -94,7 +94,7 @@ behaviour change users can see; **L** = narrow, additive, or a plain bug fix. "�
 | `90fa3bc401` | IORequest iterates in a loop, not by recursion | **H** | the I/O path of every block device (AHCI, NVMe, virtio, usb_disk): a hang or a lost completion shows as a stuck copy or bad MD5. FS (fragwrite), USB, BOOT | ★19 |
 | `8edea64c6b` | DMA bounce buffers up to 128 kB (were 16 kB) | M | each DMAResource allocates bigger contiguous bounce buffers (IDE/AHCI/usb_disk); low-memory boots (`-m 512M` run), BOOT, USB | gen |
 | `c82925eeb9` | device_manager keeps driver modules loaded while reprobing at boot | L | boot time, memory at boot; BOOT, PERF | gen |
-| `cafef4f9bb` | PCI: an I/O-port BAR's host address is the port itself | M | unconditional; on x86 `pci_ram_address()` of an I/O BAR was already the port, so nothing should change, but every x86 driver with I/O BARs (legacy virtio, e1000, IDE, AC97) goes through it. BOOT (`-machine pc` IDE), NET (e1000, rtl8139), one boot with `virtio-blk-pci,disable-modern=on` | ★24 |
+| `cafef4f9bb` | PCI: an I/O-port BAR's host address is the port itself | M | unconditional; on x86 `pci_ram_address()` of an I/O BAR was already the port, so nothing should change, but every x86 driver with I/O BARs (legacy virtio, e1000, IDE, AC97) goes through it. BOOT (`-machine pc` IDE), NET (e1000, rtl8139), one boot with `virtio-scsi-pci,disable-modern=on` (legacy virtio, I/O BAR) | ★24 |
 | `81deb24f8c` | get_next_child_node() returned only the first child | L | callers that iterate children (ACPI/PCI drivers); BOOT | ★7 |
 | `bce76d6e73` | wait up to 10 s for a boot device that is published late; strict match first | M | a boot whose boot device only matches non-strictly (BIOS disk identification by checksum, CD boot) now waits 10 s before the fallback. BOOT: serial must not show `get_boot_partitions(): waiting for the boot device`; boot time vs upstream | gen |
 | `8f0df61a1c` | boot method kept as a boot item (`main.cpp`); remote_disk only on network boots | L | every boot parses the boot volume message once more; BOOT | ★28 |
@@ -368,27 +368,32 @@ firmware next to the QEMU binary otherwise.
 ### 4.1 `scripts/qemu-x86.sh` (new, modelled on `scripts/qemu-virt.sh`)
 
 ```
-scripts/qemu-x86.sh [--image IMG] [--fw uefi|bios] [--disk virtio|ahci|nvme|usb|ide|cdrom] [--smp N]
+scripts/qemu-x86.sh [--image IMG] [--fw uefi|bios] [--disk ahci|nvme|virtio-scsi|usb|ide|cdrom] [--smp N]
                     [--topo cores=2,threads=2] [--mem 4G] [--nic virtio|e1000|rtl8139|none]
                     [--scratch IMG] [--sd IMG] [--audio] [--secs N] [--label L] [--vnc] [--gdb] [-- extra]
 ```
 
-The command it builds (UEFI, virtio, SMP 4):
+The command it builds (UEFI, AHCI, SMP 4):
 
 ```
 qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp 4 -m 4G \
   -drive if=pflash,format=raw,readonly=on,file=<edk2-x86_64-code.fd> \
   -drive if=pflash,format=raw,file=<run>/vars.fd \
-  -drive file=<run>/disk.qcow2,if=none,id=hd0 -device virtio-blk-pci,drive=hd0,bootindex=0 \
-  -drive file=<scratch>,if=none,format=raw,id=sc0 -device virtio-blk-pci,drive=sc0 \
+  -drive file=<run>/disk.qcow2,if=none,id=hd0 -device ide-hd,drive=hd0,bus=ide.0,bootindex=0 \
+  -drive file=<scratch>,if=none,format=raw,id=sc0 -device ide-hd,drive=sc0,bus=ide.1 \
   -nic user,model=virtio-net-pci \
   -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 \
   -vga std -display none \
   -serial file:<run>/serial.log -monitor none -qmp unix:<run>/qmp.sock,server,nowait
 ```
 
+- **No virtio-blk on x86-64**: `virtio_block` is packaged and a boot module only `@arm,arm64,riscv64`
+  (`build/jam/packages/Haiku:139`, `:380`, upstream's lines), so an x86-64 image cannot boot from `virtio-blk-pci` on
+  either tree. The default is AHCI (q35's ICH9: `ide-hd` on `ide.N`, as above); virtio storage is `virtio-scsi`
+  (`virtio_scsi` is a boot module on every arch).
 - `--fw bios`: no pflash (SeaBIOS). Run BIOS with both `-machine q35` and `-machine pc` (i440FX, legacy IDE).
-- `--disk ahci`: `-device ide-hd,drive=hd0,bus=ide.0` (q35's ICH9 AHCI); `nvme`: `-device nvme,drive=hd0,serial=h22`;
+- `--disk nvme`: `-device nvme,drive=hd0,serial=h22`; `virtio-scsi`: `-device virtio-scsi-pci,id=vs -device
+  scsi-hd,drive=hd0,bus=vs.0`;
   `usb`: `-device usb-storage,bus=xhci.0,drive=hd0,bootindex=0`; `ide`: `-machine pc` + `-device ide-hd`;
   `cdrom`: the anyboot image as `-cdrom` (BIOS El Torito; read-only, smoke only).
 - `--sd IMG`: `-device sdhci-pci -device sd-card,drive=sd0` with IMG as a data disk (the MMC/SDHCI changes).
@@ -431,7 +436,7 @@ Portability edits the tests need (small, in `tools/haiku-tests`):
 
 | ID | run | pass |
 |---|---|---|
-| BOOT | UEFI × {virtio, AHCI, NVMe}, BIOS × {q35 AHCI, pc IDE}, CD (BIOS), SMP 4; one SMP 1 and one `-m 512M` boot | Tracker and Deskbar on the screendump; bootscript marker after `waitfor -m application/x-vnd.Be-TRAK`; no `PANIC`, no KDL, no `vm_page_fault` for system teams in the serial log; same driver set as upstream (`listdev`, `ps`) |
+| BOOT | UEFI × {AHCI, NVMe, virtio-scsi}, BIOS × {q35 AHCI, pc IDE}, CD (BIOS), SMP 4; one SMP 1 and one `-m 512M` boot | Tracker and Deskbar on the screendump; bootscript marker after `waitfor -m application/x-vnd.Be-TRAK`; no `PANIC`, no KDL, no `vm_page_fault` for system teams in the serial log; same driver set as upstream (`listdev`, `ps`) |
 | USB | boot from `usb-storage` on xHCI; data disk on `usb-ehci` | boots; 1 GB written + read back, MD5 equal; keyboard and tablet events (keyinject) |
 | SD | `--sd` data disk | `/dev/disk/mmc/...` appears; 200 MB copy + MD5 equal; no sdhci error lines |
 | NET | virtio-net, then e1000, then rtl8139 | DHCP lease; ping 10.0.2.2; DNS lookup; HTTPS fetch (curl); `pkgman refresh`; net_server restarted (`launch_roster stop`/`start x-vnd.Haiku-net_server`) and the interface still gets its lease renewed (the `_IsBootInterface` risk); resolvetime with no DNS (`-nic user,dns=…` pointing nowhere) |
@@ -457,7 +462,7 @@ readers' UHS-I signalling, overlays on real Intel/Radeon accelerants, the Pi-spe
 
 ### 4.4 Order
 
-1. Boot smoke of both images, UEFI + virtio (if rpi4 fails here, phase 4 starts at once; the upstream image must
+1. Boot smoke of both images, UEFI + AHCI (if rpi4 fails here, phase 4 starts at once; the upstream image must
    boot or the build setup is wrong — check against upstream's own hrev60314 nightly).
 2. BOOT matrix, PWR, NET.
 3. THR, TLS, LIBC, VM (one combined bootscript, ~10 min per image).
@@ -515,7 +520,8 @@ HAIKU-RPI4-CHANGES's "Start here" table):
    pause, `x86-grade.sh`.
 
 Not blockers: the toolchain sources (buildtools `upstream/master` and tag `hrev60314` are local), KVM access, the
-firmware files, QEMU 11.
+firmware files, QEMU 11, and `nasm` (needed by configure for x86 targets only, `configure:112`; NASM 3.01 is
+installed).
 
 ## 7. Checklist
 
