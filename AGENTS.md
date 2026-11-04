@@ -37,6 +37,10 @@ adapter (`10.42.0.1`). **The bench is shared with another project on this host:*
 - Every Pi power/UART cycle and every change to the Pi LAN's DHCP/TFTP server runs under
   `flock $PI_BENCH_LOCK` (local.conf) — `scripts/lib/bench.sh` `bench_lock` does it. One cycle at a time.
 - That project's netboot server is the bench's default state; every cycle restores it on exit.
+- The Pi's SD card holds the owner's test image (docs/HANDS-ON-CHECKS.md). Network sessions must leave it
+  alone: never `mountvolume -all` (it mounts the card's BFS and FAT read-write — happened 2026-11-04), never
+  `mount`/`checkfs`/`dd` on `/dev/disk/mmc/*`; mount a USB disk by its own `/dev/disk/usb/...` path. Only a
+  release card test or `sd-cycle.sh --flash` writes the card.
 - Never run a DHCP server on any interface other than the Pi LAN adapter.
 - Never commit secrets (WiFi PSKs, tokens). Never change the host soft-AP.
 
