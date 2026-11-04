@@ -31,6 +31,10 @@ about 123 quits counted; with 0 of 120 here, the rate is below ~2.5 % at 95 %).*
 
    The diagnostic kernel below showed exactly this chain for the known SIGILL of a SIGTERM end (trace below). It
    is Firefox's design on every Unix: Linux would write a core dump at that point.
+
+   One more path ends a faulting thread just as silently: if the thread had SIGSEGV blocked (a fault inside a
+   handler whose `sa_mask` blocks all signals, say), `send_fault_signal()` (6e517bb52c) resets the signal to
+   `SIG_DFL` and the fault kills the team. Either way, the parent faulted.
 2. **It happened before Firefox's shutdown spawns `pingsender`**, or before the quit itself. Every clean quit
    spawns pingsender for the shutdown ping. The serial line records each spawn because libcurl is missing:
    "Cannot open file libcurl.so (needed by …/pingsender)". In this session these lines come ~51 s after each start,
