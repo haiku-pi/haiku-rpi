@@ -430,7 +430,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 |---|---|---|---|---|---|
 | C0 (measurement, no change) | 11-03c (11-03b for one A/B) | — | profile + pmustat of a desktop session; C5/C7/C8 gates; below | 4 network sessions, 11-03 20:55–22:05 | `artifacts/h20-c0/out/`, `artifacts/uart/20261103-*-session-h20-c0*.log` |
 | C0b / N2 (bcm2835_cpufreq total load) | h20-imgevt → h20-startcost (haiku `startcost` 83db805485) | fork+exec 6.6–8.0 ms at ≥ 4 min uptime (4.6–4.7 in the first minutes) | 4.6–4.8 ms at any uptime, after Terminal / Firefox / STK quit; idle still 750 MHz | 3 network sessions, 11-03 22:23–23:12 | `artifacts/h20-c0b/`, `artifacts/uart/20261103-22*-session-h20-c0b*.log` |
-| N6 (BFS sub-transaction start walks only changed blocks) | worktree builds of `rpi4` 162164220d: A without, B with haiku `bfs-subtrans` a9db442988 | `cache_start_sub_transaction` 616 / 1055 ms CPU per Firefox first start; bfsmeta sys 2032 ms, 11.3 % of its ticks | 26 / 59 ms; bfsmeta sys 1369 ms, 0 ticks; first window unchanged; checkfs clean, 3 power cuts like A | 11 network boots, 11-04 05:50–06:45 | `artifacts/h20-n6/`, `artifacts/uart/20261104-0*-session-n6-*.log` |
+| N6 (BFS sub-transaction start walks only changed blocks) | worktree builds of `rpi4` 162164220d: A without, B with haiku `bfs-subtrans` a9db442988 | `cache_start_sub_transaction` 616 / 1055 ms CPU per Firefox first start; 289 ticks = 11.3 % of bfsmeta | 26 / 59 ms; 0 ticks; first window unchanged; check build clean; 6 power cuts like A (5) | 18 network boots, 11-04 05:50–07:05 | `artifacts/h20-n6/`, `artifacts/uart/20261104-0*-session-n6-*.log` |
 | N3 (windowed presents paced; SDL2 swap interval) | h20-startcost + mesa 26.2.6-3 A (`rpi4` ebf1ee1ff1b) / B (`paced-windows` 1595aba36ec) | STK menu (SDL2) 132 fps, game 81 % + app_server 45 % of a core, 32.7 % of 4 CPUs busy | with B + the SDL2 patch: 60 fps, 29 % + 12 %, 11.2 %; interval 0 unchanged (glmark2 331/332 → 332/332, games bench ±1 % or noise) | 1 network boot + 4 games-bench boots, 11-04 00:16–03:39 | `artifacts/uart/20261104-001649-n3-pace.log`, `artifacts/uart/20261104-*-gbn3[ab]-[12].log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
@@ -537,7 +537,7 @@ steps.
 | N3 | windowed GL presents run unpaced | STK's menu: its main thread ~84 % of a core plus app_server's copy for its window 20.8 s CPU per ~60 s (~38 % of a core; ~190 fps derived, row 2) | pace windowed presents to the display (EGL swap interval 1 for windows by default; benchmarks set 0) | M |
 | N4 | v3d shader-variant cache hashes its key with BLAKE3 at every lookup — **done: mesa rpi4 ebf1ee1ff1b, ships with mesa 26.2.6-3 (Pi check: STK menu profile)** | 5.1 % of STK's CPU (`cache_hash` → `blake3_compress_*_portable`, from `_mesa_hash_table_search`) | `_mesa_hash_data` over key + the key's stored BLAKE3 instead of a fresh BLAKE3 (`v3d_program.c`); with the next Mesa revision | S |
 | N5 | TLS access through `__tls_get_addr` | 18.1 % of a busy python3; 2.3 % of STK (every GL call through glvnd) | TLS descriptors (TLSDESC) in runtime_loader, or initial-exec TLS for libpython / libGLdispatch | M |
-| N6 | BFS journal: sub-transaction start walks all blocks | 2.9 s CPU of a Firefox first start; 3.1 s in the 196 s session | bound the combined transaction (Journal) or make the walk incremental (block cache) | S (bound) / M |
+| N6 | BFS journal: sub-transaction start walks all blocks — **done: haiku `bfs-subtrans` a9db442988 (block cache tracks the blocks changed per sub transaction), §6 "N6 results"** | 2.9 s CPU of a Firefox first start; 3.1 s in the 196 s session | bound the combined transaction (Journal) or make the walk incremental (block cache) | S (bound) / M |
 | N7 | WiFi SDIO waits by spinning | `spin` + `system_time` 37–58 % of non-idle during transfers | interrupt-driven command completion in the SDHCI path | S–M |
 
 **Re-ranked next three:** (1) **N1**, an hour with the re-run of run (1), because every later system-wide profile
@@ -769,7 +769,7 @@ vsync gets it; a direct-EGL program that never sets the interval is paced (glmar
 The games bench therefore exports `HAIKU_EGL_SWAP_INTERVAL=0` from now on (`tools/pi-tests/games-bench.sh`; older
 Mesa ignores it), so its figures stay uncapped and comparable.
 
-### N6 results: BFS sub-transaction start walks only the changed blocks (2026-11-04 05:50–06:45)
+### N6 results: BFS sub-transaction start walks only the changed blocks (2026-11-04 05:50–07:05)
 
 **Why the walk exists** (code read: `src/system/kernel/cache/block_cache.cpp`, BFS `Journal.cpp`). BFS runs every file
 system operation (create, each size-changing `write()`, each attribute write, unlink, ...) as a `Transaction`. To
@@ -807,7 +807,8 @@ the transaction (`end`, `abort`, `abort_sub`, `detach`), so no freed block is ev
 unchanged (moved into `start_sub_transaction_block()`). `BLOCK_CACHE_CHECK_SUB_TRANSACTIONS 1` (default 0) checks
 after every start that **every** block of the transaction is in the state the full walk leaves (parent = current, or
 discarded with neither parent nor original data) and panics naming a missed block. +125/−27 lines, one file; BFS
-untouched.
+untouched. The host copy `src/tools/fs_shell/block_cache.cpp` (bfs_shell, used by the image build) keeps its full walk
+on purpose: it already differs from the kernel's and runs only on the build host.
 
 **Measured** (network sessions; A = `haiku-pi4-base.img`, B = `haiku-pi4-n6.img`, both built from the worktree's own
 `generated.arm64` with the release options, `rpi4` 162164220d without / with a9db442988; test volume: the session's
@@ -819,15 +820,17 @@ profile's pattern; about 7 BFS transactions per file), per-file time every 250 f
 
 | bfsmeta 4000 × (4 writes, 2 attrs) | A (before) | B (after) |
 |---|---|---|
-| plain run: wall / sys CPU | 11 728 ms / **2032 ms** | 10 697 ms / **1369 ms** (−33 %) |
-| under `profile -k -S`: wall / sys / profile ticks of the team | 11 267 / 2505 / 2558 | 14 495 / 1888 / **1936** (−24 %) |
-| `cache_start_sub_transaction` ticks | **289 (11.3 %)**, 2nd after `EntryCache::Lookup` | **0** |
+| `cache_start_sub_transaction` ticks (under `profile -k -S`) | **289 (11.3 % of the team)**, 2nd after `EntryCache::Lookup` | **0** |
+| under `profile -k -S`: wall / sys / profile ticks of the team | 11 267 / 2505 / 2558 | 14 495 / 1888 / 1936 |
+| plain run: wall / sys CPU | 11 728 / 2032 ms | 10 697 / 1369 ms |
 | µs per file, batches 1–7 (plain run, before the first log-full stall) | 285, 310, 335, 468, 580, 798, 581 (climbing with the batch) | 255, 281, 288, 284, 286, 313, 328 (flat) |
 
 The wall time of both is dominated by two stalls of 2–10 s (batches 8 and 15/16: 8–39 ms per file), when the
 4096-block log is full and `_TransactionDone()` syncs the transactions behind it over the network disk; the change does
-not touch them (they vary run to run in both). `get_writable_cached_block` 7 → 14 ticks (the list insertion; ~2 µs per
-file at most).
+not touch them (they vary run to run in both). The walk's 289 ticks are what the change accounts for; the team's
+total CPU fell more than that in these runs (−24 % ticks, −25–33 % sys; one run per side), the rest being the sync
+work that lands in the writer's thread and varies from run to run (`GenetDevice::Send` 235 → 135 ticks).
+`get_writable_cached_block` 7 → 14 ticks (the list insertion; ~2 µs per file at most).
 
 | Firefox first start, new profile | A run 1 / 2 | B run 1 / 2 |
 |---|---|---|
@@ -849,7 +852,7 @@ it). Run 1 of each is the session's first Firefox start (package reads), run 2 t
   is not visible); a Firefox first start; three bfsmeta loops (create + unlink the oldest) for 90 s on both volumes at
   once. **0 panics, `checkfs -c` clean on both volumes** (0 not allocated, 0 already set, 0 could be freed); the
   attribute read back identical (md5).
-- *Power cut*, 3 rounds on B and 3 on A for comparison: two bfsmeta loops (keep 3000 / 1200) and `cp -r` of Firefox's
+- *Power cut*, 6 rounds on B and 5 on A for comparison: two bfsmeta loops (keep 3000 / 1200) and `cp -r` of Firefox's
   directory (294 MB) for 45 s, then `scripts/pi-session.sh stop --no-sync` (new: power off without the `sync`), boot
   the kept disk (the journal replays at mount), `checkfs -c /boot`; repaired (`checkfs /boot`) before the next round.
 
@@ -858,16 +861,24 @@ it). Run 1 of each is the session's first Firefox start (package reads), run 2 t
   | 1 | 0 / 0 / 32 | 0 / 0 / 2 |
   | 2 | 0 / 0 / 0 | 0 / 0 / 2 |
   | 3 | 0 / 0 / 34 | 0 / 0 / 0 |
+  | 4 | 0 / 0 / 2 | 0 / 0 / 2 (a deleted `f0001333`) |
+  | 5 | 0 / 0 / 0 | 0 / 0 / 2 (a deleted `f0002928`) |
+  | 6 | 0 / 0 / 2 (a deleted `f0002934`) | — |
 
   No block referenced but unallocated or referenced twice in any round; the loop directories held their 3000 / 1200
-  files. "Could be freed" is not a bitmap check: `CheckVisitor::WriteBackCheckBitmap()` computes it as the
-  superblock's `used_blocks` minus the blocks the check found in use. `used_blocks` is counted in memory at each
-  allocation and written with the superblock outside the journal (at each log write and in `_TransactionWritten()`),
-  so after a power cut it still includes what the lost open transaction had allocated (a create loop plus a copy:
-  allocations ahead of frees). It appears on A too and depends on where the cut lands, not on the change (which leaves
-  the disk writes as they were). Not proven bit by bit: `checkfs` does not list the blocks (its `#if 0` dump would).
-  0 panics or debugger entries in the 11 boots, except one A boot that froze at start (KNOWN-ISSUES C10, retried by
-  the session script).
+  files. What "could be freed" holds, from rounds B4–B6 and A4–A5 (`tools/haiku-tests/bfsbits.c`: the on-disk bitmap
+  against the superblock's `used_blocks`, saved before `checkfs /boot` repairs and compared after): bitmap bits set
+  that no file uses (bits = `used_blocks` every time, so not a stale counter), and every freed pair is **an unlinked
+  bfsmeta file**: its inode block (flags `INODE_DELETED | INODE_IN_TRANSACTION`, size 2048) and its data block. BFS frees
+  an unlinked file's inode and blocks in `bfs_remove_vnode()`, inside the unlink's transaction when nobody else holds
+  the vnode, otherwise later in a transaction of its own (here most likely while the file cache's write-back still
+  holds it: the files were ~10 s old); a log write between the two and a power cut before the second leaves the space
+  allocated (BFS keeps no orphan list). So it is a pre-existing BFS behaviour, on A as on B; B's 32 / 34 are 16–17
+  such files (inferred from the same kind of result, not listed: those rounds ran before `bfsbits`), and the number
+  depends on how many unlinks were waiting for their free at the last log write. The change cannot alter it: in this
+  load (no aborted or detached sub transactions) the log writer takes `current_data` of every block, and only
+  `detach`/`abort_sub` read `parent_data`. 0 panics or debugger entries in the 18 boots, except one A boot that froze
+  at start (KNOWN-ISSUES C10, retried by the session script).
 
 **Side findings.** (1) The bench's USB stick (SanDisk Ultra, `/dev/disk/usb/0/0/raw`, owner: free to reformat) is not
 usable as a scratch volume: after `mkfs -t bfs` the mount fails with "bfs: invalid superblock!", and raw reads return
@@ -878,9 +889,9 @@ of bfsmeta's CPU in both images (the VFS entry cache in one directory of thousan
 later, not measured further.
 
 **Ready to land? Yes**, as one commit on `rpi4` (fast-forward from 162164220d): it removes the per-operation walk
-(Firefox 0.6–1.0 s CPU per first start, a metadata-heavy writer −24–33 % system CPU), writes the disk exactly as before,
+(Firefox 0.6–1.0 s CPU per first start; 11 % of a metadata-heavy writer's CPU), writes the disk exactly as before,
 and survived the check build's exhaustive comparison under create/unlink/attribute/ENOSPC/concurrent loads and three
-power cuts with A-like results. Not exercised for certain: the detach path (a sub transaction that overflows the log),
+power cuts with A-like results (the only finding, leaked space of unlinked files, is A's too). Not exercised for certain: the detach path (a sub transaction that overflows the log),
 which the check build would catch when it happens. The image for a re-check: `haiku-pi4-n6.img` in the worktree's
 `generated.arm64` (job tmp, not kept).
 
@@ -910,7 +921,7 @@ which the check build would catch when it happens. The image for a re-check: `ha
 | GL present path | `tools/gl-tests/present-bench.cpp`, `tools/pi-tests/gpu-present*.sh`, `tools/pi-tests/glmark2.sh` (`GM2 … Score`), `tools/pi-tests/gpu-stage6.sh` |
 | Boot | `scripts/sd-cycle.sh --flash IMG --secs 120`, `scripts/boot-times.sh LOG`, `scripts/boot-bench.sh` (reliability) |
 | Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c` |
-| BFS metadata writes, journal (N6) | `tools/haiku-tests/bfsmeta.c` (files + appends + attributes, per-file time; `--loop` for power cuts), `tools/pi-tests/n6-firefox.sh` (Firefox first start with a new profile, under `profile -a`), `scripts/pi-session.sh stop --no-sync` (power cut), `checkfs -c` |
+| BFS metadata writes, journal (N6) | `tools/haiku-tests/bfsmeta.c` (files + appends + attributes, per-file time; `--loop` for power cuts), `bfsbits.c` (on-disk bitmap vs used_blocks; the blocks a `checkfs` freed and what they held), `tools/pi-tests/n6-firefox.sh` (Firefox first start with a new profile, under `profile -a`), `scripts/pi-session.sh stop --no-sync` (power cut), `checkfs -c` |
 | Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh` |
 | Profiling | `profile -a -k -S` (N1: misses teams started after it), `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py` (`--self`: flat top of callgrind output), `profsum.py` (rank text profiles, a symbol by thread), `lookupsim.py`; desktop workload `tools/pi-tests/c0-desktop.sh` |
 | GL frame rate + CPU of one program in a window (N3) | `tools/pi-tests/gl-pace.sh LABEL WARMUP SECS CMD` (fps from `HAIKU_EGL_FPS`, the team's and app_server's CPU by `ps -a`, `pmustat -a`); bootscript `tools/pi-tests/n3-pace.sh` (two Mesas in one boot by `__EGL_VENDOR_LIBRARY_FILENAMES`) |
