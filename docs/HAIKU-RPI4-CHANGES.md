@@ -12,7 +12,7 @@ and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314*
 Upstream is merged again every weekend; see [log/](log/).
 
 On top of that base the fork carries **264 commits of its own** (2026-10-18 to 2026-11-04; counted
-2026-11-04 at `renku-fixes-2` 0b22f22f5b = `rpi4` 61fe84cd93 + 4, to be merged into `rpi4`). To list them, in `sources/haiku`:
+2026-11-04 at `rpi4` 0b22f22f5b). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -106,6 +106,8 @@ section for its area gives the detail.
 | 47 | **`atomic_test_and_set()` used a weak compare-and-swap** | `88be53559b` | A spurious store-exclusive failure returned the expected value, as success, without storing: two owners of a lock. Latent with GCC's default outline atomics (their helper retries; no store-exclusive without a retry in our build), real without them (32-bit ARM, `-mno-outline-atomics`). From RenkuOS #189 ([design/renkuos-fixes.md](design/renkuos-fixes.md)). |
 | 48 | **launch_daemon's environment pipe leaked into jobs started meanwhile** | `fb4e339ce8` | A job another worker thread started while an `env` script was being read inherited the pipe's write end, and the read waited until that job exited: for a server, for ever (no desktop). Now `pipe2(O_CLOEXEC)`. From RenkuOS #231. |
 | 49 | **arm64 could not power off or restart** | `c7509f4229`, `0b22f22f5b` | `arch_cpu_shutdown()` was a stub: "Shut down" ended in the kernel debugger and "Restart" did not restart. Now PSCI `SYSTEM_OFF`/`SYSTEM_RESET` when the firmware offers PSCI (RenkuOS #160), else a platform driver's hook; on the Pi (no PSCI under U-Boot) the PM watchdog. |
+| 50 | **A failed BFS mount panicked the kernel** | `9799738757` | When the root node of a damaged volume could not be read after the block allocator had repaired the bitmap in a transaction, `Volume::Mount()` returned without deleting its journal; the device opener then deleted the block cache under the open transaction and `block_cache_delete()` panicked in `FreeBlock()`. The mount now waits for the allocator and deletes the root node and journal on every failure path: "Invalid argument" instead of a panic (host `bfs_shell` and Pi). Every architecture; upstream master has the same code. |
+| 51 | **usb_disk ignored the host controller's DMA limit** | `61fe84cd93` | usb_disk let the DMA resource use buffers up to 4 GiB; a controller behind a PCIe window that reaches less (the Pi 4: 3 GiB, published as `B_DMA_HIGH_ADDRESS` by the PCIe driver) received addresses it cannot reach — reads returned nothing, without an error, and a later write stopped the controller. It now takes `B_DMA_HIGH_ADDRESS` from the device node's ancestors, and the DMA resource bounces higher buffers. |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
@@ -208,6 +210,7 @@ load, which QEMU did not provide. The last subsection is code that every archite
 | `e09cfa1d9e` ★ | **An exiting thread's stack stays while its team goes down** | `keep_user_stack()` (was `put_cached_user_stack()`): when the team is shutting down or its exit status is set, an exited thread's stack area is left to the deletion of the team's address space, because the team's other threads still run until the main thread kills them (as Linux keeps a dying thread group's memory). Fixes a Firefox content process's segment violation at SIGTERM (~1 in 60 ends) ([design/firefox-contentproc-crash.md](design/firefox-contentproc-crash.md)). |
 | `f6c52282df` ★ | Image notifications fit their pointer | 256-byte event buffer instead of 128: `profile -a` resolves programs started after it (design/perf-round-h20.md §6). |
 | `a9db442988` ★ | **Sub-transaction starts look only at changed blocks** | The block cache keeps, per transaction, the blocks made writable or discarded since the current sub-transaction started; the start walks those (the full walk stays for the first start and after an abort/detach). `BLOCK_CACHE_CHECK_SUB_TRANSACTIONS` compares with the full walk. Walk CPU in a Firefox first start 616–1055 → 26–59 ms ([design/perf-round-h20.md](design/perf-round-h20.md) N6). |
+| `9799738757` ★ | **BFS ends its journal before failing a mount** | A corrupt volume (unreadable root node, damaged bitmap) panicked the kernel in `block_cache_delete()` when its mount failed; now the mount fails with B_BAD_VALUE (KNOWN-ISSUES C14). |
 
 ### Interrupt controller (GICv2) and the CPU stall
 
@@ -357,6 +360,7 @@ The xHCI driver works behind the PCIe driver above with a diagnostic and one rin
 | commit | change | what and why |
 |---|---|---|
 | `eabad7a921`, `b90cb3f0d4` ★ | **Cache maintenance for USB disk transfers** | Before: every USB disk read stale data and wrote stale memory (Linux on the same Pi: correct). xHCI cleans/invalidates each physical fragment before submission and after IN completion; usb_disk 64-byte aligned buffers on arm64. Pi: repeated reads equal Linux's, Haiku-written data verified under Linux, BFS mkfs/copy/remount/checkfs clean ([design/usb-storage-integrity.md](design/usb-storage-integrity.md)). |
+| `61fe84cd93` ★ | **usb_disk honours the host controller's DMA high address** | On a 4 GB Pi buffers above 3 GiB went to the controller as they were: `usbhigh` (fills ~3.4 GB, 1 MiB reads into every slice) 866/3392 slices wrong and a later "Host System Error" → 0/3392, 62–65 MB/s. Takes `B_DMA_HIGH_ADDRESS` from the parent nodes ([design/usb-storage-integrity.md](design/usb-storage-integrity.md) "Follow-ups"). |
 | `71bc709601` | USB stack DMA below 3 GiB and non-cacheable on arm64 | The VL805 reaches only the first 3 GiB and does not snoop. This is applied to the stack's DMA areas on all of arm64 for now, **until the limits are taken from the host controller itself**. That makes it a stopgap, not upstreamable as is. |
 | `1d44b00380` ★ | xHCI: show the endpoint ring on a TRB error | Prints the event's TRB pointer and the ring, which identify the rejected TRB. Seen intermittently on a HID interrupt endpoint of the VL805. |
 | `afb2823bb5` ★ | USB: explore a new bus in the explore thread, not in its `Start()` | `BusManager::Start()` explored the new bus at once. On the Pi 4 the xHCI's `init_bus()` took 1.56 s of port resets and enumeration inside the device manager's initial scan, before the boot volume could be mounted. The explore thread does it now while the boot goes on; a USB boot disk published late is waited for by `get_boot_partitions()`, and other devices are hot-plugged as always. Boot volume mounted 5.8 s after the kernel starts, was 7.1 s. |

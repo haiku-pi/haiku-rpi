@@ -134,6 +134,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 
 | Component | Haiku driver | Status | Measured (date) | Limitations / missing |
 |---|---|---|---|---|
+| Shut down, restart | `drivers/power/bcm2835_pm` (the PM block's watchdog) | ✅ next image | restart: U-Boot again after 28–32 s, 11/11 (Deskbar's path and `shutdown -r`); shut down: board halted, 4/4 (11-04, network boots) | Before: "Shut down" ended in the kernel debugger, "Restart" did not restart. U-Boot offers no PSCI, so the firmware's watchdog does it (PSCI is used where a board has it). Power draw after the halt not measured |
 | SoC temperature, throttling, clocks | `drivers/power/bcm2835_thermal` (`/dev/power/bcm2835_thermal/0`) | ✅ | 50–52 °C idle (10-18); 72–74 °C plateau in a 20-minute load soak, never throttled (10-19); 58–73 °C after the games bench's runs, throttle flags 0x0 (11-03); reports the measured ARM, core and V3D clocks | Read-out only: the firmware owns throttling |
 
 ## 15. Random numbers
