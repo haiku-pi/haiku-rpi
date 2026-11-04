@@ -130,6 +130,10 @@ Everything in this guide that names a test tree says so.
   memory on the 4 GB board (2026-10-20).
 - **ActivityMonitor** and **ProcessController** (both in Applications) show the load of the four
   cores. Since 2026-10-20 they tell user time from kernel time correctly (§12.3).
+- **Shut down / Restart** (leaf menu, or `shutdown` / `shutdown -r` in Terminal) work from image-2026-11-04c on:
+  a restart brings the board back to the desktop by itself, a shutdown halts it (then unplug it; the Pi 4 has no
+  power switch). Older images end a shutdown in the kernel debugger and do not restart — unplug the Pi instead.
+  If a crash dialog appears during shutdown (KNOWN-ISSUES C15), close it.
 
 ### 4.2 Screen preferences and resolutions
 
