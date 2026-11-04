@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **267 commits of its own** (2026-10-18 to 2026-11-04; counted
-2026-11-04 at `rpi4` 6018671453). To list them, in `sources/haiku`:
+On top of that base the fork carries **268 commits of its own** (2026-10-18 to 2026-11-04; counted
+2026-11-04 at `rpi4` a779571e90). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -109,6 +109,7 @@ section for its area gives the detail.
 | 50 | **A failed BFS mount panicked the kernel** | `9799738757` | When the root node of a damaged volume could not be read after the block allocator had repaired the bitmap in a transaction, `Volume::Mount()` returned without deleting its journal; the device opener then deleted the block cache under the open transaction and `block_cache_delete()` panicked in `FreeBlock()`. The mount now waits for the allocator and deletes the root node and journal on every failure path: "Invalid argument" instead of a panic (host `bfs_shell` and Pi). Every architecture; upstream master has the same code. |
 | 51 | **usb_disk ignored the host controller's DMA limit** | `61fe84cd93` | usb_disk let the DMA resource use buffers up to 4 GiB; a controller behind a PCIe window that reaches less (the Pi 4: 3 GiB, published as `B_DMA_HIGH_ADDRESS` by the PCIe driver) received addresses it cannot reach — reads returned nothing, without an error, and a later write stopped the controller. It now takes `B_DMA_HIGH_ADDRESS` from the device node's ancestors, and the DMA resource bounces higher buffers. |
 | 52 | **Thread-local variables with a large alignment were misaligned** | `4d433669a8` | The runtime loader allocated a dynamically created TLS block with plain `malloc()` (16-byte aligned) whatever alignment the PT_TLS segment asked for, so an `alignas(64)` `thread_local` landed at 32 or 48 modulo 64. Blocks are now allocated with room to align. Every architecture. |
+| 53 | **Programs crashed while quitting: libbe freed its message cache under a running looper** | `a779571e90` | `terminate_after()` runs from `exit()` while the team's other threads still run; BPathMonitor's looper is never quit and keeps creating and deleting messages, so deleting `BMessage`'s block cache there made it fault on a NULL cache (Tracker during a shutdown, whose crash alert then stopped the shutdown). The cache is now left to go with the team. Reproducer `pmexit`: 11/1000 → 0/1000 on the Pi, 6/400 → 0/400 on x86-64 QEMU. Every architecture; upstream master has the same code. |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
