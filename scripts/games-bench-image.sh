@@ -33,7 +33,7 @@ rm -rf "$stage"
 mkdir -p "$stage/data/wine-tests" "$stage/data/wine-games"
 cp -a "$root/artifacts/games/non-packaged/." "$stage/"
 for t in gltest-arm64 gltest-x86 d3dtest-arm64 d3dtest-x86 input; do
-	cp -a "$root/artifacts/wine-11.20/install/boot/system/non-packaged/data/wine-tests/$t.exe" "$stage/data/wine-tests/"
+	cp -a "$root/artifacts/wine-tests-11.20/$t.exe" "$stage/data/wine-tests/"
 done
 cp -a "$root/artifacts/wine-games/tree/data/wine-games/HL" "$stage/data/wine-games/"
 rm -f "$stage/data/wine-games/HL/valve/qconsole.log"
