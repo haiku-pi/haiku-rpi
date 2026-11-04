@@ -21,6 +21,8 @@
 #
 # Build directory: artifacts/cross-ports/<port>-<version>/ (src/, source/: src/ before the build,
 # build/, install/), recreated each run.
+# A trial build that must not replace those (environment): CROSS_PORT_WORK=DIR (the build directory)
+# and CROSS_PORT_SYSROOT=DIR (a copy of the sysroot to build against and install into).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 ourPatches=""
@@ -31,7 +33,9 @@ if [ "${1:-}" = --patches ]; then
 fi
 [ $# -ge 2 ] || { echo "usage: $0 [--patches DIR] RECIPE cmake|meson|autotools|script [args...]" >&2; exit 2; }
 recipe="$(realpath "$1")" system="$2"; shift 2
-sysroot="$root/artifacts/sysroot-arm64"
+sysroot="${CROSS_PORT_SYSROOT:-$root/artifacts/sysroot-arm64}"
+export HAIKU_PI_SYSROOT="$sysroot" # (tools/cmake/haiku-arm64.cmake)
+mesonCross="$root/tools/meson/haiku-arm64.cross"
 prefix=/boot/system/non-packaged
 [ -d "$sysroot/boot/system/develop" ] || { echo "cross-port: run scripts/haiku-sysroot.sh first" >&2; exit 1; }
 
@@ -57,7 +61,7 @@ archive="$("$root/scripts/haikuports-fetch.sh" "$recipe" | sed -n 's/^haikuports
 [ -f "$archive" ] || { echo "cross-port: no source for $recipe" >&2; exit 1; }
 sourceDir="$(field SOURCE_DIR | subst)"
 
-work="$root/artifacts/cross-ports/$name"
+work="${CROSS_PORT_WORK:-$root/artifacts/cross-ports/$name}"
 rm -rf "$work"
 mkdir -p "$work/unpack"
 case "$archive" in
@@ -111,7 +115,12 @@ cmake)
 		-DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_BUILD_TYPE=Release "$@" > "$work/configure.log"
 	;;
 meson)
-	meson setup "$work/build" "$work/src" --cross-file "$root/tools/meson/haiku-arm64.cross" \
+	if [ -n "${CROSS_PORT_SYSROOT:-}" ]; then
+		sed -e "s|^sysroot = .*|sysroot = '$sysroot'|" -e "s|^root = .*|root = '$root'|" "$mesonCross" \
+			> "$work/haiku-arm64.cross"
+		mesonCross="$work/haiku-arm64.cross"
+	fi
+	meson setup "$work/build" "$work/src" --cross-file "$mesonCross" \
 		--prefix="$prefix" --libdir=lib --buildtype=release -Db_ndebug=true "$@" > "$work/configure.log"
 	;;
 autotools)

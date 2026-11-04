@@ -1,0 +1,79 @@
+Haiku: SDL_GL_SetSwapInterval() sets whether a frame waits for the vertical blank
+
+The Haiku backend refused every swap interval (SDL_Unsupported()) and swapped
+with BGLView::SwapBuffers(), which presents without waiting for the display:
+a game that asks for vsync (SuperTuxKart's default) rendered as fast as the
+GPU went, ~190 frames/s in its menu, and app_server copied every frame into
+the screen. The interval is now kept per window and passed to
+BGLView::SwapBuffers(bool vSync): 1 (and -1, late swap tearing: the GL kit
+never holds a late frame back for another blank) waits, 0 does not. Without
+a call the interval stays 0, as before.
+
+--- a/src/video/haiku/SDL_BWin.h	2026-11-03 23:29:23.905499103 +0100
++++ b/src/video/haiku/SDL_BWin.h	2026-11-03 23:29:23.922683325 +0100
+@@ -103,6 +103,7 @@
+ #ifdef SDL_VIDEO_OPENGL
+         _SDL_GLView = NULL;
+         _gl_type = 0;
++        _swap_interval = 0;
+ #endif
+         _shown = false;
+         _inhibit_resize = false;
+@@ -246,7 +247,18 @@
+ 
+     void SwapBuffers(void)
+     {
+-        _SDL_GLView->SwapBuffers();
++        /* true: the frame waits for the display's vertical blank */
++        _SDL_GLView->SwapBuffers(_swap_interval != 0);
++    }
++
++    void SetSwapInterval(int interval)
++    {
++        _swap_interval = interval;
++    }
++
++    int GetSwapInterval(void)
++    {
++        return _swap_interval;
+     }
+ #endif
+ 
+@@ -742,6 +754,7 @@
+ #ifdef SDL_VIDEO_OPENGL
+     BGLView *_SDL_GLView;
+     Uint32 _gl_type;
++    int _swap_interval; /* SDL_GL_SetSwapInterval()'s: 0 (the default), 1 or -1 */
+ #endif
+ 
+     int32 _last_buttons;
+--- a/src/video/haiku/SDL_bopengl.cc	2026-11-03 23:29:23.905581898 +0100
++++ b/src/video/haiku/SDL_bopengl.cc	2026-11-03 23:29:23.922918236 +0100
+@@ -161,13 +161,23 @@
+ 
+ 
+ int HAIKU_GL_SetSwapInterval(_THIS, int interval) {
+-    /* TODO: Implement this, if necessary? */
+-    return SDL_Unsupported();
++    /* BGLView::SwapBuffers(true) presents at most one frame per vertical
++       blank; a frame that comes late is not held back for the next one, so
++       late swap tearing (-1) is the same. Longer intervals are not offered. */
++    SDL_Window *window = SDL_GL_GetCurrentWindow();
++    if (!window) {
++        return SDL_SetError("No current OpenGL window");
++    }
++    if (interval < -1 || interval > 1) {
++        return SDL_Unsupported();
++    }
++    _ToBeWin(window)->SetSwapInterval(interval);
++    return 0;
+ }
+ 
+ int HAIKU_GL_GetSwapInterval(_THIS) {
+-    /* TODO: Implement this, if necessary? */
+-    return 0;
++    SDL_Window *window = SDL_GL_GetCurrentWindow();
++    return window ? _ToBeWin(window)->GetSwapInterval() : 0;
+ }
+ 
+ 

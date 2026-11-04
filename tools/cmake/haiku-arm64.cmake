@@ -6,7 +6,12 @@
 
 get_filename_component(HAIKU_PI_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 set(HAIKU_PI_CROSS "${HAIKU_PI_ROOT}/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-")
-set(HAIKU_PI_SYSROOT "${HAIKU_PI_ROOT}/artifacts/sysroot-arm64")
+# (HAIKU_PI_SYSROOT in the environment: another sysroot, e.g. scripts/cross-port.sh's CROSS_PORT_SYSROOT)
+if(DEFINED ENV{HAIKU_PI_SYSROOT})
+	set(HAIKU_PI_SYSROOT "$ENV{HAIKU_PI_SYSROOT}")
+else()
+	set(HAIKU_PI_SYSROOT "${HAIKU_PI_ROOT}/artifacts/sysroot-arm64")
+endif()
 
 set(CMAKE_SYSTEM_NAME Haiku)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)

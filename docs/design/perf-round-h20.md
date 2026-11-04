@@ -430,6 +430,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 |---|---|---|---|---|---|
 | C0 (measurement, no change) | 11-03c (11-03b for one A/B) | — | profile + pmustat of a desktop session; C5/C7/C8 gates; below | 4 network sessions, 11-03 20:55–22:05 | `artifacts/h20-c0/out/`, `artifacts/uart/20261103-*-session-h20-c0*.log` |
 | C0b / N2 (bcm2835_cpufreq total load) | h20-imgevt → h20-startcost (haiku `startcost` 83db805485) | fork+exec 6.6–8.0 ms at ≥ 4 min uptime (4.6–4.7 in the first minutes) | 4.6–4.8 ms at any uptime, after Terminal / Firefox / STK quit; idle still 750 MHz | 3 network sessions, 11-03 22:23–23:12 | `artifacts/h20-c0b/`, `artifacts/uart/20261103-22*-session-h20-c0b*.log` |
+| N3 (windowed presents paced; SDL2 swap interval) | h20-startcost + mesa 26.2.6-3 A (`rpi4` ebf1ee1ff1b) / B (`paced-windows` 1595aba36ec) | STK menu (SDL2) 132 fps, game 81 % + app_server 45 % of a core, 32.7 % of 4 CPUs busy | with B + the SDL2 patch: 60 fps, 29 % + 12 %, 11.2 %; interval 0 unchanged (glmark2 331/332 → 332/332, games bench ±1 % or noise) | 1 network boot + 4 games-bench boots, 11-04 00:16–03:39 | `artifacts/uart/20261104-001649-n3-pace.log`, `artifacts/uart/20261104-*-gbn3[ab]-[12].log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -627,6 +628,144 @@ must not), so a forked child that `_exit`s re-prints its parent's buffered outpu
 once per child when its stdout is a pipe. Firefox ended with a segmentation violation on `hey Firefox quit` once
 (before-fix run), not seen in the after run.
 
+### N3 results: windowed GL presents paced to the display (2026-11-04 00:16–03:39)
+
+**Who asks for which swap interval** (code read, then checked on the Pi below). EGL's default is 1; what reaches
+Mesa's Haiku EGL driver:
+
+| Program class | Interval Mesa sees | Why | Changes with the Mesa change alone? |
+|---|---|---|---|
+| BGLView programs (`BGLView::SwapBuffers()`: GLTeapot, haiku3d, GLUT's `glutSwapBuffers`, everything on SDL2) | **0** | libglvnd be20124 (stage 6): `SwapBuffers()` = `SwapBuffers(false)` → `eglSwapInterval(0)`, the BeOS API's "no sync"; `SwapBuffers(true)` → 1 | no |
+| SDL2 (libsdl2 2.32.10-5 and the games' copy) | **0**, whatever the game asks | `HAIKU_GL_SetSwapInterval()` returns `SDL_Unsupported()`; `HAIKU_GL_SwapWindow()` calls `BGLView::SwapBuffers()`. SuperTuxKart asks for 1 (`swap-interval-vsync` default 1: `SDL_GL_SetSwapInterval(-1)`, then 1), Yamagi Quake II too (`r_vsync` 1); QuakeSpasm (`vid_vsync` 0), ioquake3/OpenArena (`r_swapInterval` 0) ask for 0 | no |
+| glmark2 2023.01 (own `BitmapHook`, EGL directly) | 0 by default (`eglSwapInterval(0)` unless `--swap-mode fifo`) | `gl-state-egl.cpp` | only `--swap-mode fifo` |
+| Programs on EGL directly that leave the default; BGLView programs calling `SwapBuffers(true)` (`glflip -i 1`) | **1** | EGL default / explicit | **yes**: paced to 60 |
+| Wine's OpenGL (win32u, surfaceless EGL + GDI copy) | — | renders into pbuffers, `present_framebuffer_surface_gdi`; no EGL window surface | no |
+| Vulkan (WSI) | — | not EGL | no |
+
+So the premise of N3 ("a program that never calls `eglSwapInterval(0)` renders unpaced") holds only for direct-EGL
+programs: the ~130–190 fps of SuperTuxKart's menu is **interval 0 by the SDL2 gap**, not Mesa ignoring interval 1.
+Changing `BGLView::SwapBuffers()`'s default instead would cap GLTeapot, GLUT and every SDL game at 60 regardless of
+their settings (and break the BeOS API meaning): not done. Two changes therefore:
+
+1. **Mesa** `paced-windows` 1595aba36ec (haiku-pi/mesa, from `rpi4` ebf1ee1ff1b — so it carries N4, the v3d cache
+   hash without BLAKE3), `egl/haiku: one windowed frame per vertical blank with swap interval 1`: with interval 1 a
+   windowed (non-overlay) frame waits for the next vertical blank (`BScreen::WaitForRetrace`, the retrace semaphore
+   the overlay presenter uses) **after** it has been handed to the view, i.e. before the program starts its next
+   frame — app_server copies a window's frame when it arrives, not at a blank, so waiting before the present would
+   only show it later; the program samples its input and renders right after a blank. A frame that took longer than
+   a refresh is not held back for another blank (no wait when a blank went by since the last frame, predicted from
+   the blanks woken for before: late swap tearing, so a 45 fps program stays at 45, not 30). No retrace semaphore,
+   or no blank within two periods (display off): a timer at the measured period. Every window surface of a hardware
+   screen gets the `BScreen`; overlay bitmaps stay BGLView-only (`hgl_native_window_shows_overlays`). Interval 0
+   and the overlay path are unchanged. New: `HAIKU_EGL_SWAP_INTERVAL=0|1` overrides the program's interval
+   (benchmarks, A/B); `HAIKU_EGL_FPS=1` adds `egl_haiku: window: N frames waited for a vertical blank, M went late`.
+   The software (softpipe) path is not paced (QEMU only).
+2. **SDL2** `patches/pending/libsdl2-2.32.10-haiku-swap-interval.patch`: `SDL_GL_SetSwapInterval()` stores the
+   interval per window (0, 1, -1 = 1: the GL kit never holds a late frame back) and `SDL_GL_SwapWindow()` calls
+   `BGLView::SwapBuffers(interval != 0)`; without a call it stays 0, as before. Built for the test with
+   `scripts/cross-port.sh` into a private work directory and sysroot (`CROSS_PORT_WORK`, `CROSS_PORT_SYSROOT`, new;
+   `tools/cmake/haiku-arm64.cmake` takes `HAIKU_PI_SYSROOT`), not packaged yet.
+
+Built with `scripts/build-gl-stack.sh` (`--only libglvnd`, `mesa`, `stage`) + `package-gl-stack.sh --revision 3`
+into private sysroot copies twice: **A** = `rpi4` ebf1ee1ff1b (control), **B** = `paced-windows` 1595aba36ec; same
+libglvnd `rpi4` 8391faa, same GCC 16.2. So A and B differ by the pacing commit only (both have N4; the published
+26.2.6-2 has neither).
+
+**Pi, one network boot** (`tools/pi-tests/n3-pace.sh` as bootscript, label `n3-pace`, log
+`artifacts/uart/20261104-001649-n3-pace.log`; image: `h20-startcost.img` with mesa 26.2.6-2 replaced by B's -3,
+SuperTuxKart 1.5-2, glmark2 2023.01-2, screen saver off; A's `libEGL_mesa.so.0` chosen in the same boot with
+`__EGL_VENDOR_LIBRARY_FILENAMES`, the new libSDL2 with `LIBRARY_PATH`). CPU from `tools/pi-tests/gl-pace.sh`: the
+user + kernel time of every thread of the program's team and of app_server over 30 s (`ps -a`), and `pmustat -a 30`
+for the CPUs' busy share (the two tools agree: program + app_server = 4 × busy minus 1–5 % of a core for the rest of the system). Idle desktop:
+0.2 % busy.
+
+| Case (window) | Mesa | fps | program, % of a core | app_server, % | CPUs busy (of 4) | ARM MHz |
+|---|---|---|---|---|---|---|
+| glflip 1280×720 `-i 1` (BGLView `SwapBuffers(true)`) | A | 272.4 / 272.6 | — | — | — | — |
+| | **B** | **60.00 / 60.00** (median 16.667 ms, longest 16.88, 0 stalls; 301 of 301 frames waited, 0 late) | — | — | — | — |
+| glflip 1280×720 `-i 0` | A / B | 273.0, 271.6 / 272.2, 271.8 | — | — | — | — |
+| GLTeapot (interval 0) | A / B | 60.0 / 60.0 (both runs) | 10, 9 / 10, 9 | 33, 32 / 34, 32 | 11.0, 10.8 / 11.5, 11.0 | — |
+| GLTeapot, `HAIKU_EGL_SWAP_INTERVAL=1` | B | 60.0 (0 frames waited, 300–301 "late") | 10, 10 | 33, 33 | 11.1, 11.2 | — |
+| SuperTuxKart main menu 1024×576, libsdl2 -5 (interval 0) | A | 132.0 / 131.9 | 81 / 80 | 45 / 45 | 32.7 / 32.5 | 1555 |
+| | B | 131.8 / 131.6 | 81 / 80 | 45 / 45 | 32.7 / 32.4 | 1556 |
+| SuperTuxKart main menu, **new libSDL2** (game asks for 1) | A | 131.9 / 132.0 (unpaced: A ignores 1 in a window) | 81 / 81 | 45 / 45 | 32.6 / 32.7 | 1555 |
+| | **B** | **60.0 / 60.0** (301 of 301 waited, 0 late) | **29 / 29** | **12 / 12** | **11.2 / 11.1** | 1357 |
+| glmark2-es2 `--swap-mode fifo -b build` (EGL, interval 1) | A / B | 473.6 (score 472) / **60.2 (score 59)**, 302 waited | — | — | — | — |
+| glmark2-es2 default (800×600 window, interval 0), full run | A / B | score **331, 332 / 332, 332** | — | — | — | — |
+
+Findings:
+
+- **SuperTuxKart's menu with both changes: 132 → 60 fps, the game 81 → 29 % of a core, app_server 45 → 12 %, the
+  four CPUs 32.7 → 11.2 % busy** — ~1.26 cores → ~0.41 cores, and the ARM clock drops from 1555 to ~1357 MHz on
+  average. (C0 derived ~190 fps from the copy cost; measured here it is 132 at 1024×576 on this image.) With the
+  Mesa change alone (packaged libSDL2) nothing changes for it; with the SDL2 change alone (Mesa A) neither: both are
+  needed.
+- GLTeapot is not a consumer: it limits itself to 60 fps (its own timer), so it ran at 60.0 in every case, and with
+  interval 1 forced every frame arrives after a blank already passed (all "late", none waited) — the late rule does
+  what it should: no extra wait for a program already at the refresh rate. Its 33 % app_server share at 60 fps is
+  the window copy (§3, already fused).
+- Interval 0 is unchanged: glflip 272 = 272, STK 132 = 132, glmark2 331.5 vs 332 (scores are integers; ±0.3 %).
+- Interval 1 in a window: exactly 60.00 with no stalls (glflip, 900 frames twice, longest swap 16.88 ms) and the period
+  estimate converges to 16.659–16.663 ms.
+- glmark2 by default calls `eglSwapInterval(0)`: its windowed score does not change (331/332 → 332/332).
+
+**Games bench A vs B** (`scripts/games-bench-image.sh h20-startcost.img` + mesa -3 A or B + glmark2 package; network
+boots alternating A, B, A, B; labels `gbn3a-1`, `gbn3b-1`, `gbn3a-2`, `gbn3b-2`; `scripts/games-bench-table.py`).
+Every game there runs at interval 0 (SDL2 -5 / the games' copy: always 0; Wine: pbuffers; vkQuake: Vulkan), so the
+bench checks that the change costs the interval-0 path nothing:
+
+| game, setting | A fps (runs) | B fps (runs) | change |
+|---|---|---|---|
+| quakespasm 640x480 | 205.9 (205.6 / 206.3) | 206.1 (205.8 / 206.4) | +0 % |
+| quakespasm 1280x720 | 82.6 (82.6 / 82.6) | 82.5 (82.5 / 82.6) | −0 % |
+| quakespasm 1920x1080 | 40.3 (40.3 / 40.4) | 40.3 (40.4 / 40.3) | +0 % |
+| vkquake 1280x720 | 55.2 (55.2 / 55.2) | 55.0 (55.1 / 55.0) | −0 % |
+| vkquake 1920x1080 | 33.1 (33.1 / 33.1) | 33.2 (33.2 / 33.1) | +0 % |
+| quake2 640x480 | 215.0 (214.7 / 215.3) | 215.2 (215.1 / 215.3) | +0 % |
+| quake2 1280x720 | 106.3 (106.2 / 106.4) | 106.3 (106.3 / 106.3) | −0 % |
+| quake2 1920x1080 | 55.5 (55.6 / 55.5) | 55.6 (55.6 / 55.6) | +0 % |
+| quake3 1280x720 (egl, bots) | 89.5 (89.5 / 89.5) | 88.8 (88.0 / 89.7) | −1 % |
+| openarena 1280x720 window | 55.5 (55.7 / 55.3) | 55.6 (55.7 / 55.5) | +0 % |
+| openarena 1920x1080 fullscreen | 27.9 (27.9 / 27.8) | 28.0 (28.1 / 27.9) | +1 % |
+| supertuxkart 1280x720 (egl) | 36.5 (32.4 / 40.7) | 43.6 (38.0 / 49.2) | +19 % (noise, below) |
+| — its own "Average FPS" | 117.7 / 117.8 | 117.8 / 117.8 | 0 % |
+| wine gltest-arm64 20s | 161.5 (161.9 / 161.1) | 162.9 (163.4 / 162.3) | +1 % |
+| wine gltest-x86 20s | 162.8 (163.4 / 162.2) | 163.2 (163.1 / 163.4) | +0 % |
+| wine d3dtest-x86 window | 129.4 (128.4 / 130.5) | 129.8 (129.7 / 129.9) | +0 % |
+| wine d3dtest-x86 fullscreen | 140.9 (141.9 / 139.8) | 140.9 (139.8 / 142.1) | +0 % |
+| wine d3dtest-arm64 fullscreen | 148.5 (149.5 / 147.5) | 148.2 (146.5 / 150.0) | −0 % |
+| wine halflife window | 90.0 (89.4 / 90.6) | 92.0 (92.4 / 91.6) | +2 % (noise, below) |
+
+Temperatures after the runs 62.7–72.5 C, never throttled; Wine prefix 129/124 s (A), 123/126 s (B).
+Two cases are outside ±1 %, both by boot-to-boot noise, not by the change: **SuperTuxKart's egl rate** (its presents
+per second in the 60 s race) spreads 32–49 between boots of one image (34.7–45.9 over the ten games-bench boots
+before these that produced a figure) while its own loop rate is 117.7–117.8 in all four; **Half-Life** (Wine: pbuffers and a GDI copy,
+no EGL window surface — the changed code is not reached) spreads 88.3–94.2 over the twelve earlier boots. For every
+interval-0 BGLView window (all of the games) B runs the same calls as A plus one `is_overlay()` per frame; the
+`BScreen` it now creates for non-BGLView windows was already created for BGLView ones. No case here uses interval 1,
+so none is capped at 60.
+
+**Ready to land?** **Yes for the Mesa commit** — interval 0 unchanged (glmark2, glflip, STK menu, 18 games-bench cases within
+±1 % or explained noise), interval 1 in a window exactly 60.00 with no stalls, 0 panics or debugger entries in the
+five boots. It ships as **mesa 26.2.6-3** built from `paced-windows` (which also carries N4, ebf1ee1ff1b, the
+revision -3 was planned for). **The CPU gain needs the SDL2 patch as well** (libsdl2 2.32.10-6): with mesa -3
+alone the only programs that change are direct-EGL ones that keep interval 1 and BGLView programs calling
+`SwapBuffers(true)`; neither is in the image's default set (glmark2 sets 0). The SDL2 patch is a behaviour change
+users see (SuperTuxKart and Yamagi Quake II at 60 fps by default; their own vsync settings turn it off), the reason
+it is kept in `patches/pending/` rather than in `patches/libsdl2/` until it is landed with mesa -3. Not checked:
+a 50 or 75 Hz display mode (the period is measured, so it should follow), and the full-screen (overlay) path
+with the new libSDL2 (stage 6's vsynced flips at 60.00, already measured with `glflip -i 1`).
+
+Landing steps (when decided): mesa `rpi4` fast-forwards to `paced-windows` (it is `rpi4` + one commit); mesa 26.2.6-3
+from `package-gl-stack.sh --revision 3` (the three parts of a package bump, AGENTS.md; B's packages are in the job's
+tmp, rebuild them from the branch); `patches/pending/libsdl2-2.32.10-haiku-swap-interval.patch` moves into
+`patches/libsdl2/` and libsdl2 goes to revision 6 (`scripts/build-packages.sh`'s SDL2 step, `--revision 6`), and
+`scripts/build-games.sh` refreshes the games' own copy. Behaviour after landing: SuperTuxKart (default vsync on) and
+Yamagi Quake II (`r_vsync 1`) run at the display's 60 Hz in a window and on a plane; any SDL game that asks for
+vsync gets it; a direct-EGL program that never sets the interval is paced (glmark2 only with `--swap-mode fifo`).
+The games bench therefore exports `HAIKU_EGL_SWAP_INTERVAL=0` from now on (`tools/pi-tests/games-bench.sh`; older
+Mesa ignores it), so its figures stay uncapped and comparable.
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
@@ -655,6 +794,7 @@ once per child when its stdout is a pipe. Firefox ended with a segmentation viol
 | Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c` |
 | Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh` |
 | Profiling | `profile -a -k -S` (N1: misses teams started after it), `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py` (`--self`: flat top of callgrind output), `profsum.py` (rank text profiles, a symbol by thread), `lookupsim.py`; desktop workload `tools/pi-tests/c0-desktop.sh` |
+| GL frame rate + CPU of one program in a window (N3) | `tools/pi-tests/gl-pace.sh LABEL WARMUP SECS CMD` (fps from `HAIKU_EGL_FPS`, the team's and app_server's CPU by `ps -a`, `pmustat -a`); bootscript `tools/pi-tests/n3-pace.sh` (two Mesas in one boot by `__EGL_VENDOR_LIBRARY_FILENAMES`) |
 | Process start over a session | `tools/pi-tests/startcost-steps.sh` (forkbench after each desktop step), `startcost-clock.sh` (forkbench with the ARM clock sampled) |
 | Wine | `tools/pi-tests/prefix-timeline.sh`, `x86-cpubench.sh`, `wine-games.sh`; `tools/wine-tests/cpubench.c`, `prefix-timeline.py` |
 | Firefox | `tools/pi-tests/firefox-video.sh`, `ffstall.sh`, `ffv-prof.sh`, `firefox-start-loop.sh` |

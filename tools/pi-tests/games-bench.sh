@@ -33,6 +33,9 @@ sleep 30
 out=/dev/dprintf
 np=/boot/system/non-packaged
 export HOME=/boot/home
+# the games' own vsync settings off (Mesa 26.2.6-3 on: a window paces to the display with swap interval 1, and
+# SuperTuxKart and Yamagi Quake II ask for 1 once libSDL2 passes it on): the bench measures the uncapped rate
+export HAIKU_EGL_SWAP_INTERVAL=0
 say() { echo "GB $*" > $out; }
 # temperature, throttling (now / since boot) and the clocks the firmware runs
 thermal() {
