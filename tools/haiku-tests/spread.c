@@ -37,9 +37,17 @@ barrier(long i)
 	int32 target = 2 * (i + 1);
 	__atomic_fetch_add(&sArrive, 1, __ATOMIC_SEQ_CST);
 	while (__atomic_load_n(&sArrive, __ATOMIC_ACQUIRE) < target && !sTimeUp) {
+#if defined(__aarch64__)
 		if (sDmb)
 			__asm__ volatile("dmb ishst" ::: "memory");
 		__asm__ volatile("yield");
+#else
+		/* x86: stores are not reordered with other stores, so a store barrier is only a compiler
+		   barrier there */
+		if (sDmb)
+			__asm__ volatile("" ::: "memory");
+		__asm__ volatile("pause");
+#endif
 	}
 }
 

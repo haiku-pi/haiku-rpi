@@ -526,7 +526,177 @@ installed).
 ## 7. Checklist
 
 - [x] Phase 1: inventory, toolchain decision, build and test plan (this document)
-- [ ] Phase 2: free disk; worktrees; `build-x86.sh`; cross tools; rpi4 `@nightly-anyboot`; hrev60314 `@nightly-anyboot`
+- [x] Phase 2: free disk; worktrees; `build-x86.sh`; cross tools; rpi4 `@nightly-anyboot`; hrev60314 `@nightly-anyboot`
+  (plus the hrev60314 `KDEBUG_LEVEL 1` image; §8)
 - [ ] Phase 2b (optional): GCC 16.2 x86-64 build of rpi4
-- [ ] Phase 3: `qemu-x86.sh`, test builds, §4.4 steps 1–6
+- [x] Phase 3 tooling: `qemu-x86.sh`, `image-add.sh --bfs-shell`, `haiku-sysroot.sh --arch x86_64`,
+  `build-x86-tests.sh`, `spread.c` pause; §4.4 step 1 (smoke) done (§8.5)
+- [ ] Phase 3: strtold x87 table, `tools/x86-tests/*.sh` bootscripts, `x86-grade.sh`; §4.4 steps 2–6
 - [ ] Phase 4: fixes on rpi4 (arm64 still green), report §6, KNOWN-ISSUES, HAIKU-RPI4-CHANGES
+
+## 8. Phase 2 results (2026-11-04)
+
+Both x86-64 images build and boot to the desktop under KVM. **No build break, so no fix:** branch `x86-buildfix`
+was not needed and does not exist. The top risk of §1.5 did not happen: the x86-64 kernel builds at
+`KDEBUG_LEVEL 1` without errors, both in our tree and in upstream with the one-line change.
+
+### 8.1 Trees and toolchain
+
+| dir | ref |
+|---|---|
+| `sources/buildtools-x86` | buildtools `33d46bf5c3` (upstream master, GCC 13.3.0, binutils 2.46.1), detached worktree |
+| `sources/haiku-x86` | haiku `rpi4` **a779571e90** (`hrev60314+275`), detached worktree |
+| `sources/haiku-x86-up` | haiku **hrev60314** `c9859af553`, detached worktree |
+| `sources/haiku-x86-up-kd1` | hrev60314 + an uncommitted `KDEBUG_LEVEL 2 → 1` (`build/config_headers/kernel_debug_config.h`), detached worktree (the timing baseline of §4.6) |
+
+One set of cross tools, `sources/haiku-x86/generated.x86_64/cross-tools-x86_64` (325 MB). The other trees use it
+through `--cross-tools-prefix`, so all three `BuildConfig`s name the same compiler.
+
+### 8.2 Commands and times
+
+```
+git -C sources/buildtools worktree add --detach ../buildtools-x86 33d46bf5c3
+git -C sources/haiku worktree add --detach ../haiku-x86 rpi4
+git -C sources/haiku worktree add --detach ../haiku-x86-up c9859af553
+scripts/build-x86.sh configure rpi4           # cross tools, heavy-build guarded
+scripts/build-x86.sh configure up
+scripts/build-x86.sh build rpi4               # @nightly-anyboot
+scripts/build-x86.sh build up                 # hard-links rpi4's download/ first
+git -C sources/haiku worktree add --detach ../haiku-x86-up-kd1 c9859af553   # + the KDEBUG_LEVEL edit
+scripts/build-x86.sh configure sources/haiku-x86-up-kd1/generated.x86_64
+scripts/build-x86.sh build sources/haiku-x86-up-kd1/generated.x86_64
+```
+
+| step | rc | time (16 jobs) | log (artifacts/build/) |
+|---|---|---|---|
+| cross tools (binutils + GCC 13.3) | 0 | 367 s | `x86-crosstools-20261104-165112.log` |
+| rpi4 `@nightly-anyboot` (incl. download and a short heavy-build lock wait) | 0 | 309 s | `x86-rpi4-20261104-165740.log` |
+| hrev60314 `@nightly-anyboot` | 0 | 252 s | `x86-up-20261104-170314.log` |
+| hrev60314 + `KDEBUG_LEVEL 1` `@nightly-anyboot` | 0 | 263 s | `x86-haiku-x86-up-kd1-20261104-171023.log` |
+
+Each image, `generated.x86_64/haiku-nightly-anyboot.iso`, is 690 814 976 bytes. It has two MBR partitions:
+BFS (type `0xeb`, the first, bootable) and the EFI system partition (`0xef`). That is why `image-add.sh` now finds
+the BFS partition by its type: the Pi image's BFS is its second partition.
+
+### 8.3 Build-log checklist (§3.2)
+
+- jam rc 0 on all three.
+- In our tree's `haiku.hpkg`: `bt_dev_info`, `bt_discovery`, `libmidi.so` and `/system/boot/SavedClock`.
+- `AddHaikuImagePackages: package mawk not available!` appears in **all three** logs: upstream's
+  `OptionalPackages` names mawk and the x86_64 repository has none. Not ours.
+- **Warnings** (normalised `../src|../headers` file + message, line numbers dropped):
+  - rpi4: 1015 distinct (2270 lines). hrev60314 at level 2: 1022 (2263 lines). hrev60314 at level 1: 1015.
+  - **rpi4 and upstream at level 1 have identical warning sets**, so our commits (`hrev60314+275`) add no warning to the
+    x86-64 build.
+  - Against upstream's level 2, there are 4 warnings more and 11 fewer, all `KDEBUG_LEVEL` effects in files our
+    commits do not touch. New: unused variables only read by `ASSERT()`, in `nvmm_x86_svm.c`, `nvmm_x86_vmx.c`,
+    `fat/vcache.cpp` and `ntfs/kernel_interface.cpp`. Gone: sign-compare/format warnings in the FreeBSD
+    compat / realtekwifi / net80211 code and one `-Warray-bounds` in `kernel/interrupts.cpp`.
+- The log's `fatal error: jpeglib.h …` (and png, tiff, webp, avif, icns, jasper, wonderbrush) lines come from
+  catalog-key extraction, which preprocesses the translators without their build-feature headers. They are not
+  failures, and upstream's log has them too. `build-x86.sh` leaves them out of its error summary.
+
+### 8.4 Downloaded packages (§3.3)
+
+148 files, 428 MB, from `eu.hpkg.haiku-os.org/haikuports/master/build-packages` (the CDN). The rpi4 build downloads
+them; the other trees get them as hard links, so they take no extra space:
+
+autoconf automake bash bc binutils bison brotli bzip2 ca_root_certificates cdrtools coreutils curl dav1d diffutils
+expat(+devel) fdk_aac ffmpeg6(+devel) findutils flex fluidlite_devel fontconfig(+devel) freetype(+devel) fribidi
+game_music_emu gawk gcc gcc_syslibs(+devel) gettext_libintl giflib git glu(+devel) gmp graphite2 grep
+gutenprint9(+devel) gzip haikuwebkit(+devel) harfbuzz icu74(+devel) intel_wifi_firmwares jam jasper(+devel) lame
+lcms less libass libavif1.0(+devel) libedit(+devel) libexecinfo libgpg_error libicns(+devel) libiconv libidn2
+libjpeg_turbo(+devel) libogg libopenmpt libpcap libpcre libpcre2 libpng16(+devel) libpsl libraw(+devel) libssh2
+libtheora libunibreak libunistring libvorbis(+devel) libvpx1.16 libwebp(+devel) libxml2 libxslt llvm12_libs m4
+make mandoc mesa(+devel, swpipe) mkdepend mpc mpfr nano nasm ncurses6(+devel) netcat nghttp2 noto noto_sans_cjk_jp
+openjpeg openssh openssl3(+devel) opus p7zip patch pe perl pkgconfig ralink_wifi_firmwares rav1e readline
+realtek_wifi_firmwares sed sharutils snappy sounds_community_default soxr speex speexdsp sqlite tar tcpdump texinfo
+tiff(+devel) unzip vision wget which woff2 wpa_supplicant xz_utils zip zlib(+devel, source) zstd(+devel, source).
+
+### 8.5 Smoke boots (KVM, q35, AHCI, SMP 4, 4 GB, virtio-net)
+
+`scripts/qemu-x86.sh --desktop --bootscript tools/x86-tests/smoke.sh --until 'SMOKE desktop up'`: the bootscript
+waits for Tracker and Deskbar, prints uname, the CPU count and the team count, sleeps 10 s, then prints the
+marker. Every run is a first boot on a fresh overlay.
+
+| image | firmware | marker after | result | serial / screenshot (artifacts/qemu-x86/) |
+|---|---|---|---|---|
+| rpi4 | UEFI | 17 s | desktop, 4 CPUs, 28 teams | `20261104-170826-smoke-rpi4-uefi.{log,png}` |
+| rpi4 | BIOS | 16 s | desktop | `20261104-170847-smoke-rpi4-bios.{log,png}` |
+| hrev60314 | UEFI | 19 s | desktop, 4 CPUs, 27 teams | `20261104-170905-smoke-up-uefi.{log,png}` |
+| hrev60314 | BIOS | 17 s | desktop | `20261104-170925-smoke-up-bios.{log,png}` |
+
+- Every log is free of `PANIC`, KDL entry, `vm_page_fault` and `waiting for the boot device` (the `bce76d6e73`
+  risk).
+- The kernel writes its log to COM1 by default, so §4.1's bootscript convention works unchanged.
+- UEFI's frame buffer comes up at 2048×2048 and VESA (BIOS) at 1280×800, the same on both trees.
+- The first rpi4 UEFI run (`20261104-170336-*`) took 37 s because the upstream build ran beside it. These are
+  single samples, not the timing A/B of §4.6.
+
+Pipeline proof (`20261104-171515-pipe-proof-rpi4.log`): the rpi4 image with two cross-built tests added by `--add`
+and a bootscript that runs them, prints to COM1 and calls `shutdown -q`:
+
+- `mmap-shared-mprotect` **PASS** (★21 on x86-64, first sample).
+- QEMU exits by itself on the ACPI power-off ("guest powered off").
+
+### 8.6 Phase-3 tooling (committed, no VM matrix run yet)
+
+- `scripts/build-x86.sh`:
+  - `configure rpi4|up|all|DIR`;
+  - `build rpi4|up|DIR [jam args]` (default `@nightly-anyboot`), heavy-build guarded; it hard-links rpi4's
+    downloads into the other trees, logs `artifacts/build/x86-<tree>-<ts>.log`, prints rc and the warning count,
+    and stops a stale image-builder `bfs_shell` after a failure.
+- `scripts/qemu-x86.sh`:
+  - KVM, q35 (or `pc`), UEFI (edk2-x86_64-code.fd + a per-run copy of edk2-i386-vars.fd) or BIOS;
+  - `--disk ahci|nvme|virtio-scsi|usb|ide|cdrom`, `--smp/--topo/--mem`, `--nic virtio|e1000|rtl8139|none`,
+    `--scratch`, `--sd` (sdhci-pci), `--audio` (intel-hda);
+  - `--bootscript`, `--add FILE:PATH`, `--desktop` (ships `Locale settings`, so the first boot skips
+    FirstBootPrompt);
+  - a qcow2 overlay (the image is never written);
+  - serial to `artifacts/qemu-x86/<ts>-<label>.log`, a QMP socket, screendumps every `--shot-every` s and at
+    the end;
+  - the run ends on guest power-off, `--until REGEX` or `--secs`; then a summary of the end reason, the time and
+    PANIC/KDL lines.
+- `scripts/image-add.sh`:
+  - `--bfs-shell PATH`;
+  - the BFS partition is found by type `0xeb` (the anyboot layout);
+  - `bfs_shell` arguments are quoted, so names with blanks such as `Locale settings` work (they silently failed
+    before);
+  - re-tested on a synthetic Pi-layout image with the arm64 `bfs_shell`.
+- `scripts/haiku-sysroot.sh --arch x86_64 [--generated DIR]` → `artifacts/sysroot-x86_64` (225 MB).
+  `scripts/build-tls-tests.sh --arch x86_64`.
+- `scripts/build-x86-tests.sh OUTDIR`:
+  - builds all 45 files cleanly with GCC 13.3: THR, LIBC (incl. relrtest with DT_RELR, membarrier with `-lgnu`),
+    VM, FS, APP/MEDIA/NET, DBG (DWARF 4 and 5), TLS;
+  - leaves out `armdbg.c`, `id-regs.c` and `strtold.c`.
+- `tools/haiku-tests/spread.c` uses `pause` on x86.
+
+### 8.7 Disk
+
+| item | size |
+|---|---|
+| `sources/haiku-x86` (sources, cross tools, objects, download, image) | 3.7 GB |
+| `sources/haiku-x86-up`, `sources/haiku-x86-up-kd1` | 2.7 GB each (download hard-linked) |
+| `sources/buildtools-x86` | 1.7 GB |
+| `artifacts/sysroot-x86_64`, `artifacts/qemu-x86` | 0.23 GB |
+| **phase 2 total** | **≈ 11 GB** (the plan estimated 22–31 GB) |
+
+Free space on `/`: 52 GB at the start, 40 GB at the end. Another agent wrote at the same time, so that drop is not
+all ours.
+
+### 8.8 What phase 3 needs
+
+1. `strtold.c` for x87 long double. A new table is not enough:
+   - the 16-byte `long double` holds 10 value bytes and 6 padding bytes, so the bit comparisons must mask them;
+   - the `%.36Lg` round trip becomes `%.21Lg`;
+   - the random patterns need the explicit integer bit;
+   - the expected values come from host glibc (`strtold --gen`).
+2. The bootscripts for each test group (`tools/x86-tests/*.sh`) and `scripts/x86-grade.sh`.
+   - Note from the proof run: `$?` after a pipeline is the last command's status, so a test's own exit code has
+     to be captured before its output is filtered.
+3. The §4.3 matrix on both images, in §4.4 order, with `qemu-x86.sh`:
+   - BOOT: UEFI × {AHCI, NVMe, virtio-scsi}, BIOS × {q35, pc IDE}, CD, SMP 1, 512 MB; then PWR and NET;
+   - THR/TLS/LIBC/VM, then FS/USB/SD, then APP/DBG/MEDIA/RNG.
+4. Timing A/B (§4.6): rpi4 against `haiku-x86-up-kd1`, alternating, 5 boots each, under `$HEAVY_BUILD_LOCK` so that
+   no build runs beside them.
+5. Optional 2b (GCC 16.2 build of rpi4): there is disk for it (≈ 4 GB by this phase's numbers).

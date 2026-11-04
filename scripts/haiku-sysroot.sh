@@ -3,6 +3,9 @@
 # libglvnd, Mesa, test tools) on this Linux host with the jam-built cross compiler.
 #
 #   scripts/haiku-sysroot.sh [--out DIR]       (default artifacts/sysroot-arm64)
+#   scripts/haiku-sysroot.sh --arch x86_64 [--generated DIR] [--out DIR]
+#       the x86_64 sysroot (default artifacts/sysroot-x86_64) from an x86_64 build (default
+#       sources/haiku-x86/generated.x86_64, scripts/build-x86.sh), for the H22 tests (build-x86-tests.sh)
 #
 # The sysroot is the content of the packages a Haiku system would have installed, extracted with the
 # jam-built host `package` tool into DIR/boot/system/ — the layout the cross gcc's built-in search
@@ -17,23 +20,30 @@
 # DIR/boot/system/non-packaged (scripts/build-gl-stack.sh), which this script wipes.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/artifacts/sysroot-arm64"
+arch=arm64 out="" gen=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--out) out="$2"; shift 2 ;;
+	--arch) arch="$2"; shift 2 ;;
+	--generated) gen="$(cd "$2" && pwd)"; shift 2 ;;
 	*) echo "haiku-sysroot: unknown option $1" >&2; exit 2 ;;
 	esac
 done
-gen="$root/sources/haiku/generated.arm64"
+case "$arch" in
+arm64) : "${gen:=$root/sources/haiku/generated.arm64}" ;;
+x86_64) : "${gen:=$root/sources/haiku-x86/generated.x86_64}" ;;
+*) echo "haiku-sysroot: --arch arm64|x86_64" >&2; exit 2 ;;
+esac
+: "${out:=$root/artifacts/sysroot-$arch}"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 [ -x "$pkgtool" ] || { echo "haiku-sysroot: $pkgtool missing (build Haiku first)" >&2; exit 1; }
 packages=(
-	"$gen/objects/haiku/arm64/packaging/packages/haiku.hpkg"
-	"$gen/objects/haiku/arm64/packaging/packages/haiku_devel.hpkg"
+	"$gen/objects/haiku/$arch/packaging/packages/haiku.hpkg"
+	"$gen/objects/haiku/$arch/packaging/packages/haiku_devel.hpkg"
 )
 for p in gcc_syslibs gcc_syslibs_devel zlib zlib_devel ncurses6 ncurses6_devel; do
-	f=$(ls "$gen"/download/"$p"-[0-9]*-arm64.hpkg 2>/dev/null | sort -V | tail -n 1)
-	[ -n "$f" ] || { echo "haiku-sysroot: no $p arm64 package in $gen/download" >&2; exit 1; }
+	f=$(ls "$gen"/download/"$p"-[0-9]*-"$arch".hpkg 2>/dev/null | sort -V | tail -n 1)
+	[ -n "$f" ] || { echo "haiku-sysroot: no $p $arch package in $gen/download" >&2; exit 1; }
 	packages+=("$f")
 done
 
@@ -53,9 +63,10 @@ for f in "$out"/boot/system/develop/lib/pkgconfig/*.pc; do
 	[ -L "$f" ] || sed -i 's|/packages/[^/]*/\.self|/boot/system|g' "$f"
 done
 mkdir -p "$out/boot/system/non-packaged"
-for f in develop/lib/libroot.so develop/lib/crti.o develop/lib/libstdc++.so develop/lib/libz.so \
-	develop/headers/posix/stdio.h develop/headers/os/interface/View.h \
-	develop/headers/private/drivers/drm/v3d_drm.h; do
+checks=(develop/lib/libroot.so develop/lib/crti.o develop/lib/libstdc++.so develop/lib/libz.so
+	develop/headers/posix/stdio.h develop/headers/os/interface/View.h)
+[ "$arch" = arm64 ] && checks+=(develop/headers/private/drivers/drm/v3d_drm.h)
+for f in "${checks[@]}"; do
 	[ -e "$out/boot/system/$f" ] || { echo "haiku-sysroot: $f missing in the sysroot" >&2; exit 1; }
 done
 echo "haiku-sysroot: $out ($(du -sh "$out" | cut -f1))"
