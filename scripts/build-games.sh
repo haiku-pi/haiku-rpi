@@ -10,7 +10,9 @@
 #   SDL2 2.32.10   HaikuPorts recipe + patchset + patches/libsdl2 (Vulkan windows: SDL_WINDOW_VULKAN,
 #                  SDL_Vulkan_CreateSurface on Mesa's Haiku WSI) (scripts/cross-port.sh); also staged as
 #                  lib/libSDL2-2.0.so.0, which wins over an image's older libsdl2 package (2.32.10-1, no
-#                  Vulkan): non-packaged/lib comes first in LIBRARY_PATH
+#                  Vulkan): non-packaged/lib comes first in LIBRARY_PATH — so it shadows the package for
+#                  every SDL program of an image that has it (the mega image): renew it with each libsdl2
+#                  revision (the package's library, stripped, is the same build)
 #   sdlvk          tools/gl-tests/sdlvk.c: SDL2 + Vulkan smoke test, into bin/ (tools/pi-tests/sdl-vulkan.sh)
 #   QuakeSpasm 0.96.3  HaikuPorts recipe's source, its Makefile (no MP3/Vorbis codecs: no
 #                  libmad/libvorbis yet), into apps/QuakeSpasm with the shareware id1/pak0.pak
