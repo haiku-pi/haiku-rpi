@@ -16,7 +16,7 @@ During H20 N6 ([perf-round-h20.md](perf-round-h20.md), "N6 results", side findin
 and a BFS made on it with `mkfs -t bfs` would not mount ("bfs: invalid superblock!"). The raw read speeds in
 HARDWARE-SUPPORT (78–90 MB/s, 10-18 to 10-25, `tools/pi-tests/usbcheck.sh`) measured time only; no data was
 ever compared. One N6 boot (`artifacts/uart/20261104-064008-session-n6-basepc3.log`, lines ~236–250) stalled
-with xHCI "USB transaction" errors on the stick at enumeration; see "Not explained" below.
+with xHCI "USB transaction" errors on the stick at enumeration; see "The enumeration stall" under "Follow-ups".
 
 ## Linux, the reference (same Pi, same port, same stick)
 
@@ -269,15 +269,92 @@ Still open: the same window applies to any other PCIe bus master that DMAs into 
 a CM4 board, say); the controller's cache coherency is still assumed per architecture (the TODOs of 71bc709601
 and eabad7a921).
 
+### The enumeration stall (task 116; haiku branch `usb-enum-stall`, 11-04 15:50–)
+
+**What happened in that boot** (`artifacts/uart/20261104-064008-session-n6-basepc3.log`, hrev60314+262, before
+the three USB fixes). The stick's SuperSpeed port (root hub 2, port 1) dropped and came back **three times** within
+4 s of enumeration, so usb_disk attached three times (`disk/usb/0`, `/1`, `/2`):
+
+| s | line | event |
+|---|---|---|
+| 39.25–41.27 | 175–185 | connect, reset, link change; stick A attached, `disk/usb/0` |
+| 42.27–42.67 | 187–202 | connect again: "new device on a port that is already in use" (188); stick B attached, `disk/usb/1`; A removed cleanly (its pipes force-cancelled, "cancel queued transfers (0) for pipe …", 197–202): nothing was in flight on A |
+| 43.48–43.88 | 220–245 | connect again, "already in use" (235); **a CBW in flight on B** (most likely the new disk's partition scan) fails, "Device check-sum error" (237), reset recovery's control request too; stick C attached, `disk/usb/2` (244) |
+| 43.88 | 247–249 | `usb_modeswitch: trying module bus_managers/usb/v3.1`: a legacy driver's `init_driver()` → `install_notify` → `Stack::InstallNotify()` takes `fExploreLock` (Stack.cpp:483). In every good boot `publish_devices()` follows at once; here never |
+| 48.91 | 250 | B's control request (pipe 31) times out after 5 s |
+| 49.31 | 253–256 | cancels on B's bulk pipes ("halted endpoint, reset!", "unsuccessful command 15 (Stop Endpoint), Context state"): **only `usb_disk_device_removed()` cancels a pending CBW from another thread**, and only `usb_disk_uninit_driver()` calls it |
+| 49.52 | 257 | B's CBW: "Operation canceled" |
+| 49.52–69.7 | — | silence; the 20 s watchdog's debugger: all four CPUs idle, no ICIs; xHCI interrupts handled normally |
+
+What is missing after 49.52 is as telling: no force-cancel lines for B's pipes (`Device::~Device()` →
+`Unconfigure()` prints them, as for A at 42.67), so whoever ran `usb_disk_uninit_driver()` for B never returned; no
+further 5 s/10 s timeout messages, so no thread was in a timed wait — the stuck threads were blocked on locks.
+
+**Most consistent explanation (no thread dump of that boot; not reproduced):** a lock-order deadlock in usb_disk's
+teardown. `usb_disk_uninit_driver()` (usb_disk.cpp:1938–1953 on `rpi4`) calls `usb_disk_device_removed()`, then
+takes `device->lock` and calls `usb_disk_free_device_and_luns()`, which deletes each LUN's `IOSchedulerSimple`;
+its destructor `wait_for_thread()`s the scheduler thread (IOSchedulerSimple.cpp:152). That thread runs
+`usb_disk_do_io()`, which takes `device->io_lock` and `device->lock` (:1809–1810), and re-takes `device->lock`
+after each transfer wait (`usb_disk_transfer_data()`, :251). B still had partition-scan operations queued (a read
+is split into 128 KiB operations; each one on a vanished stick waits up to 10 s): the scheduler thread wants the
+device lock, the teardown thread holds it and waits for the scheduler thread — forever, silently. If the teardown
+ran on the USB explore thread (device removal: `Stack::Explore()` → `FreeDevice()` → `~Device()` →
+`unregister_node()`), it holds `fExploreLock`, so usb_modeswitch's `InstallNotify()` and with it the boot's driver
+loading wait forever too: the stall seen. `usb_disk_update_capacity()` (:939–953) already releases both locks
+before deleting a scheduler, with a comment saying why; the teardown did not. Upstream code (unchanged on
+`upstream/master`), not a port change. Stick A's removal (nothing queued) and rel1029b (1 re-enumeration, no I/O
+in flight) went through the same path without stalling.
+
+**Fix: haiku e5efe6f717** `usb_disk: delete the I/O schedulers before taking the device lock in uninit` (branch
+`usb-enum-stall` on `rpi4` 6018671453, pushed, not merged): `usb_disk_uninit_driver()` deletes the I/O
+schedulers before it takes the device lock, after `usb_disk_device_removed()`; `usb_disk_do_io()` completes
+operations of a removed device at once with `B_DEV_NOT_READY` instead of sending each to the dead device to wait
+for its timeout. Built in a worktree output directory (`scripts/build.sh --generated
+sources/haiku-usbstall/generated.arm64`; only usb_disk recompiled, no warnings). Session with it (`artifacts/uart/20261104-164053-session-usbfix1.log`,
+hrev60314+274+dirty): 9 rounds of port cycling during `dd` reads — 5 real removals with the read in flight (dd: "I/O
+error" after 70–106 MiB), 5 ghost devices replaced through "new device on a port that is already in use", each
+removed device torn down, the stick back each time as a new disk (`disk/usb/0` … `/10`), one SanDisk left in
+`listusb` at the end, reads 94.7 MB/s before and 91.0 MB/s after; no panic, no debugger entry, no stall. That
+shows the changed teardown works; it does not show the deadlock is gone (it never occurred on the stock image
+either).
+
+**Can it still happen with current `rpi4`?** The DMA fixes do not touch the trigger (a SuperSpeed port reconnecting
+during enumeration) or the teardown path. Base rate from the UART archive: of ~2 170 boots with the stick enumerated
+(2 093 logs with `disk/usb/0/0/raw`, 10-18 to 11-04), **2** show "already in use" (basepc3 and
+`20261029-010119-rel1029b.log`) and **1** stalled. A 40-boot bench therefore has only a few per cent chance of
+seeing the trigger at all; 40 clean boots say nothing about the stall (the "1 of 57" of N6 was that day's count).
+The bench below is a regression grade of current `rpi4` with the stick plugged, not evidence that the stall is gone.
+
+**Replaying the trigger** (`tools/haiku-tests/usbport.cpp`: hub-class PORT_POWER requests through usb_raw), two
+sessions on stock `rpi4` (`artifacts/uart/20261104-160035-session-usbrepro.log`, `…-usbrepro2.log`):
+
+- Clearing PORT_POWER on the VL805's SuperSpeed root port 2 (even for 5 s) makes the stick enumerate again on the
+  USB 2 side (hub 7, port 0), but **the hub explorer never sees the SuperSpeed device go**: its usb_disk stays (a
+  "ghost"), and every command to it fails with exactly basepc3's errors ("transfer error on slot N endpoint 4/1:
+  USB transaction", "CBW failed: Device check-sum error", control-pipe 5 s timeouts, "halted endpoint, reset!"),
+  repeated every ~5.5 s for as long as the session ran. Not a stall: the kernel's media checker
+  (`KDiskDeviceManager::_CheckMediaStatus`, one thread for all disks) spends ~25 s per round in
+  `usb_disk_test_unit_ready()` on the ghost holding its `io_lock` (KDL: `dd` blocked in `usb_disk_close()` on it).
+- Power-cycling hub 7's port 1 during a `dd` read: a real removal (dd: "I/O error"), the stick back as a new disk;
+  the removed device's teardown ran after dd closed it (nothing queued), no stall. Rapid cycles (30 ms off, the
+  second 0.4–2.2 s after the replug, 20 rounds) left the stick on the SuperSpeed side after the first round, after
+  which hub 7 cycles no longer reached it.
+- So the tool reproduces basepc3's error pattern but not the stall: no case had partition-scan operations still
+  queued when the teardown ran. Port power on the VL805 is not a real SuperSpeed unplug.
+
+**Bench** (`scripts/boot-bench.sh 40 IMG --netboot --label usbstall`, graded with `scripts/usb-boot-grade.sh`;
+stick plugged, no file system on it, image `rpi4` 6018671453 = hrev60314+274): running, 3 of 40 done at 16:55 (all: desktop, keyboard, mouse, stick enumerated once, 0 USB error lines); counts follow when it ends.
+
+**Still open:**
+- The ghost device: a SuperSpeed root port whose PORT_POWER is cleared never reports the disconnect to the hub
+  explorer (XHCI root hub status, not investigated), and nothing gives up on a usb_disk whose every command fails:
+  each media check costs ~25 s on it. Bounded, but large; one dead device delays media checks of all disks.
+- `Stack::InstallNotify()` takes `fExploreLock` without the timeout `Stack::Explore()` uses during the initial
+  scan; left as is (a second line of defence would hide the next teardown deadlock instead of exposing it).
+
 ## Not explained
 
-The stall of `…064008-session-n6-basepc3.log` (lines ~236–250: "transfer error on slot 5 endpoint 4: USB
-transaction", "sending the command block wrapper failed: Device check-sum error", "TRB … was not found in the
-endpoint", then a control-pipe timeout, "halted endpoint, reset", "unsuccessful command 15, error Context state",
-silence with all CPUs idle) happened **during enumeration** ("usb error hub 2: new device on a port that is already
-in use": the stick's SuperSpeed port reconnected), before any usb_disk data transfer, and on buffers the stack
-owns (CBW/CSW, non-cacheable). The cache bug cannot cause it. 1 of 57 session boots on 11-03/11-04 shows these
-errors; none of the 7 boots here did. Open; a separate item if it recurs.
+The basepc3 stall: see "The enumeration stall" above (most consistent explanation and fix; not reproduced).
 
 ## For the user-facing docs (not edited here)
 
@@ -313,4 +390,11 @@ scripts/pi-ssh.sh 'dd if=/boot/home/c14.img of=/dev/disk/usb/0/0/raw bs=1M conv=
 scripts/pi-session.sh stop
 scripts/sd-cycle.sh --script tools/flashlane/usb-verify.sh --script-file usb-verify.txt --script-file pat20000.bin
     # usb-verify.txt: "check 20000 pat20000.bin", "sum MIB", "dump KIB", "wipe MIB"
+# task 116: the enumeration stall
+scripts/boot-bench.sh 40 IMG --netboot --label usbstall          # stick plugged
+scripts/usb-boot-grade.sh artifacts/uart/*-usbstall-t*.log         # desktop, keyboard, mouse, stick, re-enumerations, USB errors
+scripts/pi-session.sh start --image IMG --add usbport:/boot/home/usbport   # tools/haiku-tests/usbport.cpp, cross-built
+scripts/pi-ssh.sh '/boot/home/usbport /dev/bus/usb/0/hub 2 cycle 1000'     # SuperSpeed port: leaves a ghost usb_disk
+scripts/pi-ssh.sh '(dd if=/dev/disk/usb/1/0/raw of=/dev/null bs=1M count=3000 &); sleep 2; /boot/home/usbport /dev/bus/usb/0/0/hub 1 cycle 2000'
+scripts/uart-send.sh '0:\x1d\x1d\x1dd' '3:threads | grep mutex\n' '8:threads | grep usb\n'   # then "continue"
 ```
