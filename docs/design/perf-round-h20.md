@@ -1187,6 +1187,23 @@ here used the 13.3 objects; the revision should be built as `build-firefox.sh` b
 relative relocations are Firefox's pointer tables and change little with the compiler, so the measurement carries over (check the new RELACOUNT/RELRSZ at the stage step). Not done: enabling
 `HAIKU_PACK_RELATIVE_RELOCS=1` for the image (§6 point 5, unchanged). Images deleted after the run; mega23 put back on the card.
 
+**As built (Firefox 157.0.1-6, 2026-11-04 evening).** `scripts/build-firefox.sh`: `revision=6`, `ldflags="-Wl,--hash-style=both -Wl,-z,pack-relative-relocs"`
+(one variable for the mozconfig and the new `relink` step), `requires { haiku >= r1~beta6_hrev60295_178 }`, and a
+stage check that fails unless `readelf -d lib/libxul.so` shows `(RELR)`. The objdir could not be reconfigured any more: the
+sysroot recreated on 11-03 lost libffi/libjpeg/libwebp and the deps step's freetype/fontconfig/libevent, so `./mach` would have
+failed at configure. The new `--only relink` step re-runs the 10-24 link line of `toolkit/library/build` on the objdir's
+**GCC 13.3 objects** with the 16.2 cross tools (link-only libraries from jam's download directory and the deps step's
+install trees; the sysroot is untouched): 11 s, and the result is **byte-identical to the C1 B `libxul-relr.so`**, so the
+measured configuration is the shipped one (it is not a GCC 16.2 recompile of Firefox; that stays a future full `./mach build`).
+Stripped libxul.so 178.6 → 166.9 MB; `.rela.dyn` 137 256 bytes + `.relr.dyn` 110 528 (RELRSZ); highest GLIBCXX needed 3.4.30 (so
+no newer libstdc++ than before). The package: 102 386 638 → **100 899 438 bytes**. The bump's three parts done; the regular
+image built from rpi4 with it (`h20-ffx6.img`, haiku `b195a41e64` for the repository line) carries `firefox-157.0.1-6-arm64.hpkg`
+next to the haiku package of that image (the build's `not available` lines name other packages, none Firefox).
+Pi check (network boot, `scripts/release-check.sh`): 0 problems, 0 debugger entries, Firefox-1/2/3 windows 9698 / 3189 / 3216 ms
+(11-04c: 9885 / 3210 / 3212: the same within noise; the cold card gain is for a card boot and was not re-measured), 24 launch
+cycles clean; headless screenshots of a local page (first 9.0 s, then 3.2 s) and of https://www.haiku-os.org/ (5.2 / 4.9 s,
+a full 1366x3352 render).
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot

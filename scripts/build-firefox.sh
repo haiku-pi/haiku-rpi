@@ -20,11 +20,17 @@
 #   hosttools  cbindgen (scripts/build-spidermonkey.sh hosttools)
 #   config   artifacts/firefox/mozconfig
 #   build    ./mach build under scripts/heavy-build.sh; resumable (objdir artifacts/firefox/obj)
+#   relink   (only with --only, not in the chain) libxul.so alone from the objdir's objects, with the
+#            link line of toolkit/library/build and $ldflags, into obj/dist/bin and obj/toolkit/library/build:
+#            for an objdir that cannot be reconfigured because the sysroot lost the link libraries
+#            (libffi, libjpeg, libwebp, freetype, fontconfig, libevent) since it was configured; the
+#            link-only libraries come from jam's download directory and artifacts/cross-ports
 #   check    every ELF file of dist/bin passes the runtime_loader checks (as build-spidermonkey.sh:
 #            DYN, no COPY/TLSDESC/TPREL relocations, no tpidr_el0 reads)
 #   stage    ./mach package's dist/Firefox, stripped, as artifacts/firefox/non-packaged/apps/Firefox
 #            (libxul and the other libraries in lib/, as the HaikuPorts recipe arranges them, plus
-#            freetype/fontconfig/libevent), fontconfig's configuration in fontconfig/ (Firefox sets
+#            freetype/fontconfig/libevent from the deps step's install trees; fails unless libxul.so
+#            carries DT_RELR), fontconfig's configuration in fontconfig/ (Firefox sets
 #            FONTCONFIG_PATH to it), and the HaikuPorts launcher "Firefox Browser"
 #            (scripts/mkimage-pi4.sh --add-tree artifacts/firefox/non-packaged)
 #   package  artifacts/firefox/firefox-157.0.1-<revision>-arm64.hpkg from the staged app (vendor "Haiku Project";
@@ -43,8 +49,16 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 version=157.0.1
 # the package's revision (3: WebGL on an OpenGL ES context; 4: zstd, 112 -> 102 MB, under GitHub's
 # 100 MiB file limit, so the published repository carries it; 5: getentropy() for random bytes, GNU
-# hash tables)
-revision=5
+# hash tables; 6: packed relative relocations, DT_RELR: libxul.so's 11.7 MB of RELA entries become a
+# 0.1 MB .relr.dyn, so the package needs the runtime_loader of haiku 4539cd2f00)
+revision=6
+# the link flags: GNU hash tables too (as the Haiku build, haiku-pi 91012322ef): the runtime loader's
+# symbol lookups skip an image that lacks a symbol with a Bloom filter test instead of walking its hash
+# chain; and DT_RELR (perf-round-h20.md C1: Firefox's cold start 1.85 s faster from BFS, warm -0.8 %).
+# An older runtime_loader runs a DT_RELR libxul.so with unrelocated pointers: the package's `requires`
+# names the haiku package that has the loader (hrev60295-178)
+ldflags="-Wl,--hash-style=both -Wl,-z,pack-relative-relocs"
+haikuLoader="r1~beta6_hrev60295_178"
 target=aarch64-unknown-haiku
 src="$root/sources/firefox/firefox-$version"
 out="$root/artifacts/firefox"
@@ -150,9 +164,8 @@ export BINDGEN_CFLAGS="--sysroot=$sysroot -isystem $cxxInc -isystem $cxxInc/$tar
 # MOZ_LIBEVENT_CFLAGS); the deps step installs them under non-packaged/include: searched last
 export CFLAGS="-D__unix__=1 -D__unix=1 -idirafter $np/include"
 export CXXFLAGS="-D__unix__=1 -D__unix=1 -idirafter $np/include"
-# GNU hash tables too (as the Haiku build, haiku-pi 91012322ef): the runtime loader's symbol lookups
-# skip an image that lacks a symbol with a Bloom filter test instead of walking its hash chain
-export LDFLAGS="-Wl,--hash-style=both"
+# GNU hash tables and DT_RELR ($ldflags at the top of this script)
+export LDFLAGS="$ldflags"
 export CC="$root/artifacts/rust/bin/$target-gcc"
 export CXX="$root/artifacts/rust/bin/$target-g++"
 export AR="$crossBin/$target-ar"
@@ -188,6 +201,49 @@ build() {
 		./mach --no-interactive build -j '{JOBS}')
 	echo "build-firefox: mach build took $(( (SECONDS - start) / 60 )) min"
 	ls -l "$obj/dist/bin/Firefox" "$obj/dist/bin/libxul.so"
+}
+
+# libxul.so alone, from the objdir's objects: the link line of toolkit/library/build (as ./mach build ran it
+# on 10-24, objects compiled by GCC 13.3) with the current cross tools and $ldflags. For an objdir that
+# ./mach cannot reconfigure any more: the sysroot was recreated on 11-03 (scripts/haiku-sysroot.sh) and lost
+# the libraries the link needs, which are put together in $out/linklib from jam's download directory and the
+# deps step's install trees; the sysroot is not touched. The link command is the 13.3-era one: a new
+# libxul_so.list or flags need a ./mach build.
+relink() {
+	local gen="$root/sources/haiku/generated.arm64" L="$out/linklib" p f ports="$root/artifacts/cross-ports"
+	local pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
+	rm -rf "$L"
+	mkdir -p "$L/develop/lib"
+	for p in libffi-3.4.6_bootstrap libffi_devel-3.4.6_bootstrap libjpeg_turbo-3.1.4.1 libjpeg_turbo_devel-3.1.4.1 \
+		libwebp-1.6.0 libwebp_devel-1.6.0; do
+		LD_LIBRARY_PATH="$gen/objects/linux/lib" "$pkgtool" extract -C "$L" "$gen/download/$p-1-arm64.hpkg"
+	done
+	ln -sf "$ports/freetype-2.14.3/install/boot/system/non-packaged/lib/libfreetype.so.6" "$L/develop/lib/libfreetype.so"
+	ln -sf "$ports/fontconfig-2.18.2/install/boot/system/non-packaged/lib/libfontconfig.so.1" "$L/develop/lib/libfontconfig.so"
+	ln -sf "$ports/libevent-2.1.13/install/boot/system/non-packaged/lib/libevent-2.1.so.7" "$L/develop/lib/libevent.so"
+	f="$obj/toolkit/library/build/libxul.so.relink"
+	(cd "$obj/toolkit/library/build" &&
+	"$root/artifacts/rust/bin/$target-g++" -std=gnu++20 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
+		-fstrict-flex-arrays=1 -fno-rtti -pthread -fno-sized-deallocation -fno-aligned-new -ffunction-sections \
+		-fdata-sections -fno-math-errno -fno-exceptions -pipe -fPIC -D__unix__=1 -D__unix=1 -O2 -fomit-frame-pointer \
+		-funwind-tables -shared -Wl,-z,defs -Wl,--gc-sections -Wl,-h,libxul.so -o "$f" -Wl,@libxul_so.list \
+		$ldflags -Wl,--build-id=sha1 -Wl,-z,noexecstack -Wl,-z,text -Wl,-z,relro -Wl,-z,now -Wl,-z,nocopyreloc \
+		-fstack-protector-strong -Wl,-rpath-link,"$obj/dist/bin" -Wl,-rpath-link,"$L/lib" \
+		../../../third_party/angle/translator_gn/libtranslator_gn.a \
+		../../../third_party/angle/angle_common_gn/libangle_common_gn.a \
+		../../../third_party/angle/angle_common_shader_state_gn/libangle_common_shader_state_gn.a \
+		../../../third_party/angle/preprocessor_gn/libpreprocessor_gn.a ../../../js/src/build/libjs_static.a \
+		../../../build/pure_virtual/libpure_virtual.a ../../../aarch64-unknown-haiku/release/libgkrust.a \
+		../../../dist/bin/libnspr4.so ../../../dist/bin/libplc4.so ../../../dist/bin/libplds4.so \
+		../../../dist/bin/libgkcodecs.so ../../../dist/bin/liblgpllibs.so ../../../dist/bin/libnss3.so \
+		../../../dist/bin/libnssutil3.so ../../../dist/bin/libsmime3.so ../../../dist/bin/libmozsqlite3.so \
+		../../../dist/bin/libssl3.so -Wl,--version-script,libxul.so.symbols \
+		-lbe -lmedia -lnetwork -ldevice -lroot -ltranslation -ltracker -lpthread -lgnu -L"$L/develop/lib" -lffi \
+		-L"$sysroot/boot/system/lib" -lz -lm -lfreetype -lfontconfig -lgame -lGL -ljpeg -lwebpdemux -lwebp -levent -lbsd)
+	"$crossBin/$target-readelf" -dW "$f" | grep -q '(RELR)' || { echo "build-firefox: relinked libxul.so has no DT_RELR" >&2; exit 1; }
+	mv -f "$f" "$obj/toolkit/library/build/libxul.so"
+	cp -f "$obj/toolkit/library/build/libxul.so" "$obj/dist/bin/libxul.so"
+	ls -l "$obj/dist/bin/libxul.so"
 }
 
 # fails if FILE would not load or would misbehave under Haiku's arm64 runtime_loader
@@ -235,14 +291,22 @@ stage() {
 	for l in $libDirLibs; do
 		[ -f "$app/$l" ] && mv "$app/$l" "$app/lib/"
 	done
-	# the deps step's libraries (by soname, as the runtime_loader looks them up)
-	for l in "$np"/lib/libfreetype.so.6 "$np"/lib/libfontconfig.so.1 "$np"/lib/libevent-2.1.so.7; do
-		cp -L "$l" "$app/lib/"
+	# the deps step's libraries (by soname, as the runtime_loader looks them up), from their install
+	# trees (the sysroot's non-packaged/ is wiped by scripts/haiku-sysroot.sh)
+	for l in freetype-2.14.3/install/boot/system/non-packaged/lib/libfreetype.so.6 \
+		fontconfig-2.18.2/install/boot/system/non-packaged/lib/libfontconfig.so.1 \
+		libevent-2.1.13/install/boot/system/non-packaged/lib/libevent-2.1.so.7; do
+		cp -L "$root/artifacts/cross-ports/$l" "$app/lib/"
 	done
 	# stripped (the objdir keeps the symbols for addr2line)
 	while IFS= read -r -d '' f; do
 		is_elf "$f" && "$crossBin/$target-strip" --strip-unneeded "$f"
 	done < <(find "$app" -type f -print0)
+	# DT_RELR: an older runtime_loader would run this libxul.so with unrelocated pointers (a crash, no
+	# error), so a link without the flag must not become a package whose `requires` promise the loader
+	"$crossBin/$target-readelf" -dW "$app/lib/libxul.so" | grep -E 'RELR|RELACOUNT' || true
+	"$crossBin/$target-readelf" -dW "$app/lib/libxul.so" | grep -q '(RELR)' ||
+		{ echo "build-firefox: $app/lib/libxul.so has no DT_RELR (LDFLAGS lacks -z pack-relative-relocs)" >&2; exit 1; }
 	# fontconfig's configuration in the app directory: Firefox points FONTCONFIG_PATH there
 	# (patches/firefox, nsBrowserApp.cpp); conf.d's links into conf.avail become copies
 	f="$root/artifacts/cross-ports/fontconfig-2.18.2/install/boot/system/non-packaged"
@@ -305,7 +369,7 @@ provides {
 	cmd:firefox = $version
 }
 requires {
-	haiku
+	haiku >= $haikuLoader
 	lib:libbz2
 	lib:libffi
 	lib:libgl
@@ -342,7 +406,7 @@ configure() {
 steps=(source deps hosttools config build check stage package)
 if [ "${1:-}" = --only ]; then
 	[ $# = 2 ] || { echo "usage: $0 --only STEP" >&2; exit 2; }
-	case " ${steps[*]} configure " in
+	case " ${steps[*]} configure relink " in
 	*" $2 "*) [ "$2" = source ] && source_ || "$2" ;;
 	*) echo "build-firefox: no step $2" >&2; exit 2 ;;
 	esac

@@ -638,5 +638,6 @@ repo builds and publishes. The notes say what a bump fixed, where it fixed somet
 | `821aaf239d` | mesa 26.2.6-1 | Mesa 26.2.6. |
 | `d2fd8ddf8b` | gcc_syslibs 16.2.0 | The GCC 16.2 C++ runtime (libstdc++ 6.0.36), a superset of 13.3's. |
 | `d7d6924a6e` | firefox 157.0.1-5 | getentropy() for random bytes, GNU hash tables |
+| `b195a41e64` | firefox 157.0.1-6 | libxul.so linked with `-z pack-relative-relocs` (DT_RELR): 11.7 MB of relative relocations become 0.11 MB, so a start reads and applies far fewer (cold start from BFS −1.85 s, warm −0.8 %; [design/perf-round-h20.md](design/perf-round-h20.md) C1). The package `requires` `haiku >= r1~beta6_hrev60295_178`, the first with the DT_RELR runtime_loader (`4539cd2f00`). 102.4 → 100.9 MB. |
 
 `e98b67a5bd` and `be395e19f4` (section 8) also bump ffmpeg6, to 6.1.6-2 and 6.1.6-3.
