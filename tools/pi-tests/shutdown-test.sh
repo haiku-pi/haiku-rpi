@@ -5,6 +5,8 @@
 # /boot/home/shutdown-test.restarts = N: N registrar restarts first. Crashing programs save reports instead of
 # showing the crash alert (debug_server default_action log), and each boot prints the previous boots' reports.
 # The boot count lives on the disk, which the network boot's disk server keeps across the restarts.
+# Before each registrar shutdown the test lists Tracker's threads ("tracker threads"), then logs every change of them
+# and of the system apps still running ("quit: ...") until Tracker is gone.
 # Serial console lines: "SDT ". Grade: three "SDT boot <n>" lines, a new U-Boot banner before boots 2 and 3, and no
 # further U-Boot banner after boot 3's shutdown.
 out=/dev/dprintf
@@ -29,15 +31,39 @@ for r in /boot/home/Desktop/*.report; do
 	mv "$r" "$r.shown"
 done
 sleep 20
+# Tracker's threads now and, from the shutdown on, every change (thread ids name the thread of a crash that left no
+# report) and which of the system apps are still there, until Tracker is gone (design/tracker-shutdown-crash.md)
+tracker_threads() {
+	ps -a Tracker 2> /dev/null | awk 'NF >= 6 && $(NF - 4) ~ /^[0-9]+$/ {
+		name = $1; for (i = 2; i <= NF - 5; i++) name = name "_" $i; printf "%s:%s ", $(NF - 4), name }'
+}
+apps() { for a in Deskbar Tracker package_daemon net_server; do ps | grep -q "/$a " && printf '%s ' $a; done; }
+say "tracker threads $(tracker_threads)"
+watch_quit() {
+	last=""
+	while :; do
+		now="$(tracker_threads)| $(apps)"
+		[ "$now" != "$last" ] && say "quit: $now"
+		last="$now"
+		ps | grep -q "/Tracker " || { say "quit: tracker gone"; return; }
+		sleep 0.3
+	done
+}
 # /boot/home/shutdown-test.restarts: how many registrar restarts before the direct one (default 1)
 restarts=1
 [ -r /boot/home/shutdown-test.restarts ] && restarts=$(cat /boot/home/shutdown-test.restarts)
 if [ $n -le $restarts ]; then
-	say "shutdown -r"; shutdown -r
+	watch_quit &
+	say "shutdown -r"; shutdown -r; r=$?
+	wait
+	(exit $r)
 elif [ $n = $((restarts + 1)) ]; then
 	say "shutdown -q -r"; shutdown -q -r
 elif [ $n = $((restarts + 2)) ]; then
-	say "shutdown"; shutdown
+	watch_quit &
+	say "shutdown"; shutdown; r=$?
+	wait
+	(exit $r)
 else
 	say "done"
 fi
