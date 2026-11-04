@@ -119,16 +119,20 @@ Chance of 0 by luck at the unfixed rate: QEMU (1 − 6/400)^400 ≈ 0.002; Pi (1
   `stack trace` and a saved report).
 - `tools/pi-tests/shutdown-test.sh` now lists Tracker's threads before each registrar shutdown (`SDT tracker
   threads 129:Tracker 174:launch_looper 179:w>Desktop 202:PathMonitor_looper 212:w>Tracker_status
-  223:TrashWatcher 224:ClipboardRefsWatcher 226:TrackerTaskLoop`) and logs each change of them and of the system
-  apps still running until Tracker is gone. In practice the last `quit:` line shows Tracker after
-  `TTracker::Quit()` (launch looper, PathMonitor looper, task loop left): the registrar's last phase sends
-  SIGTERM to the test's shell soon after Tracker unregisters.
+  223:TrashWatcher 224:ClipboardRefsWatcher 226:TrackerTaskLoop`), so a crash that leaves no report can still be
+  placed by its thread id. A poller logging Tracker's threads during the quit was tried and dropped: on the Pi it
+  never printed past its first line (in QEMU it stopped after `TTracker::Quit()`), so it gave no quit timing.
 
-## Fix (haiku branch `c15-tracker`, cc4746af7f, pushed to `origin`, not merged)
+## Fix (haiku branch `c15-tracker`: cc4746af7f on `rpi4` 0b22f22f5b, pushed to `origin`, not merged)
 
 `libbe: keep the message cache when the library terminates` — `terminate_after()` no longer deletes the cache
 (a comment says why); the reply ports and `be_roster` are still cleaned up there. The cache's memory goes with
-the team. `_StaticCacheCleanup()` stays (it is in the public `Message.h` class declaration).
+the team. `_StaticCacheCleanup()` stays (it is in the public `Message.h` class declaration). The one other
+change in behaviour: if libbe were unloaded and loaded again in a living team, `_StaticInit()` would make a new
+cache and the old one would be leaked.
+
+The images tested as "fixed" (`sources/haiku-c15/generated.arm64/haiku-pi4-c15fix.img`, `haiku-mmc.image`) also
+carry the uncommitted diag kernel; a release image is built from the branch, which has only cc4746af7f.
 
 Alternatives not taken: stopping the Desktop window's path watch in Tracker (`BPathMonitor::StopWatching()` in
 `~BDeskWindow`, which Tracker never does) would only remove Tracker's trigger — net_server, input_server,
@@ -144,9 +148,10 @@ destroyed during `exit()` while loopers may run; none of the 19 traced faults he
 |---|---|---|
 | pmexit, Pi | 11 / 1000 | 0 / 1000 (p ≈ 2 × 10⁻⁵ by chance) |
 | pmexit, QEMU | 6 / 400 | 0 / 400 (p ≈ 0.002) |
-| Tracker, QEMU first-boot registrar shutdowns | 2 / 6 | QFIX_COLD |
-| Tracker, Pi first-boot registrar shutdowns (diag kernel: silent faults counted) | 1 / 23 (0 / 19 with diag) | PI_COLD |
-| Tracker, Pi later registrar restarts | 0 / 31 | PI_WARM |
+| Tracker, QEMU first-boot registrar shutdowns | 2 / 6 | 0 / 18 (p ≈ 0.0007 by chance at 2 in 6) |
+| Tracker, QEMU later registrar shutdowns (boot 3) | 0 / 6 | 0 / 18 |
+| Tracker, Pi first-boot registrar shutdowns (diag kernel: silent faults counted) | 1 / 23 (0 / 19 with diag) | 0 / 10 (`20261104-1[45]*-c15-fixcold-1..10.log`) |
+| Tracker, Pi later registrar restarts | 0 / 31 | 0 / 20 (one disk, `20261104-154042-c15-fix-r20.log`) |
 
 The Pi's own Tracker rate (about 1 in 20 first-boot shutdowns, 1 in 54 overall) is too low to verify a fix
 directly in a day of bench time; the evidence for the fix is the mechanism (identical traces in Tracker and in
@@ -154,6 +159,8 @@ directly in a day of bench time; the evidence for the fix is the mechanism (iden
 
 ## Open
 
+- Tracker's quit took up to 3.6 s in the crash run (the fault came 3.6 s after `shutdown -r`); how long it
+  normally takes on a first boot was not measured (the dropped poller above).
 - The respawn storm in the crash run: from the fault on, launch_daemon restarted package_daemon every
   ~0.2 s for 350 s, each start failing "failed to init server application: System shutting down". launch_daemon
   restarts a service only when `IsShutDownInProgress()` fails or says no (`src/servers/launch/LaunchDaemon.cpp:587`);

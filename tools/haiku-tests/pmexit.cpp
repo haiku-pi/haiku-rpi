@@ -2,7 +2,7 @@
  * pmexit.cpp — a program that exits while BPathMonitor's looper is busy (design/tracker-shutdown-crash.md).
  * It watches a path whose ancestors another process creates and removes all the time
  * (tools/pi-tests/pmexit-loop.sh), so the "PathMonitor looper" thread, which nobody quits, handles node
- * monitor messages while exit() runs libbe's terminate_after(). Up to haiku c15-tracker cc4746af7f that
+ * monitor messages while exit() runs libbe's terminate_after(). Before haiku cc4746af7f (branch c15-tracker) that
  * deleted BMessage's block cache, and the looper faulted (read 0x34, BBlockCache::Save()/Get() on NULL) in
  * about 1 of 100 runs.
  *
