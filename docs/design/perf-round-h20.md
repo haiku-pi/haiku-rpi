@@ -433,6 +433,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | N6 (BFS sub-transaction start walks only changed blocks) | worktree builds of `rpi4` 162164220d: A without, B with haiku `bfs-subtrans` a9db442988 | `cache_start_sub_transaction` 616 / 1055 ms CPU per Firefox first start; 289 ticks = 11.3 % of bfsmeta | 26 / 59 ms; 0 ticks; first window unchanged; check build clean; 6 power cuts like A (5) | 18 network boots, 11-04 05:50–07:05 | `artifacts/h20-n6/`, `artifacts/uart/20261104-0*-session-n6-*.log` |
 | N3 (windowed presents paced; SDL2 swap interval) | h20-startcost + mesa 26.2.6-3 A (`rpi4` ebf1ee1ff1b) / B (`paced-windows` 1595aba36ec) | STK menu (SDL2) 132 fps, game 81 % + app_server 45 % of a core, 32.7 % of 4 CPUs busy | with B + the SDL2 patch: 60 fps, 29 % + 12 %, 11.2 %; interval 0 unchanged (glmark2 331/332 → 332/332, games bench ±1 % or noise) | 1 network boot + 4 games-bench boots, 11-04 00:16–03:39 | `artifacts/uart/20261104-001649-n3-pace.log`, `artifacts/uart/20261104-*-gbn3[ab]-[12].log` |
 | N5 (TLS of start-up images without the generation check) | worktree builds of `rpi4` b90cb3f0d4: A without, B with haiku `rpi4` c6cab6cc9e + 4d433669a8 | python3 `sum(i*i…)` 1e7: `__tls_get_addr` 19.4 % of ticks, 12.87 G instructions, 7.97 G cycles, 5181 ms median; tlsbench 17.35 ns | 9.8 %, 11.60 G (−9.9 %), 7.65 G (−4 %), 5104 ms (−1.5 %); tlsbench 14.68 ns (a dlopen()ed library's 16.0 → 17.35 ns); TLS test PASS (A fails the 64-byte alignment) | 6 network boots A/B alternating + 1, 11-04 11:43–12:29 | `artifacts/h20-n5/`, `artifacts/uart/20261104-1*-session-n5-*.log` |
+| N7 (SDIO data blocks moved in the interrupt handler) | worktree builds of `rpi4` 4d433669a8: A without, B with haiku `n7-sdio-wait` 6018671453 | WiFi TCP 64 MiB: up 49.5 / down 46.8 Mbit/s; 226 / 183 M cycles per MiB; CPUs busy 19.6 / 15.9 %; `spin` + `system_time` 59 / 47 % of non-idle | 49.2 / 46.1 Mbit/s (ARM clock held at 1500 MHz: 49.3 / 46.5 = A); 151 / 126 M cycles per MiB (−33 / −31 %; at 1500 MHz kernel cycles −34 / −31 %); busy 11.6 / 8.9 %; spin 32 / 18 %; bring-up 5/5 one join; SD card probe + raw read unchanged | 10 network boots A/B alternating + 1 (a dropped variant) + 2 lost to a script race, 11-04 14:05–15:33 | `artifacts/h20-n7/`, `artifacts/uart/20261104-1*-session-n7-*.log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -539,7 +540,7 @@ steps.
 | N4 | v3d shader-variant cache hashes its key with BLAKE3 at every lookup — **done: mesa rpi4 ebf1ee1ff1b, ships with mesa 26.2.6-3 (Pi check: STK menu profile)** | 5.1 % of STK's CPU (`cache_hash` → `blake3_compress_*_portable`, from `_mesa_hash_table_search`) | `_mesa_hash_data` over key + the key's stored BLAKE3 instead of a fresh BLAKE3 (`v3d_program.c`); with the next Mesa revision | S |
 | N5 | TLS access through `__tls_get_addr` — **done: haiku `rpi4` c6cab6cc9e + 4d433669a8 (static TLS block for the images loaded at start, no generation check), §6 "N5 results": −9.9 % instructions, −4 % cycles of the Python loop; the 18 % share was mostly hidden latency** | 18.1 % of a busy python3; 2.3 % of STK (every GL call through glvnd) | TLS descriptors (TLSDESC) in runtime_loader, or initial-exec TLS for libpython / libGLdispatch | M |
 | N6 | BFS journal: sub-transaction start walks all blocks — **done: haiku `bfs-subtrans` a9db442988 (block cache tracks the blocks changed per sub transaction), §6 "N6 results"** | 2.9 s CPU of a Firefox first start; 3.1 s in the 196 s session | bound the combined transaction (Journal) or make the walk incremental (block cache) | S (bound) / M |
-| N7 | WiFi SDIO waits by spinning | `spin` + `system_time` 37–58 % of non-idle during transfers | interrupt-driven command completion in the SDHCI path | S–M |
+| N7 | WiFi SDIO waits by spinning — **done: haiku `n7-sdio-wait` 6018671453 (data blocks of ≥ 256 bytes moved by the interrupt handler, the caller sleeps), §6 "N7 results": −31 to −34 % CPU cycles per MiB, rate unchanged at equal clock** | `spin` + `system_time` 37–58 % of non-idle during transfers | interrupt-driven command completion in the SDHCI path | S–M |
 
 **Re-ranked next three:** (1) **N1**, an hour with the re-run of run (1), because every later system-wide profile
 needs it; (2) **N2**, measured 1.5–1.9× on every program start in a normal session (shell scripts, builds, configure,
@@ -999,6 +1000,103 @@ and a few % of its cycles; not worth the world rebuild on its own, worth doing t
 rebase needed): correctness by the new test on QEMU and Pi, tlsreload/tlsunload unchanged; the measured gain is
 small but real (−10 % instructions; −2.7 ns per access, −27 % of its cost over a global) and it fixes the alignment bug. Images not kept.
 
+### N7 results: SDIO data blocks moved by the interrupt handler (2026-11-04 13:49–15:35)
+
+**Where the CPU went** (code read of `src/add-ons/kernel/busses/mmc/sdhci.cpp` at `rpi4` 4d433669a8, and the A
+profiles below). WiFi on the Pi 4 is SDIO on the legacy Arasan controller, by PIO (no usable DMA, wifi-bcm43455.md:55),
+41.7 MHz, 4 bits: a 512-byte F2 block is ~25 µs on the bus. Every CMD53 goes through `SdhciBus::ExecuteIoCommand()`:
+(1) **`sdhci.cpp:557-573`: per block, `spin(1)` until the Present State register's buffer enable bit is set** — the
+bulk: ~12 000 blocks/s at 49 Mbit/s, each waited out on a CPU; (2) **`:591-599`: `spin(10)` until the transfer
+complete interrupt** has set `fCommandResult`, although that interrupt is signalled and the handler already notifies
+`fInterruptNotifier`; (3) `:381-385`: the deliberate 50 µs `cpu_pause()` loop for the command complete interrupt
+(c283f50c5b, it gave WiFi +80 % upload; a command completes in a few µs, so it stays). `spin()` is itself a loop on
+`system_time()`, so the profile's `spin` and `system_time` are one cost. Why polled: interrupts are wired (command and
+transfer complete are signalled), but the buffer ready bits were only status-enabled, and the data phase read the level
+bit in the thread because of the lost-edge hazard (wifi-bcm43455.md:61, R2 :172). Also in the old loop: one
+variable-size `memcpy()` call per 32-bit word — the **21 % `memcpy`** of the C0 download profile was this copy, not the
+network stack (A5 download: 1473 `memcpy` ticks, B5: 219).
+
+**Change** (haiku branch **`n7-sdio-wait`**, base `rpi4` 4d433669a8: **6018671453** `sdhci: move SDIO data blocks in the
+interrupt handler`, then a98a2c9890 + its revert dd77d0b1e5 — a variant measured and dropped, below; the branch's tree is
+6018671453's). Blocks of at least 256 bytes (F2 data) are moved by the interrupt handler, as Linux's sdhci does on this
+controller (`sdhci_transfer_pio()` from the data interrupt): before the command, the buffer ready interrupt of the
+transfer's direction is signal-enabled and the buffer, block size and count are handed over under a spinlock
+(`fInterruptLock`, which now also guards every `interrupt_signal_enable` read-modify-write); the handler **acknowledges
+the latched bit first, then moves every block the level bit says is ready**, so an edge that comes during the copy
+raises the interrupt again (the R2 order); the caller sleeps on `fInterruptNotifier` until transfer complete, with a
+1 ms timeout after which it moves any ready block itself (a missed edge costs ≤ 1 ms, never an I/O error; counted
+and logged at powers of two: "data blocks moved without their buffer ready interrupt"); every exit path takes the
+transfer back under the lock before returning, so the handler never touches a freed buffer. **Smaller blocks stay
+polled, byte for byte the old code**: register accesses and the 64-byte F1 blocks of the backplane window, which carry
+the **firmware download and its read-back verification** (`bwfm_sdio_load_microcode`) — they are ready sooner than a
+thread wakes, and keeping them unchanged keeps the bring-up path that R2 was about. Words are copied with fixed-size
+accesses. A bus without interrupts (ACPI's polling thread) keeps polling (`fWorkerThread` is now initialized, so that this
+can be told). The SD card's controller (emmc2) uses ADMA2 and never has such a transfer: for it the handler change is a
+no-op. +240 / −53 lines in sdhci.cpp/.h.
+
+**Measured** (network sessions, fresh boot each, alternating A = `haiku-pi4-n7a.img` (worktree build of 4d433669a8),
+B = `haiku-pi4-n7b.img` (the same + 6018671453), same tree, same packages: a1 b1 a2 b2 a3 b3 a4 b4 a5 b5, 14:20–15:33;
+`scripts/n7-wifi.sh LABEL` runs `tools/pi-tests/n7-wifi.sh` over ssh against `scripts/net-perf-server.sh` on the
+bench's 2.4 GHz soft AP (PhoenixNet, 802.11n): WiFi bring-up; 3 × (64 MiB up, 64 MiB down) with `tcp_throughput` under
+`pmustat -A`; from boot 3 on the ARM clock sampled every 0.25 s during each transfer, and 2 × (up, down) with the clock
+held at 1500 MHz by a user-mode busy loop under `pmustat -k` (kernel cycles and instructions only); one up and one down
+under `profile -a -k -S`; the SD card check. Table: `tools/haiku-tests/n7-table.py --a n7-a1 … --b n7-b1 …`; outputs
+`artifacts/h20-n7/`, serial logs `artifacts/uart/20261104-1*-session-n7-*.log`).
+
+| per 64 MiB transfer, median (n) | A up | B up | A down | B down |
+|---|---|---|---|---|
+| TCP Mbit/s (15) | 49.5 | 49.2 (−0.6 %) | 46.8 | 46.1 (−1.5 %) |
+| — the same, boots 3–5 only (9) | 49.4 | 49.1 | 46.5 | 46.0 |
+| ARM clock samples below 1500 MHz (9) | 0 % | 61 % | 2 % | 89 % (mostly 750 MHz) |
+| TCP Mbit/s, clock held at 1500 MHz (6) | 49.3 | 49.3 | 46.3 | 46.5 |
+| PMU cycles of all CPUs per MiB (15) | 226 M | 151 M (**−33 %**) | 183 M | 126 M (**−31 %**) |
+| kernel cycles per MiB at 1500 MHz (4) | 222.5 M | 147.4 M (**−34 %**) | 175.1 M | 121.4 M (**−31 %**) |
+| kernel instructions per MiB at 1500 MHz (4) | 81.0 M | 54.2 M (−33 %) | 59.4 M | 39.3 M (−34 %) |
+| CPUs busy, scheduler (15) | 19.6 % | 11.6 % | 15.9 % | 8.9 % |
+| `profile`: non-idle share of ticks (5) | 19.5 % | 12.8 % | 15.2 % | 10.3 % |
+| `profile`: `spin` + `system_time`, share of non-idle (5) | 58.8 % | 32.4 % | 47.0 % | 17.7 % |
+| SD card raw read, `dd` 64 MiB (10 per side) | 35.5–39.2 MB/s | 34.8–40.7 MB/s | | |
+
+Boots 1–2 used the script without the clock sampler (its `grep` 4×/s adds ~7 % of cycles, both sides); the A/B ratios
+are the same with and without it (boots 1–2: 213 → 137 and 173 → 103 M cycles per MiB; boots 3–5: 227 → 156 and
+185 → 128). The cycle counter stops in WFI, so it includes the interrupt handler's PIO on otherwise idle CPUs; the
+profiler does not (its timer cannot sample inside the handler: `_MoveIoBlock` shows 15 ticks), and neither does the
+scheduler's busy time — so the cycle rows are the measure, and they include the new cost.
+
+**Reading.** The busy-wait goes from 59 / 47 % to 32 / 18 % of the non-idle time and the CPU cost of a WiFi transfer
+falls by a third (kernel cycles −34 % up, −31 % down at the same clock; at 1500 MHz that is ~0.87 → 0.58 of a core
+while uploading at 49 Mbit/s and ~0.65 → 0.45 while downloading, derived from cycles/MiB × 5.9 / 5.5 MiB/s). **The rate
+does not move at an equal clock** (49.3 / 46.3–46.5 Mbit/s both sides; the AP is the limit). Unpinned, B is 0.6 % /
+1.5 % slower: with the spinning gone the CPUs fall under the cpufreq driver's 55 % target and it drops the ARM to
+750 MHz for most of a transfer (`bcm2835_cpufreq`, C0b/N2), which slows each packet's software path a little; with the
+clock held at 1500 MHz B equals A. The download rate also differs from boot to boot by more than that (A: 47.6–48.7 on
+boots 1–2, 46.2–46.9 on boots 3–5). What remains of the busy-wait in B is the polled small-transfer path (`spin(1)` /
+`spin(10)` of blocks under 256 bytes: register accesses and frame headers) and the 50 µs command-complete loop
+(`_ExecuteCommand` self 8–13 %); no "moved without their buffer ready interrupt" line and no CMD53 error in any B boot
+(all 5 syslogs: the 5 attach lines only).
+
+**Dropped variant** (a98a2c9890, image `haiku-pi4-n7c.img`, one boot c1 at 14:50, then reverted on the branch): the
+handler woke the caller once the last block was on the bus and the caller polled ≤ 100 µs for transfer complete, to
+recover the download rate before the clock effect was known. Download 46.9 Mbit/s (B1/B2: 46.2), but upload 191 M
+cycles per MiB against 137 (the caller polls through each write's last block and the card's busy time) — the
+rate it seemed to recover is the clock's.
+
+**Reliability.** WiFi bring-up (association + DHCP lease) on fresh network boots: **B 5/5** (one join each, address
+5.5 s after the join), **A 4/4** scripted (a4 needed a second join, 32.8 s) + a1 by hand. The first two A boots of the
+session (before the script waited 3 s after association before starting DHCP) got no lease: started at once after the
+join, `auto-config` gets none — a bench-script race, same on both images, fixed in the script. Firmware download and
+read-back verification ran in every boot (the driver attached and its interface came up in all 13 boots of the session, the two script-race boots and c1 included; no panic or kernel debugger entry in any serial log). SD card (emmc2,
+same driver): attached and probed in every boot ("mmc@7e340000 … using ADMA2", `disk/mmc/0/raw` published, DDR50),
+raw read-only `dd` of 64 MiB at the same speed on both sides; nothing on the card was mounted or written.
+
+**Ready to land?** Yes, one commit (6018671453; the branch head dd77d0b1e5 has the same tree): CPU per WiFi MiB −31 to
+−34 %, rate unchanged at an equal clock, bring-up 5/5, SD unaffected. Open: (a) on this bench the governor turns the
+saved CPU into a lower clock and ~1 % of rate — a load-based clock floor while a network interface is busy, or a
+lower `kBusyForMax`, would be a separate cpufreq change; (b) the small transfers and the 50 µs command loop still spin
+(the remaining 18–32 % of non-idle): interrupt-driven small transfers would cost a thread wake-up per register
+access; (c) DMA (C8) remains off: not needed for CPU now; (c2) `interrupt_signal_enable` is still written without `fInterruptLock` by the handler's storm masking, `RecoverError()` and `Enable/DisableInterrupts()` (pre-existing; the thread's locked read-modify-write now runs per CMD53, so a storm mask could be undone once and re-masked — no hang, no I/O error); (c3) KNOWN-ISSUES.md:45 and HARDWARE-SUPPORT.md:114/:221 ("SDIO runs PIO and is CPU-bound") need rewording when this lands; (d) another AP or 5 GHz is still untried, so the rate limit
+is still the AP's; (e) Images not kept beyond `artifacts/images/haiku-pi4-n7[abc].img`.
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
@@ -1026,7 +1124,7 @@ small but real (−10 % instructions; −2.7 ns per access, −27 % of its cost 
 | Boot | `scripts/sd-cycle.sh --flash IMG --secs 120`, `scripts/boot-times.sh LOG`, `scripts/boot-bench.sh` (reliability) |
 | Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c` |
 | BFS metadata writes, journal (N6) | `tools/haiku-tests/bfsmeta.c` (files + appends + attributes, per-file time; `--loop` for power cuts), `bfsbits.c` (on-disk bitmap vs used_blocks; the blocks a `checkfs` freed and what they held), `tools/pi-tests/n6-firefox.sh` (Firefox first start with a new profile, under `profile -a`), `scripts/pi-session.sh stop --no-sync` (power cut), `checkfs -c` |
-| Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh` |
+| Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh`; in a session: `scripts/n7-wifi.sh LABEL` (`tools/pi-tests/n7-wifi.sh`: join + DHCP time, TCP up/down under `pmustat`, ARM clock samples, clock-held runs with kernel cycles, `profile`, SD probe check), `tools/haiku-tests/n7-table.py` |
 | Profiling | `profile -a -k -S` (N1: misses teams started after it), `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py` (`--self`: flat top of callgrind output), `profsum.py` (rank text profiles, a symbol by thread), `lookupsim.py`; desktop workload `tools/pi-tests/c0-desktop.sh` |
 | GL frame rate + CPU of one program in a window (N3) | `tools/pi-tests/gl-pace.sh LABEL WARMUP SECS CMD` (fps from `HAIKU_EGL_FPS`, the team's and app_server's CPU by `ps -a`, `pmustat -a`); bootscript `tools/pi-tests/n3-pace.sh` (two Mesas in one boot by `__EGL_VENDOR_LIBRARY_FILENAMES`) |
 | Process start over a session | `tools/pi-tests/startcost-steps.sh` (forkbench after each desktop step), `startcost-clock.sh` (forkbench with the ARM clock sampled) |
