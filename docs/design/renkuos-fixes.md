@@ -2,7 +2,8 @@
 
 2026-11-04. The owner decided (W45, 08:39) to take three fixes from RenkuOS
 ([github.com/RenkuOS/Source](https://github.com/RenkuOS/Source), a Haiku fork, MIT) into haiku-pi, and nothing else
-from that project: no pull requests, contact, forks or posts. Their tree was read at `main` `fe12fcdd3a`.
+from that project: no pull requests, contact, forks or posts. Their tree was read at `main` `fe12fcdd3a`. The analysis that
+found them: [renkuos-analysis.md](renkuos-analysis.md).
 
 **Branch:** haiku `renku-fixes-2` (pushed to `origin`): the four commits below on `rpi4` `61fe84cd93`, to be merged
 by the main session. They were built and tested first as `renku-fixes` on `rpi4` `b90cb3f0d4` (`2d20fb2ef7`,
