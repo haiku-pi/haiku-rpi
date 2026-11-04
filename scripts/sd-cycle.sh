@@ -4,6 +4,11 @@
 #   [--read-back FILE [--read-mb N] [--read-skip-mb N]]
 #                  (instead of booting) netboot the flash lane and copy the card's first N MiB
 #                  (default 400) to FILE, e.g. to read Haiku's syslog with scripts/sd-syslog.sh
+#   [--script FILE [--script-file F]... [--script-secs N]]
+#                  (instead of booting) netboot the flash lane and run the busybox shell script FILE
+#                  on Linux with the card read-only (blockdev --setro), e.g. to test a USB disk; each F
+#                  is served next to it (http://<host>:<port>/<basename F>);
+#                  output: "HFL out" lines in the log and artifacts/uart/<ts>-<label>-script.txt
 #   then           power-cycle with no DHCP server on the Pi LAN so the Pi boots the SD card,
 #                  capture the UART (+ an HDMI frame every --hdmi-every s), power off,
 #                  and restore the peer project's netboot server (the bench default).
@@ -17,7 +22,7 @@
 # 3 a --fail line, 2 the UART stayed silent, 4 UART went quiet.
 set -euo pipefail
 . "$(dirname "$0")/lib/bench.sh"
-flash="" boot=1 secs=120 label=sd hdmi_every=20 quiet=0 readback="" readmb=400 readskip=0
+flash="" boot=1 secs=120 label=sd hdmi_every=20 quiet=0 readback="" readmb=400 readskip=0 script="" scriptsecs=900 sfiles=()
 caps=()
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -26,6 +31,9 @@ while [ $# -gt 0 ]; do
 	--read-back) readback="$(realpath -m "$2")"; boot=0; shift 2 ;;
 	--read-mb) readmb="$2"; shift 2 ;;
 	--read-skip-mb) readskip="$2"; shift 2 ;;
+	--script) script="$(realpath "$2")"; boot=0; shift 2 ;;
+	--script-secs) scriptsecs="$2"; shift 2 ;;
+	--script-file) sfiles+=("$(realpath "$2")"); shift 2 ;;
 	--secs) secs="$2"; shift 2 ;;
 	--label) label="$2"; shift 2 ;;
 	--until|--fail|--send) caps+=("$1" "$2"); shift 2 ;;
@@ -99,6 +107,27 @@ if [ -n "$readback" ]; then
 	fi
 	mv "$readback.part" "$readback"
 	echo "sd-cycle: read back $(stat -c %s "$readback") bytes -> $readback"
+fi
+if [ -n "$script" ]; then
+	www="$HAIKU_RPI_ROOT/artifacts/flashlane/www"; mkdir -p "$www/upload"
+	out="$ts-$label-script.txt"
+	cp "$script" "$www/job.sh"
+	for f in "${sfiles[@]}"; do rm -f "$www/${f##*/}"; ln "$f" "$www/${f##*/}" 2>/dev/null || cp "$f" "$www/${f##*/}"; done
+	rm -f "$www/upload/$out"
+	printf 'MODE=script\nSCRIPT=job.sh\nOUT=%s\n' "$out" > "$www/job.txt"
+	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" up
+	pi_power on
+	slog="$uart_dir/$ts-$label-script.log"
+	"$PYTHON" "$cap" --dev "$PI_UART" --log "$slog" --secs "$scriptsecs" --until '^HFL end' || true
+	pi_power off
+	"$HAIKU_RPI_ROOT/scripts/flashlane-server.sh" down
+	grep -a '^\[.*\] HFL [^o]' "$slog" || true
+	if [ ! -f "$www/upload/$out" ]; then
+		echo "sd-cycle: SCRIPT OUTPUT NOT UPLOADED (see the HFL out lines in $slog)" >&2; exit 1
+	fi
+	mv "$www/upload/$out" "$uart_dir/$out"
+	for f in "${sfiles[@]}"; do rm -f "$www/${f##*/}"; done
+	echo "sd-cycle: script output -> $uart_dir/$out"
 fi
 [ "$boot" = 1 ] || exit 0
 

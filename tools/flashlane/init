@@ -5,7 +5,9 @@
 # It fetches http://<host>:<port>/job.txt and then either (MODE=write, the default; IMAGE=, SIZE=,
 # SHA256=) streams IMAGE onto /dev/mmcblk0, reads the written bytes back and compares the SHA-256,
 # or (MODE=read; OFFSET=, SIZE= in MiB, READ_PORT=) streams that part of the card to
-# <host>:READ_PORT (where the host listens with nc). Then it powers off.
+# <host>:READ_PORT (where the host listens with nc), or (MODE=script; SCRIPT=, OUT=) runs a shell
+# script from the host with the card read-only and uploads its output (text: busybox wget posts up to
+# the first NUL byte). Then it powers off.
 # Every line it prints starts with "HFL " (grading on the UART); the last one is "HFL end".
 /bin/busybox --install -s /bin
 mkdir -p /proc /sys /dev /tmp
@@ -50,11 +52,32 @@ udhcpc -i eth0 -n -q -t 10 -s /tmp/udhcpc.sh > /dev/null 2>&1 || die "dhcp"
 say "net $(ip -4 addr show eth0 | grep -o 'inet [0-9./]*')"
 
 wget -q -O /tmp/job.txt "http://$HOST:$PORT/job.txt" || die "no job.txt"
-MODE=write IMAGE= SIZE= SHA256= OFFSET=0 READ_PORT=
+MODE=write IMAGE= SIZE= SHA256= OFFSET=0 READ_PORT= SCRIPT= OUT=
 . /tmp/job.txt
 
 n=0
 until [ -b "$DEV" ]; do n=$((n + 1)); [ $n -gt 40 ] && die "no $DEV"; sleep 0.5; done
+
+if [ "$MODE" = script ]; then
+	# Run a host-supplied shell script (SCRIPT=, served next to job.txt) with the card read-only,
+	# e.g. to look at a USB disk under Linux. Its output goes to the console as "HFL out ..." lines
+	# and is uploaded as upload/$OUT.
+	[ -n "$SCRIPT" ] && [ -n "$OUT" ] || die "bad job.txt"
+	for b in "$DEV" "$DEV"p*; do
+		[ -b "$b" ] && { blockdev --setro "$b" || die "setro $b"; }
+	done
+	[ "$(blockdev --getro "$DEV")" = 1 ] || die "$DEV is not read-only"
+	wget -q -O /tmp/job.sh "http://$HOST:$PORT/$SCRIPT" || die "no $SCRIPT"
+	say "job script=$SCRIPT ($DEV read-only)"
+	# streamed, so that a script that hangs still shows how far it got
+	{ sh /tmp/job.sh 2>&1; echo "script exit=$?"; } | tee /tmp/out.txt | sed 's/^/HFL out /'
+	wget -q -O /dev/null --post-file=/tmp/out.txt "http://$HOST:$PORT/upload/$OUT" || say "upload failed"
+	say "done ok=1 script"
+	say end
+	sync
+	sleep 5	# let the console drain the output before the power goes
+	poweroff -f
+fi
 
 if [ "$MODE" = read ]; then
 	[ -n "$SIZE" ] && [ -n "$READ_PORT" ] || die "bad job.txt"
