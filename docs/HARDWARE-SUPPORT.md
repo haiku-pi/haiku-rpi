@@ -115,7 +115,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 
 | Component | Haiku driver | Status | Measured (date) | Limitations / missing |
 |---|---|---|---|---|
-| BCM43455 over SDIO | `drivers/network/wlan/broadcomfmac` (OpenBSD `bwfm`) on `src/libs/compat/openbsd_wlan`, an `sdio` bus in `freebsd_network`, SDIO in `bus_managers/mmc` | ✅ | firmware 7.45.234 (linux-firmware 20260810, sha256-pinned); scan, WPA2-PSK join, DHCP; joins 3/3 (10-19); TCP **37.4 up / 46.0 down Mbit/s** (10-19, 2.4 GHz access point) | No wpa_supplicant on arm64: net_server joins WPA2-PSK through the kernel (`IEEE80211_IOC_HAIKU_JOIN`), and an unscanned network is assumed to be WPA2-PSK. SDIO runs PIO at 41.67 MHz and is CPU-bound. Joining from Network preferences takes the same path but has not been tried by hand |
+| BCM43455 over SDIO | `drivers/network/wlan/broadcomfmac` (OpenBSD `bwfm`) on `src/libs/compat/openbsd_wlan`, an `sdio` bus in `freebsd_network`, SDIO in `bus_managers/mmc` | ✅ | firmware 7.45.234 (linux-firmware 20260810, sha256-pinned); scan, WPA2-PSK join, DHCP; joins 3/3 (10-19); TCP **37.4 up / 46.0 down Mbit/s** (10-19), **49 / 46** (11-04; 2.4 GHz access point) | No wpa_supplicant on arm64: net_server joins WPA2-PSK through the kernel (`IEEE80211_IOC_HAIKU_JOIN`), and an unscanned network is assumed to be WPA2-PSK. SDIO runs PIO at 41.67 MHz; from the next image on, its data blocks are moved by the interrupt handler instead of a spinning thread (CPU per MiB −31/−34 %, rate the same, 11-04). Joining from Network preferences takes the same path but has not been tried by hand |
 
 ## 12. Bluetooth
 
@@ -231,7 +231,7 @@ From the "Next" list of [log/WEEK-2026-W45.md](log/WEEK-2026-W45.md) (2026-11-03
 6. **Windows programs (H15)**: Wine 11.21 runs arm64, x86 (Box64) and x86-64 (FEX) programs and is published;
    open: the items in KNOWN-ISSUES §5 (x86 memory ordering under Box64, two demos that crash)
    ([design/wine-x86.md](design/wine-x86.md)).
-7. **Smaller items**: WiFi throughput (37/46 Mbit/s: SDIO runs PIO; F4); WebPositive's Web Inspector data (F7);
+7. **Smaller items**: WiFi throughput (49/46 Mbit/s on the bench's 2.4 GHz AP; F4); WebPositive's Web Inspector data (F7);
    HDMI audio on the second port and after a hot-plug (P3).
 8. **H.264 hardware decoding** (H21, last in the backlog): through the VideoCore firmware's MMAL over VCHIQ, by a
    BSD-licensed route ([design/hw-video-decode.md](design/hw-video-decode.md) §0a).

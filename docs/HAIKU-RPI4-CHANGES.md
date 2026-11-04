@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **266 commits of its own** (2026-10-18 to 2026-11-04; counted
-2026-11-04 at `rpi4` 4d433669a8). To list them, in `sources/haiku`:
+On top of that base the fork carries **267 commits of its own** (2026-10-18 to 2026-11-04; counted
+2026-11-04 at `rpi4` 6018671453). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -350,6 +350,7 @@ Pi-specific.
 | `c5f52af56b` ★ | SDIO data transfers; power-cycle the WiFi chip | CMD53 through the buffer port, any block size up to 2048. Block size and count go in one 32-bit write, because the Arasan controller can lose a write closely following another to the same register (Linux shadows them too). Errors reset the CMD/DAT lines, a busy command line is an error rather than a panic, and CMD52 may be sent while DAT is busy. `mmc_bus` gets CMD52/CMD53 operations for function drivers (block mode plus byte remainder), function block sizes and enable, and a 4-bit bus with high-speed timing. The card is power-cycled through the firmware GPIO expander (`WL_ON`). The mailbox gains `GET_GPIO_STATE` and accepts unmarked responses. |
 | `1be86daecf` | SDIO card attributes as `uint16` | Vendor and device IDs are published as `uint16`, like other buses. (The masking of the card interrupt in this commit was superseded by the next.) |
 | `4d12fd3908` ★ | Deliver the SDIO card interrupt | sdhci signals the card interrupt to a semaphore and keeps it masked until the function driver has serviced the card (only the card can clear the level). The MMC bus manager and the compat `sdio` bus pass it through. broadcomfmac waits on it instead of polling every 10 ms; a 100 ms poll remains as a safety net. WiFi round trip ~13 → ~9 ms. |
+| `6018671453` | **SDIO data blocks moved by the interrupt handler** | CMD53 polled the Present State register with `spin(1)` per block and `spin(10)` for transfer complete: 37–58 % of the busy CPU time during WiFi transfers. Blocks of ≥ 256 bytes are now moved by the handler (acknowledge the latched bit, then move every block the level bit shows ready, so a lost edge cannot strand one); the caller sleeps until transfer complete and moves a block itself after 1 ms without its interrupt (never seen). Smaller blocks (firmware download, register windows) stay polled. CPU per MiB −34 % up / −31 % down, TCP rate unchanged ([design/perf-round-h20.md](design/perf-round-h20.md) N7). |
 | `d018d9dfe1` | SDIO high speed up to 50 MHz | The Pi's WiFi controller gets 41.67 MHz (250 MHz ÷ 6). The chip's RAM still reads back intact. WiFi downloads ~29 → ~38 Mbit/s. |
 
 ---
