@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # build.sh [jam args...] — build Haiku arm64 in sources/haiku/generated.arm64 under the heavy-build
 # guard (default target: @minimum-mmc), then make the Pi SD image (scripts/mkimage-pi4.sh; for
-# @pi-mmc, the regular image: artifacts/images/haiku-pi4-regular.img, or $PI_IMAGE_OUT; @nightly-mmc:
-# -nightly.img).
+# @pi-mmc, the regular image: artifacts/images/haiku-pi4-regular.img; @minimum-mmc (and other mmc
+# profiles): haiku-pi4.img — either one $PI_IMAGE_OUT instead, if set; @nightly-mmc: -nightly.img).
 # Log: artifacts/build/<ts>.log; prints the log's warnings count and the JAM rc.
 #
 #   scripts/build.sh --generated DIR [jam args...]
 #       build in another configured output directory DIR instead (a worktree's generated.arm64, for
 #       an A/B image from a branch without touching the main checkout's build); its images are
-#       DIR/haiku-pi4*.img (@pi-mmc: PI_IMAGE_OUT, if set)
+#       DIR/haiku-pi4*.img (PI_IMAGE_OUT, if set, except for @nightly-mmc)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 gen="$root/sources/haiku/generated.arm64"
@@ -49,5 +49,5 @@ case " $* " in
 		&& head -n 1 "$log.mkimage" ;;
 *mmc*)
 	"$root/scripts/mkimage-pi4.sh" --in "$gen/haiku-mmc.image" \
-		--out "$imgdir/haiku-pi4.img" > "$log.mkimage" && head -n 1 "$log.mkimage" ;;
+		--out "${PI_IMAGE_OUT:-$imgdir/haiku-pi4.img}" > "$log.mkimage" && head -n 1 "$log.mkimage" ;;
 esac
