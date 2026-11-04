@@ -343,7 +343,13 @@ sessions on stock `rpi4` (`artifacts/uart/20261104-160035-session-usbrepro.log`,
   queued when the teardown ran. Port power on the VL805 is not a real SuperSpeed unplug.
 
 **Bench** (`scripts/boot-bench.sh 40 IMG --netboot --label usbstall`, graded with `scripts/usb-boot-grade.sh`;
-stick plugged, no file system on it, image `rpi4` 6018671453 = hrev60314+274): running, 3 of 40 done at 16:55 (all: desktop, keyboard, mouse, stick enumerated once, 0 USB error lines); counts follow when it ends.
+stick plugged, no file system on it, image `rpi4` 6018671453 = hrev60314+274): **40/40** reached the desktop with the USB keyboard and mouse working (their input_server watcher threads in the
+debugger's thread list) and the stick enumerated exactly once; **0** re-enumerations, **0** xHCI/usb_disk error lines,
+0 stalls (`artifacts/uart/20261104-155411-usbstall-t1.log` … `20261104-234306-usbstall-t40.log`). With e5efe6f717
+(`scripts/boot-bench.sh 20 … --label usbfix`, hrev60314+274+dirty, the same image plus the fix): **20/20**, the same grades
+in every column. Read with the base rate above: the trigger did not occur in these 60 boots (as expected at ~1 in
+1 000), so this shows neither change hurts a normal boot with the stick, not that the stall is gone. If the 1/57 of
+N6 had been the true stall rate, 0/40 would still leave p ≈ 0.49 of chance (0.98^40); at the archive's rate, ≈ 0.98.
 
 **Still open:**
 - The ghost device: a SuperSpeed root port whose PORT_POWER is cleared never reports the disconnect to the hub
