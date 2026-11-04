@@ -588,8 +588,10 @@ hubs, keyboards, mice and storage. `listusb` lists the devices.
   The serial log line "no handlers" for the keyboard is its second, multimedia-keys interface, and
   is harmless. Typing, pointing and everyday desktop use were checked by hand on 2026-10-25 (the bench's
   Logitech K120 and Pixart mouse).
-- USB storage: a stick appears as `/dev/disk/usb/0/0/raw`. Raw reads from a USB 3 stick ran at
-  **78–90 MB/s** (2026-10-18/19).
+- USB storage: a stick appears as `/dev/disk/usb/0/0/raw`. From image-2026-11-04b, reads run at 60–81 MB/s and
+  writes at 49 MB/s with correct data (2026-11-04). **Images up to image-2026-11-04 corrupt USB disk data** (no cache
+  maintenance for the transfers; KNOWN-ISSUES C13): update before writing to a USB disk, and re-create file systems
+  older images wrote.
 - Mounting a stick's file system (FAT, BFS, ...) uses Haiku's ordinary mounting, but it has not been
   tried on the Pi: only raw reads were measured. Hot-plugging is untested.
 

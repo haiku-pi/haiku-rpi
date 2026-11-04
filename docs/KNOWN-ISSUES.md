@@ -10,13 +10,14 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-11-04 04:15** (the newest entry: 2026-11-03 23:15).
+Checked against the weekly logs up to **2026-11-04 11:00** (the newest entry: 2026-11-03 23:15).
 
 ## 1. Correctness: crashes and hangs
 
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
-| C13 | **USB storage: inconsistent reads from the bench's USB stick (under investigation, 2026-11-04)** — the same 1 MiB read twice returned different data, a fresh BFS on it would not mount, and one boot stalled on its transfer errors (`usb_disk: sending the command block wrapper failed`, xHCI `USB transaction` errors). Not yet known whether the stick is failing or our USB stack is at fault; a comparison under Linux on the same Pi is running. Read speeds measured earlier (78–90 MB/s) were never checked for data integrity. | Seen with one SanDisk Ultra stick | Do not keep data you need only on a USB disk until this is settled | W45: 11-04 08:30 |
+| C13 | **Images up to image-2026-11-04 corrupt data on USB disks — fixed in image-2026-11-04b; update.** The xHCI driver did no cache maintenance for USB disk transfers and the Pi 4's USB controller does not see the CPU caches, so reads returned stale data and writes stored stale memory, on any USB disk and without an error in the log (the bench stick itself is fine: Linux on the same Pi reads and writes it correctly). Fixed by haiku eabad7a921 + b90cb3f0d4 ([design/usb-storage-integrity.md](design/usb-storage-integrity.md)). A USB disk written by an older image may hold a corrupt file system (see C14). | Every USB disk, images up to image-2026-11-04 | Use image-2026-11-04b or later; re-create file systems written by older images | W45: 11-04 11:00 |
+| C14 | **A corrupt BFS volume (e.g. a USB disk written before image-2026-11-04b) can panic the kernel at boot** while its failed mount is cleaned up (`block_cache::FreeBlock` / `block_cache_delete()`), 4 of 4 boots with one such stick plugged in. | When such a volume is attached at boot | Unplug it; re-create its file system (`mkbfs`) on a fixed image | W45: 11-04 11:00 |
 | C4 | **The media kit's audio time source published nothing for 16 s** under the 15-minute application soak (Firefox + SuperTuxKart + 1080p HEVC). This used to crash MediaPlayer's video producer; the crash is fixed (time conversions in double precision), the stall itself is unexplained. Not seen since: 10-24, the same 15-minute soak on image-2026-10-24d with a watcher on the time source (`tools/haiku-tests/tswatch.cpp`): while audio ran, its last publish was never more than 24 ms old; 0 crashes. | Once, in the first of three soak runs | — | W43: 10-20 10:00, 10-24 10:57 |
 
 ## 2. Graphics and UI

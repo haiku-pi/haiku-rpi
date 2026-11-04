@@ -39,7 +39,7 @@ number with its test.
 - **Ethernet:** a new GENET driver, TCP **~915 Mbit/s each way** (10-20; from 623 up / 250 down on day one).
 - **WiFi:** the BCM43455 over SDIO with OpenBSD's `bwfm` driver: WPA2, DHCP, **37 Mbit/s up / 46 down** (10-19).
 - **Storage:** SD card at UHS-I DDR50, **43 MB/s** reads (10-20; from 10.5 MB/s at default speed); USB 3
-  storage through the PCIe-attached VL805 at **78–90 MB/s** (10-18).
+  storage through the PCIe-attached VL805: reads 60–81 MB/s, writes 49 MB/s with verified data (11-04; images before 11-04b corrupted USB disk data, KNOWN-ISSUES C13).
 - **GPU:** an in-kernel V3D driver with Linux's `v3d` interface, Mesa 26.2: windowed OpenGL ran 5 minutes
   at **485.6 fps, 0 GPU resets** (10-18); a zero-copy present path made an 800×800 GL window **3.8× faster**
   (39.9 → 151.8 fps); the GPU's queues run concurrently (11-03), and full-screen GL is flipped on a display

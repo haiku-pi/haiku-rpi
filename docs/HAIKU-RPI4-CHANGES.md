@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **256 commits of its own** (2026-10-18 to 2026-11-04; counted
-2026-11-04 at `rpi4` a9db442988). To list them, in `sources/haiku`:
+On top of that base the fork carries **258 commits of its own** (2026-10-18 to 2026-11-04; counted
+2026-11-04 at `rpi4` b90cb3f0d4). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -102,6 +102,7 @@ section for its area gives the detail.
 | 43 | **A dying team deleted an exited thread's stack while its other threads still ran** | `e09cfa1d9e` | The thread that takes a team-ending signal (SIGTERM) exits at once; its stack area was deleted before the main thread had killed the others, which may still use objects on it (a pool's idle list with entries on each idle thread's stack): a segment violation in a team already going down. The area now goes with the team's address space while the team is going down; `killrace` test 20/20 faults → 0/30. |
 | 44 | **Image notifications lost their pointer on 64-bit** | `f6c52282df` | The image monitor event was built in 128 bytes; two int32 fields and the `imageStruct` pointer need 132 with 64-bit pointers, so the pointer was left out and the system profiler dropped the event: `profile -a` could not resolve any program started after it (65 % of a desktop session's busy ticks "unknown"). Every 64-bit architecture. Pi: unknown ticks 14.13 % → 0.01 %. |
 | 45 | **Each BFS write walked the whole open journal transaction** | `a9db442988` | `cache_start_sub_transaction()` visited every block of the combined transaction (up to half the log, 2043 blocks) at every sub-transaction start: O(n²) per combined transaction, 0.6–1.0 s of CPU in a Firefox first start on the Pi 4. It now visits only the blocks changed since the previous start; the same disk writes in the same order (power-cut and disk-full tests, a check build comparing with the full walk). Every architecture, every journaled block-cache user. |
+| 46 | **xHCI did no cache maintenance for physical (disk) transfers** | `eabad7a921`, `b90cb3f0d4` | usb_disk hands the controller its callers' memory directly; on a controller that does not snoop the CPU caches (the Pi 4's VL805 behind PCIe) reads returned stale data and writes stored stale memory, silently. The xHCI driver now cleans and invalidates each fragment before the controller sees it and again after an IN transfer; usb_disk keeps buffers 64-byte aligned on arm64 (misaligned ones are bounced, a shared cache line would be overwritten). Assumes non-snooping on all arm64, as the stack's own DMA memory already does. |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
@@ -351,6 +352,7 @@ The xHCI driver works behind the PCIe driver above with a diagnostic and one rin
 
 | commit | change | what and why |
 |---|---|---|
+| `eabad7a921`, `b90cb3f0d4` ★ | **Cache maintenance for USB disk transfers** | Before: every USB disk read stale data and wrote stale memory (Linux on the same Pi: correct). xHCI cleans/invalidates each physical fragment before submission and after IN completion; usb_disk 64-byte aligned buffers on arm64. Pi: repeated reads equal Linux's, Haiku-written data verified under Linux, BFS mkfs/copy/remount/checkfs clean ([design/usb-storage-integrity.md](design/usb-storage-integrity.md)). |
 | `71bc709601` | USB stack DMA below 3 GiB and non-cacheable on arm64 | The VL805 reaches only the first 3 GiB and does not snoop. This is applied to the stack's DMA areas on all of arm64 for now, **until the limits are taken from the host controller itself**. That makes it a stopgap, not upstreamable as is. |
 | `1d44b00380` ★ | xHCI: show the endpoint ring on a TRB error | Prints the event's TRB pointer and the ring, which identify the rejected TRB. Seen intermittently on a HID interrupt endpoint of the VL805. |
 | `afb2823bb5` ★ | USB: explore a new bus in the explore thread, not in its `Start()` | `BusManager::Start()` explored the new bus at once. On the Pi 4 the xHCI's `init_bus()` took 1.56 s of port resets and enumeration inside the device manager's initial scan, before the boot volume could be mounted. The explore thread does it now while the boot goes on; a USB boot disk published late is waited for by `get_boot_partitions()`, and other devices are hot-plugged as always. Boot volume mounted 5.8 s after the kernel starts, was 7.1 s. |

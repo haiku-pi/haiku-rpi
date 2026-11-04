@@ -98,9 +98,9 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 | Component | Haiku driver | Status | Measured (date) | Limitations / missing |
 |---|---|---|---|---|
 | PCIe root complex | `busses/pci/brcmstb` | ✅ | full reset + link training (U-Boot tears PCIe down), link gen 2 ×1 (10-18) | DMA below 3 GiB; USB DMA memory is non-cacheable on arm64 ("usb: on arm64, allocate DMA memory below 3 GiB and non-cacheable") |
-| VL805 xHCI | upstream `busses/usb/xhci.cpp` (+ VL805 workarounds: completed ring entries cleared, TRB overfetch padding, firmware version logged — 0x0138c0 on the bench); VL805 firmware check/notify through the mailbox in `brcmstb` | ✅ | USB 3 stick 78–90 MB/s (10-18), 68–82 (10-24); 40/40 cold boots without a hub timeout (10-24; was ~1 in 10) | — |
+| VL805 xHCI | upstream `busses/usb/xhci.cpp` (+ VL805 workarounds: completed ring entries cleared, TRB overfetch padding, firmware version logged — 0x0138c0 on the bench; cache maintenance for disk transfers from image-2026-11-04b); VL805 firmware check/notify through the mailbox in `brcmstb` | ✅ | USB 3 stick reads 60–81 MB/s, writes 49 MB/s with correct data (11-04; the earlier 78–90 MB/s (10-18) and 68–82 (10-24) moved corrupted data, KNOWN-ISSUES C13); 40/40 cold boots without a hub timeout (10-24; was ~1 in 10) | — |
 | USB HID (keyboard, mouse) | upstream `usb_hid` | 🟡 | a Logitech K120 keyboard and a Pixart mouse enumerate and publish `/dev/input/keyboard/usb/0`, `/dev/input/mouse/usb/0` (10-20); typing and pointing checked by hand on the desktop (owner, 10-25) | Not yet checked by hand in SDL games |
-| USB mass storage | upstream `usb_disk` | ✅ | published as `/dev/disk/usb/0/0/raw` (10-18) | — |
+| USB mass storage | upstream `usb_disk` (+ cache-line aligned buffers on arm64) | ✅ from image-2026-11-04b | raw reads repeatable and equal to Linux's on the same Pi; Haiku-written data verified under Linux (0 differing bytes in 64 MiB); BFS mkfs, mount, 329 MB copy, remount, checkfs clean; reads 60–81 MB/s, writes 49 MB/s (11-04) | **Images up to image-2026-11-04 corrupted USB disk data** (no cache maintenance in xHCI; KNOWN-ISSUES C13) |
 
 ## 10. Ethernet and network services
 
