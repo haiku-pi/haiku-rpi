@@ -10,7 +10,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-11-04** (the newest entry: 2026-11-03 23:15).
+Checked against the weekly logs up to **2026-11-04 04:15** (the newest entry: 2026-11-03 23:15).
 
 ## 1. Correctness: crashes and hangs
 
@@ -48,7 +48,6 @@ Checked against the weekly logs up to **2026-11-04** (the newest entry: 2026-11-
 | F7 | **WebPositive**: the Web Inspector's resources are not installed — as on x86 Haiku: the HaikuPorts recipe does not install them either. (Its user agent, "Macintosh; Intel Haiku/…", is upstream's deliberate Safari-compatible string — Safari on Apple Silicon Macs also says "Intel" — so it stays.) | — | — | W43: 10-19 23:40; "Next" item 6 |
 | F8 | **Network boot moves 1 KiB per request** (16 requests in flight in the kernel for reads, and since haiku 84fd3835a4 for writes too: ~70 MB/s synced, was 2.9; 8 in flight in the loader), and is not an NFS root: Haiku boots from a block device. Images before image-2026-10-23c write one request at a time. | — | — | [design/netboot.md](design/netboot.md); W43: 10-23 16:30 |
 | F9 | **Haiku's Debugger on arm64 is mostly complete** (back end 10-23; breakpoints, stepping, watchpoints and disassembly 10-29, haiku rpi4 e944a1ab38…3c4a73f4dd, from image-2026-10-29b; checked on the Pi 9 of 9; the command line's `stop`/`bt` race fixed in image-2026-10-29c): it attaches, stops threads, prints stacks and variables, sets breakpoints (6 hardware ones, then `brk #0`), single-steps, steps over/into/out, has 4 watchpoints (1–8 bytes; reads, writes or both) and shows disassembly (NetBSD's disassembler) and reads DWARF 5 (from image-2026-11-03b: source lines, variables, stacks of today's GCC output); the command line interface has `break`, `step`, `next`, `finish`. Left: static class members are not shown with DWARF 5; `quit` can hang the command line Debugger (2 of 12 sessions, older Debugger too); the CLI steps instructions, not source lines (it loads no source); the Debugger assumes 4 watchpoints (the kernel refuses more if a CPU has fewer). In image-2026-10-23c and before the Debugger cannot attach at all; up to image-2026-10-29 it has no breakpoints or stepping. | Always | `Debugger --save-report=FILE --team ID`; the crash's stack trace in /var/log/syslog | W43: 10-23 18:18, 19:51; W44: 10-29 03:58 |
-| F10 | **Short programs start up to 1.7× slower after the first minutes of uptime.** The ARM clock driver raised the clock by the busiest core only; a chain of short processes (a shell script, a build, `configure`) spreads over the four cores at about a quarter each, so the shared clock stayed at 750–1200 MHz: fork+exec 6.6–8.0 ms instead of 4.7 (the first ~2 minutes after power-on run at 1500 MHz anyway). Fixed on rpi4 in 83db805485 (the driver also sums the cores' load), after image-2026-11-03c: 1.03× of the fresh state. | Every chain of short programs on an otherwise light system | — | W45: 11-03 22:21, 23:15; [design/perf-round-h20.md](design/perf-round-h20.md) C0b |
 
 ## 5. Windows programs (Wine)
 

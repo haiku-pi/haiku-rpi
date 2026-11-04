@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **254 commits of its own** (2026-10-18 to 2026-11-03; counted
-2026-11-04 at `rpi4` 83db805485). To list them, in `sources/haiku`:
+On top of that base the fork carries **255 commits of its own** (2026-10-18 to 2026-11-04; counted
+2026-11-04 at `rpi4` 162164220d). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -594,6 +594,7 @@ repo builds and publishes. The notes say what a bump fixed, where it fixed somet
 | `0c09391cfc` | ncurses6 6.6-1 | Built with the packaged prefix ([../scripts/build-ncurses.sh](../scripts/build-ncurses.sh)), so the terminfo database is `/boot/system/data/terminfo`. It replaces the bootstrap ncurses6 and the shim that gave it its database path. |
 | `b59f1c957f` | gcc 16.2.0_2026_11_01-1, binutils 2.46.1-1, make 4.4.1-1 | The development image (`-sHAIKU_PI_DEV=1`) gets the native GCC 16.2 and released binutils and make instead of the bootstrap gcc 13.3, binutils 2.41 and make of the arm64 bring-up ([design/native-gcc.md](design/native-gcc.md)). |
 | `461104856d` | mesa 26.2.6-2 (GCC 16.2) | GPU stage 6: full-screen GL frames flipped on an overlay plane (vsync'd flips with swap interval 1, a mailbox of four buffers with 0) and libglvnd's `hgl_native_window_shows_overlays()` ([design/gpu-stage6.md](design/gpu-stage6.md)). |
+| `162164220d` | mesa 26.2.6-3, libsdl2 2.32.10-6 | Windowed GL frames paced to the display with swap interval 1 (mesa 1595aba36ec) and the v3d variant-cache hash without BLAKE3 (ebf1ee1ff1b); SDL2 passes the program's `SDL_GL_SetSwapInterval` on (it always swapped unsynchronised): games that ask for vsync run at the display rate ([design/perf-round-h20.md](design/perf-round-h20.md) N3). |
 | `bb0cbab1f7` | mesa 26.2.0-6, glu 9.0.3-6, openarena 0.8.8-4 | mesa: the EGL driver's presenter thread no longer ends on an interrupted semaphore wait (a program whose signal handler ran on that thread then waited for it at its next frame for ever). openarena: ioq3's SIGTERM handler returns instead of running on into `Sys_Error()`. |
 | `cb96327eec` | mesa 26.2.5-1 | |
 | `f16c822de5` | mesa 26.2.5-3 | The on-disk shader cache (a GL program's shaders compile once, not at every start). |

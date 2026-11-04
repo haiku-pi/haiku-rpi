@@ -231,6 +231,11 @@ From image-2026-11-03c a full-screen OpenGL program's frames are flipped on a di
 dropped frames. `HAIKU_EGL_OVERLAY=0` turns the planes off for one program (frames are copied as before);
 `HAIKU_EGL_OVERLAY=1` uses them for windows too, not only full screen.
 
+From image-2026-11-04 a GL program that asks for vsync (swap interval 1, EGL's default; SDL games with their
+vsync setting on, e.g. SuperTuxKart and Yamagi Quake II) draws one frame per display refresh in a window too:
+SuperTuxKart's menu runs at 60 fps and needs about a third of the CPU it took at 130. Turn vsync off in the game
+for uncapped frame rates; `HAIKU_EGL_SWAP_INTERVAL=0` forces it off for one program.
+
 ## 6. Games
 
 ### 6.1 What exists
