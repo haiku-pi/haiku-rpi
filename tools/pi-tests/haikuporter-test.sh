@@ -5,11 +5,16 @@
 # ports' download/ directories on the host; the tools of scripts/build-bootstrap-tools.sh and the python
 # modules of scripts/build-python-modules.sh also added): builds ports natively with haikuporter, one by
 # one, activates each package and runs the program it provides. Serial console lines: "HPT ".
-sleep 15
-out=/dev/dprintf
-say() { echo "HPT $*" > $out; }
+# In a network session (scripts/pi-session.sh; the staged trees copied with scripts/pi-ssh.sh put) run by hand:
+# `HPT_OUT=- HPT_CLOCK=<epoch> sh haikuporter-test.sh [PORT...]` (no boot delay; the clock from the
+# host, the image's file time is that of the session image; the lines go to stdout: HPT_OUT=-).
+[ -n "$HPT_OUT" ] || sleep 15
+out=${HPT_OUT:-/dev/dprintf}
+say() { if [ "$out" = - ]; then echo "HPT $*"; else echo "HPT $*" > $out; fi; }
 # the cross-built python3.10 package: see devtools-test.sh
-export LIBRARY_PATH="$LIBRARY_PATH:/boot/system/develop/lib"
+# (a LIBRARY_PATH replaces the loader's default for add-ons: with only develop/lib, `package` fails with "Cannot
+# open file libicudata.so.74 (needed by libroot-addon-icu.so)" once icu is on the image, so the system lib too)
+export LIBRARY_PATH="/boot/system/develop/lib:/boot/system/lib"
 export PYTHONHOME=/boot/system
 # its missing compression modules (scripts/build-python-modules.sh)
 export PYTHONPATH=/boot/system/non-packaged/lib/python3.10/lib-dynload
@@ -17,8 +22,9 @@ tree=/boot/system/non-packaged/haikuports
 # no network here, so no NTP: a clock at 1970 makes every source file "newer than now", and make then
 # remakes what the tarball ships prebuilt (gperf's manual: texi2pdf). Set it from the image instead:
 # mkimage-pi4.sh writes this script into it, so the file's time is when the image was made.
-date -s "@$(stat -c %Y /boot/home/config/settings/boot/UserBootscript)" > /dev/null 2>&1
+date -s "@${HPT_CLOCK:-$(stat -c %Y /boot/home/config/settings/boot/UserBootscript)}" > /dev/null 2>&1
 say "clock: $(date)"
+say "gcc: $(gcc --version 2>&1 | head -n 1) as: $(as --version 2>&1 | head -n 1)"
 cat > /boot/home/config/settings/haikuports.conf <<CONF
 TREE_PATH="$tree"
 PACKAGER="haiku-pi build farm <build@haiku-pi.invalid>"
@@ -36,6 +42,7 @@ for test in \
 	"hoedown|echo '# Hello *Haiku* on the Pi' | hoedown" \
 	"gperf|printf 'haiku\\npi\\n' | gperf | grep -c in_word_set"
 do
+	[ $# -eq 0 ] || case " $* " in *" ${test%%|*} "*) ;; *) continue ;; esac
 	port=${test%%|*}
 	say "building $port"
 	start=$(date +%s)
@@ -58,5 +65,7 @@ do
 	waited=0
 	while [ $waited -lt 30 ] && ! command -v $port > /dev/null 2>&1; do sleep 2; waited=$((waited + 2)); done
 	say "$port run (after ${waited} s): $(sh -c "${test#*|}" 2>&1)"
+	# the compiler that made the binary (its .comment section)
+	say "$port comment: $(readelf -p .comment "$(command -v $port || echo /nonexistent)" 2>&1 | grep -a 'GCC:' | sort -u | tr '\n' ';')"
 done
 say end

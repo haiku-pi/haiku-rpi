@@ -113,13 +113,71 @@ API, LTO, OpenMP, PCH, gcov, `-static-libgcc`, Fortran, C calling Fortran, CMake
 `dev-tools.sh` with this compiler: **DEV end 23/23**, `DEV gcc 16.2.0` (make, CMake + Ninja and Meson builds of C++
 projects, `pip install` of a pure and of a Cython package compiled by gcc 16.2). Logs in `artifacts/native-gcc-pi/`.
 
+## haikuporter on the Pi with gcc 16.2 (2026-11-04)
+
+The last check of H18: HaikuPorts recipes built **natively on the Pi by haikuporter with the gcc 16.2 package**, not the
+bootstrap 13.3 of the 10-21 runs (hoedown 37 s, gperf 52 s).
+
+- **Image**: `PI_IMAGE_OUT=… scripts/build.sh -sHAIKU_PI_DEV=1 @minimum-mmc` (haiku b59f1c957f + `build/jam/repositories/
+  HaikuPorts/arm64`: gcc 16.2.0_2026_11_01, gcc_syslibs and `_devel` 16.2, binutils 2.46.1, make 4.4.1, haikuporter 0_bootstrap,
+  python3.10 bootstrap, hrev60314_261), built incrementally in about 4 min; the build log's only `not available` lines: **bc and
+  wget**, as before. (`build.sh` writes an `@minimum-mmc` image as `artifacts/images/haiku-pi4.img`; `PI_IMAGE_OUT` only applies
+  to `@pi-mmc`: the file was renamed to `haiku-pi4-dev16b.img`.)
+- **Pi**: a network session (`scripts/pi-session.sh`, then `scripts/pi-ssh.sh`) on that image: `gcc (2026_11_01) 16.2.0`, `GNU
+  assembler (GNU Binutils) 2.46.1`. Staged by `scp`: the bootstrap tools (patch, tar, gzip, xz, bzip2, diff: `build-bootstrap-tools.sh`),
+  the python compression modules (`build-python-modules.sh`) and the trimmed HaikuPorts tree `artifacts/haikuports-min` (hoedown
+  and gperf with their sources; the whole tree costs ~9 min of recipe parsing per port); the clock set from the host (no NTP in
+  the 1970 state of a network boot); `tools/pi-tests/haikuporter-test.sh` run by hand (`HPT_OUT=- HPT_CLOCK=<epoch> sh
+  haikuporter-test.sh [PORT...]`), `haikuporter -G -y -j4 --no-source-packages PORT` in haikuporter's chroot, then `pkgman install FILE`.
+  Logs and packages: `artifacts/haikuporter-gcc16/`.
+
+| recipe | result | time | package | run |
+|---|---|---|---|---|
+| hoedown 3.0.7 (C) | built | **53 s** | `hoedown-3.0.7-4-arm64.hpkg` 164 kB + `hoedown_devel` 4.9 kB | `echo '# Hello *Haiku* on the Pi' \| hoedown` -> `<h1>Hello <em>Haiku</em> on the Pi</h1>`; `hoedown --version` "Built with Hoedown 3.0.7" |
+| gperf 3.1 (C++, one patch), recipe as HaikuPorts has it | **failed** | 32 s | none | see below |
+| gperf 3.1, recipe revision 2 (`CFLAGS="-O2 -std=gnu17"`) | built | **45 s** | `gperf-3.1-2-arm64.hpkg` 204 kB | `gperf --version` "GNU gperf 3.1"; generates the C hash function for `haiku`/`pi` |
+
+Both binaries carry `GCC: (2026_11_01) 16.2.0` in `.comment` (`readelf -p .comment`), so they were made by the new compiler. The
+times are not comparable one to one with 10-21 (there an SD boot, here a network boot and ssh; hoedown +16 s, gperf -7 s): same
+order, nothing slower in kind.
+
+**GCC 16 issue, the recipe's (not ours)**: gperf 3.1's old gnulib copy `lib/getopt.c` declares `extern int strncmp ();` and
+`extern int getopt ();`. GCC 15 and later compile C as **C23** (`-std=gnu23`), where an empty parameter list means `(void)`:
+
+```
+./getopt.c:611:14: error: too many arguments to function 'strncmp'; expected 0, have 3
+./getopt.c:198:12: note: declared here
+  198 | extern int strncmp ();
+./getopt.c:927:1: error: conflicting types for 'getopt'; have 'int(int,  char * const*, const char *)'
+./getopt.h:105:12: note: previous declaration of 'getopt' with type 'int(void)'
+```
+
+Any build of the unchanged recipe with GCC 15+ hits it (HaikuPorts will when its default compiler moves up); the gperf 3.1 source
+is simply pre-C23. The fix is in the recipe: build the C part as C17 (`export CFLAGS="-O2 -std=gnu17"`
+before `runConfigure`, revision 2). Other gcc 16 output, all warnings and none fatal: hoedown 4 (`-Wenum-int-mismatch` x3,
+`-Wmisleading-indentation`), gperf 3 (`-Wregister` for the C++ `register` keyword, `-Wbuiltin-declaration-mismatch`); no C++20 default
+problem (gperf compiles as gnu++20).
+
+**Two traps found on the way (ours, fixed in the scripts)**:
+- A `LIBRARY_PATH` that holds only `/boot/system/develop/lib` (what `haikuporter-test.sh` set for the bootstrap python3.10) **replaces** the
+  loader's default for add-ons: once icu74 is on the image (`libroot-addon-icu.so`), every `package` command run by haikuporter
+  dies with `Cannot open file libicudata.so.74 (needed by …)`, and haikuporter exits 1 after 2 s. The test now sets
+  `/boot/system/develop/lib:/boot/system/lib`.
+- The minimum/development image has one login, **`baron`**, not `user` (the regular images): `pi-session.sh` waited its 300 + 900 s
+  for an ssh that was refused (publickey) while the Pi was up with sshd. `PI_SSH_USER=baron` now selects it in `pi-ssh.sh` and
+  `pi-session.sh`.
+
+**Result: H18's last check is met** (gcc 16.2.0 natively on the Pi builds a C and a C++ HaikuPorts recipe with haikuporter into
+installable packages whose programs run). Not covered: building recipes against the full HaikuPorts tree (recipe parsing time),
+recipes needing more build dependencies than the bootstrap set (cmake, ninja, meson are not in this chroot's set).
+
 ## Not done yet
 
 - **Replacing the bootstrap gcc 13.3 in the dev profile** (`HAIKU_PI_DEV`): `build/jam/repositories/HaikuPorts/arm64`
   now lists `gcc-16.2.0_2026_11_01-1`, `binutils-2.46.1-1`, `make-4.4.1-1` (the hpkgs in `generated.arm64/download/`);
   haiku b59f1c957f. The dev image built with them (no new `not available` line: bc and wget, as before) boots in
   QEMU and passes native-gcc.sh **19/19** (the Fortran and CMake checks skip: no gcc_fortran/cmake in that image;
-  log artifacts/qemu/20261103-074747-virt.log) (2026-11-03).
+  log artifacts/qemu/20261103-074747-virt.log) (2026-11-03). On the Pi (2026-11-04): gcc 16.2.0 from the dev image builds hoedown and gperf with haikuporter (section above).
 - **haiku_devel in the repository**: programs that use Haiku's headers and libraries (`libroot`, `libbe`, every C program's
   `<stdio.h>`) need the `haiku_devel` package of the same build as the running system (`haiku_devel` requires `haiku ==`
   its own version). Published with each release from image-2026-11-03b on, the newest release's only

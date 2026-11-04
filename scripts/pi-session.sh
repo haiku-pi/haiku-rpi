@@ -14,6 +14,7 @@
 # powered off and the other project's netboot server restored). The serial log is the cycle's
 # (artifacts/uart/<ts>-session-<label>.log); HDMI frames every 5 minutes.
 # The key: artifacts/pi-session/id_ed25519, made on the first start (never in git).
+# The login is "user"; the minimum/development image has only "baron": PI_SSH_USER=baron (also for pi-ssh.sh).
 # A Pi that has been off for a while can freeze in its first minutes (KNOWN-ISSUES C10, ~1 in 3): when ssh does
 # not answer within 300 s (counted once the cycle has the bench lock), the cycle is ended and the session started
 # once more (the next boot works);
@@ -44,7 +45,7 @@ wait_up() {
 		ulog=$(ls -t "$HAIKU_RPI_ROOT"/artifacts/uart/*-"$label".log 2>/dev/null | head -n 1) || true
 		ip=$([ -n "$ulog" ] && grep -a -o 'PIS sshd: exit 0, inet addr: [0-9.]*' "$ulog" | tail -n 1 | awk '{ print $NF }') || true
 		if [ -n "$ip" ] && ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-			-o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "user@$ip" true 2>/dev/null; then
+			-o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "${PI_SSH_USER:-user}@$ip" true 2>/dev/null; then
 			grep -q "^ip=" "$state" || echo "ip=$ip" >> "$state"
 			echo "pi-session: up at $ip after $t s (scripts/pi-ssh.sh CMD; scripts/pi-session.sh stop)"
 			return 0
