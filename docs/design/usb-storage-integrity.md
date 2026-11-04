@@ -210,7 +210,9 @@ Observations:
   `B_DEVICE_ADDED` (the stick enumerated at ~45 s, after mount_server started), where removable disks use "all
   volumes" (`AutoMounter.cpp:452-460`). Three stock boots today (`c14A2`–`c14A4`, stick published at ~39.6 s)
   never tried: the initial scan uses the normal mode, "previously mounted volumes" (`AutoMounter.cpp:171-186`).
-  So whether a corrupt stick stopped a boot depended on enumeration timing; with the fix it no longer matters.
+  So whether a corrupt stick stopped a boot depended on enumeration timing. The Pi tests above therefore used
+  `mount` and `mountvolume`, which reach the same `fs_mount()` → `bfs_mount()` → `Volume::Mount()`; the
+  boot-time trigger itself was not reproduced today with either kernel.
 - **A failed mount still writes.** Deleting the journal flushes the repair: after the first failed mount the
   stick's first 64 MiB had changed (sha `6901b9972f755ff2`), and later mounts no longer repaired anything. This is
   what an `Unmount()` would write too, and BFS's normal mount-time repair; not changed.
@@ -255,9 +257,13 @@ UART logs. The stick's first 16 MiB were zeroed afterwards (read back as zeros):
 before; the pattern at 20 000 MiB remains (the one at 1024 MiB is now BFS data).
 
 **Bench incident (c14B2, ~10:56):** `mountvolume -all` also mounted the **SD card** (`/dev/disk/mmc/0/1`, the
-mega22 card, BFS read-write, and its FAT) for about a minute before it was unmounted. BFS writes nothing at mount
-or unmount without a transaction, no log replay was reported, and nothing ran on the volume, so the card is
-most likely unchanged, but this was not verified. Use `mount DEV DIR`, not `mountvolume -all`, on the bench.
+mega22 card, BFS read-write, and its FAT) for about a minute before both were unmounted (exit 0). **The FAT
+partition was written:** a read-write FAT mount sets the volume's dirty bit in the FAT and a clean unmount clears
+it (`fat/kernel_interface.cpp:3534`, `:3573`, `markvoldirty()`), so its content should be back as it was. BFS
+writes nothing at mount or unmount without a transaction and reported no log replay or repair; nothing was run
+on either volume, but Tracker activity on a newly mounted volume was not ruled out. Not verified: re-run the
+mega22 card boot check (the 09:57 one predates this) before the card is used. Use `mount DEV DIR`, never
+`mountvolume -all`, on the bench.
 
 Still open: the same window applies to any other PCIe bus master that DMAs into request memory (an NVMe disk on
 a CM4 board, say); the controller's cache coherency is still assumed per architecture (the TODOs of 71bc709601
