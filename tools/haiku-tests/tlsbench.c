@@ -2,7 +2,11 @@
  * tlsbench.c — the cost of a thread-local variable in a shared library (general-dynamic TLS, i.e. a call
  * to __tls_get_addr per access, as -fPIC code such as libpython does), next to a plain global.
  *
- *   tlsbench [MILLIONS]          (default 50 million accesses each)
+ *   tlsbench [MILLIONS [COPY]]   (default 50 million accesses each)
+ *
+ * COPY: a copy of libtlsbench.so under another name (e.g. ./libtlsbench2.so), dlopen()ed: its thread-local
+ * variable is then measured too. Since haiku n5-tls the library the program links is in the static TLS
+ * block (no generation check), a dlopen()ed one still in the dynamic thread vector.
  *
  * Build (cross): the same file is the library (-DTLSBENCH_LIB) and the program:
  *   g=sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-gcc --sysroot=artifacts/sysroot-arm64
@@ -10,6 +14,7 @@
  *   $g -O2 -o tlsbench tools/haiku-tests/tlsbench.c -L. -ltlsbench
  * Put libtlsbench.so next to the program in a lib/ directory, or into ~/config/non-packaged/lib.
  */
+#include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -64,6 +69,22 @@ main(int argc, char** argv)
 
 	printf("tlsbench: global %.2f ns, thread-local %.2f ns per call (%ld million; %ld)\n",
 		global * 1e9 / count, thread * 1e9 / count, count / 1000000, sum & 1);
+
+	if (argc > 2) {
+		void* library = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
+		long (*add)(long) = library != NULL
+			? (long (*)(long))dlsym(library, "tlsbench_thread_add") : NULL;
+		if (add == NULL) {
+			printf("tlsbench: cannot use %s: %s\n", argv[2], dlerror());
+			return 1;
+		}
+		start = now();
+		for (long i = 0; i < count; i++)
+			sum += add(1);
+		double dynamic = now() - start;
+		printf("tlsbench: dlopened thread-local %.2f ns per call (%ld)\n",
+			dynamic * 1e9 / count, sum & 1);
+	}
 	return 0;
 }
 

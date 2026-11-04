@@ -432,6 +432,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | C0b / N2 (bcm2835_cpufreq total load) | h20-imgevt → h20-startcost (haiku `startcost` 83db805485) | fork+exec 6.6–8.0 ms at ≥ 4 min uptime (4.6–4.7 in the first minutes) | 4.6–4.8 ms at any uptime, after Terminal / Firefox / STK quit; idle still 750 MHz | 3 network sessions, 11-03 22:23–23:12 | `artifacts/h20-c0b/`, `artifacts/uart/20261103-22*-session-h20-c0b*.log` |
 | N6 (BFS sub-transaction start walks only changed blocks) | worktree builds of `rpi4` 162164220d: A without, B with haiku `bfs-subtrans` a9db442988 | `cache_start_sub_transaction` 616 / 1055 ms CPU per Firefox first start; 289 ticks = 11.3 % of bfsmeta | 26 / 59 ms; 0 ticks; first window unchanged; check build clean; 6 power cuts like A (5) | 18 network boots, 11-04 05:50–07:05 | `artifacts/h20-n6/`, `artifacts/uart/20261104-0*-session-n6-*.log` |
 | N3 (windowed presents paced; SDL2 swap interval) | h20-startcost + mesa 26.2.6-3 A (`rpi4` ebf1ee1ff1b) / B (`paced-windows` 1595aba36ec) | STK menu (SDL2) 132 fps, game 81 % + app_server 45 % of a core, 32.7 % of 4 CPUs busy | with B + the SDL2 patch: 60 fps, 29 % + 12 %, 11.2 %; interval 0 unchanged (glmark2 331/332 → 332/332, games bench ±1 % or noise) | 1 network boot + 4 games-bench boots, 11-04 00:16–03:39 | `artifacts/uart/20261104-001649-n3-pace.log`, `artifacts/uart/20261104-*-gbn3[ab]-[12].log` |
+| N5 (TLS of start-up images without the generation check) | worktree builds of `rpi4` b90cb3f0d4: A without, B with haiku `n5-tls` 6e3bc0acd7 + 5b04609460 | python3 `sum(i*i…)` 1e7: `__tls_get_addr` 19.4 % of ticks, 12.87 G instructions, 7.97 G cycles, 5181 ms median; tlsbench 17.35 ns | 9.8 %, 11.60 G (−9.9 %), 7.65 G (−4 %), 5104 ms (−1.5 %); tlsbench 14.68 ns (a dlopen()ed library's 16.0 → 17.35 ns); TLS test PASS (A fails the 64-byte alignment) | 6 network boots A/B alternating + 1, 11-04 11:43–12:29 | `artifacts/h20-n5/`, `artifacts/uart/20261104-1*-session-n5-*.log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -536,7 +537,7 @@ steps.
 | N2 | process start 1.5–1.9× slower after GUI apps ran | fork+exec 4.6 → 6.8–8.7 ms, posix_spawn 3.4 → 4.9–6.7, fork+exit 1.0 → 2.3 ms; runtime-loader symbol work 20–29 % of ticks in the slow state | **done (C0b below):** not the apps — the cpufreq governor leaves the ARM at 750–1200 MHz for a fork/exec chain spread over four cores (the "fresh" state was the boot's busy minutes at 1500); fix: the clock also follows the CPUs' total active time (haiku `startcost` 83db805485): 1.03× of fresh | S |
 | N3 | windowed GL presents run unpaced | STK's menu: its main thread ~84 % of a core plus app_server's copy for its window 20.8 s CPU per ~60 s (~38 % of a core; ~190 fps derived, row 2) | pace windowed presents to the display (EGL swap interval 1 for windows by default; benchmarks set 0) | M |
 | N4 | v3d shader-variant cache hashes its key with BLAKE3 at every lookup — **done: mesa rpi4 ebf1ee1ff1b, ships with mesa 26.2.6-3 (Pi check: STK menu profile)** | 5.1 % of STK's CPU (`cache_hash` → `blake3_compress_*_portable`, from `_mesa_hash_table_search`) | `_mesa_hash_data` over key + the key's stored BLAKE3 instead of a fresh BLAKE3 (`v3d_program.c`); with the next Mesa revision | S |
-| N5 | TLS access through `__tls_get_addr` | 18.1 % of a busy python3; 2.3 % of STK (every GL call through glvnd) | TLS descriptors (TLSDESC) in runtime_loader, or initial-exec TLS for libpython / libGLdispatch | M |
+| N5 | TLS access through `__tls_get_addr` — **done: haiku `n5-tls` 6e3bc0acd7 + 5b04609460 (static TLS block for the images loaded at start, no generation check), §6 "N5 results": −9.9 % instructions, −4 % cycles of the Python loop; the 18 % share was mostly hidden latency** | 18.1 % of a busy python3; 2.3 % of STK (every GL call through glvnd) | TLS descriptors (TLSDESC) in runtime_loader, or initial-exec TLS for libpython / libGLdispatch | M |
 | N6 | BFS journal: sub-transaction start walks all blocks — **done: haiku `bfs-subtrans` a9db442988 (block cache tracks the blocks changed per sub transaction), §6 "N6 results"** | 2.9 s CPU of a Firefox first start; 3.1 s in the 196 s session | bound the combined transaction (Journal) or make the walk incremental (block cache) | S (bound) / M |
 | N7 | WiFi SDIO waits by spinning | `spin` + `system_time` 37–58 % of non-idle during transfers | interrupt-driven command completion in the SDHCI path | S–M |
 
@@ -894,6 +895,109 @@ and survived the check build's exhaustive comparison under create/unlink/attribu
 power cuts with A-like results (the only finding, leaked space of unlinked files, is A's too). Not exercised for certain: the detach path (a sub transaction that overflows the log),
 which the check build would catch when it happens. The image for a re-check: `haiku-pi4-n6.img` in the worktree's
 `generated.arm64` (job tmp, not kept).
+
+### N5 results: thread-local storage of the images loaded at program start without the generation check (2026-11-04 10:20–12:29)
+
+**Why arm64 code calls `__tls_get_addr()` at all** (code read + cross-compiled probes). Three causes, each enough:
+(1) GCC's Haiku spec forces the traditional dialect: `sources/buildtools/gcc/gcc/config/aarch64/aarch64-haiku.h:81-83`
+(`CC1_SPEC … %{!mtls-dialect: -mtls-dialect=trad}`), so no TLS descriptors; (2) **every** Haiku image, the program
+included, is linked as a shared object (`LINK_SPEC "… %{!r:-shared} …"`, same file: a probe `__thread int x; int
+main(){return x++;}` gives `Type: DYN`, `R_AARCH64_TLS_DTPMOD64`/`DTPREL64` and `bl __tls_get_addr@plt`), so the
+linker never relaxes an access to initial-/local-exec, not even the program's own; (3) Haiku has no static TLS:
+`tpidr_el0` points at the 64 `tls_get()` slots, every module's block is `malloc()`ed into the dynamic thread vector,
+and `runtime_loader/arch/arm64/arch_relocate.cpp:65-73` handles only DTPMOD64/DTPREL64 (TPREL64 and TLSDESC fall to
+`default: B_BAD_DATA`). So libpython's 1512 call sites, glvnd's GL entry stubs (STK's callers of `__tls_get_addr` in
+`cg-stk` are STK frames: the stubs jump), libstdc++'s exception globals and libgomp all take the general-dynamic path.
+The 10-24 fast path (W43 10-24 04:55, haiku 076da9813a) left 21 instructions in `__tls_get_addr`
+(`src/system/libroot/os/arch/arm64/tls.c:65-86` on rpi4) with two chains of four dependent loads:
+`tpidr_el0 → slot 5 → vector[0] → counter, size` against `GOT → __gRuntimeLoader → tls_generation → counter`, the
+check that a reused module ID has not left a stale block (`runtime_loader/elf_tls.cpp` `DynamicThreadVector::operator[]`).
+
+**Options and the choice.** Measured cost to recover: tlsbench, a library's `__thread` 17.4 ns against a global's 7.3 ns
+(W43 10-24) — 10 ns per access at most, of which the call (PLT, `bl`, a stack frame in the caller) stays with any
+fix that keeps the traditional sequence. (a) TLSDESC (`-mtls-dialect=desc`; the probe links: `R_AARCH64_TLSDESC`,
+`DT_TLSDESC_PLT/GOT`) helps only with a static block at a fixed offset from `tpidr_el0` (a resolver of two
+instructions, no clobbered registers); that needs the kernel to reserve that space in every thread's TLS area, a
+thread-start copy, runtime-loader descriptors, the spec change, and **a rebuild of every TLS-using package**
+(python3.14, mesa/glvnd, gcc_syslibs …). With a dynamic resolver it still walks the vector: little gain.
+(b) Initial-exec TLS for libpython/libGLdispatch: the same static-block work plus two package rebuilds. (c) Make the
+existing call cheap: the images loaded before the program's code runs are never unloaded, so their blocks can
+never be stale — give them a path without the generation check. Chosen: (c), because every binary already shipped
+benefits (libpython, the glvnd stubs, libstdc++) and nothing is rebuilt; (a) stays a follow-up whose remaining
+gain is bounded by the numbers below.
+
+**Change** (haiku branch **`n5-tls`**, pushed to origin, not merged; base `rpi4` b90cb3f0d4): **6e3bc0acd7**
+`runtime_loader: static TLS block for the images loaded at program start` + **5b04609460** `runtime_loader: align
+TLS blocks to their segment's alignment`. The TLS of every image registered before `load_program()` runs the
+init routines goes into one per-thread block (offsets aligned to each PT_TLS `p_align`), allocated and filled on
+the thread's first access and found through a new slot `TLS_STATIC_TLS_SLOT` (`headers/private/system/tls.h`, before
+`TLS_FIRST_FREE_SLOT`; the kernel clears all slots of a new thread since a000d5d6cc; fork copies it). Their DTPMOD64
+relocations get `TLS_STATIC_MODULE` (bit 31) `| offset` instead of the module ID — the only relocated word in the
+local-dynamic case (libpython: 5 DTPMOD64, no DTPREL64), and 32 bits because `rld_export::get_tls_address()` takes
+an `unsigned`. `__tls_get_addr()` is now `ldp; tbz; mrs; ldr [tp, #64]; cbz; and; add; add; ret` for them (one
+load from the thread pointer), the old path for the rest. Details: the layout is frozen before the program's init
+routines or at the first block a thread allocates (an `LD_PRELOAD_ADDONS` add-on's init routine runs earlier: then the
+program's modules stay dynamic); a static module that is unloaded anyway keeps its ID and place, later blocks start
+zeroed instead of reading the unmapped image; a module whose load fails is unregistered; `get_tls_address()` maps the
+tagged value and the plain ID of a static module to the same block (an older libroot still works, slowly); only arm64
+tags (`TLS_STATIC_BLOCK` in elf_tls.h), other architectures unchanged. The second commit fixes an upstream bug found by
+the new test: a dynamically allocated block came from plain `malloc()` (16-byte aligned), so an `alignas(64)`
+`thread_local` sat at 32 or 48 modulo 64 (A fails that check). +~250 lines in 8 files.
+
+**Test** (`tools/haiku-tests/tlsstatic.c`, built with the others by `scripts/build-tls-tests.sh`, run by
+`tools/pi-tests/tls-tests.sh`): TLS in the program, in a linked library (.tdata, .tbss, a 64-byte aligned variable, a
+pointer in .tdata that needs a relocation, local-dynamic accesses), in a dlopen()ed library, and one variable of the
+linked library used from all three (same address everywhere); main thread and 4 threads before and after the
+dlopen(), per-thread values kept across a barrier; dlclose and reload on new threads (tlsreload's case); fork() with
+threads in the child; 2000 short threads; an extra dlclose() of the linked library before a new thread's first access
+(child process); with `-p`, an add-on preloaded by `LD_PRELOAD_ADDONS` whose init routine uses its TLS before the
+program is loaded. Plus tlsreload, tlsunload (200 rounds), tlsbench. **QEMU** (virt, both images with the tests,
+11:35): B all PASS; A fails only the 64-byte alignment (`% 64: 32` / `48`), tlsreload/tlsunload PASS. **Pi** (every
+session below): B `failures=0`, A `failures=2` (the same alignment check, all three).
+
+**Measured** (network sessions, fresh boot each, alternating A = `haiku-pi4-n5a.img` (worktree build of b90cb3f0d4),
+B = `haiku-pi4-n5b.img` (the same + the two commits), same tree, same packages; `tools/pi-tests/n5-tls.sh` over ssh;
+A = n5-a1/a2/a3, B = n5-b2/b3/b4, alternating 11:45–12:29 (a3 waited 31 min for another agent's cycles); an extra B boot at 11:43 (n5-b1) ran the Pi test pass, a first A boot at 11:41 was lost to a test-script bug (LIBRARY_PATH); logs `artifacts/uart/20261104-1*-session-n5-*.log`, outputs (and the QEMU logs a.log/b.log) in `artifacts/h20-n5/`). Python: `python3 -c "sum(i*i for i in range(10**7))"` (the C0 control) five times by wall clock, twice
+under `pmustat -u` (user-mode cycles, instructions, branch mispredictions), once under `profile -k -S -i 1000`;
+`python3 -m timeit "sum(i*i for i in range(1000000))"` five times.
+
+| python3 `sum(i*i …)` 1e7, per run | A (before), 3 boots | B (after), 3 boots | B/A |
+|---|---|---|---|
+| `__tls_get_addr` share of `profile -k -S` ticks | 18.8 / 20.4 / 19.1 % | 9.1 / 9.8 / 10.5 % | ½ |
+| instructions retired (`pmustat -u`, 6 runs) | 12.86–12.88 G | 11.58–11.61 G | **−9.9 %** |
+| cycles (6 runs; branch mispredictions) | 8.00 (11 M), 8.19 (25 M), 8.34 (11 M), 7.56 (11 M), 8.02 (11 M), 7.71 (11 M): mean **7.97 G** | 7.98 (41 M), 7.63 (31 M), 8.39 (64 M), 7.36 (11 M), 7.31 (11 M), 7.23 (11 M): mean **7.65 G** | −4.0 % (runs with 11 M mispredictions only: 7.93 → 7.30 G, −8 %) |
+| wall clock, 15 runs: median / mean / range | 5181 / 5283 / 5066–5730 ms | 5104 / 5112 / 4924–5437 ms | −1.5 % / −3.2 % |
+| `python3 -m timeit "sum(i*i … 1e6)"`, 15 runs: median / range | 396 / 366–422 ms | 386 / 368–425 ms | −2.5 % |
+| tlsbench, linked library (9 runs) | 17.35 ns (and 19.35 in 4 runs) | **14.68 ns** (all 9) | −2.7 ns |
+| tlsbench, dlopen()ed copy | 16.01 ns (and 19.34 in 4 runs) | 17.35 ns (all 9) | +1.3 ns |
+| global variable (control) | 7.34 ns | 7.34 ns | = |
+| TLS tests | `failures=2` (alignment only) | `failures=0` | |
+
+**Reading.** The change does what it was built for: `__tls_get_addr` falls from 19–20 % to 9–10 % of the loop's profile
+ticks, the loop retires **9.9 % fewer instructions** (12.87 → 11.60 G: ~128 per iteration, ~11 TLS accesses × the 12
+instructions the old fast path had in excess), and tlsbench's linked-library access goes 17.35 → **14.68 ns** (the
+call itself, 7.3 ns of it, remains). But the CPU time moves much less: cycles **−4 %** on average (−8 % between runs with the same, low, number of branch mispredictions), wall time **−1.5 to −3 %** (median / mean) — within the
+run-to-run spread, which is large here (7.56–8.34 G within A at equal mispredictions) and partly follows the branch
+mispredictions, bimodal per process on both sides (11 M in most runs, 25–64 M in 1 of 6 A and 3 of 6 B runs; most likely
+address-space-layout dependent aliasing, not investigated). So the profile's 18 % overstated the TLS cost: the old check's loads were mostly hidden by the
+out-of-order core (IPC ~1.6), and a timer tick tends to land on the instruction waiting for them. Cost found: a
+dlopen()ed library's access is 16.0 → **17.35 ns** in B (+1.3 ns; cause not isolated — the one added, taken branch
+before the old path, or code placement: A itself gave 16.0 or 19.3 ns for the same binary from boot to boot);
+in this workload that is Mesa's own TLS (`_mesa_*` callers: < 2 % of STK's `__tls_get_addr` calls in `cg-stk`).
+Per-thread cost: the static block is the sum of the start-up images' PT_TLS sizes, allocated and copied on each
+thread's first TLS access whether or not the thread uses all of them (as glibc's static TLS): python3 32 bytes;
+Firefox (the largest set in our packages) libxul 457 bytes (align 32) + liblgpllibs 16 + libmozinference 8 +
+libstdc++ 32 ≈ 0.6 KB per thread; thread create+join (W44: 49.5 µs) not re-measured under B. SuperTuxKart not measured: neither image has the games packages (`HAIKU_PI_GAMES`), and its expected change, below
+2.3 % × the Python ratio, is under the menu's measurement noise.
+
+**Packages need rebuilding?** No for this change — every existing binary uses it. TLSDESC with a fixed-offset static
+block (a kernel reserve per thread + `-mtls-dialect=desc` in the spec, then each package as it is next revised) could
+take the remaining ~7 ns call per access: by these numbers at most another ~10 % of the Python loop's instructions
+and a few % of its cycles; not worth the world rebuild on its own, worth doing together with a toolchain change.
+
+**Ready to land?** Yes, as two commits (n5-tls, fast-forward from b90cb3f0d4; `rpi4` has since moved to 61fe84cd93,
+rebase needed): correctness by the new test on QEMU and Pi, tlsreload/tlsunload unchanged; the measured gain is
+small but real (−10 % instructions; −2.7 ns per access, −27 % of its cost over a global) and it fixes the alignment bug. Images not kept.
 
 ## 7. Still unmeasured, in one list
 
