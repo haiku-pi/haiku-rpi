@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **255 commits of its own** (2026-10-18 to 2026-11-04; counted
-2026-11-04 at `rpi4` 162164220d). To list them, in `sources/haiku`:
+On top of that base the fork carries **256 commits of its own** (2026-10-18 to 2026-11-04; counted
+2026-11-04 at `rpi4` a9db442988). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -101,6 +101,7 @@ section for its area gives the detail.
 | 42 | **arm64 threads entered userland with a signal pending** | `5d9132a49c` | `arch_thread_enter_userspace()` skipped the kernel exit work x86 does: the `resume_thread()` that starts a thread leaves a signal pending, which interrupted the thread's first wait (hidden while its first stack touches faulted; exposed by stack reuse, `ecab951764`). |
 | 43 | **A dying team deleted an exited thread's stack while its other threads still ran** | `e09cfa1d9e` | The thread that takes a team-ending signal (SIGTERM) exits at once; its stack area was deleted before the main thread had killed the others, which may still use objects on it (a pool's idle list with entries on each idle thread's stack): a segment violation in a team already going down. The area now goes with the team's address space while the team is going down; `killrace` test 20/20 faults → 0/30. |
 | 44 | **Image notifications lost their pointer on 64-bit** | `f6c52282df` | The image monitor event was built in 128 bytes; two int32 fields and the `imageStruct` pointer need 132 with 64-bit pointers, so the pointer was left out and the system profiler dropped the event: `profile -a` could not resolve any program started after it (65 % of a desktop session's busy ticks "unknown"). Every 64-bit architecture. Pi: unknown ticks 14.13 % → 0.01 %. |
+| 45 | **Each BFS write walked the whole open journal transaction** | `a9db442988` | `cache_start_sub_transaction()` visited every block of the combined transaction (up to half the log, 2043 blocks) at every sub-transaction start: O(n²) per combined transaction, 0.6–1.0 s of CPU in a Firefox first start on the Pi 4. It now visits only the blocks changed since the previous start; the same disk writes in the same order (power-cut and disk-full tests, a check build comparing with the full walk). Every architecture, every journaled block-cache user. |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
@@ -202,6 +203,7 @@ load, which QEMU did not provide. The last subsection is code that every archite
 | `5d9132a49c` ★ | **A new thread's pending signals are handled before it enters userland** | As x86's `x86_return_to_userland()`: `arch_thread_enter_userspace()` now does the kernel exit work (signals, debugger, core dump) before its `eret`. Without it the `resume_thread()` that starts every thread left a signal pending, so the thread's first interruptible wait returned `B_INTERRUPTED` — noticed only once threads reused the stacks of exited ones (`ecab951764`: no first faults any more), as SuperTuxKart's start hang ([design/stk-start-hang.md](design/stk-start-hang.md)). |
 | `e09cfa1d9e` ★ | **An exiting thread's stack stays while its team goes down** | `keep_user_stack()` (was `put_cached_user_stack()`): when the team is shutting down or its exit status is set, an exited thread's stack area is left to the deletion of the team's address space, because the team's other threads still run until the main thread kills them (as Linux keeps a dying thread group's memory). Fixes a Firefox content process's segment violation at SIGTERM (~1 in 60 ends) ([design/firefox-contentproc-crash.md](design/firefox-contentproc-crash.md)). |
 | `f6c52282df` ★ | Image notifications fit their pointer | 256-byte event buffer instead of 128: `profile -a` resolves programs started after it (design/perf-round-h20.md §6). |
+| `a9db442988` ★ | **Sub-transaction starts look only at changed blocks** | The block cache keeps, per transaction, the blocks made writable or discarded since the current sub-transaction started; the start walks those (the full walk stays for the first start and after an abort/detach). `BLOCK_CACHE_CHECK_SUB_TRANSACTIONS` compares with the full walk. Walk CPU in a Firefox first start 616–1055 → 26–59 ms ([design/perf-round-h20.md](design/perf-round-h20.md) N6). |
 
 ### Interrupt controller (GICv2) and the CPU stall
 

@@ -16,6 +16,7 @@ Checked against the weekly logs up to **2026-11-04 04:15** (the newest entry: 20
 
 | # | Issue | How often | Workaround | Tracked |
 |---|---|---|---|---|
+| C13 | **USB storage: inconsistent reads from the bench's USB stick (under investigation, 2026-11-04)** — the same 1 MiB read twice returned different data, a fresh BFS on it would not mount, and one boot stalled on its transfer errors (`usb_disk: sending the command block wrapper failed`, xHCI `USB transaction` errors). Not yet known whether the stick is failing or our USB stack is at fault; a comparison under Linux on the same Pi is running. Read speeds measured earlier (78–90 MB/s) were never checked for data integrity. | Seen with one SanDisk Ultra stick | Do not keep data you need only on a USB disk until this is settled | W45: 11-04 08:30 |
 | C4 | **The media kit's audio time source published nothing for 16 s** under the 15-minute application soak (Firefox + SuperTuxKart + 1080p HEVC). This used to crash MediaPlayer's video producer; the crash is fixed (time conversions in double precision), the stall itself is unexplained. Not seen since: 10-24, the same 15-minute soak on image-2026-10-24d with a watcher on the time source (`tools/haiku-tests/tswatch.cpp`): while audio ran, its last publish was never more than 24 ms old; 0 crashes. | Once, in the first of three soak runs | — | W43: 10-20 10:00, 10-24 10:57 |
 
 ## 2. Graphics and UI
