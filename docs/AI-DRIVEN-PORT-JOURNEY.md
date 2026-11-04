@@ -63,8 +63,8 @@ A few things from those three days, by area:
 - **Boot and kernel**: four CPUs; a GIC-400 setup that matches Linux; a fix for a livelock in the
   kernel's spin-waits on the Cortex-A72; a cpufreq driver; user time counted as user time; kernel
   stack traces and profiling on arm64; spinlock deadlock detection by time.
-- **Devices**: SD at UHS-I DDR50 (43 MB/s reads), USB 3 storage at 78–90 MB/s, GENET Ethernet at ~915
-  Mbit/s, WiFi at 37 up / 46 down Mbit/s, Bluetooth, PWM audio, the hardware random number generator,
+- **Devices**: SD at UHS-I DDR50 (43 MB/s reads), USB 3 storage at 60–81 MB/s reads (the 78–90 MB/s first
+  reported moved corrupted data until 11-04), GENET Ethernet at ~915 Mbit/s, WiFi at 49 up / 46 down Mbit/s, Bluetooth, PWM audio, the hardware random number generator,
   thermal and clock readouts, GPIO, the HEVC decoder block.
 - **Graphics**: an in-kernel V3D driver exposing Linux's `v3d` interface, Mesa's `v3d` (OpenGL 2.1,
   OpenGL ES 3.1) and `v3dv` (Vulkan 1.3) drivers, a Haiku Vulkan WSI, a zero-copy present path, a
