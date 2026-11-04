@@ -164,6 +164,7 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
   (W44 10-28 21:57); the 16.2 cross tools make `-z pack-relative-relocs` work without a special tree. Those pieces are
   from the 13.3-era Firefox: rebuild them against the 16.2 runtime or label the A/B accordingly.
 - **Still unmeasured**: cold first-launch effect; effect on the page cache footprint (relocation pages touched).
+  → Measured 11-04 (cold card A/B from a BFS tree; the packaged cold case derived): §6 "C1 results".
 
 ### C2. Cold-start prefetch for big applications (extend the packagefs read-ahead to scattered reads)
 
@@ -434,6 +435,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | N3 (windowed presents paced; SDL2 swap interval) | h20-startcost + mesa 26.2.6-3 A (`rpi4` ebf1ee1ff1b) / B (`paced-windows` 1595aba36ec) | STK menu (SDL2) 132 fps, game 81 % + app_server 45 % of a core, 32.7 % of 4 CPUs busy | with B + the SDL2 patch: 60 fps, 29 % + 12 %, 11.2 %; interval 0 unchanged (glmark2 331/332 → 332/332, games bench ±1 % or noise) | 1 network boot + 4 games-bench boots, 11-04 00:16–03:39 | `artifacts/uart/20261104-001649-n3-pace.log`, `artifacts/uart/20261104-*-gbn3[ab]-[12].log` |
 | N5 (TLS of start-up images without the generation check) | worktree builds of `rpi4` b90cb3f0d4: A without, B with haiku `rpi4` c6cab6cc9e + 4d433669a8 | python3 `sum(i*i…)` 1e7: `__tls_get_addr` 19.4 % of ticks, 12.87 G instructions, 7.97 G cycles, 5181 ms median; tlsbench 17.35 ns | 9.8 %, 11.60 G (−9.9 %), 7.65 G (−4 %), 5104 ms (−1.5 %); tlsbench 14.68 ns (a dlopen()ed library's 16.0 → 17.35 ns); TLS test PASS (A fails the 64-byte alignment) | 6 network boots A/B alternating + 1, 11-04 11:43–12:29 | `artifacts/h20-n5/`, `artifacts/uart/20261104-1*-session-n5-*.log` |
 | N7 (SDIO data blocks moved in the interrupt handler) | worktree builds of `rpi4` 4d433669a8: A without, B with haiku `n7-sdio-wait` 6018671453 | WiFi TCP 64 MiB: up 49.5 / down 46.8 Mbit/s; 226 / 183 M cycles per MiB; CPUs busy 19.6 / 15.9 %; `spin` + `system_time` 59 / 47 % of non-idle | 49.2 / 46.1 Mbit/s (ARM clock held at 1500 MHz: 49.3 / 46.5 = A); 151 / 126 M cycles per MiB (−33 / −31 %; at 1500 MHz kernel cycles −34 / −31 %); busy 11.6 / 8.9 %; spin 32 / 18 %; bring-up 5/5 one join; SD card probe + raw read unchanged | 10 network boots A/B alternating + 1 (a dropped variant) + 2 lost to a script race, 11-04 14:05–15:33 | `artifacts/h20-n7/`, `artifacts/uart/20261104-1*-session-n7-*.log` |
+| C1 (DT_RELR for Firefox's libxul.so) | image-2026-11-04c + `relr-image.sh`: A = libxul relinked as is, B = the same with `-z pack-relative-relocs` (157.0.1-5 objects, GCC 13.3; both linked by the 16.2 cross tools) | Firefox tree in `/boot/home`, cold first window after a card boot 15 624 ms (median; 15 582–16 018); warm 3126 ms | **13 774 ms** (13 722–13 784, **−1850 ms, −11.8 %**); warm 3102.5 ms (−0.75 %); same-binary packaged Firefox control 8260 → 8199 cold, 3112.5 → 3106 warm; controls equal; 0 debugger entries | 6 card boots A,B,A,B,A,B (flashed each time) + 6 network boots, 11-04 17:00–20:20 | `artifacts/uart/20261104-*-relr-c1-[AB]-{sd,net}[123].log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -1097,6 +1099,94 @@ lower `kBusyForMax`, would be a separate cpufreq change; (b) the small transfers
 access; (c) DMA (C8) remains off: not needed for CPU now; (c2) `interrupt_signal_enable` is still written without `fInterruptLock` by the handler's storm masking, `RecoverError()` and `Enable/DisableInterrupts()` (pre-existing; the thread's locked read-modify-write now runs per CMD53, so a storm mask could be undone once and re-masked — no hang, no I/O error); (c3) KNOWN-ISSUES.md:45 and HARDWARE-SUPPORT.md:114/:221 ("SDIO runs PIO and is CPU-bound") need rewording when this lands; (d) another AP or 5 GHz is still untried, so the rate limit
 is still the AP's; (e) Images not kept beyond `artifacts/images/haiku-pi4-n7[abc].img`.
 
+### C1 results: DT_RELR for Firefox's libxul.so, cold card A/B (2026-11-04 16:50–20:20)
+
+**What was compared.** One Firefox, linked two ways. A: Firefox 157.0.1-5's `libxul.so` relinked from its objdir
+(`artifacts/firefox/obj`, objects compiled by GCC 13.3 on 10-20/10-24) **with the 16.2 cross tools** (gcc 16.2.0, GNU ld
+2.46.1) against the 11-03 sysroot (16.2 `libstdc++.so.6.0.36`). B: the same command plus `-Wl,-z,pack-relative-relocs`, nothing else.
+So the A/B is "13.3-compiled objects, 16.2 link, 16.2 runtime"; a full 16.2 recompile of Firefox (hours) was not needed for
+the relocation question. Both run on **image-2026-11-04c** (haiku `rpi4` 4d433669a8, hrev60314+273, runtime_loader with
+DT_RELR since 4539cd2f00).
+Recipe (`artifacts/relr/relink-libxul.sh rela|relr OUT LINKLIB`, under `scripts/heavy-build.sh -j 1`; under a minute of link once the objects are cached): the
+link line of `toolkit/library/build` from the 10-28 relink, without its `-B` to the old RELR binutils (the 16.2 `ld`
+honours the option, buildtools 1cad3a62fa). The 11-03 sysroot no longer has Firefox's link-time libraries, so LINKLIB is a
+private directory: libffi, libjpeg_turbo, libwebp (+ `_devel`) extracted from `generated.arm64/download/*.hpkg` with the
+jam `package` tool, and `libfreetype.so`/`libfontconfig.so`/`libevent.so` symlinked to the staged Firefox's
+`lib/` copies (the shared sysroot was not touched). Checks: `NEEDED` lists identical to the shipped libxul.so (31
+entries); exported symbol names (`nm -D --defined-only`) identical on A, B and the shipped one; section sizes identical except
+the relocations: `.rela.dyn` **11 962 872 → 137 256 bytes + `.relr.dyn` 110 528** (RELACOUNT 492 734); unstripped 237.3 →
+225.6 MB, stripped (`--strip-unneeded`, as the stage step) 178.6 → 166.9 MB. Both relinks are kept as
+`artifacts/relr/libxul-{rela,relr}.so` (the 10-28 13.3-ld relink they replace is gone).
+
+**Images.** `scripts/relr-image.sh` gained `--firefox-rela LIBXUL` / `--firefox-relr LIBXUL`: one tree per image,
+`/boot/home/ffx-rela` (A) or `/boot/home/ffx-relr` (B) = the staged Firefox with that libxul.so, checked for the absence /
+presence of DT_RELR; everything else (the test programs, `tools/pi-tests/relr.sh` as UserBootscript, unchanged) is the
+same on both. relr.sh's order per round: Terminal, GLTeapot, Devices, the packaged Firefox (`Firefox-N`, the image's RELA
+-5 package, **the same binary on both sides**), then the variant (`Firefox-rela-N` / `Firefox-relr-N`). So in round 1 the
+variant's own files (libxul.so, omni.ja, the other libraries of its tree, all on BFS) are cold while the Firefox profile,
+the fonts and the system libraries are already warm from the packaged launch: the **cold first window** below is that
+launch, and the packaged `Firefox-1` is the boot-to-boot noise control. Every card boot is the first boot of a freshly
+flashed image, the same on both sides.
+
+**Measured.** Card: `scripts/sd-cycle.sh --flash artifacts/images/relr-c1-{A,B}.img --secs 900 --until 'RELR end'`, in the
+order A, B, A, B, A, B (17:23–19:15), power off between, each flash read back and SHA-256 verified (`HFL done ok=1`), each log
+checked to carry only its own variant's lines. Network: `scripts/netboot-cycle.sh --image … --retry-wedge`, B, A, B, A, B, A
+(17:00, 19:17–20:20). All 12 boots reached `RELR end`; relrtest `ok` in all (big library 0 bad pointers); **0
+`debug_server`, PANIC or kernel-debugger lines** in any serial log. Logs `artifacts/uart/20261104-*-relr-c1-[AB]-sd[123].log`
+(+ `-flash.log`) and `…-net[123].log`. Window times from `launchtime -q`, ms; warm = rounds 2–5 of 3 boots (12 values).
+
+| Card boots | A (RELA) | B (DT_RELR) | B − A |
+|---|---|---|---|
+| **variant, cold first window**, boot 1 / 2 / 3 | 15 624 / 15 582 / 16 018 | 13 722 / 13 774 / 13 784 | |
+| — median (A-to-A spread) | **15 624** (436) | **13 774** (62) | **−1850 (−11.8 %)** |
+| variant, warm: median / mean / range | 3126 / 3122.6 / 3095–3137 | 3102.5 / 3099.2 / 3070–3113 | −0.75 % |
+| packaged Firefox (same binary), cold boot 1 / 2 / 3 | 8260 / 8251 / 8301 | 8199 / 8153 / 8251 | median −61 |
+| packaged Firefox, warm median | 3112.5 | 3106 | −0.2 % |
+| Terminal cold; warm median | 98–99; 65 | 98–99; 66 | = |
+| GLTeapot cold; warm median | 322–329; 61 | 321–329; 60.5 | = |
+| Devices cold; warm median | 243–247; 160 | 240–246; 164 | = |
+| dlopen big-rela / big-relr, first (all 6 boots) | 2248–2311 / 17.2–17.4 | (same: both libraries are on both images) | |
+
+| Network boots (remote disk) | A | B | B − A |
+|---|---|---|---|
+| variant, warm: median / mean / range | 3115.5 / 3112.8 / 3083–3137 | 3091.5 / 3096.9 / 3044–3170 | −0.8 % |
+| packaged Firefox, warm median | 3081.5 | 3086.5 | +0.2 % |
+| variant, cold (not scored: the plan leaves network colds out) | 22 997 / 24 799 / 23 992 | 22 738 / 21 201 / 22 182 | median −1.8 s |
+| Terminal / GLTeapot / Devices warm medians | 66 / 59 / 162 | 66.5 / 59 / 160 | = |
+
+**Reading.** The pass rule (§6 "Second: C1") holds: B's cold first window is not slower — every B boot (13.72–13.78 s)
+is faster than every A boot (15.58–16.02 s) — and the median is **1850 ms lower, 4× the A-to-A spread** (436 ms); the
+same-binary control moved 61 ms, so the difference is the relink. Warm: −0.75 % (card) and −0.8 % (network) against
+−0.2 / +0.2 % for the control: "unchanged", at the edge of the expected −1 to −2 % (10-28: −1.5 % from 4 runs).
+Controls Terminal/GLTeapot/Devices within a few ms; 0 debugger entries. Why 1.85 s, six times the §4 bound of 0.26 s: the
+bound assumed the 11.7 MB of RELA read sequentially at the card's 45 MB/s; it is read by page faults from a BFS file, with
+no read-ahead, at ~5 MB/s — the dlopen control shows the same rate on its own (12 MB of RELA in a 16.9 MB library: 2.25 s
+cold vs 17 ms packed, in all six boots). **This number is for a Firefox tree on BFS.** The shipped Firefox is a package,
+and packagefs reads 256 KiB ahead after two in-order reads (§2); there the same table is a **derived ~0.3–0.5 s** of the
+8.2 s first launch (11.7 MB at 25–45 MB/s), not measured: a packaged cold A/B (two hpkgs, two more images, six card
+boots) was not run, because the decision below is already made at the §4 bound. Side finding for C2: the same 288 MB
+tree takes 15.6 s cold from `/boot/home` — although launched after the packaged Firefox has warmed the profile and the
+system libraries — against 8.2 s from the package: the fault path without read-ahead is the cost, on any big
+non-packaged application.
+
+**Decision: ship DT_RELR in the next Firefox revision.** Gain: −1.85 s on a cold BFS start (measured), ~0.3–0.5 s cold
+from the package (derived), −0.5 to −0.8 % warm, −11.7 MB of relocation table per process start, −12 MB in the package and
+~1.5 MB of download; no cost found. The content-process crash hunt (W45 11-03 16:20) is closed (e09cfa1d9e), the other
+gate in §6. What the revision needs (`scripts/build-firefox.sh`): `revision=6` (and its comment line: "6: packed relative
+relocations"); `export LDFLAGS="-Wl,--hash-style=both -Wl,-z,pack-relative-relocs"` — a relink, not a rebuild (the 10-24
+LDFLAGS change cost ~45 min; the relink itself is minutes); in the `package()` `.PackageInfo`, `requires` gets **`haiku >=
+r1~beta6_hrev60295_178`** instead of the bare `haiku` (4539cd2f00 = `hrev60295-178-g4539cd2f00` by `git describe`; the
+package version format is `r1~beta6_hrev60314_274-1`, `HAIKU_VERSION = r1~beta6` at both commits; first release with it:
+image-2026-10-29, hrev60295+186); a stage check that `readelf -d lib/libxul.so` shows `(RELR)`; then the three-part
+bump of AGENTS.md (the hpkg in `artifacts/packages/` alone, the copy in `generated.arm64/download/`, the version in
+`build/jam/repositories/HaikuPorts/arm64`; grep the image build log for `not available`). An older runtime_loader would run
+this libxul with unrelocated pointers (a crash, no error); a version `requires` cannot tell an upstream Haiku at a higher
+hrev (no DT_RELR loader) from ours, which is acceptable while the package is served only from the haiku-pi repository —
+if that changes, a `provides` capability for the loader feature in the haiku package is the exact form. The relink
+here used the 13.3 objects; the revision should be built as `build-firefox.sh` builds it (GCC 16.2 objects): the
+relative relocations are Firefox's pointer tables and change little with the compiler, so the measurement carries over (check the new RELACOUNT/RELRSZ at the stage step). Not done: enabling
+`HAIKU_PACK_RELATIVE_RELOCS=1` for the image (§6 point 5, unchanged). Images deleted after the run; mega23 put back on the card.
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
@@ -1105,7 +1195,10 @@ is still the AP's; (e) Images not kept beyond `artifacts/images/haiku-pi4-n7[abc
 - The SD card's write speed on Linux (C4); a second card on Haiku; the Wine prefix from the card (C5).
 - The WiFi limit without the bench AP (another AP or 5 GHz, C8).
 - The fraction of Firefox's package a first launch touches, and the order's stability (C2).
-- Cold-card effect of DT_RELR (C1).
+- (Cold-card effect of DT_RELR from a BFS tree: measured 11-04, §6 "C1 results".) The same cold A/B with Firefox
+  **as a package** (packagefs read-ahead): only derived (~0.3–0.5 s); and the page-cache footprint of the relocation pages.
+- BFS page-in of a big application tree with no read-ahead on faults: Firefox's tree from `/boot/home` cold 15.6 s against
+  8.2 s from its package (C1 results) — input for C2.
 - Today's boot phase table (C3).
 - Which Wine games are CPU-bound; any per-setting Box64/FEX game rate (C9).
 - The stage-6 re-run after `stage6-keying` (C10, owned by F2) and MediaPlayer's per-frame RGB32 conversion cost.

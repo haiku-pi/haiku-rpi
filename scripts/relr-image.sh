@@ -4,7 +4,7 @@
 # library linked with RELA and with DT_RELR, dlopentime and launchtime (tools/haiku-tests/). For QEMU
 # (scripts/qemu-virt.sh --image OUT) or the Pi (scripts/sd-cycle.sh --flash OUT).
 #
-#   scripts/relr-image.sh [--cross DIR] [--firefox LIBXUL] IMG OUT
+#   scripts/relr-image.sh [--cross DIR] [--firefox LIBXUL | --firefox-rela LIBXUL | --firefox-relr LIBXUL] IMG OUT
 #
 #   --cross DIR     cross tools whose ld packs relative relocations for aarch64-unknown-haiku (buildtools
 #                   with "binutils/haiku: support -z pack-relative-relocs on arm64"); default
@@ -13,16 +13,20 @@
 #   --firefox LIBXUL  also /boot/home/ffx-rela and /boot/home/ffx-relr: the staged Firefox
 #                   (artifacts/firefox/non-packaged/apps/Firefox) as it is, and with LIBXUL (libxul.so
 #                   linked with -z pack-relative-relocs) in its lib/, stripped; relr.sh launches both
+#   --firefox-rela LIBXUL, --firefox-relr LIBXUL  only that one tree, with LIBXUL (checked: no DT_RELR /
+#                   DT_RELR) in its lib/, stripped as the stage step strips: one image per side of a
+#                   cold A/B (perf-round-h20.md C1), the two images differing only in libxul.so
 #
 # The programs are built in artifacts/relr/.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cross="$root/sources/haiku/generated.arm64/cross-tools-arm64"
-libxul=
+libxul= only=
 while [ $# -gt 2 ]; do
 	case "$1" in
 	--cross) cross="$(cd "$2" && pwd)"; shift 2 ;;
 	--firefox) libxul="$(realpath "$2")"; shift 2 ;;
+	--firefox-rela|--firefox-relr) libxul="$(realpath "$2")"; only="${1#--firefox-}"; shift 2 ;;
 	*) echo "relr-image: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -55,7 +59,17 @@ echo "relr-image: test programs built in $b"
 	"$b/librelrbig-relr.so:/boot/home/librelrbig-relr.so" "$b/dlopentime:/boot/home/dlopentime" \
 	"$b/launchtime:/boot/home/launchtime"
 
-if [ -n "$libxul" ]; then
+if [ -n "$only" ]; then
+	has=0
+	"${tp}readelf" -d "$libxul" | grep -q '(RELR)' && has=1
+	[ "$has" = "$([ "$only" = relr ] && echo 1 || echo 0)" ] \
+		|| { echo "relr-image: $libxul: DT_RELR present=$has, wrong for --firefox-$only" >&2; exit 1; }
+	ffx="$root/artifacts/firefox/non-packaged/apps/Firefox"
+	rm -rf "$b/ffx-rela" "$b/ffx-relr"
+	cp -a "$ffx" "$b/ffx-$only"
+	"${tp}strip" --strip-unneeded -o "$b/ffx-$only/lib/libxul.so" "$libxul"
+	"$root/scripts/disk-add-tree.sh" --disk "$out" "$b/ffx-$only" "/boot/home/ffx-$only"
+elif [ -n "$libxul" ]; then
 	"${tp}readelf" -d "$libxul" | grep -q '(RELR)' || { echo "relr-image: $libxul has no DT_RELR" >&2; exit 1; }
 	ffx="$root/artifacts/firefox/non-packaged/apps/Firefox"
 	rm -rf "$b/ffx-rela" "$b/ffx-relr"
