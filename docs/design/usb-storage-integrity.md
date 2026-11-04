@@ -355,6 +355,9 @@ N6 had been the true stall rate, 0/40 would still leave p ≈ 0.49 of chance (0.
 - The ghost device: a SuperSpeed root port whose PORT_POWER is cleared never reports the disconnect to the hub
   explorer (XHCI root hub status, not investigated), and nothing gives up on a usb_disk whose every command fails:
   each media check costs ~25 s on it. Bounded, but large; one dead device delays media checks of all disks.
+- After repeated PORT_POWER cycles of the SuperSpeed root port (session 1), the VL805's internal USB 2 hub (hub 7)
+  stopped answering port-status requests ("control pipe 8: timeout", "hub 7: error updating port status") until
+  the next boot: a bench artefact of the tool, but nothing recovers a hub whose control pipe stops answering.
 - `Stack::InstallNotify()` takes `fExploreLock` without the timeout `Stack::Explore()` uses during the initial
   scan; left as is (a second line of defence would hide the next teardown deadlock instead of exposing it).
 
