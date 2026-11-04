@@ -730,7 +730,9 @@ file are in `artifacts/qemu-x86/` (`results.tsv`: one row per test and run; `per
   `scripts/x86-matrix.sh` (BOOT configurations), `scripts/x86-powercut.sh`, `scripts/x86-perf.sh` +
   `scripts/x86-perf-table.py` (timing under the heavy-build lock), `scripts/kdl-x86.py` + `qemu-x86.sh
   --serial-sock` (type KDL commands into COM1), `qemu-x86.sh --legacy-virtio`,
-  `scripts/arm64-compile-check.sh` (compile a worktree's files with the arm64 build's exact flags).
+  `scripts/arm64-compile-check.sh` (compile a worktree's files with the arm64 build's exact flags; the object goes to
+  a temp file — checked: the main arm64 tree's objects of the touched files kept their 12:35/12:37 mtimes; it leaves
+  `<worktree>/generated.arm64-check/` with two links into `sources/haiku/generated.arm64`).
 - Tests: `strtold.c` now has an x87 branch (padding bytes masked, `%.21Lg` round trips, the explicit integer bit
   set exactly for normal random values, a table from x86_64 glibc 2.43 plus x87 limit cases) and checks of
   values that overflow only by rounding; new `setrlimit.c`, `systime.c`; `rw_lock_interrupt_test` comes from the
@@ -747,7 +749,7 @@ file are in `artifacts/qemu-x86/` (`results.tsv`: one row per test and run; `per
 | configuration | ours | up | note |
 |---|---|---|---|
 | UEFI, AHCI (q35) | PASS | PASS | |
-| UEFI, **NVMe** | **FAIL**: desktop up, then `shutdown` never powers off | PASS | regression R1 (§9.4); **fix: PASS** (3 boots + `bootio`) |
+| UEFI, **NVMe** | **FAIL**: desktop up, then `shutdown` never powers off | PASS | regression R1 (§9.4); **fix: PASS** (5 of 5 boots, `bootio`) |
 | UEFI, virtio-scsi | PASS | PASS | |
 | UEFI, virtio-scsi + virtio-net **legacy** (`disable-modern=on`, I/O BARs) | PASS | PASS | the `cafef4f9bb` I/O-BAR risk: none |
 | UEFI, USB boot disk (usb-storage on xHCI) | PASS, but the kernel **waits** for the boot device | PASS, no wait | expected from `afb2823bb5` + `bce76d6e73` (§9.4 R4) |
@@ -790,12 +792,12 @@ BIOS AHCI/IDE; the USB boot differs only in `usb_raw` being loaded on ours by th
 | VM | mmap-shared-mprotect | PASS | **FAIL** `after mprotect() of a new mapping … BROKEN` | PASS | ★21 |
 | VM | fault-signal-blocked | PASS | **FAIL** `still faulting after 10 s` (both cases) | PASS | ★22 |
 | VM | mprotect-unprotect-retry | PASS | PASS | PASS | arm64-only problem |
-| FS | bfsmeta 4000 files on a scratch BFS | PASS, **74 µs/file** | PASS, **1527 µs/file** | — | ★45 (one run each, run side by side) |
-| FS | copy apps+lib (2277 files, 613 MiB), MD5; unmount + mount, MD5 | PASS | PASS | — | |
-| FS | fragwrite (30 MB in ~7500 holes) | PASS | PASS | — | |
-| FS | checkfs: 0 not allocated, 0 already set | PASS (28 "could be freed") | PASS (28) | — | same count on both; bfsbits S−U = 0 |
+| FS | bfsmeta 4000 files on a scratch BFS | PASS, **74 µs/file** | PASS, **1527 µs/file** | PASS | ★45 (one run each, run side by side) |
+| FS | copy apps+lib (2277 files, 613 MiB), MD5; unmount + mount, MD5 | PASS | PASS | PASS | |
+| FS | fragwrite (30 MB in ~7500 holes) | PASS | PASS | PASS | |
+| FS | checkfs: 0 not allocated, 0 already set | PASS (28 "could be freed") | PASS (28) | PASS (28) | same count on both; bfsbits S−U = 0 |
 | FS | power cut (QMP quit after 20000 files of `bfsmeta --loop`), mount, checkfs, bfsbits, write | PASS 3/3 | PASS 3/3 | — | |
-| FS | boot-disk write integrity (80 MB copy, MD5, restart, MD5), NVMe and AHCI | NVMe: hangs (R1) | PASS (NVMe) | PASS (NVMe, AHCI) | |
+| FS | boot-disk write integrity (80 MB copy, MD5, restart, MD5), NVMe and AHCI | not run (`dd`/`sync` on NVMe hang, R1) | PASS (NVMe) | PASS (NVMe, AHCI) | |
 | APP | launch Terminal, StyledEdit, ShowImage, DeskCalc, Devices, FileTypes, MediaPlayer, WebPositive | PASS | PASS | — | |
 | APP | bitmapcheck (13 screen hashes) | identical | identical | — | |
 | APP | drawbench | ran | ran | — | |
