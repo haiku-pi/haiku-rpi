@@ -11,7 +11,8 @@
 #   clock   step 2's mmal-h264 (/boot/home/mmal) with the H.264 clock held (the default) and left to the firmware
 #           (driver setting "video_clock false"), and the clock measured during each
 #   play    MediaPlayer on play-720p30, play-1080p30 and play-1080p60, the hardware decoder and the software one
-#           (FFMPEG_H264_MMAL=0): the decoder in use, dropped frames, the team's and the system's CPU over 20 s
+#           (FFMPEG_H264_MMAL=0): the decoder in use, dropped frames, the team's and the system's CPU over 20 s, the
+#           frames shown (the overlay plane's updates, from the display driver's statistics)
 #   seek    pause, play, seek forward and back, quit, reopen; screenshots
 #   two     two players at once (a second window of MediaPlayer, which is single-launch), then a player with
 #           ffmpeg's h264_mmal in another team and a second window: three decoders
@@ -56,6 +57,7 @@ report() {
 # play_one FILE LABEL SECS [ENV]: start a player, measure SECS from 5 s after its start, quit it
 play_one() {
 	log="$dir/$2.log"
+	syslogStart=$(wc -l < /var/log/syslog)
 	if [ -n "$4" ]; then
 		env "$4" /boot/system/apps/MediaPlayer "$dir/$1" > "$log" 2>&1 &
 	else
@@ -67,6 +69,9 @@ play_one() {
 	[ "$5" = shot ] && shot "$2"
 	quit_players
 	report "$log" "$2"
+	# the frames shown: the display driver's statistics of the video's overlay plane, when the player closes it
+	tail -n +$((syslogStart + 1)) /var/log/syslog | grep -a -o "plane [0-9]: [0-9]* updates in [0-9]* vblanks, [0-9]* late" \
+		| while read -r line; do say "$2 shown: $line"; done
 }
 
 case "$phase" in

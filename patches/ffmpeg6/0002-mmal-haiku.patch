@@ -25,7 +25,11 @@ docs/design/vchiq.md, step 3).
                (since FFmpeg 5 the end comes as AVERROR_EOF from
                ff_decode_get_packet(), not as the empty packet mmaldec waited
                for, so the frames the decoder still held were lost) and waits
-               for the decoder's last frames instead of returning EAGAIN
+               for the decoder's last frames instead of returning EAGAIN; the
+               decoder is kept supplied with 8 packets (receive_frame() asks
+               for more before it returns a frame): a caller that sends a
+               packet only when no frame is ready - Haiku's media plugin - let
+               it run dry, and its next frame then came 70-90 ms late at 1080p
 
 LGPL-2.1-or-later, as the files it changes.
 
@@ -78,10 +82,16 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      int interlaced_frame;
      int top_field_first;
  } MMALDecodeContext;
-@@ -101,6 +108,10 @@
+@@ -101,6 +108,16 @@
  // packets (where each packet contains 1 frame).
  #define MAX_DELAYED_FRAMES 16
  
++// Packets the decoder is kept supplied with while it is not draining: it
++// decodes ahead only with packets in hand, and once it ran dry it needs
++// several (with B-frames) before its next frame - a stall of 70-90 ms at 1080p,
++// when the caller asks for packets only when no frame is ready.
++#define MIN_BUFFERED_PACKETS 8
++
 +// A decoder that has given no frame for this many waits of 100 ms while it
 +// should have is taken to have failed (end of stream when draining).
 +#define MAX_STALLS 20
@@ -89,7 +99,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  static void ffmmal_poolref_unref(FFPoolRef *ref)
  {
      if (ref &&
-@@ -181,14 +192,18 @@
+@@ -181,14 +198,18 @@
      av_assert0(atomic_load(&ctx->packets_buffered) == 0);
  
      ctx->frames_output = ctx->eos_received = ctx->eos_sent = ctx->packets_sent = ctx->extradata_sent = 0;
@@ -109,7 +119,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  
      mmal_component_destroy(ctx->decoder);
      ctx->decoder = NULL;
-@@ -230,8 +245,10 @@
+@@ -230,8 +251,10 @@
      MMAL_STATUS_T status;
  
      if (buffer->cmd == MMAL_EVENT_ERROR) {
@@ -120,7 +130,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      } else {
          av_log(avctx, AV_LOG_WARNING, "Unknown MMAL event %s on control port\n",
                 av_fourcc2str(buffer->cmd));
-@@ -360,7 +377,9 @@
+@@ -360,7 +383,9 @@
  
      ctx->pkt = avctx->internal->in_pkt;
  
@@ -130,7 +140,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  
      if (mmal_vc_init()) {
          av_log(avctx, AV_LOG_ERROR, "Cannot initialize MMAL VC driver!\n");
-@@ -448,6 +467,8 @@
+@@ -448,6 +473,8 @@
      if ((status = mmal_component_enable(decoder)))
          goto fail;
  
@@ -139,7 +149,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      return 0;
  
  fail:
-@@ -499,8 +520,10 @@
+@@ -499,8 +526,10 @@
          buf  = avpkt->buf;
          data = avpkt->data;
          size = avpkt->size;
@@ -151,7 +161,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      } else {
          if (ctx->eos_sent)
              goto done;
-@@ -696,10 +719,25 @@
+@@ -696,10 +725,25 @@
              // in this unlikely situation.
              buffer = mmal_queue_timedwait(ctx->queue_decoded_frames, 100);
              if (!buffer) {
@@ -178,7 +188,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
          } else {
              buffer = mmal_queue_get(ctx->queue_decoded_frames);
              if (!buffer)
-@@ -750,6 +788,7 @@
+@@ -750,6 +794,7 @@
          }
  
          ctx->frames_output++;
@@ -186,7 +196,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  
          if ((ret = ffmal_copy_frame(avctx, frame, buffer)) < 0)
              goto done;
-@@ -773,9 +812,18 @@
+@@ -773,9 +818,18 @@
      int ret = 0;
      int got_frame = 0;
  
@@ -208,7 +218,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
          ctx->extradata_sent = 1;
          if ((ret = ffmmal_add_packet(avctx, avpkt, 1)) < 0)
              return ret;
-@@ -785,6 +833,12 @@
+@@ -785,6 +839,12 @@
      if (ret == 0) {
          if ((ret = ffmmal_add_packet(avctx, avpkt, 0)) < 0)
              return ret;
@@ -221,7 +231,17 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      } else if (ret < 0 && !(ret == AVERROR(EAGAIN)))
          return ret;
  
-@@ -807,7 +861,7 @@
+@@ -794,6 +854,9 @@
+     if ((ret = ffmmal_fill_output_port(avctx)) < 0)
+         return ret;
+ 
++    if (!ctx->eos_sent && atomic_load(&ctx->packets_buffered) < MIN_BUFFERED_PACKETS)
++        return AVERROR(EAGAIN);
++
+     if ((ret = ffmmal_read_frame(avctx, frame, &got_frame)) < 0)
+         return ret;
+ 
+@@ -807,7 +870,7 @@
          return ret;
  
      if (!got_frame && ret == 0)
@@ -230,7 +250,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      else
          return ret;
  }
-@@ -818,7 +872,9 @@
+@@ -818,7 +881,9 @@
  };
  
  static const AVOption options[]={
@@ -241,7 +261,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      {"extra_decoder_buffers", "extra MMAL internal buffered frames", offsetof(MMALDecodeContext, extra_decoder_buffers), AV_OPT_TYPE_INT, {.i64 = 10}, 0, 256, 0},
      {NULL}
  };
-@@ -830,7 +886,7 @@
+@@ -830,7 +895,7 @@
      .version    = LIBAVUTIL_VERSION_INT,
  };
  
@@ -250,7 +270,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      const FFCodec ff_##NAME##_mmal_decoder = { \
          .p.name         = #NAME "_mmal", \
          CODEC_LONG_NAME(#NAME " (mmal)"), \
-@@ -840,10 +896,11 @@
+@@ -840,10 +905,11 @@
          .init           = ffmmal_init_decoder, \
          .close          = ffmmal_close_decoder, \
          FF_CODEC_RECEIVE_FRAME_CB(ffmmal_receive_frame), \
@@ -263,7 +283,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
          .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_MMAL, \
                                                           AV_PIX_FMT_YUV420P, \
                                                           AV_PIX_FMT_NONE}, \
-@@ -851,7 +908,7 @@
+@@ -851,7 +917,7 @@
          .p.wrapper_name = "mmal", \
      };
  
