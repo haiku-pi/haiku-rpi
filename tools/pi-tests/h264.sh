@@ -27,7 +27,12 @@ cd "$dir" || exit 1
 problems=0
 say() { echo "H264 $*"; }
 fail() { say "FAIL: $*"; problems=$((problems + 1)); }
-gpu() { cat /dev/vchiq 2> /dev/null | grep -a -E "^gencmd get_mem gpu|H.264 clock" | sed "s/^/H264 $1 /"; }
+gpu() {
+	cat /dev/vchiq 2> /dev/null | grep -a -E "^gencmd get_mem gpu|H.264 clock" | sed "s/^/H264 $1 /"
+	# the VideoCore's free relocatable memory (where its decoder's buffers are)
+	[ -x /boot/home/mmal/vchiq-gcmd ] && timeout 20 /boot/home/mmal/vchiq-gcmd "get_mem reloc" 2>&1 \
+		| grep -a -o "reloc=.*" | sed "s/^/H264 $1 free /"
+}
 shot() { screenshot -s "$dir/shot-$1.png" > /dev/null 2>&1 && say "screenshot $dir/shot-$1.png"; }
 # MediaPlayer resumes a file where it last stopped (its "Media:Frame" attribute): every play starts at the start
 forget_positions() { for f in "$dir"/*.mp4; do rmattr Media:Frame "$f" 2> /dev/null; done; }
