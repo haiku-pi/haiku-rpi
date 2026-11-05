@@ -438,6 +438,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | N3 (windowed presents paced; SDL2 swap interval) | h20-startcost + mesa 26.2.6-3 A (`rpi4` ebf1ee1ff1b) / B (`paced-windows` 1595aba36ec) | STK menu (SDL2) 132 fps, game 81 % + app_server 45 % of a core, 32.7 % of 4 CPUs busy | with B + the SDL2 patch: 60 fps, 29 % + 12 %, 11.2 %; interval 0 unchanged (glmark2 331/332 → 332/332, games bench ±1 % or noise) | 1 network boot + 4 games-bench boots, 11-04 00:16–03:39 | `artifacts/uart/20261104-001649-n3-pace.log`, `artifacts/uart/20261104-*-gbn3[ab]-[12].log` |
 | N5 (TLS of start-up images without the generation check) | worktree builds of `rpi4` b90cb3f0d4: A without, B with haiku `rpi4` c6cab6cc9e + 4d433669a8 | python3 `sum(i*i…)` 1e7: `__tls_get_addr` 19.4 % of ticks, 12.87 G instructions, 7.97 G cycles, 5181 ms median; tlsbench 17.35 ns | 9.8 %, 11.60 G (−9.9 %), 7.65 G (−4 %), 5104 ms (−1.5 %); tlsbench 14.68 ns (a dlopen()ed library's 16.0 → 17.35 ns); TLS test PASS (A fails the 64-byte alignment) | 6 network boots A/B alternating + 1, 11-04 11:43–12:29 | `artifacts/h20-n5/`, `artifacts/uart/20261104-1*-session-n5-*.log` |
 | N7 (SDIO data blocks moved in the interrupt handler) | worktree builds of `rpi4` 4d433669a8: A without, B with haiku `n7-sdio-wait` 6018671453 | WiFi TCP 64 MiB: up 49.5 / down 46.8 Mbit/s; 226 / 183 M cycles per MiB; CPUs busy 19.6 / 15.9 %; `spin` + `system_time` 59 / 47 % of non-idle | 49.2 / 46.1 Mbit/s (ARM clock held at 1500 MHz: 49.3 / 46.5 = A); 151 / 126 M cycles per MiB (−33 / −31 %; at 1500 MHz kernel cycles −34 / −31 %); busy 11.6 / 8.9 %; spin 32 / 18 %; bring-up 5/5 one join; SD card probe + raw read unchanged | 10 network boots A/B alternating + 1 (a dropped variant) + 2 lost to a script race, 11-04 14:05–15:33 | `artifacts/h20-n7/`, `artifacts/uart/20261104-1*-session-n7-*.log` |
+| N7b (ARM clock during WiFi transfers after N7) | N7's B runs (no new image) | B unpinned 49.1–49.2 / 45.7–46.5 Mbit/s per boot, ARM 61–88 % of samples at 750 MHz | held at 1500: +0.6 % up, +1.1 % down (A's busy-loop control 0.0 / −0.3 %) — **not worth a governor change** (would hold 1500 through every I/O phase); no change | desk work on N7 boots 3–5, 11-05 13:05–13:30 | `artifacts/h20-n7/n7-[ab][345].txt` |
 | C1 (DT_RELR for Firefox's libxul.so) | image-2026-11-04c + `relr-image.sh`: A = libxul relinked as is, B = the same with `-z pack-relative-relocs` (157.0.1-5 objects, GCC 13.3; both linked by the 16.2 cross tools) | Firefox tree in `/boot/home`, cold first window after a card boot 15 624 ms (median; 15 582–16 018); warm 3126 ms | **13 774 ms** (13 722–13 784, **−1850 ms, −11.8 %**); warm 3102.5 ms (−0.75 %); same-binary packaged Firefox control 8260 → 8199 cold, 3112.5 → 3106 warm; controls equal; 0 debugger entries | 6 card boots A,B,A,B,A,B (flashed each time) + 6 network boots, 11-04 17:00–20:20 | `artifacts/uart/20261104-*-relr-c1-[AB]-{sd,net}[123].log` |
 | C2 (page faults on files read the missing pages around them, 64 KiB clusters, files on a partition) | worktree builds of `rpi4` b195a41e64: A without, C with haiku `c2-fault-readaround` a38b19efab (B = without the partition test, dropped) | Firefox from a BFS directory, cold first window after a card boot 14 047 ms (median of 5; 13 686–14 145); packaged Firefox 7710, WebPositive 2628; mapped files fault in at 8–10 MB/s | **8358 ms (8303–8772, −5.7 s, −40.5 %)**; packaged Firefox 7749, WebPositive 2641, Terminal 97 = (B: +486 / +163); warm, boot (cursor 5.42–5.63 s) and raw card reads unchanged; mapped files 23–32 MB/s, MD5 24/24 on every boot; x86-64 KVM: a 108 MiB library on BFS dlopen cold 550–567 → 77–88 ms | 13 card boots A×5, B×3, C×3, catall×2, 21:50–00:52; x86-64 6 + 6 KVM runs | `artifacts/uart/2026110[45]-*-c2-*.log`, `artifacts/qemu-x86/2026110[45]-23*-{c2,perf,fs,boot}-x86-*.log` |
 | C4 (SD card writes in 512 KiB commands: 128 DMA segments, 512 KiB bounce buffers) | image-2026-11-05 (A) vs worktree build of `rpi4` a38b19efab + haiku `c4-sd-writes` 529875f0eb, 85d80f06f9 (B); Linux 6.18 on the same card | raw 1 MiB writes 24.3 MB/s sustained (median of 6 × 1 GiB; 22.3–36.7, bimodal), 512 KiB–4 MiB 23.9; BFS 1 GiB + fsync 26.2; raw 1 MiB reads 34–36; Linux 32.7 | **35.6 MB/s (33.7–36.0, +46 %, above Linux)**, 512 KiB–4 MiB 35.2–36.4 steady; BFS 1 GiB 32.3 (+23 %; file cache/page writer still 128 KiB); raw 1 MiB reads 43–44; 128 KiB requests −1–2 MB/s; SHA-256 13/13 across Haiku and Linux; release check 0 problems; card boot cursor 5.62 s | 7 network sessions (A1, B1 first variant, A2 B2 A3 B3), 2 Linux flash-lane runs, 1 release check, 1 card boot, 11-05 02:55–04:15 | `artifacts/h20-c4/`, `artifacts/uart/20261105-0[34]*-{c4-*,session-c4-haiku-*}.log` |
@@ -1100,7 +1101,7 @@ raw read-only `dd` of 64 MiB at the same speed on both sides; nothing on the car
 **Ready to land?** Yes, one commit (6018671453; the branch head dd77d0b1e5 has the same tree): CPU per WiFi MiB −31 to
 −34 %, rate unchanged at an equal clock, bring-up 5/5, SD unaffected. Open: (a) on this bench the governor turns the
 saved CPU into a lower clock and ~1 % of rate — a load-based clock floor while a network interface is busy, or a
-lower `kBusyForMax`, would be a separate cpufreq change; (b) the small transfers and the 50 µs command loop still spin
+lower `kBusyForMax`, would be a separate cpufreq change — **decided against, §6 "N7b / governor"**: 0.6 % up, ~1.1 % down; (b) the small transfers and the 50 µs command loop still spin
 (the remaining 18–32 % of non-idle): interrupt-driven small transfers would cost a thread wake-up per register
 access; (c) DMA (C8) remains off: not needed for CPU now; (c2) `interrupt_signal_enable` is still written without `fInterruptLock` by the handler's storm masking, `RecoverError()` and `Enable/DisableInterrupts()` (pre-existing; the thread's locked read-modify-write now runs per CMD53, so a storm mask could be undone once and re-masked — no hang, no I/O error); (c3) KNOWN-ISSUES.md:45 and HARDWARE-SUPPORT.md:114/:221 ("SDIO runs PIO and is CPU-bound") need rewording when this lands; (d) another AP or 5 GHz is still untried, so the rate limit
 is still the AP's; (e) Images not kept beyond `artifacts/images/haiku-pi4-n7[abc].img`.
@@ -1533,6 +1534,57 @@ cutA/B, checkA/B, relcheck.out, x86*.txt), `artifacts/uart/20261105-0[5-7]*-sess
 Images deleted afterwards (`fcA.img`, `fcB.img`; `fxa.iso` was a copy of `artifacts/x86-images/r265.iso`); mega24 put
 back on the card (07:09, `20261105-064651-mega24-restore.log`: flash SHA-256 verified, MEGA end, 0 PANIC,
 hrev60314+282).
+
+### N7b / governor: the ARM clock during WiFi transfers after N7 — not worth changing (2026-11-05 13:05–13:30)
+
+N7's open item (a): with the SDIO busy-wait gone, `bcm2835_cpufreq` (C0b rule, `kBusyForMax` 55 % of one CPU) leaves
+the ARM at 750 MHz for most of a transfer, and the unpinned rate is ~1 % lower. Decided from N7's own runs (desk work,
+no Pi time: the bench is shared with H21, and the only build-free measurement, the unpinned side, already exists).
+
+**The gain, paired inside each boot** (N7 boots 3–5, `artifacts/h20-n7/n7-[ab][345].txt`; median of the 3 unpinned runs
+against the 2 runs with the clock held at 1500 MHz by a user-mode busy loop, same boot, so the boot-to-boot spread
+drops out):
+
+| per 64 MiB, Mbit/s | B up, free → held at 1500 | B down, free → held | A up (already 1500) | A down |
+|---|---|---|---|---|
+| boot 3 / 4 / 5 | 49.1→49.2, 49.0→49.3, 49.2→49.5 | 46.1→46.6, 45.7→46.3, 46.5→46.5 | 49.5→49.6, 49.4→49.2, 49.2→49.2 | 46.6→46.8, 46.5→46.3, 46.5→46.2 |
+| median change | **+0.6 %** | **+1.1 %** | 0.0 % | −0.3 % (the busy loop's own cost) |
+| ARM clock samples, free runs 2–3 / held | 61–73 % at 750 / 0 % | 81–88 % at 750 / 0 % | 0 % / 0 % | 2 % / 0 % |
+
+So the clock is worth **0.6 % up and 1.1–1.4 % down** (net of the busy loop's cost on A): ~0.3 / ~0.5 Mbit/s, 0.07 /
+0.13 s per 64 MiB. The download rate of one image varies more than that from boot to boot (A 46.2–48.7, B 44.7–46.7
+Mbit/s per run, §6 "N7 results"), and the access point is the limit at an equal clock. (Each boot's first upload
+ran at 1500 throughout: the session's preceding work still had the clock up; it is not used above.)
+
+**Which rule would win it back, and at what cost.** The transfer is a steady light load, not bursts: the scheduler
+counts 0.36–0.46 of one CPU busy (8.9 / 11.6 % of four), under the 55 % mark. So:
+
+- *A faster up-ramp* (shorter than 50 ms) and *a hold at maximum after a burst* change nothing here: there is no burst
+  to react to, and the clock is already raised within one interval when a real burst comes (C0b's start-cost result).
+- *Counting interrupt time* is what the governor misses: `cpu_get_active_time()` is the non-idle threads' time
+  (`CPUEntry::TrackActivity()`, scheduler_cpu.cpp), so N7's interrupt handler PIO on an otherwise idle CPU counts as
+  idle, while `cpu_ent::interrupt_time` (interrupts.cpp, IRQ and ICI time) has it. Derived from N7's PMU rows: B uses
+  151 / 126 M cycles per MiB, at 5.9 / 5.5 MiB/s ≈ 0.89 / 0.69 G cycles/s, at the sampled clocks (≈ 1.0 / 0.84 GHz on
+  average) **~0.8 of a CPU not in WFI** against the 0.36–0.46 the governor sees (the gap also holds the idle loop's
+  own non-WFI time and the clock sampler's ~7 %). Adding the interrupt time's delta would put every transfer over 55 %:
+  **the clock at 1500 for the whole transfer, as before N7.** It also applies to every interrupt-heavy I/O (GENET on a
+  network boot, USB, the card) and counts interrupts that hit a busy thread twice (that thread's kernel time already
+  holds them). ~3 lines in `clock_thread()`.
+- *A lower `kBusyForMax`* (~40 %) catches this case and every steady light load besides (video playback, page loads),
+  the widest cost; C0b already moved those to 1500 once (§6 "C0b", the trade-off paragraph).
+- *Linux's schedutil "iowait boost"* boosts tasks waking from I/O wait; Haiku's scheduler has no I/O-wait state to
+  report through `cpufreq_module_info`, so it would be a scheduler change for the same effect as the interrupt rule.
+
+**The cost** is the clock N7 saved: during a transfer the ARM would run at 1500 instead of mostly 750 MHz, and the
+firmware raises the core voltage with the ARM clock, so the same cycles cost more energy. Not measurable on this
+bench (the Meross plug has on/off only, no power reading); unmeasured, not estimated. Heat is not the argument: the
+board plateaus at 72–74 °C in a 20-minute full-load soak and has never throttled (HARDWARE-SUPPORT.md §14).
+
+**Decision: no change.** ≤ 0.6 % up and ~1.1 % down (under the boot-to-boot spread, 0.13 s per 64 MiB on an AP-bound
+link) does not justify a rule that keeps the clock doubled through every I/O-bound phase; N7's point was to turn the
+spinning into idle time, and the governor turning that into a lower clock is it working. No branch, no image, no Pi
+session. If a faster link (5 GHz, another AP: C8/§7) makes the WiFi path CPU-bound, the interrupt-time rule above is the
+fix to try first, A/B'd for idle clock, temperature after 5 min idle and the C0b start-cost test.
 
 ## 7. Still unmeasured, in one list
 
