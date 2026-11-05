@@ -1,0 +1,1350 @@
+From ea17b45d2e79d15629dee9d31a522a8df0312fed Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 10:23:23 +0100
+Subject: [PATCH 1/7] vcos: initialise the pthread_once_t controls with
+ VCOS_ONCE_INIT
+
+current_thread_key_once and cmd_globals.initialized relied on a zeroed
+pthread_once_t being PTHREAD_ONCE_INIT, which is true for glibc only.
+On Haiku PTHREAD_ONCE_INIT is { -1 }: the thread key was never created
+and vcos_init() aborted.
+---
+ interface/vcos/generic/vcos_cmd.c       | 2 +-
+ interface/vcos/pthreads/vcos_pthreads.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/interface/vcos/generic/vcos_cmd.c b/interface/vcos/generic/vcos_cmd.c
+index 953923a..f054a5d 100644
+--- a/interface/vcos/generic/vcos_cmd.c
++++ b/interface/vcos/generic/vcos_cmd.c
+@@ -63,7 +63,7 @@ static struct VCOS_CMD_GLOBALS_T
+     VCOS_CMD_T     *cmd_entry;
+ 
+     VCOS_LOG_CAT_T *log_category;
+-} cmd_globals;
++} cmd_globals = { .initialized = VCOS_ONCE_INIT };
+ 
+ #ifdef HAVE_VCOS_VERSION
+ /* Keep the static strings in the image from being dropped by
+diff --git a/interface/vcos/pthreads/vcos_pthreads.c b/interface/vcos/pthreads/vcos_pthreads.c
+index 77ce58c..02030e7 100644
+--- a/interface/vcos/pthreads/vcos_pthreads.c
++++ b/interface/vcos/pthreads/vcos_pthreads.c
+@@ -81,7 +81,7 @@ static VCOS_MUTEX_T printf_lock;
+ pthread_key_t _vcos_thread_current_key;
+ 
+ static VCOS_UNSIGNED _vcos_thread_current_key_created = 0;
+-static VCOS_ONCE_T current_thread_key_once;  /* init just once */
++static VCOS_ONCE_T current_thread_key_once = VCOS_ONCE_INIT;  /* init just once */
+ 
+ static void vcos_thread_cleanup(VCOS_THREAD_T *thread)
+ {
+-- 
+2.53.0
+
+
+From e0d221710a6e469655031ea2ed8d19adea79c438 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 10:23:23 +0100
+Subject: [PATCH 2/7] vchiq_arm: don't shadow the global vchiq_lib_mutex
+
+vchiq_lib_init() created a function-local static vchiq_lib_mutex, so the
+file-scope one that vchiq_close_service(), alloc_msgbuf() etc. lock was
+never created. A zeroed pthread_mutex_t happens to be a valid unlocked
+mutex with glibc; Haiku's libroot asserts on it.
+---
+ interface/vchiq_arm/vchiq_lib.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/interface/vchiq_arm/vchiq_lib.c b/interface/vchiq_arm/vchiq_lib.c
+index 133d5ca..40adab9 100755
+--- a/interface/vchiq_arm/vchiq_lib.c
++++ b/interface/vchiq_arm/vchiq_lib.c
+@@ -1420,7 +1420,6 @@ static VCHIQ_INSTANCE_T
+ vchiq_lib_init(const int dev_vchiq_fd)
+ {
+    static int mutex_initialised = 0;
+-   static VCOS_MUTEX_T vchiq_lib_mutex;
+    VCHIQ_INSTANCE_T instance = &vchiq_instance;
+ 
+    vcos_global_lock();
+-- 
+2.53.0
+
+
+From 9f798343ad9ac32a9788f1f7956cf7dbc760cb7e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 10:23:32 +0100
+Subject: [PATCH 3/7] Haiku support for VCOS, libvchiq and the MMAL VideoCore
+ client
+
+- the ioctl numbers from <sys/ioccom.h> (Haiku's /dev/vchiq uses the BSD
+  encoding), HZ from <sys/param.h>;
+- VCOS threads get their names with rename_thread();
+- the component-create message carries the pid, as on Linux.
+---
+ interface/mmal/vc/mmal_vc_api.c         |  2 +-
+ interface/vchiq_arm/vchiq_ioctl.h       |  5 +++++
+ interface/vcos/pthreads/vcos_pthreads.c | 10 ++++++++++
+ 3 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/interface/mmal/vc/mmal_vc_api.c b/interface/mmal/vc/mmal_vc_api.c
+index 4c74bda..d171152 100644
+--- a/interface/mmal/vc/mmal_vc_api.c
++++ b/interface/mmal/vc/mmal_vc_api.c
+@@ -1331,7 +1331,7 @@ static MMAL_STATUS_T mmal_vc_component_create(const char *name, MMAL_COMPONENT_T
+    msg.client_component = component;
+    /* coverity[secure_coding] Length tested above */
+    strcpy(msg.name, basename);
+-#ifdef __linux__
++#if defined(__linux__) || defined(__HAIKU__)
+    msg.pid = getpid();
+ #endif
+ 
+diff --git a/interface/vchiq_arm/vchiq_ioctl.h b/interface/vchiq_arm/vchiq_ioctl.h
+index dab4a8b..281d657 100755
+--- a/interface/vchiq_arm/vchiq_ioctl.h
++++ b/interface/vchiq_arm/vchiq_ioctl.h
+@@ -28,7 +28,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #ifndef VCHIQ_IOCTLS_H
+ #define VCHIQ_IOCTLS_H
+ 
++#ifdef __HAIKU__
++/* Haiku's VCHIQ driver uses the BSD encoding of the ioctl numbers (as FreeBSD's) */
++#include <sys/ioccom.h>
++#else
+ #include <linux/ioctl.h>
++#endif
+ #include "vchiq_if.h"
+ 
+ #define VCHIQ_IOC_MAGIC 0xc4
+diff --git a/interface/vcos/pthreads/vcos_pthreads.c b/interface/vcos/pthreads/vcos_pthreads.c
+index 02030e7..e664c95 100644
+--- a/interface/vcos/pthreads/vcos_pthreads.c
++++ b/interface/vcos/pthreads/vcos_pthreads.c
+@@ -33,7 +33,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <sys/time.h>
++#ifdef __HAIKU__
++#include <OS.h>
++#include <sys/param.h>
++#ifndef HZ
++#define HZ 100
++#endif
++#else
+ #include <linux/param.h>
++#endif
+ 
+ /* Cygwin doesn't always have prctl.h and it doesn't have PR_SET_NAME */
+ #if defined( __linux__ )
+@@ -132,6 +140,8 @@ static void *vcos_thread_entry(void *arg)
+ #if defined( HAVE_PRCTL ) && defined( PR_SET_NAME )
+    /* cygwin doesn't have PR_SET_NAME */
+    prctl( PR_SET_NAME, (unsigned long)thread->name, 0, 0, 0 );
++#elif defined( __HAIKU__ )
++   rename_thread( find_thread(NULL), thread->name );
+ #endif
+    if (thread->legacy)
+    {
+-- 
+2.53.0
+
+
+From 24470cdc0a283bb5b3ad171527b7accb5dfe3cb9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 10:34:46 +0100
+Subject: [PATCH 4/7] vchiq_arm: 64-bit clean
+
+vchiq_dump_phys_mem() took the service handle for a pointer, which it is
+not (find_service_by_handle() maps it, as everywhere else); the trace
+messages printed pointers truncated to 32 bits.
+---
+ interface/vchiq_arm/vchiq_lib.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/interface/vchiq_arm/vchiq_lib.c b/interface/vchiq_arm/vchiq_lib.c
+index 40adab9..098667f 100755
+--- a/interface/vchiq_arm/vchiq_lib.c
++++ b/interface/vchiq_arm/vchiq_lib.c
+@@ -398,7 +398,7 @@ void
+ vchiq_release_message(VCHIQ_SERVICE_HANDLE_T handle,
+    VCHIQ_HEADER_T *header)
+ {
+-   vcos_log_trace( "%s handle=%08x, header=%x", __func__, (uint32_t)handle, (uint32_t)header );
++   vcos_log_trace( "%s handle=%08x, header=%p", __func__, (uint32_t)handle, header );
+ 
+    free_msgbuf(header);
+ }
+@@ -1396,7 +1396,7 @@ VCHIQ_STATUS_T vchiq_dump_phys_mem( VCHIQ_SERVICE_HANDLE_T handle,
+                              void *ptr,
+                              size_t num_bytes )
+ {
+-   VCHIQ_SERVICE_T *service = (VCHIQ_SERVICE_T *)handle;
++   VCHIQ_SERVICE_T *service = find_service_by_handle(handle);
+    VCHIQ_DUMP_MEM_T  dump_mem;
+    int ret;
+ 
+@@ -1547,9 +1547,9 @@ completion_thread(void *arg)
+          VCHIQ_SERVICE_T *service = (VCHIQ_SERVICE_T *)completion->service_userdata;
+          if (service->base.callback)
+          {
+-            vcos_log_trace( "callback(%x, %x, %x(%x,%x), %x)",
+-               completion->reason, (uint32_t)completion->header,
+-               (uint32_t)&service->base, (uint32_t)service->lib_handle, (uint32_t)service->base.userdata, (uint32_t)completion->bulk_userdata );
++            vcos_log_trace( "callback(%x, %p, %p(%x,%p), %p)",
++               completion->reason, completion->header,
++               &service->base, (uint32_t)service->lib_handle, service->base.userdata, completion->bulk_userdata );
+             service->base.callback(completion->reason, completion->header,
+                service->lib_handle, completion->bulk_userdata);
+          }
+-- 
+2.53.0
+
+
+From 285985c6a62171f3cce301e537a21013398d92be Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 10:29:45 +0100
+Subject: [PATCH 5/7] mmal: the VideoCore's message layout on 64-bit hosts
+
+The MMAL service on the VideoCore parses its messages with the layout they
+have on a 32-bit ARM host, which is why the CMake build leaves MMAL out on
+ARM64. Give the messages that layout on every host:
+
+- where a message had a pointer to a host object that the VideoCore passes
+  back (the waiter of a reply, the client component of an event, the context
+  of a buffer, the buffer of a delayed event), it has a 32-bit handle:
+  mmal_vc_handle_alloc()/_get()/_free() map handles to objects, a waiter's
+  handle is its index in the wait pool;
+- where a message embedded an MMAL structure with pointers (MMAL_PORT_T,
+  MMAL_ES_FORMAT_T, MMAL_BUFFER_HEADER_T, the buffer's driver data), it has
+  an mmal_worker_* copy with 32-bit fields in their place; the VideoCore does
+  not use those fields;
+- a format-changed event arrives in the VideoCore's layout and is converted
+  to MMAL_EVENT_FORMAT_CHANGED_T + MMAL_ES_FORMAT_T, which are larger on a
+  64-bit host (the event buffers get room for that);
+- MMAL_VC_COMP_STATS_T.comp, a VideoCore address, is a uint32_t.
+
+Static assertions pin the sizes; on a 32-bit host the messages are as
+before. When the allocation of the component's module fails, the destroy message
+sent to the VideoCore now names the component (it was uninitialised).
+---
+ interface/mmal/vc/mmal_vc_api.c         |  70 ++++---
+ interface/mmal/vc/mmal_vc_api.h         |   2 +-
+ interface/mmal/vc/mmal_vc_client.c      | 243 ++++++++++++++++++++----
+ interface/mmal/vc/mmal_vc_client_priv.h |   7 +
+ interface/mmal/vc/mmal_vc_diag.c        |   2 +-
+ interface/mmal/vc/mmal_vc_msgs.h        | 164 ++++++++++++++--
+ 6 files changed, 410 insertions(+), 78 deletions(-)
+
+diff --git a/interface/mmal/vc/mmal_vc_api.c b/interface/mmal/vc/mmal_vc_api.c
+index d171152..03080e3 100644
+--- a/interface/mmal/vc/mmal_vc_api.c
++++ b/interface/mmal/vc/mmal_vc_api.c
+@@ -77,6 +77,7 @@ typedef struct MMAL_PORT_MODULE_T
+ typedef struct MMAL_COMPONENT_MODULE_T
+ {
+    uint32_t component_handle;
++   uint32_t client_handle;         /**< Our handle for the component, in the VideoCore's messages */
+ 
+    MMAL_PORT_MODULE_T **ports;
+    uint32_t ports_num;
+@@ -148,7 +149,7 @@ static MMAL_STATUS_T mmal_vc_port_requirements_set(MMAL_PORT_T *port)
+    msg.component_handle = module->component_handle;
+    msg.action = MMAL_WORKER_PORT_ACTION_SET_REQUIREMENTS;
+    msg.port_handle = module->port_handle;
+-   msg.param.enable.port = *port;
++   mmal_vc_port_to_msg(&msg.param.enable.port, port);
+ 
+    status = mmal_vc_sendwait_message(mmal_vc_get_client(), &msg.header, sizeof(msg),
+                                      MMAL_WORKER_PORT_ACTION, &reply, &replylen, MMAL_FALSE);
+@@ -255,7 +256,7 @@ static MMAL_STATUS_T mmal_vc_port_enable(MMAL_PORT_T *port, MMAL_PORT_BH_CB_T cb
+    msg.component_handle = module->component_handle;
+    msg.action = MMAL_WORKER_PORT_ACTION_ENABLE;
+    msg.port_handle = module->port_handle;
+-   msg.param.enable.port = *port;
++   mmal_vc_port_to_msg(&msg.param.enable.port, port);
+ 
+    status = mmal_vc_sendwait_message(mmal_vc_get_client(), &msg.header, sizeof(msg),
+                                      MMAL_WORKER_PORT_ACTION, &reply, &replylen, MMAL_FALSE);
+@@ -368,7 +369,9 @@ static MMAL_STATUS_T mmal_vc_port_flush_sync(MMAL_PORT_T *port)
+    client_context.magic = MMAL_MAGIC;
+    client_context.port = port;
+ 
+-   msg->drvbuf.client_context = &client_context;
++   msg->drvbuf.client_context = mmal_vc_handle_alloc(&client_context);
++   if (!msg->drvbuf.client_context)
++      return MMAL_ENOSPC;
+    msg->drvbuf.component_handle = module->component_handle;
+    msg->drvbuf.port_handle = module->port_handle;
+    msg->drvbuf.magic = MMAL_MAGIC;
+@@ -376,6 +379,7 @@ static MMAL_STATUS_T mmal_vc_port_flush_sync(MMAL_PORT_T *port)
+ 
+    status = mmal_vc_sendwait_message(mmal_vc_get_client(), &msg->header, sizeof(*msg),
+                                      MMAL_WORKER_PORT_FLUSH, &reply, &replylen, MMAL_TRUE);
++   mmal_vc_handle_free(msg->drvbuf.client_context);
+    if (status == MMAL_SUCCESS)
+    {
+       vcos_assert(replylen == sizeof(reply));
+@@ -528,14 +532,15 @@ static void mmal_vc_port_send_callback(mmal_worker_buffer_from_host *msg)
+ {
+    MMAL_BUFFER_HEADER_T *buffer;
+    MMAL_PORT_T *port;
+-   MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context = msg->drvbuf.client_context;
++   MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context = mmal_vc_handle_get(msg->drvbuf.client_context);
+ 
+    vcos_assert(client_context);
+    vcos_assert(client_context->magic == MMAL_MAGIC);
+ 
+    buffer = client_context->buffer;
+    port = client_context->port;
+-   vcos_blockpool_free(msg->drvbuf.client_context);
++   mmal_vc_handle_free(msg->drvbuf.client_context);
++   vcos_blockpool_free(client_context);
+ 
+    vcos_assert(port->priv->module->magic == MMAL_MAGIC);
+    mmal_vc_msg_to_buffer_header(buffer, msg);
+@@ -614,7 +619,12 @@ static MMAL_STATUS_T mmal_vc_port_send(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *
+    client_context->callback_event = NULL;
+    client_context->port = port;
+ 
+-   msg->drvbuf.client_context = client_context;
++   msg->drvbuf.client_context = mmal_vc_handle_alloc(client_context);
++   if (!msg->drvbuf.client_context)
++   {
++      vcos_blockpool_free(client_context);
++      return MMAL_ENOSPC;
++   }
+    msg->drvbuf.component_handle = module->component_handle;
+    msg->drvbuf.port_handle = module->port_handle;
+    msg->drvbuf.magic = MMAL_MAGIC;
+@@ -693,7 +703,8 @@ static MMAL_STATUS_T mmal_vc_port_send(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *
+    if (status != MMAL_SUCCESS)
+    {
+       LOG_INFO("failed %d", status);
+-      vcos_blockpool_free(msg->drvbuf.client_context);
++      mmal_vc_handle_free(msg->drvbuf.client_context);
++      vcos_blockpool_free(client_context);
+       buffer->data = mmal_vc_shm_lock(buffer->data, port->priv->module->zero_copy_workaround);
+    }
+ 
+@@ -796,6 +807,7 @@ static MMAL_STATUS_T mmal_vc_component_destroy(MMAL_COMPONENT_T *component)
+ 
+    mmal_queue_destroy(component->priv->module->callback_queue);
+ 
++   mmal_vc_handle_free(component->priv->module->client_handle);
+    vcos_free(component->priv->module);
+    component->priv->module = NULL;
+ 
+@@ -969,9 +981,7 @@ static MMAL_STATUS_T mmal_vc_port_info_get(MMAL_PORT_T *port)
+    port->buffer_alignment_min = reply.port.buffer_alignment_min;
+    port->is_enabled = reply.port.is_enabled;
+    port->capabilities = reply.port.capabilities;
+-   reply.format.extradata = port->format->extradata;
+-   reply.format.es = port->format->es;
+-   *port->format = reply.format;
++   mmal_vc_msg_to_format(port->format, &reply.format);
+    *port->format->es = reply.es;
+    if(port->format->extradata_size)
+    {
+@@ -1001,15 +1011,15 @@ static MMAL_STATUS_T mmal_vc_port_info_set(MMAL_PORT_T *port)
+    msg.component_handle = module->component_handle;
+    msg.port_type = port->type;
+    msg.index = port->index;
+-   msg.port = *port;
+-   msg.format = *port->format;
++   mmal_vc_port_to_msg(&msg.port, port);
++   mmal_vc_format_to_msg(&msg.format, port->format);
+    msg.es = *port->format->es;
+    if(msg.format.extradata_size > MMAL_FORMAT_EXTRADATA_MAX_SIZE)
+    {
+       vcos_assert(0);
+       msg.format.extradata_size = MMAL_FORMAT_EXTRADATA_MAX_SIZE;
+    }
+-   memcpy(msg.extradata, msg.format.extradata, msg.format.extradata_size);
++   memcpy(msg.extradata, port->format->extradata, msg.format.extradata_size);
+ 
+    LOG_TRACE("set port info (%i:%i)", port->type, port->index);
+ 
+@@ -1037,9 +1047,7 @@ static MMAL_STATUS_T mmal_vc_port_info_set(MMAL_PORT_T *port)
+    port->buffer_alignment_min = reply.port.buffer_alignment_min;
+    port->is_enabled = reply.port.is_enabled;
+    port->capabilities = reply.port.capabilities;
+-   reply.format.extradata = port->format->extradata;
+-   reply.format.es = port->format->es;
+-   *port->format = reply.format;
++   mmal_vc_msg_to_format(port->format, &reply.format);
+    *port->format->es = reply.es;
+    if(port->format->extradata_size)
+    {
+@@ -1328,7 +1336,6 @@ static MMAL_STATUS_T mmal_vc_component_create(const char *name, MMAL_COMPONENT_T
+       return MMAL_EINVAL;
+    }
+ 
+-   msg.client_component = component;
+    /* coverity[secure_coding] Length tested above */
+    strcpy(msg.name, basename);
+ #if defined(__linux__) || defined(__HAIKU__)
+@@ -1351,6 +1358,14 @@ static MMAL_STATUS_T mmal_vc_component_create(const char *name, MMAL_COMPONENT_T
+       return status;
+    }
+ 
++   msg.client_component = mmal_vc_handle_alloc(component);
++   if (!msg.client_component)
++   {
++      mmal_vc_shm_exit();
++      mmal_vc_deinit();
++      return MMAL_ENOSPC;
++   }
++
+    // claim VC for entire duration of component.
+    status = mmal_vc_use();
+ 
+@@ -1370,6 +1385,7 @@ static MMAL_STATUS_T mmal_vc_component_create(const char *name, MMAL_COMPONENT_T
+    {
+       LOG_ERROR("failed to create component '%s' (%i:%s)", name, status,
+                 mmal_status_to_string(status));
++      mmal_vc_handle_free(msg.client_component);
+       mmal_vc_release();
+       mmal_vc_shm_exit();
+       mmal_vc_deinit();
+@@ -1382,14 +1398,17 @@ static MMAL_STATUS_T mmal_vc_component_create(const char *name, MMAL_COMPONENT_T
+    module = vcos_calloc(1, sizeof(*module) + ports_num * sizeof(*module->ports), "mmal_vc_module");
+    if (!module)
+    {
+-      mmal_worker_component_destroy msg;
+-      mmal_worker_reply reply;
+-      size_t replylen = sizeof(reply);
++      mmal_worker_component_destroy destroy_msg;
++      mmal_worker_reply destroy_reply;
++      size_t destroy_replylen = sizeof(destroy_reply);
+       MMAL_STATUS_T destroy_status;
+ 
+-      destroy_status = mmal_vc_sendwait_message(mmal_vc_get_client(), &msg.header, sizeof(msg),
+-                               MMAL_WORKER_COMPONENT_DESTROY, &reply, &replylen, MMAL_FALSE);
++      destroy_msg.component_handle = reply.component_handle;
++      destroy_status = mmal_vc_sendwait_message(mmal_vc_get_client(), &destroy_msg.header,
++                               sizeof(destroy_msg), MMAL_WORKER_COMPONENT_DESTROY, &destroy_reply,
++                               &destroy_replylen, MMAL_FALSE);
+       vcos_assert(destroy_status == MMAL_SUCCESS);
++      mmal_vc_handle_free(msg.client_component);
+       mmal_vc_release();
+       mmal_vc_shm_exit();
+       mmal_vc_deinit();
+@@ -1397,6 +1416,7 @@ static MMAL_STATUS_T mmal_vc_component_create(const char *name, MMAL_COMPONENT_T
+    }
+    module->ports = (MMAL_PORT_MODULE_T **)&module[1];
+    module->component_handle = reply.component_handle;
++   module->client_handle = msg.client_component;
+    component->priv->module = module;
+ 
+    /* Allocate our local ports. Control port reallocated to set module size. */
+@@ -1492,6 +1512,12 @@ static MMAL_STATUS_T mmal_vc_component_create(const char *name, MMAL_COMPONENT_T
+          goto fail;
+    }
+ 
++   /* The event buffers receive the VideoCore's events, which mmal_vc_client.c converts to the
++    * host's layout: a format change grows on a 64-bit host */
++   component->control->buffer_size_min +=
++      sizeof(MMAL_EVENT_FORMAT_CHANGED_T) + sizeof(MMAL_ES_FORMAT_T) -
++      sizeof(mmal_worker_event_format_changed) - sizeof(mmal_worker_es_format);
++
+    /* Initialise the vc client context which will be used for our event buffers */
+    module->event_ctx_initialised = MMAL_FALSE;
+    module->event_ctx.magic = MMAL_MAGIC;
+diff --git a/interface/mmal/vc/mmal_vc_api.h b/interface/mmal/vc/mmal_vc_api.h
+index 3ba7ce9..cd426f2 100644
+--- a/interface/mmal/vc/mmal_vc_api.h
++++ b/interface/mmal/vc/mmal_vc_api.h
+@@ -56,7 +56,7 @@ typedef enum {
+ /** Per-component statistics collected by the VC adaptation layer.
+  */
+ struct MMAL_VC_COMP_STATS_T {
+-   struct MMAL_DRIVER_COMPONENT_T *comp;
++   uint32_t comp;                /**< The component's address on the VideoCore */
+    MMAL_STATS_COMP_STATE_T state;
+    uint32_t pid;
+    uint32_t pool_mem_alloc_size;
+diff --git a/interface/mmal/vc/mmal_vc_client.c b/interface/mmal/vc/mmal_vc_client.c
+index 4935a27..3a61a3b 100644
+--- a/interface/mmal/vc/mmal_vc_client.c
++++ b/interface/mmal/vc/mmal_vc_client.c
+@@ -87,9 +87,112 @@ struct MMAL_CLIENT_T
+  */
+ static MMAL_CLIENT_T client;
+ 
++/** Host objects the VideoCore refers to by a handle (mmal_vc_msgs.h): handle = index + 1.
++  * Entries are handed out in order, freed ones are reused first. */
++#define MAX_HANDLES 1024
++static struct
++{
++   VCOS_MUTEX_T lock;
++   void *objects[MAX_HANDLES];
++   uint32_t next_free[MAX_HANDLES]; /**< Handle of the next free entry, 0 at the end */
++   uint32_t first_free;             /**< First free handle, 0 if none */
++   uint32_t used;                   /**< Entries handed out so far */
++} handles;
++
+ static void init_once(void)
+ {
+    vcos_mutex_create(&client.lock, VCOS_FUNCTION);
++   vcos_mutex_create(&handles.lock, "mmal vc handles");
++}
++
++uint32_t mmal_vc_handle_alloc(void *object)
++{
++   uint32_t index;
++
++   vcos_assert(object);
++   vcos_once(&once, init_once);
++   vcos_mutex_lock(&handles.lock);
++   if (handles.first_free)
++   {
++      index = handles.first_free - 1;
++      handles.first_free = handles.next_free[index];
++   }
++   else if (handles.used < MAX_HANDLES)
++      index = handles.used++;
++   else
++   {
++      vcos_mutex_unlock(&handles.lock);
++      LOG_ERROR("all %d handles in use", MAX_HANDLES);
++      return 0;
++   }
++   handles.objects[index] = object;
++   vcos_mutex_unlock(&handles.lock);
++   return index + 1;
++}
++
++void *mmal_vc_handle_get(uint32_t handle)
++{
++   void *object;
++
++   if (handle == 0 || handle > MAX_HANDLES)
++      return NULL;
++   vcos_mutex_lock(&handles.lock);
++   object = handles.objects[handle - 1];
++   vcos_mutex_unlock(&handles.lock);
++   return object;
++}
++
++void mmal_vc_handle_free(uint32_t handle)
++{
++   if (handle == 0 || handle > MAX_HANDLES)
++      return;
++   vcos_mutex_lock(&handles.lock);
++   if (handles.objects[handle - 1])
++   {
++      handles.objects[handle - 1] = NULL;
++      handles.next_free[handle - 1] = handles.first_free;
++      handles.first_free = handle;
++   }
++   vcos_mutex_unlock(&handles.lock);
++}
++
++/** An event's data from the VideoCore's layout to the host's: MMAL_EVENT_FORMAT_CHANGED_T and
++  * MMAL_ES_FORMAT_T have pointers (mmal_vc_msgs.h). Returns false if it does not fit the buffer. */
++static MMAL_BOOL_T mmal_vc_event_from_msg(MMAL_BUFFER_HEADER_T *buffer)
++{
++   const uint32_t msg_size = sizeof(mmal_worker_event_format_changed) +
++      sizeof(mmal_worker_es_format) + sizeof(MMAL_ES_SPECIFIC_FORMAT_T);
++   const uint32_t host_size = sizeof(MMAL_EVENT_FORMAT_CHANGED_T) +
++      sizeof(MMAL_ES_FORMAT_T) + sizeof(MMAL_ES_SPECIFIC_FORMAT_T);
++   mmal_worker_event_format_changed event;
++   mmal_worker_es_format format;
++   MMAL_EVENT_FORMAT_CHANGED_T *host_event;
++   uint32_t extradata_size;
++
++   /* (a shorter one is refused by mmal_event_format_changed_get()) */
++   if (buffer->cmd != MMAL_EVENT_FORMAT_CHANGED || msg_size == host_size ||
++       buffer->length < msg_size)
++      return MMAL_TRUE;
++
++   extradata_size = buffer->length - msg_size;
++   if (buffer->offset + host_size + extradata_size > buffer->alloc_size)
++      return MMAL_FALSE;
++
++   memcpy(&event, buffer->data + buffer->offset, sizeof(event));
++   memcpy(&format, buffer->data + buffer->offset + sizeof(event), sizeof(format));
++   /* the format-specific part and the extradata move to their place */
++   memmove(buffer->data + buffer->offset + host_size - sizeof(MMAL_ES_SPECIFIC_FORMAT_T),
++           buffer->data + buffer->offset + msg_size - sizeof(MMAL_ES_SPECIFIC_FORMAT_T),
++           sizeof(MMAL_ES_SPECIFIC_FORMAT_T) + extradata_size);
++   host_event = (MMAL_EVENT_FORMAT_CHANGED_T *)(buffer->data + buffer->offset);
++   memset(host_event, 0, sizeof(MMAL_EVENT_FORMAT_CHANGED_T) + sizeof(MMAL_ES_FORMAT_T));
++   host_event->buffer_size_min = event.buffer_size_min;
++   host_event->buffer_num_min = event.buffer_num_min;
++   host_event->buffer_size_recommended = event.buffer_size_recommended;
++   host_event->buffer_num_recommended = event.buffer_num_recommended;
++   mmal_vc_msg_to_format((MMAL_ES_FORMAT_T *)&host_event[1], &format);
++   buffer->length = host_size + extradata_size;
++   return MMAL_TRUE;
+ }
+ 
+ /** Create a pool of wait-structures.
+@@ -198,15 +301,20 @@ static void mmal_vc_handle_event_msg(VCHIQ_HEADER_T *vchiq_header,
+                                     void *context)
+ {
+    mmal_worker_event_to_host *msg = (mmal_worker_event_to_host *)vchiq_header->data;
+-   MMAL_COMPONENT_T *component = msg->client_component;
++   MMAL_COMPONENT_T *component = mmal_vc_handle_get(msg->client_component);
+    MMAL_BUFFER_HEADER_T *buffer;
+    MMAL_STATUS_T status;
+    MMAL_PORT_T *port;
+ 
+    LOG_DEBUG("event to host, cmd 0x%08x len %d to component %p port (%d,%d)",
+-         msg->cmd, msg->length, msg->client_component, msg->port_type, msg->port_num);
++         msg->cmd, msg->length, component, msg->port_type, msg->port_num);
+    (void)context;
+ 
++   if (!vcos_verify(component))
++   {
++      LOG_ERROR("event for an unknown component %u", msg->client_component);
++      goto error;
++   }
+    port = mmal_vc_port_by_number(component, msg->port_type, msg->port_num);
+    if (!vcos_verify(port))
+    {
+@@ -245,12 +353,18 @@ static void mmal_vc_handle_event_msg(VCHIQ_HEADER_T *vchiq_header,
+       int len = buffer->length;
+       len = (len+3) & (~3);
+       LOG_DEBUG("queue event bulk rx: %p, %d", buffer->data, buffer->length);
+-      msg->delayed_buffer = buffer;
++      msg->delayed_buffer = mmal_vc_handle_alloc(buffer);
++      if (!msg->delayed_buffer)
++      {
++         mmal_buffer_header_release(buffer);
++         goto error;
++      }
+ 
+       VCHIQ_STATUS_T vst = vchiq_queue_bulk_receive(service, buffer->data, len, vchiq_header);
+       if (vst != VCHIQ_SUCCESS)
+       {
+          LOG_TRACE("queue event bulk rx len %d failed to start", buffer->length);
++         mmal_vc_handle_free(msg->delayed_buffer);
+          mmal_buffer_header_release(buffer);
+          goto error;
+       }
+@@ -259,6 +373,13 @@ static void mmal_vc_handle_event_msg(VCHIQ_HEADER_T *vchiq_header,
+    {
+       if (msg->length)
+          memcpy(buffer->data, msg->data, msg->length);
++      if (!mmal_vc_event_from_msg(buffer))
++      {
++         LOG_ERROR("event buffer too small to convert event (%i/%i)",
++                   (int)buffer->alloc_size, (int)msg->length);
++         mmal_buffer_header_release(buffer);
++         goto error;
++      }
+ 
+       mmal_buffer_header_driver_data(buffer)->client_context->callback_event(port, buffer);
+       LOG_DEBUG("done callback back to client");
+@@ -326,27 +447,37 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+          {
+             LOG_TRACE("buffer to host");
+             mmal_worker_buffer_from_host *msg = (mmal_worker_buffer_from_host *)vchiq_header->data;
+-            LOG_TRACE("len %d context %p", msg->buffer_header.length, msg->drvbuf.client_context);
+-            vcos_assert(msg->drvbuf.client_context);
+-            vcos_assert(msg->drvbuf.client_context->magic == MMAL_MAGIC);
++            MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context =
++               mmal_vc_handle_get(msg->drvbuf.client_context);
++            LOG_TRACE("len %d context %p", msg->buffer_header.length, client_context);
++            if (!vcos_verify(client_context && client_context->magic == MMAL_MAGIC))
++            {
++               LOG_ERROR("buffer with an unknown context %u", msg->drvbuf.client_context);
++               vchiq_release_message(service, vchiq_header);
++               break;
++            }
+ 
+             /* If the buffer is referencing another, need to replicate it here
+              * in order to use the reference buffer's payload and ensure the
+              * reference is not released prematurely */
+             if (msg->has_reference)
+-               mmal_buffer_header_replicate(msg->drvbuf.client_context->buffer,
+-                                            msg->drvbuf_ref.client_context->buffer);
++            {
++               MMAL_VC_CLIENT_BUFFER_CONTEXT_T *reference =
++                  mmal_vc_handle_get(msg->drvbuf_ref.client_context);
++               if (vcos_verify(reference && reference->magic == MMAL_MAGIC))
++                  mmal_buffer_header_replicate(client_context->buffer, reference->buffer);
++            }
+ 
+             /* Sanity check the size of the transfer so we don't overrun our buffer */
+             if (!vcos_verify(msg->buffer_header.offset + msg->buffer_header.length <=
+-                             msg->drvbuf.client_context->buffer->alloc_size))
++                             client_context->buffer->alloc_size))
+             {
+                LOG_TRACE("buffer too small (%i, %i)",
+                          msg->buffer_header.offset + msg->buffer_header.length,
+-                         msg->drvbuf.client_context->buffer->alloc_size);
++                         client_context->buffer->alloc_size);
+                msg->buffer_header.length = 0;
+                msg->buffer_header.flags |= MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;
+-               msg->drvbuf.client_context->callback(msg);
++               client_context->callback(msg);
+                vchiq_release_message(service, vchiq_header);
+                break;
+             }
+@@ -357,7 +488,7 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+             {
+                /* a buffer full of data for us to process */
+                VCHIQ_STATUS_T vst = VCHIQ_SUCCESS;
+-               LOG_TRACE("queue bulk rx: %p, %d", msg->drvbuf.client_context->buffer->data +
++               LOG_TRACE("queue bulk rx: %p, %d", client_context->buffer->data +
+                          msg->buffer_header.offset, msg->buffer_header.length);
+                int len = msg->buffer_header.length;
+                len = (len+3) & (~3);
+@@ -370,7 +501,7 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+                {
+                   /* buffer transferred using vchiq bulk xfer */
+                   vst = vchiq_queue_bulk_receive(service,
+-                     msg->drvbuf.client_context->buffer->data + msg->buffer_header.offset,
++                     client_context->buffer->data + msg->buffer_header.offset,
+                      len, vchiq_header);
+ 
+                   if (vst != VCHIQ_SUCCESS)
+@@ -378,20 +509,20 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+                      LOG_TRACE("queue bulk rx len %d failed to start", msg->buffer_header.length);
+                      msg->buffer_header.length = 0;
+                      msg->buffer_header.flags |= MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;
+-                     msg->drvbuf.client_context->callback(msg);
++                     client_context->callback(msg);
+                      vchiq_release_message(service, vchiq_header);
+                   }
+                }
+                else if (msg->payload_in_message <= MMAL_VC_SHORT_DATA)
+                {
+                   /* we have already received the buffer data in the message! */
+-                  MMAL_BUFFER_HEADER_T *dst = msg->drvbuf.client_context->buffer;
++                  MMAL_BUFFER_HEADER_T *dst = client_context->buffer;
+                   LOG_TRACE("short data: dst = %p, dst->data = %p, len %d short len %d", dst, dst? dst->data : 0, msg->buffer_header.length, msg->payload_in_message);
+                   memcpy(dst->data, msg->short_data, msg->payload_in_message);
+                   dst->offset = 0;
+                   dst->length = msg->payload_in_message;
+                   vchiq_release_message(service, vchiq_header);
+-                  msg->drvbuf.client_context->callback(msg);
++                  client_context->callback(msg);
+                }
+                else
+                {
+@@ -409,9 +540,8 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+                 * be picked up in the callback to complete the sequence.
+                 */
+                LOG_TRACE("doing cb (%p) context %p",
+-                         msg->drvbuf.client_context, msg->drvbuf.client_context ?
+-                         msg->drvbuf.client_context->callback : 0);
+-               msg->drvbuf.client_context->callback(msg);
++                         client_context, client_context->callback);
++               client_context->callback(msg);
+                LOG_TRACE("done callback back to client");
+                vchiq_release_message(service, vchiq_header);
+             }
+@@ -422,9 +552,16 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+          }
+          else
+          {
+-            MMAL_WAITER_T *waiter = msg->u.waiter;
++            MMAL_WAITER_T *waiter = NULL;
++            if (msg->u.waiter >= 1 && msg->u.waiter <= MAX_WAITERS)
++               waiter = &client.waitpool.waiters[msg->u.waiter - 1];
+             LOG_TRACE("waking up waiter at %p", waiter);
+-            vcos_assert(waiter->inuse);
++            if (!vcos_verify(waiter && waiter->inuse))
++            {
++               LOG_ERROR("reply %u for an unknown waiter %u", msg->msgid, msg->u.waiter);
++               vchiq_release_message(service, vchiq_header);
++               break;
++            }
+             int len = vcos_min(waiter->destlen, vchiq_header->size);
+             waiter->destlen = len;
+             LOG_TRACE("copying payload @%p to %p len %d", waiter->dest, msg, len);
+@@ -443,7 +580,7 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+ #ifdef VCOS_LOGGING_ENABLED
+          mmal_worker_buffer_from_host *msg = (mmal_worker_buffer_from_host *)context;
+ #endif
+-         LOG_TRACE("bulk tx done: %p, %d", msg->buffer_header.data, msg->buffer_header.length);
++         LOG_TRACE("bulk tx done: 0x%x, %d", msg->buffer_header.data, msg->buffer_header.length);
+       }
+       break;
+    case VCHIQ_BULK_RECEIVE_DONE:
+@@ -453,18 +590,34 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+          if (msg_hdr->msgid == MMAL_WORKER_BUFFER_TO_HOST)
+          {
+             mmal_worker_buffer_from_host *msg = (mmal_worker_buffer_from_host *)msg_hdr;
+-            vcos_assert(msg->drvbuf.client_context->magic == MMAL_MAGIC);
+-            msg->drvbuf.client_context->callback(msg);
+-            LOG_TRACE("bulk rx done: %p, %d", msg->buffer_header.data, msg->buffer_header.length);
++            MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context =
++               mmal_vc_handle_get(msg->drvbuf.client_context);
++            vcos_assert(client_context && client_context->magic == MMAL_MAGIC);
++            client_context->callback(msg);
++            LOG_TRACE("bulk rx done: 0x%x, %d", msg->buffer_header.data, msg->buffer_header.length);
+          }
+          else
+          {
+             mmal_worker_event_to_host *msg = (mmal_worker_event_to_host *)msg_hdr;
+-            MMAL_PORT_T *port = mmal_vc_port_by_number(msg->client_component, msg->port_type, msg->port_num);
++            MMAL_COMPONENT_T *component = mmal_vc_handle_get(msg->client_component);
++            MMAL_BUFFER_HEADER_T *buffer = mmal_vc_handle_get(msg->delayed_buffer);
++            MMAL_PORT_T *port = component ?
++               mmal_vc_port_by_number(component, msg->port_type, msg->port_num) : NULL;
+ 
+-            vcos_assert(port);
+-            mmal_buffer_header_driver_data(msg->delayed_buffer)->
+-               client_context->callback_event(port, msg->delayed_buffer);
++            mmal_vc_handle_free(msg->delayed_buffer);
++            if (vcos_verify(port && buffer))
++            {
++               if (!mmal_vc_event_from_msg(buffer))
++               {
++                  LOG_ERROR("event buffer too small to convert event (%i/%i)",
++                            (int)buffer->alloc_size, (int)buffer->length);
++                  buffer->length = 0;
++               }
++               mmal_buffer_header_driver_data(buffer)->
++                  client_context->callback_event(port, buffer);
++            }
++            else if (buffer)
++               mmal_buffer_header_release(buffer);
+             LOG_DEBUG("event bulk rx done, length %d", msg->length);
+          }
+          vchiq_release_message(service, header);
+@@ -477,21 +630,31 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+          if (msg_hdr->msgid == MMAL_WORKER_BUFFER_TO_HOST)
+          {
+             mmal_worker_buffer_from_host *msg = (mmal_worker_buffer_from_host *)msg_hdr;
+-            LOG_TRACE("bulk rx aborted: %p, %d", msg->buffer_header.data, msg->buffer_header.length);
+-            vcos_assert(msg->drvbuf.client_context->magic == MMAL_MAGIC);
++            MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context =
++               mmal_vc_handle_get(msg->drvbuf.client_context);
++            LOG_TRACE("bulk rx aborted: 0x%x, %d", msg->buffer_header.data, msg->buffer_header.length);
++            vcos_assert(client_context && client_context->magic == MMAL_MAGIC);
+             msg->buffer_header.flags |= MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;
+-            msg->drvbuf.client_context->callback(msg);
++            client_context->callback(msg);
+          }
+          else
+          {
+             mmal_worker_event_to_host *msg = (mmal_worker_event_to_host *)msg_hdr;
+-            MMAL_PORT_T *port = mmal_vc_port_by_number(msg->client_component, msg->port_type, msg->port_num);
++            MMAL_COMPONENT_T *component = mmal_vc_handle_get(msg->client_component);
++            MMAL_BUFFER_HEADER_T *buffer = mmal_vc_handle_get(msg->delayed_buffer);
++            MMAL_PORT_T *port = component ?
++               mmal_vc_port_by_number(component, msg->port_type, msg->port_num) : NULL;
+ 
+-            vcos_assert(port);
++            mmal_vc_handle_free(msg->delayed_buffer);
+             LOG_DEBUG("event bulk rx aborted");
+-            msg->delayed_buffer->flags |= MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;
+-            mmal_buffer_header_driver_data(msg->delayed_buffer)->
+-               client_context->callback_event(port, msg->delayed_buffer);
++            if (vcos_verify(port && buffer))
++            {
++               buffer->flags |= MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;
++               mmal_buffer_header_driver_data(buffer)->
++                  client_context->callback_event(port, buffer);
++            }
++            else if (buffer)
++               mmal_buffer_header_release(buffer);
+          }
+          vchiq_release_message(service, header);
+       }
+@@ -499,8 +662,8 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+    case VCHIQ_BULK_TRANSMIT_ABORTED:
+       {
+          mmal_worker_buffer_from_host *msg = (mmal_worker_buffer_from_host *)context;
+-         LOG_INFO("bulk tx aborted: %p, %d", msg->buffer_header.data, msg->buffer_header.length);
+-         vcos_assert(msg->drvbuf.client_context->magic == MMAL_MAGIC);
++         LOG_INFO("bulk tx aborted: 0x%x, %d", msg->buffer_header.data, msg->buffer_header.length);
++         vcos_assert(mmal_vc_handle_get(msg->drvbuf.client_context));
+          /* Nothing to do as the VC side will release the buffer and notify us of the error */
+       }
+       break;
+@@ -548,7 +711,7 @@ MMAL_STATUS_T mmal_vc_sendwait_message(struct MMAL_CLIENT_T *client,
+ 
+    waiter = get_waiter(client);
+    msg_header->msgid  = msgid;
+-   msg_header->u.waiter = waiter;
++   msg_header->u.waiter = (uint32_t)(waiter - client->waitpool.waiters) + 1;
+    msg_header->magic  = MMAL_MAGIC;
+ 
+    waiter->dest    = dest;
+diff --git a/interface/mmal/vc/mmal_vc_client_priv.h b/interface/mmal/vc/mmal_vc_client_priv.h
+index 0fc3aaa..8ac7307 100644
+--- a/interface/mmal/vc/mmal_vc_client_priv.h
++++ b/interface/mmal/vc/mmal_vc_client_priv.h
+@@ -63,6 +63,13 @@ typedef struct MMAL_VC_CLIENT_BUFFER_CONTEXT_T
+ 
+ MMAL_CLIENT_T *mmal_vc_get_client(void);
+ 
++/** Handles of host objects the VideoCore passes back in its messages (a component, a buffer's
++  * context): 32 bits, whatever the size of a host pointer. 0 is no object.
++  */
++uint32_t mmal_vc_handle_alloc(void *object);
++void *mmal_vc_handle_get(uint32_t handle);
++void mmal_vc_handle_free(uint32_t handle);
++
+ MMAL_STATUS_T mmal_vc_sendwait_message(MMAL_CLIENT_T *client,
+                                        mmal_worker_msg_header *header,
+                                        size_t size,
+diff --git a/interface/mmal/vc/mmal_vc_diag.c b/interface/mmal/vc/mmal_vc_diag.c
+index a082e4f..13fc473 100644
+--- a/interface/mmal/vc/mmal_vc_diag.c
++++ b/interface/mmal/vc/mmal_vc_diag.c
+@@ -434,7 +434,7 @@ static int print_component_stats(const MMAL_VC_STATS_T *stats)
+             default: state = "corrupt"; break;
+          }
+          printf("%-32s: %s: pid %d address %p pool mem alloc size %d\n",
+-               cs->name, state, cs->pid, cs->comp, cs->pool_mem_alloc_size);
++               cs->name, state, cs->pid, (void *)(uintptr_t)cs->comp, cs->pool_mem_alloc_size);
+       }
+    }
+    return 0;
+diff --git a/interface/mmal/vc/mmal_vc_msgs.h b/interface/mmal/vc/mmal_vc_msgs.h
+index 343922b..cea7a7f 100644
+--- a/interface/mmal/vc/mmal_vc_msgs.h
++++ b/interface/mmal/vc/mmal_vc_msgs.h
+@@ -106,16 +106,23 @@ typedef enum {
+    MMAL_WORKER_MSG_LAST
+ } MMAL_WORKER_CMD_T;
+ 
++/* The messages have the layout they have on a 32-bit host, on every host: the VideoCore only knows that
++ * one. Where the structures had a pointer to a host object the VideoCore passes back (a waiter, a
++ * component, a buffer's context), they have a 32-bit handle (mmal_vc_handle_alloc()); where they embed
++ * an MMAL structure with pointers (MMAL_PORT_T, MMAL_ES_FORMAT_T, MMAL_BUFFER_HEADER_T,
++ * MMAL_EVENT_FORMAT_CHANGED_T), they have a copy of it with 32-bit fields in place of the pointers,
++ * which the VideoCore does not use. The sizes are checked below. */
++
+ /** Every message has one of these at the start.
+   */
+ typedef struct
+ {
+    uint32_t magic;
+    uint32_t msgid;
+-   struct MMAL_CONTROL_SERVICE_T *control_service;       /** Handle to the control service */
++   uint32_t control_service;           /** Handle to the control service */
+ 
+    union {
+-      struct MMAL_WAITER_T *waiter;    /** User-land wait structure, passed back */
++      uint32_t waiter;                 /** User-land wait structure (its handle), passed back */
+    } u;
+ 
+    MMAL_STATUS_T status;            /** Result code, passed back */
+@@ -125,6 +132,79 @@ typedef struct
+ 
+ /* Make sure mmal_worker_msg_header will preserve 64 bits alignment */
+ vcos_static_assert(!(sizeof(mmal_worker_msg_header) & 0x7));
++vcos_static_assert(sizeof(mmal_worker_msg_header) == 24);
++
++/** MMAL_PORT_T as the VideoCore sees it (32-bit pointers, not used by the VideoCore) */
++typedef struct
++{
++   uint32_t priv;
++   uint32_t name;
++   MMAL_PORT_TYPE_T type;
++   uint16_t index;
++   uint16_t index_all;
++   uint32_t is_enabled;
++   uint32_t format;
++   uint32_t buffer_num_min;
++   uint32_t buffer_size_min;
++   uint32_t buffer_alignment_min;
++   uint32_t buffer_num_recommended;
++   uint32_t buffer_size_recommended;
++   uint32_t buffer_num;
++   uint32_t buffer_size;
++   uint32_t component;
++   uint32_t userdata;
++   uint32_t capabilities;
++} mmal_worker_port;
++vcos_static_assert(sizeof(mmal_worker_port) == 64);
++
++/** MMAL_ES_FORMAT_T as the VideoCore sees it; the elementary stream format and the extradata
++  * follow it in the messages */
++typedef struct
++{
++   MMAL_ES_TYPE_T type;
++   MMAL_FOURCC_T encoding;
++   MMAL_FOURCC_T encoding_variant;
++   uint32_t es;
++   uint32_t bitrate;
++   uint32_t flags;
++   uint32_t extradata_size;
++   uint32_t extradata;
++} mmal_worker_es_format;
++vcos_static_assert(sizeof(mmal_worker_es_format) == 32);
++
++/** MMAL_BUFFER_HEADER_T as the VideoCore sees it. data is the payload's address on a 32-bit host
++  * (its low 32 bits otherwise); only zero-copy buffers use it (a VideoCore handle then). */
++typedef struct
++{
++   uint32_t next;
++   uint32_t priv;
++   uint32_t cmd;
++   uint32_t data;
++   uint32_t alloc_size;
++   uint32_t length;
++   uint32_t offset;
++   uint32_t flags;
++   int64_t  pts;
++   int64_t  dts;
++   uint32_t type;
++   uint32_t user_data;
++} mmal_worker_buffer_header;
++vcos_static_assert(sizeof(mmal_worker_buffer_header) == 56);
++
++/** MMAL_EVENT_FORMAT_CHANGED_T as the VideoCore sends it: followed by an mmal_worker_es_format,
++  * an MMAL_ES_SPECIFIC_FORMAT_T and the extradata */
++typedef struct
++{
++   uint32_t buffer_size_min;
++   uint32_t buffer_num_min;
++   uint32_t buffer_size_recommended;
++   uint32_t buffer_num_recommended;
++   uint32_t format;
++} mmal_worker_event_format_changed;
++vcos_static_assert(sizeof(mmal_worker_event_format_changed) == 20);
++vcos_static_assert(sizeof(MMAL_ES_SPECIFIC_FORMAT_T) == 44);
++vcos_static_assert(sizeof(MMAL_BUFFER_HEADER_TYPE_SPECIFIC_T) == 40);
++vcos_static_assert(sizeof(MMAL_VC_STATS_T) == 408);
+ 
+ /* Message structures sent to worker thread.
+  */
+@@ -152,10 +232,11 @@ typedef struct
+ typedef struct
+ {
+    mmal_worker_msg_header header;
+-   void *client_component;             /** Client component */
++   uint32_t client_component;          /** Client component (its handle) */
+    char name[128];
+    uint32_t pid;                       /**< For debug */
+ } mmal_worker_component_create;
++vcos_static_assert(sizeof(mmal_worker_component_create) == 160);
+ 
+ /** Reply to component-creation message. Reports back
+   * the number of ports.
+@@ -214,12 +295,13 @@ typedef struct
+    uint32_t component_handle;          /**< Which component */
+    MMAL_PORT_TYPE_T port_type;         /**< Type of port */
+    uint32_t index;                     /**< Which port of given type to get */
+-   MMAL_PORT_T port;
+-   MMAL_ES_FORMAT_T format;
++   mmal_worker_port port;
++   mmal_worker_es_format format;
+    MMAL_ES_SPECIFIC_FORMAT_T es;
+    uint8_t  extradata[MMAL_FORMAT_EXTRADATA_MAX_SIZE];
+ } mmal_worker_port_info_set;
+ vcos_static_assert(sizeof(mmal_worker_port_info_set) <= MMAL_WORKER_MAX_MSG_LEN);
++vcos_static_assert(sizeof(mmal_worker_port_info_set) == 304);
+ 
+ /** Report port info back in response to a get / set. */
+ typedef struct
+@@ -231,12 +313,13 @@ typedef struct
+    uint32_t index;                     /**< Which port of given type to get */
+    int32_t found;                      /**< Did we find anything? */
+    uint32_t port_handle;               /**< Handle to use for this port */
+-   MMAL_PORT_T port;
+-   MMAL_ES_FORMAT_T format;
++   mmal_worker_port port;
++   mmal_worker_es_format format;
+    MMAL_ES_SPECIFIC_FORMAT_T es;
+    uint8_t  extradata[MMAL_FORMAT_EXTRADATA_MAX_SIZE];
+ } mmal_worker_port_info;
+ vcos_static_assert(sizeof(mmal_worker_port_info) <= MMAL_WORKER_MAX_MSG_LEN);
++vcos_static_assert(sizeof(mmal_worker_port_info) == 316);
+ 
+ typedef struct
+ {
+@@ -285,7 +368,7 @@ typedef struct
+    /** Action parameter */
+    union {
+       struct {
+-         MMAL_PORT_T port;
++         mmal_worker_port port;
+       } enable;
+       struct {
+          uint32_t component_handle;
+@@ -295,6 +378,7 @@ typedef struct
+ 
+ } mmal_worker_port_action;
+ vcos_static_assert(sizeof(mmal_worker_port_action) <= MMAL_WORKER_MAX_MSG_LEN);
++vcos_static_assert(sizeof(mmal_worker_port_action) == 100);
+ 
+ #define MMAL_WORKER_PORT_PARAMETER_SPACE      96
+ 
+@@ -360,6 +444,17 @@ struct MMAL_DRIVER_BUFFER_T
+    struct MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context;
+ };
+ 
++/** The same in a message: the context is a handle */
++typedef struct
++{
++   uint32_t magic;
++   uint32_t component_handle;    /**< The component this buffer is from */
++   uint32_t port_handle;         /**< Index into array of ports for this component */
++
++   /** Client side uses this to get back to its context structure (mmal_vc_handle_get()). */
++   uint32_t client_context;
++} mmal_worker_driver_buffer;
++
+ /** Receive a buffer from the host.
+   *
+   * @sa mmal_port_send_buffer()
+@@ -372,17 +467,17 @@ typedef struct mmal_worker_buffer_from_host
+    /** Our control data, copied from the buffer header "driver area"
+     * @sa mmal_buffer_header_driver_data().
+     */
+-   struct MMAL_DRIVER_BUFFER_T drvbuf;
++   mmal_worker_driver_buffer drvbuf;
+ 
+    /** Referenced buffer control data.
+     * This is set if the buffer is referencing another
+     * buffer as is the case with passthrough ports where
+     * buffers on the output port reference buffers on the
+     * input port. */
+-   struct MMAL_DRIVER_BUFFER_T drvbuf_ref;
++   mmal_worker_driver_buffer drvbuf_ref;
+ 
+    /** the buffer header itself */
+-   MMAL_BUFFER_HEADER_T buffer_header;
++   mmal_worker_buffer_header buffer_header;
+    MMAL_BUFFER_HEADER_TYPE_SPECIFIC_T buffer_header_type_specific;
+ 
+    MMAL_BOOL_T is_zero_copy;
+@@ -396,6 +491,7 @@ typedef struct mmal_worker_buffer_from_host
+ 
+ } mmal_worker_buffer_from_host;
+ vcos_static_assert(sizeof(mmal_worker_buffer_from_host) <= MMAL_WORKER_MAX_MSG_LEN);
++vcos_static_assert(sizeof(mmal_worker_buffer_from_host) == 296);
+ 
+ /** Maximum number of event data bytes that can be passed in the message.
+  * More than this and the data is passed in a bulk message.
+@@ -411,16 +507,17 @@ typedef struct mmal_worker_event_to_host
+ {
+    mmal_worker_msg_header header;
+ 
+-   struct MMAL_COMPONENT_T *client_component;
++   uint32_t client_component;          /**< Client component (its handle) */
+    uint32_t port_type;
+    uint32_t port_num;
+ 
+    uint32_t cmd;
+    uint32_t length;
+    uint8_t data[MMAL_WORKER_EVENT_SPACE];
+-   MMAL_BUFFER_HEADER_T *delayed_buffer;  /* Only used to remember buffer for bulk rx */
++   uint32_t delayed_buffer;  /* Only used to remember buffer for bulk rx (its handle) */
+ } mmal_worker_event_to_host;
+ vcos_static_assert(sizeof(mmal_worker_event_to_host) <= MMAL_WORKER_MAX_MSG_LEN);
++vcos_static_assert(sizeof(mmal_worker_event_to_host) == 304);
+ 
+ typedef struct
+ {
+@@ -515,7 +612,7 @@ static inline void mmal_vc_buffer_header_to_msg(mmal_worker_buffer_from_host *ms
+    msg->buffer_header.pts           = header->pts;
+    msg->buffer_header.dts           = header->dts;
+    msg->buffer_header.alloc_size    = header->alloc_size;
+-   msg->buffer_header.data          = header->data;
++   msg->buffer_header.data          = (uint32_t)(uintptr_t)header->data;
+    msg->buffer_header_type_specific = *header->type;
+ }
+ 
+@@ -531,5 +628,44 @@ static inline void mmal_vc_msg_to_buffer_header(MMAL_BUFFER_HEADER_T *header,
+    *header->type  = msg->buffer_header_type_specific;
+ }
+ 
++static inline void mmal_vc_port_to_msg(mmal_worker_port *msg, const MMAL_PORT_T *port)
++{
++   memset(msg, 0, sizeof(*msg));
++   msg->type                    = port->type;
++   msg->index                   = port->index;
++   msg->index_all               = port->index_all;
++   msg->is_enabled              = port->is_enabled;
++   msg->buffer_num_min          = port->buffer_num_min;
++   msg->buffer_size_min         = port->buffer_size_min;
++   msg->buffer_alignment_min    = port->buffer_alignment_min;
++   msg->buffer_num_recommended  = port->buffer_num_recommended;
++   msg->buffer_size_recommended = port->buffer_size_recommended;
++   msg->buffer_num              = port->buffer_num;
++   msg->buffer_size             = port->buffer_size;
++   msg->capabilities            = port->capabilities;
++}
++
++static inline void mmal_vc_format_to_msg(mmal_worker_es_format *msg, const MMAL_ES_FORMAT_T *format)
++{
++   memset(msg, 0, sizeof(*msg));
++   msg->type             = format->type;
++   msg->encoding         = format->encoding;
++   msg->encoding_variant = format->encoding_variant;
++   msg->bitrate          = format->bitrate;
++   msg->flags            = format->flags;
++   msg->extradata_size   = format->extradata_size;
++}
++
++/** The fields of a message's format, into a format (its es and extradata stay) */
++static inline void mmal_vc_msg_to_format(MMAL_ES_FORMAT_T *format, const mmal_worker_es_format *msg)
++{
++   format->type             = msg->type;
++   format->encoding         = msg->encoding;
++   format->encoding_variant = msg->encoding_variant;
++   format->bitrate          = msg->bitrate;
++   format->flags            = msg->flags;
++   format->extradata_size   = msg->extradata_size;
++}
++
+ #endif
+ 
+-- 
+2.53.0
+
+
+From ffcab963a2899aefe761bca18aa4152ea9099963 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 10:29:45 +0100
+Subject: [PATCH 6/7] Haiku: a Makefile for VCOS, libvchiq and MMAL's VideoCore
+ client
+
+makefiles/haiku/Makefile builds libvcos, libvchiq_arm, libmmal_core,
+libmmal_util, libmmal_vc_client and libmmal (the names and sonames of the
+CMake build) and installs them with their headers and an mmal.pc. The CMake
+build also builds the Linux host applications, and no MMAL on 64-bit hosts.
+---
+ makefiles/haiku/Makefile   | 79 ++++++++++++++++++++++++++++++++++++++
+ makefiles/haiku/mmal.pc.in |  9 +++++
+ 2 files changed, 88 insertions(+)
+ create mode 100644 makefiles/haiku/Makefile
+ create mode 100644 makefiles/haiku/mmal.pc.in
+
+diff --git a/makefiles/haiku/Makefile b/makefiles/haiku/Makefile
+new file mode 100644
+index 0000000..b0ee8cd
+--- /dev/null
++++ b/makefiles/haiku/Makefile
+@@ -0,0 +1,79 @@
++# Haiku build of VCOS (pthreads), libvchiq and MMAL's VideoCore client:
++#
++#   make -f makefiles/haiku/Makefile [CC=...] [AR=...]
++#   make -f makefiles/haiku/Makefile install DESTDIR=... prefix=/boot/system
++#
++# The CMake build (CMakeLists.txt) builds the Linux host applications as well and leaves MMAL out on 64-bit
++# hosts; this builds only the libraries an MMAL client needs, with the names and sonames of the CMake build:
++#   libvcos.so libvchiq_arm.so libmmal_core.so libmmal_util.so libmmal_vc_client.so libmmal.so
++# Not built: the ARM-side MMAL components (mmal_components), the OpenMAX IL layer, the containers, vcsm
++# (zero-copy buffers need the vc-sm kernel driver) and bcm_host.
++
++CC ?= gcc
++prefix ?= /boot/system
++libdir ?= $(prefix)/lib
++headersdir ?= $(prefix)/develop/headers
++includedir ?= $(headersdir)/raspberrypi_userland
++pkgconfigdir ?= $(prefix)/develop/lib/pkgconfig
++B ?= build-haiku
++
++CPPFLAGS += -D_REENTRANT -D_GNU_SOURCE -DUSE_VCHIQ_ARM -DVCHI_BULK_ALIGN=1 -DVCHI_BULK_GRANULARITY=1 \
++	-D__VIDEOCORE4__ -DOMX_SKIP64BIT -I. -Iinterface/vcos -Iinterface/vcos/pthreads -Iinterface/vchiq_arm -Iinterface/mmal
++CFLAGS ?= -O2
++CFLAGS += -std=gnu11 -fPIC -Wall -Wno-multichar -Wno-unused-but-set-variable
++
++vcos_SRCS := $(addprefix interface/vcos/, pthreads/vcos_pthreads.c pthreads/vcos_dlfcn.c glibc/vcos_backtrace.c \
++	$(addprefix generic/vcos_, generic_event_flags.c mem_from_malloc.c generic_named_sem.c \
++		generic_safe_string.c generic_reentrant_mtx.c abort.c cmd.c init.c msgqueue.c logcat.c \
++		generic_blockpool.c))
++vchiq_arm_SRCS := interface/vchiq_arm/vchiq_lib.c interface/vchiq_arm/vchiq_util.c
++mmal_core_SRCS := $(addprefix interface/mmal/core/mmal_, format.c port.c port_clock.c component.c buffer.c \
++	queue.c pool.c events.c logging.c clock.c)
++mmal_util_SRCS := $(addprefix interface/mmal/util/mmal_, il.c util.c connection.c graph.c list.c \
++	param_convert.c util_params.c component_wrapper.c util_rational.c)
++mmal_vc_client_SRCS := $(addprefix interface/mmal/vc/mmal_vc_, client.c shm.c api.c opaque_alloc.c msgnames.c \
++	api_drm.c)
++mmal_SRCS := interface/mmal/util/mmal_util.c
++
++# library: its sources, the libraries it links
++vcos_LIBS :=
++vchiq_arm_LIBS := -lvcos
++mmal_vc_client_LIBS := -lvchiq_arm -lvcos
++mmal_core_LIBS := -lmmal_vc_client -lvcos
++mmal_util_LIBS := -lmmal_core -lvcos
++mmal_LIBS := -lmmal_core -lmmal_util -lmmal_vc_client -lvcos
++
++LIBS := vcos vchiq_arm mmal_vc_client mmal_core mmal_util mmal
++all: $(foreach l,$(LIBS),$(B)/lib$(l).so)
++
++$(B)/%.o: %.c
++	@mkdir -p $(dir $@)
++	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
++
++define library
++$(B)/lib$(1).so: $$(patsubst %.c,$(B)/%.o,$$($(1)_SRCS)) $$(patsubst -l%,$(B)/lib%.so,$$($(1)_LIBS))
++	$$(CC) -shared -Wl,-soname,lib$(1).so $$(LDFLAGS) -o $$@ $$(patsubst %.c,$(B)/%.o,$$($(1)_SRCS)) \
++		-L$(B) $$($(1)_LIBS)
++endef
++# mmal_core and mmal_vc_client use each other; mmal_vc_client is linked first, with mmal_core's symbols
++# left to the runtime loader (as in the CMake build)
++$(foreach l,$(LIBS),$(eval $(call library,$(l))))
++
++# (interface/vmcs_host/khronos/IL: the OpenMAX IL headers mmal_il.h includes, Khronos's MIT licence)
++HEADER_DIRS := interface/vcos interface/vcos/pthreads interface/vcos/generic interface/vchiq_arm interface/vchi \
++	interface/vmcs_host/khronos/IL interface/mmal interface/mmal/core interface/mmal/util interface/mmal/vc
++install: all
++	install -d $(DESTDIR)$(libdir) $(DESTDIR)$(pkgconfigdir)
++	install -m 755 $(foreach l,$(LIBS),$(B)/lib$(l).so) $(DESTDIR)$(libdir)
++	for d in $(HEADER_DIRS); do \
++		install -d $(DESTDIR)$(includedir)/$$d; \
++		install -m 644 $$d/*.h $(DESTDIR)$(includedir)/$$d; \
++	done
++	install -m 644 LICENCE $(DESTDIR)$(includedir)
++	sed -e 's|@prefix@|$(prefix)|; s|@libdir@|$(libdir)|; s|@headersdir@|$(headersdir)|' \
++		makefiles/haiku/mmal.pc.in > $(DESTDIR)$(pkgconfigdir)/mmal.pc
++
++clean:
++	rm -rf $(B)
++
++.PHONY: all install clean
+diff --git a/makefiles/haiku/mmal.pc.in b/makefiles/haiku/mmal.pc.in
+new file mode 100644
+index 0000000..61a4ffc
+--- /dev/null
++++ b/makefiles/haiku/mmal.pc.in
+@@ -0,0 +1,9 @@
++prefix=@prefix@
++libdir=@libdir@
++includedir=@headersdir@
++
++Name: MMAL
++Description: Multi-Media Abstraction Layer library for the Raspberry Pi's VideoCore
++Version: 1
++Libs: -L${libdir} -lmmal -lmmal_core -lmmal_util -lmmal_vc_client -lvchiq_arm -lvcos
++Cflags: -I${includedir}/raspberrypi_userland -I${includedir}/raspberrypi_userland/interface/vcos/pthreads -I${includedir}/raspberrypi_userland/interface/mmal
+-- 
+2.53.0
+
+
+From 5273c3d496a9fa3c4b1f6c8eb324553598e35227 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 19:24:03 +0100
+Subject: [PATCH 7/7] mmal: take refcount_lock in mmal_vc_shm_exit()
+
+mmal_vc_shm_exit() unlocked refcount_lock without having locked it,
+so two components destroyed at once could race on the count and the
+payload list, and an error-checking mutex (Haiku's libroot) refuses
+the unlock.
+---
+ interface/mmal/vc/mmal_vc_shm.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/interface/mmal/vc/mmal_vc_shm.c b/interface/mmal/vc/mmal_vc_shm.c
+index aa81309..407d0f7 100644
+--- a/interface/mmal/vc/mmal_vc_shm.c
++++ b/interface/mmal/vc/mmal_vc_shm.c
+@@ -167,6 +167,9 @@ unlock:
+ 
+ void mmal_vc_shm_exit(void)
+ {
++   vcos_once(&once, mmal_vc_shm_init_once);
++
++   vcos_mutex_lock(&refcount_lock);
+    if (mmal_vc_shm_initialised <= 0)
+       goto unlock;
+ 
+-- 
+2.53.0
+

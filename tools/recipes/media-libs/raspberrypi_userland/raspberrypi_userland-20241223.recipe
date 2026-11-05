@@ -1,0 +1,74 @@
+SUMMARY="MMAL, VCHIQ and VCOS: the Raspberry Pi's VideoCore multimedia libraries"
+DESCRIPTION="The client side of the VideoCore firmware's multimedia services on the \
+Raspberry Pi, from Raspberry Pi's userland repository: MMAL (the Multi-Media \
+Abstraction Layer: the firmware's video decoders and encoders, image codecs, \
+camera and ISP components), libvchiq (the message queues to the VideoCore, over \
+/dev/vchiq) and VCOS (the OS abstraction they are written on, pthreads backend). \
+Built for 64-bit hosts: the VideoCore's messages keep the layout of a 32-bit \
+host. Without zero-copy buffers (vcsm), the ARM-side MMAL components, OpenMAX IL \
+and bcm_host."
+HOMEPAGE="https://github.com/raspberrypi/userland"
+COPYRIGHT="2010-2024 Broadcom Europe Ltd
+	2015-2024 Raspberry Pi (Trading) Ltd"
+LICENSE="Raspberry Pi userland"
+REVISION="1"
+srcGitRev="a54a0dbb2b8dcf9bafdddfc9a9374fb51d97e976"
+SOURCE_URI="https://github.com/raspberrypi/userland/archive/$srcGitRev.tar.gz"
+CHECKSUM_SHA256="e977277a280d76fdb6fc8c8f8c43d6e93aea29565253bf07f8d2b3356116c2fc"
+SOURCE_FILENAME="userland-$srcGitRev.tar.gz"
+SOURCE_DIR="userland-$srcGitRev"
+PATCHES="raspberrypi_userland-$portVersion.patchset"
+
+ARCHITECTURES="!x86_gcc2 !x86 !x86_64 arm64"
+
+PROVIDES="
+	raspberrypi_userland = $portVersion
+	lib:libmmal = $portVersion
+	lib:libmmal_core = $portVersion
+	lib:libmmal_util = $portVersion
+	lib:libmmal_vc_client = $portVersion
+	lib:libvchiq_arm = $portVersion
+	lib:libvcos = $portVersion
+	"
+REQUIRES="
+	haiku
+	"
+
+PROVIDES_devel="
+	raspberrypi_userland_devel = $portVersion
+	devel:libmmal = $portVersion
+	devel:libmmal_core = $portVersion
+	devel:libmmal_util = $portVersion
+	devel:libmmal_vc_client = $portVersion
+	devel:libvchiq_arm = $portVersion
+	devel:libvcos = $portVersion
+	"
+REQUIRES_devel="
+	raspberrypi_userland == $portVersion base
+	"
+
+BUILD_REQUIRES="
+	haiku_devel
+	"
+BUILD_PREREQUIRES="
+	cmd:gcc
+	cmd:make
+	"
+
+BUILD()
+{
+	make -f makefiles/haiku/Makefile $jobArgs
+}
+
+INSTALL()
+{
+	make -f makefiles/haiku/Makefile install prefix=$prefix libdir=$libDir \
+		headersdir=$includeDir pkgconfigdir=$developLibDir/pkgconfig
+
+	prepareInstalledDevelLibs libmmal libmmal_core libmmal_util libmmal_vc_client \
+		libvchiq_arm libvcos
+	fixPkgconfig
+
+	packageEntries devel \
+		$developDir
+}

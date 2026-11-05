@@ -239,3 +239,113 @@ first connection · `f47b5639b5` buffers of a dying team · `6e8be068c5` a log l
   (no zero-copy: `vc-sm-cma` is GPL; our own buffer import later).
 - Open: `exec()` while bulk transfers are queued still hits the wired-area assertion (no notification before
   `exec_team` deletes the areas); an aborted bulk the VC never acknowledged leaks its lock, as in [F]/Linux.
+
+## 7. Step 2: libmmal on Haiku and H.264 decoded by the VideoCore
+
+Status (2026-11-05): **works on the Pi** (network boot of the `vchiq` branch image, `6e8be068c5`; no driver change
+was needed for step 2). Broadcom's MMAL, libvchiq and VCOS [U] run on arm64 Haiku; `vc.ril.video_decode` decodes
+H.264 Annex-B streams to I420 frames that come back by VCHIQ bulk transfers; every frame of three test streams is
+checked against ffmpeg's software decode (§7.4).
+
+### 7.1 Packaging
+
+- Recipe `tools/recipes/media-libs/raspberrypi_userland/raspberrypi_userland-20241223.recipe` ([U] at
+  `a54a0dbb2b8d`, BSD-3-Clause, `ARCHITECTURES="arm64"`), patchset beside it. Two packages:
+  `raspberrypi_userland` (libvcos, libvchiq_arm, libmmal_core, libmmal_util, libmmal_vc_client, libmmal: the
+  CMake build's names and sonames) and `raspberrypi_userland_devel` (headers under
+  `develop/headers/raspberrypi_userland`, `mmal.pc`).
+- Not built: vcsm (zero-copy buffers need the GPL vc-sm kernel driver), the ARM-side MMAL components, the
+  containers, OpenMAX IL, bcm_host, the Linux host programs. [U]'s CMake build leaves MMAL out on 64-bit hosts; the
+  patchset's `makefiles/haiku/Makefile` builds only the libraries.
+- `scripts/build-mmal.sh` cross-builds it (`scripts/cross-port.sh ... script`, into the sysroot's `non-packaged/`),
+  fails on any compiler warning but [U]'s own two (`vchiq_use_service`/`vchiq_release_service` declared with
+  `VCHIQ_STATUS_T` and `int32_t`), runs the ABI check (§7.2), builds `tools/haiku-tests/mmal-h264.c` and copies the
+  libraries to `artifacts/mmal/lib` for a test session; `--package` makes the two hpkgs
+  (`scripts/package-port.py`; kept in `artifacts/mmal/packages/`, **not** in the published `artifacts/packages/`
+  while the driver is on an unmerged branch); `--clips` makes the test streams and ffmpeg's reference hashes.
+
+### 7.2 The patches (`raspberrypi_userland-20241223.patchset`, 7 commits on [U])
+
+1. **vcos: `VCOS_ONCE_INIT`** for `current_thread_key_once` (`vcos_pthreads.c`) and `cmd_globals.initialized`
+   (`vcos_cmd.c`): zeroed `pthread_once_t`s, which are `PTHREAD_ONCE_INIT` only on glibc (Haiku: `{ -1 }`; the
+   thread key was never made and `vcos_init()` aborted).
+2. **vchiq_arm: no shadowed `vchiq_lib_mutex`**: `vchiq_lib_init()`'s function-local static hid the file-scope
+   mutex that `alloc_msgbuf()`, `vchiq_close_service()` etc. lock, so that one was never created (a zeroed
+   `pthread_mutex_t` works on glibc; libroot asserts).
+3. **Haiku support**: `vchiq_ioctl.h` takes `<sys/ioccom.h>` (the driver's BSD ioctl encoding, §4), HZ from
+   `<sys/param.h>`, VCOS thread names by `rename_thread()`, the pid in the component-create message.
+4. **vchiq_arm: 64-bit clean**: `vchiq_dump_phys_mem()` cast a handle to a pointer; trace formats.
+5. **mmal: the VideoCore's message layout on 64-bit hosts** (the big one, ~400 lines). The firmware parses
+   `mmal_vc_msgs.h` with the layout of a 32-bit ARM host. Pointers the VC passes back (the reply's waiter, the
+   event's client component, a buffer's client context, a delayed event buffer) become 32-bit handles
+   (`mmal_vc_handle_alloc/_get/_free`, a 1024-entry table; a waiter's handle is its pool index + 1); embedded
+   structures with pointers (`MMAL_PORT_T`, `MMAL_ES_FORMAT_T`, `MMAL_BUFFER_HEADER_T`, `MMAL_DRIVER_BUFFER_T`)
+   become `mmal_worker_*` copies with 32-bit fields; a format-changed event is converted from the VC's layout
+   to the host's, which is larger (the control port's buffers get the difference); `MMAL_VC_COMP_STATS_T.comp` is a
+   `uint32_t`. Static assertions pin every size. `tools/haiku-tests/mmal-abi-check.py` (run by build-mmal.sh)
+   dumps clang's record layouts of the unpatched header for 32-bit ARM and of the patched one for 32-bit ARM and
+   arm64 and compares size, field offsets and names: `37 structures, all equal`. Linux's kernel MMAL client
+   (`vchiq-mmal`) uses the same idea (u32 context handles); no code taken from it.
+6. **A Makefile** (`makefiles/haiku/Makefile`) and `mmal.pc`.
+7. **mmal: `mmal_vc_shm_exit()` takes `refcount_lock`** — it unlocked a mutex it never locked (an upstream
+   race on the count; libroot's mutex refuses the unlock). Added after the first Pi runs.
+
+**The zero-initialised synchronisation objects, all of them** (`grep` of `interface/{vcos,vchiq_arm,mmal}` for
+`static` `VCOS_*_T` / `pthread_*_t`): beyond 1 and 2, every other one is created before its first use —
+`printf_lock`, the named-semaphore `lock` and the logging `lock` by `vcos_platform_init()` (from `vcos_init()`,
+a constructor of libvcos); `mmal_core_lock` (`mmal_component.c`) and `refcount_lock` (`mmal_vc_shm.c`) in a
+`vcos_once()` with `VCOS_ONCE_INIT`; `client.lock`/`handles.lock` (`mmal_vc_client.c`) in `init_once()`; all
+others are members of allocated objects created by their constructors. `vcos_pthreads.c`'s `lock` uses
+`PTHREAD_MUTEX_INITIALIZER`.
+
+### 7.3 The test: `mmal-h264`
+
+`tools/haiku-tests/mmal-h264.c`: reads an Annex-B stream into memory, creates `vc.ril.video_decode`
+(`MMAL_COMPONENT_DEFAULT_VIDEO_DECODER`), input H.264 with no size, output I420; feeds the stream in input-port
+sized buffers (20 × 80 KiB, unframed) and an end-of-stream buffer; handles the format-changed event (disable the
+output port, take the new format, new pool, enable); runs until the output buffer flagged end of stream. `-m`
+prints the MD5 of each frame's visible part (crop rectangle, Y then U then V: what `ffmpeg -f framemd5 -pix_fmt
+yuv420p` hashes), `-q` only the summary (frames/s; CPU of the team and of the whole system, i.e. including the
+kernel's VCHIQ threads), `-f FOURCC` another output encoding (`-f OPQV`: opaque, frames stay on the VideoCore),
+`-r N:FILE` writes frame N's raw buffer. `tools/pi-tests/mmal.sh` runs everything ("MMAL result: N problems").
+
+Streams (`build-mmal.sh --clips`, the host's ffmpeg + libx264, High profile, 3 B-frames, CABAC, 300 frames at
+30 fps of `testsrc2` + temporal noise): `h264-720p` (1280×720, 6 Mbit/s), `h264-1080p` (1920×1080, 12 Mbit/s;
+coded 1920×1088, cropped), `h264-1080p-inrange` (1080p without noise, every source sample clipped to 32–224).
+
+### 7.4 Results (Pi 4, firmware Oct 15 2026, `tools/pi-tests/mmal.sh`: 0 problems)
+
+| Stream | MMAL → I420 copied out | CPU (team / all 4 CPUs) | opaque (no copy) | ffmpeg 1 thread | ffmpeg 4 threads |
+|---|---|---|---|---|---|
+| 720p | **111 fps** (2.70 s) | 0.21 s = 7.7–9 % of one CPU / 3.6–4.1 % | 112 fps, 1.7 % | 61 fps, 4.9 s CPU | 137 fps, 6.3 s CPU |
+| 1080p | **53.0 fps** (5.66 s) | 0.43 s = 7.6–8.3 % of one CPU / 3.6 % | 53.5 fps, 1.4 % | 28 fps, 10.7 s CPU | 66 fps, 14.5 s CPU |
+| 1080p in-range | 51.1 fps (5.87 s) | 0.45 s = 7.3–8.1 % / 3.4–3.9 % | 51.5 fps, 1.3 % | 41 fps, 7.3 s CPU | 102 fps, 9.4 s CPU |
+
+- Three timed runs each, within 0.1 %. First frame 44 ms (720p) / 74–89 ms (1080p) after the start. The rates
+  with `-m` (15 fps at 1080p, 80 % of a CPU) are the MD5 of every frame on the callback thread, not the decoder.
+- **The decoder is the limit, not the copies**: the opaque output (no bulk transfer) runs at the same rate. The
+  bulk copy of a 3.1 MB frame costs ~166 MB/s of frames at 4 % of the system's CPU (step 1's bulk echo: 4 MiB in
+  27.5 ms per round trip). The decoder asks for one output buffer (`buffer_num_recommended` 1, 3 133 440 bytes:
+  1920×1088 I420).
+- During a decode: `measure_clock h264` 250 MHz, `core` 500 MHz, `arm` 750 MHz. A faster H.264 clock
+  (`h264_freq`) is a lever for later, not tested.
+- Against ffmpeg on 4 threads: ffmpeg is 23–25 % faster on the noisy clips and 2× on the in-range one, for
+  **15–18× the CPU time** of the whole system during the MMAL decode (6.3 s vs 0.42 s at 720p, 14.5 s vs 0.81 s at
+  1080p); MMAL is 1.8× (720p) / 1.9× (1080p) faster than one software thread.
+- No kernel messages but the handshake; `get_mem gpu` 76 MiB before and after; 55–64 °C over the script.
+
+**Bit-exactness.** Every frame is decoded (300 of 300 in each stream) and the crop (1088 → 1080) and plane
+offsets/pitches (`buffer->type->video`: pitch 1920/960/960, offsets 0/2088960/2611200) are right. The I420 frames
+equal ffmpeg's **exactly where no decoded sample is below 16** (297 of 300 frames of the in-range clip; the three
+others and every frame of the noisy clips have such samples); with every ffmpeg sample `v` in 1…15 replaced by
+`v − 1` (0 stays 0, 16…255 unchanged), **all 900 frames are equal**. So the decoded picture is the same; the
+I420 output differs by one code value in the footroom below video black. (Where this happens is §7.5.)
+
+### 7.5 Limits and open points
+
+- Copies only: every frame crosses by a VCHIQ bulk transfer into the client's memory (no vcsm/vc-sm-cma, GPL).
+  At 1080p that is ~4 % of the system's CPU; fine for playback, the zero-copy route is our own buffer import.
+- `exec()` with bulks queued (§6) still open; a client killed mid-decode is step 1's "dying team" path (not
+  re-tested with MMAL).
+- Patch 5's handle table is process-wide (1024 handles: components, buffers in flight, delayed events); beyond
+  that `mmal_port_send_buffer()` fails with `MMAL_ENOSPC`.
