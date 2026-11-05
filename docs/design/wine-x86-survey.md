@@ -437,10 +437,70 @@ image; frame rates from `WINEDEBUG=+fps`, judged by HDMI captures).** The SHA-25
 | Program | Result | Notes |
 |---|---|---|
 | Age of Empires II demo | **Works** (mega image) | DirectDraw, full screen 800×600: menus, a random-map game, units and buildings; ~31 fps in game. The zip's setup program is a CAB: `7z x` gives the game tree, no installer run needed. |
-| Unreal Tournament demo 338 | **Works** with the OpenGL renderer (mega image) | ~50 fps at 640×480 in DM-Morpheus. Needs two settings or it crashes at its first frame (KNOWN-ISSUES W10). Direct3D also works: 5–6 fps, 16 with 0028. |
+| Unreal Tournament demo 338 | **Works** with the OpenGL renderer (mega image) | ~50 fps at 640×480 in DM-Morpheus, ~57 in the menu. Its launcher limits the OpenGL extensions to Mesa's up to 1998 and DirectDraw stays off, else it crashes at its first frame (W10, traced below). Direct3D also works: 5–6 fps, 16 with 0028. |
 | Diablo II demo 1.04 | **Works in a window** (`-w`; mega image) | Installer runs under Wine; menus, character creation, walking in the Act 1 camp; animates smoothly (a new picture in the HDMI capture ~30 times a second). Full screen stops on "Error 22" (DirectDraw P8 + 3D: W12). |
 | Warcraft III demo 1.01 | **Works, slow** (mega image) | Installer needs Windows XP set for it ("Windows NT is not supported"). Direct3D 8 through wined3d: menus, prologue cinematic and map play; 3 fps (1–3 in game) with the packaged Wine, 12–18 fps with 0028. DXT textures work (Mesa's fallback). Menu buttons need the mouse button held ~0.3 s at 3 fps. |
 | Need for Speed: Porsche Unleashed demo | **Partly**: menus and garage, races crash | Direct3D 7: menus 2.5 fps (26 with 0028), car models render; starting a race faults in the game (W11). Its InstallShield setup crashed the wineserver (alignment fault, fixed by Wine 0029: W13). Not in the mega image. |
+
+### W10: Unreal Tournament's OpenGL renderer, traced (2026-11-05)
+
+The crash is the game's own, and a real Windows driver with a long extension list hits it as well: **UT 338
+overruns its stack writing any log line of 1024 characters or more**, and the OpenGL renderer's
+`glGetString(GL_EXTENSIONS)` line is the only line that long. Traced in a network session of the mega image
+(mega25: wine 11.21, Box64 v0.4.4, Mesa 26.2.6), with Wine's opengl32/gdi32 relay trace and the game's DLLs
+disassembled on the host (`llvm-objdump`; nothing of the game is in this repository).
+
+1. OpenGLDrv (0x10005a51) logs `appFromAnsi(glGetString(GL_EXTENSIONS))` through `Logf`. Both are safe: Core's
+   `appFromAnsi` copies at most 1023 characters into a 1024-character buffer, `Logf` formats into 4096. The relay
+   trace shows nothing after that `glGetString`: the next GL call never comes.
+2. The log file's output device (`FOutputDeviceFile::Serialize`, in `UnrealTournament.exe` at 0x1090388e) formats
+   `"%s: %s%s"` (event name, text, CRLF) with Core's `appSprintf` = `_vsnwprintf(buffer, 1024, ...)` into a
+   1024-character wide buffer. A line of 1024 characters or more is **left without its terminating zero** (that
+   is `_vsnwprintf`'s contract, on Windows too).
+3. It then converts that buffer to ANSI into a 1024-byte buffer that lies right after it on the stack, one
+   character at a time **until it reads a zero**, writing 0x7F for every character above 0xFF (Unreal's
+   `ToAnsi`). Past the end of the wide buffer it reads the ANSI bytes it has just written, two at a time: each
+   pair is a character above 0xFF, so it writes 0x7F, and keeps going over the saved frame pointer, the SEH
+   record, the return address and about a kilobyte of the caller's stack. The `ret` jumps to 0x7F7F7F7F, where
+   Box64 tries to translate code (`native_pass0`, x86 pc 0: no block). With the dynarec off for that range the
+   interpreter faults instead, and Wine cannot dispatch the exception ("Exception frame is not in stack
+   limits": the SEH record was overwritten too).
+
+So it crashes when `"Init: glGetString(GL_EXTENSIONS): "` (34 characters) + the list + CRLF reaches 1024: **when
+the list Wine reports is 988 characters or more.** The full list is 231 extensions (well over 1023; `appFromAnsi`
+truncates it to 1023, still too long).
+
+**The fix: `MESA_EXTENSION_MAX_YEAR=1998`** in the UT launcher ([tools/mega/apps.txt](../../tools/mega/apps.txt)).
+Mesa sorts the legacy `GL_EXTENSIONS` string by year and drops the newer ones when this is set (it has the
+variable for this kind of game), and Wine's opengl32 builds its string from Mesa's (in that order), adding
+`WGL_EXT_extensions_string WGL_EXT_swap_control`. On the V3D (OpenGL 2.1): up to 1998, 30 Mesa extensions, 717
+characters with Wine's two: the menu renders at ~57 fps, also through the launcher rebuilt from apps.txt after
+the new first boot ([screenshot](../screenshots/32-wine-unreal-tournament-opengl.png)). **Up to 1999 or 2000 it still crashes** (47
+extensions, about 1120 characters). OpenGLDrv 338 asks for `GL_ARB_multitexture`, `GL_EXT_bgra`,
+`GL_EXT_compiled_vertex_array`, `GL_EXT_point_parameters`, `GL_S3_s3tc`, `GL_EXT_paletted_texture`,
+`GL_EXT_clip_volume_hint`, `GL_WIN_swap_hint` and `WGL_EXT_swap_control`; up to 1998 it gets all that Wine has
+except `GL_S3_s3tc` (1999), which only the compressed textures of the full game's second CD use. This replaces
+the `EnabledExtensions` AppDefault the mega image's first boot set since 10-31: that list left out
+`GL_EXT_compiled_vertex_array` and `GL_EXT_point_parameters`, which the renderer uses, and lived in the shared
+prefix rather than with the game. Same rate in the menu (56 fps).
+
+**DirectDraw must stay off (`UseDirectDraw=False`) — a second, separate crash.** With mode switching through
+DirectDraw, UT's WinDrv creates a DirectDraw object at start-up, and ddraw sets wined3d up on OpenGL in the same
+process. Under any shortened list (the `EnabledExtensions` key or the year limit) wined3d sees neither
+`GL_ARB_framebuffer_object` (2008) nor `GL_EXT_framebuffer_object` (2005), yet its driver-quirk test
+`match_fbo_tex_update` (`dlls/wined3d/adapter_gl.c`) calls `fbo_ops.glGenFramebuffers` — a null pointer: Box64
+faults translating code at address 0, right after the test's 4×4 texture (`+d3d,+opengl` trace). With the full
+list wined3d gets through and the game then hits the log overflow above. The OpenGL renderer does not need
+DirectDraw (it switches modes with `ChangeDisplaySettings`), so the ini setting stays and nothing is patched.
+For the same reason the Direct3D renderer cannot be chosen in UT's settings while the launcher limits the list:
+start `UnrealTournament.exe` without the variable for it.
+
+How it was traced, for the next one: `BOX64_DYNAREC_SAFEFLAGS=2 BOX64_DYNAREC_STRONGMEM=2
+BOX64_DYNAREC_BIGBLOCK=0 BOX64_DYNAREC_CALLRET=0` crashed the same way (not the dynarec);
+`BOX64_NODYNAREC=0x7f000000-0x80000000` turned the bad jump into an interpreter fault; `RelayInclude`
+`opengl32.*;gdi32.*` with `+relay` showed the last call; the log file itself is no witness here (written in
+4 KB blocks, the last one lost in the crash). UT keeps a `System/Running.ini` while it runs: after a killed run
+it opens a recovery dialog instead of the game until that file is removed.
 
 Two other candidates were checked and set aside:
 

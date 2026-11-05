@@ -62,7 +62,8 @@ warcraft3-demo|https://archive.org/download/WarcraftIiiReignOfChaosDemo/W3Demo.e
 #   tree/data/wine-games/SC3, falldemo (from sc3demo.zip / falldemo.zip)
 #   tree/data/wine-games/AOE2 (7z x of AoE2demo.exe, the zip's only member: its CAB holds the game tree)
 #   tree/data/wine-games/UT   (7z x of UTDemo338.exe; System/UnrealTournament.ini set to FirstRun=338,
-#                              the OpenGL renderer and UseDirectDraw=False: see build-mega-image.sh)
+#                              the OpenGL renderer and UseDirectDraw=False: see build-mega-image.sh and
+#                              the launcher's MESA_EXTENSION_MAX_YEAR in apps.txt)
 #   tree/data/wine-games/D2, W3 (DiabloIIDemo.exe / W3Demo.exe installed under Wine on the Pi, the user's
 #                              save directories left out; W3Demo.exe's installer needs Windows XP set for it)
 

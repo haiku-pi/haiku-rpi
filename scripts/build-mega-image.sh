@@ -200,8 +200,9 @@ else
 			&& 7z x -y -o"$g/AOE2" "$cache/extract/aoe2/AoE2demo.exe" > /dev/null
 	fi
 	# Unreal Tournament: a zip archive in a setup program; set up as its first-run wizard would, with the OpenGL
-	# renderer (Direct3D through wined3d is a third as fast) and without DirectDraw (with it the OpenGL renderer
-	# crashes; first-boot.sh also trims the OpenGL extensions it sees)
+	# renderer (Direct3D through wined3d is a third as fast) and without DirectDraw: its launcher shortens the
+	# OpenGL extension list (apps.txt, KNOWN-ISSUES W10), and DirectDraw's wined3d then finds no framebuffer
+	# objects and calls a null function at start-up
 	if [ -f "$dl/ut-demo" ]; then
 		7z x -y -o"$g/UT" "$dl/ut-demo" > /dev/null 2>&1 || true	# a warning: the setup program's own bytes
 		[ -f "$g/UT/System/UnrealTournament.ini" ] && sed -i 's/^FirstRun=.*/FirstRun=338/;
