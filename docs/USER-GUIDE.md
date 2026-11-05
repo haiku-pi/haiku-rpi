@@ -133,7 +133,7 @@ Everything in this guide that names a test tree says so.
 - **Shut down / Restart** (leaf menu, or `shutdown` / `shutdown -r` in Terminal) work from image-2026-11-04c on:
   a restart brings the board back to the desktop by itself, a shutdown halts it (then unplug it; the Pi 4 has no
   power switch). Older images end a shutdown in the kernel debugger and do not restart — unplug the Pi instead.
-  If a crash alert appears during shutdown (KNOWN-ISSUES C15, fixed after image-2026-11-04c), press **Terminate** and the shutdown continues.
+  On images up to image-2026-11-04c Tracker's crash alert could appear during shutdown (fixed in image-2026-11-05): press **Terminate** and the shutdown continues.
 
 ### 4.2 Screen preferences and resolutions
 

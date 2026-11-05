@@ -5,10 +5,10 @@ media kit, plus this port's drivers and the ported libraries. Everything below w
 bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-11-04).
 
 **Download:** a ready-to-flash image is on the
-[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-04c)
-(`haiku-pi4-2026-11-04c.img.xz`, 337 MB; 8 GB card or larger; written with
-`xz -dc haiku-pi4-2026-11-04c.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
-Imager's "Use custom"). It is this page's regular image (4.4 GiB instead of 1.1 GB), built 2026-11-04 with GCC
+[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-05)
+(`haiku-pi4-2026-11-05.img.xz`, 336 MB; 8 GB card or larger; written with
+`xz -dc haiku-pi4-2026-11-05.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
+Imager's "Use custom"). It is this page's regular image (4.4 GiB instead of 1.1 GB), built 2026-11-05 with GCC
 16.2, release-checked over a network boot and booted from a card before publishing.
 Wine (`pkgman install wine wine_x86 wine_x86_64`) needs this image or a newer one.
 

@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **274 commits of its own** (2026-10-18 to 2026-11-04; counted
-2026-11-04 at `rpi4` d3cc8e3fd1). To list them, in `sources/haiku`:
+On top of that base the fork carries **275 commits of its own** (2026-10-18 to 2026-11-05; counted
+2026-11-05 at `rpi4` a38b19efab). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -120,6 +120,7 @@ section for its area gives the detail.
 | 52 | **Thread-local variables with a large alignment were misaligned** | `4d433669a8` | The runtime loader allocated a dynamically created TLS block with plain `malloc()` (16-byte aligned) whatever alignment the PT_TLS segment asked for, so an `alignas(64)` `thread_local` landed at 32 or 48 modulo 64. Blocks are now allocated with room to align. Every architecture. |
 | 53 | **Programs crashed while quitting: libbe freed its message cache under a running looper** | `a779571e90` | `terminate_after()` runs from `exit()` while the team's other threads still run; BPathMonitor's looper is never quit and keeps creating and deleting messages, so deleting `BMessage`'s block cache there made it fault on a NULL cache (Tracker during a shutdown, whose crash alert then stopped the shutdown). The cache is now left to go with the team. Reproducer `pmexit`: 11/1000 → 0/1000 on the Pi, 6/400 → 0/400 in QEMU (arm64 `virt`; x86-64 untested until H22). Every architecture; upstream master has the same code. |
 | 54 | **usb_disk's teardown could deadlock with its own I/O thread** | `d3cc8e3fd1` | `usb_disk_uninit_driver()` deleted each LUN's I/O scheduler while holding the device lock; that waits for the scheduler thread, which needs the same lock in `usb_disk_do_io()`. With reads queued when a stick drops off its port, both wait forever, and on the USB explore thread every later driver registration blocks too — the most consistent explanation of one stalled boot (not reproduced: 40/40 + 20/20 clean). Schedulers are now deleted before the lock is taken, and I/O for a removed device fails at once. Upstream code. |
+| 55 | **A page fault on a file read one 4 KiB page per disk request** | `a38b19efab` | Programs fault their pages in scattered over their files, so a cold start from a plain file system was bound by per-request cost (0.59 ms per 4 KiB on the Pi's card: 8–10 MB/s). A fault that misses the cache of a file on a disk partition now reads the run of missing pages around it within its 64 KiB cluster in one request (as FreeBSD's `vm_fault`), only with pages reservable without waiting, and re-reads the faulting page alone on error; packagefs keeps its own chunked read. Firefox from a BFS folder, cold: 14.05 → 8.36 s; x86-64 (KVM): a 108 MiB library 560 → 80 ms. Every architecture. |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
@@ -224,6 +225,7 @@ load, which QEMU did not provide. The last subsection is code that every archite
 | `f6c52282df` ★ | Image notifications fit their pointer | 256-byte event buffer instead of 128: `profile -a` resolves programs started after it (design/perf-round-h20.md §6). |
 | `a9db442988` ★ | **Sub-transaction starts look only at changed blocks** | The block cache keeps, per transaction, the blocks made writable or discarded since the current sub-transaction started; the start walks those (the full walk stays for the first start and after an abort/detach). `BLOCK_CACHE_CHECK_SUB_TRANSACTIONS` compares with the full walk. Walk CPU in a Firefox first start 616–1055 → 26–59 ms ([design/perf-round-h20.md](design/perf-round-h20.md) N6). |
 | `9799738757` ★ | **BFS ends its journal before failing a mount** | A corrupt volume (unreadable root node, damaged bitmap) panicked the kernel in `block_cache_delete()` when its mount failed; now the mount fails with B_BAD_VALUE (was KNOWN-ISSUES C14, fixed in image-2026-11-04c). |
+| `a38b19efab` ★ | **Page faults read around the faulting file page** | Missing pages within the 64 KiB cluster are read in one request for files on a disk partition (not packagefs); mapped files fault in at 23–32 MB/s instead of 8–10, contents checked identical ([design/perf-round-h20.md](design/perf-round-h20.md) C2). |
 
 ### Interrupt controller (GICv2) and the CPU stall
 
