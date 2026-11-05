@@ -5,9 +5,9 @@ media kit, plus this port's drivers and the ported libraries. Everything below w
 bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-11-04).
 
 **Download:** a ready-to-flash image is on the
-[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-05)
-(`haiku-pi4-2026-11-05.img.xz`, 336 MB; 8 GB card or larger; written with
-`xz -dc haiku-pi4-2026-11-05.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
+[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-05b)
+(`haiku-pi4-2026-11-05b.img.xz`, 336 MB; 8 GB card or larger; written with
+`xz -dc haiku-pi4-2026-11-05b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
 Imager's "Use custom"). It is this page's regular image (4.4 GiB instead of 1.1 GB), built 2026-11-05 with GCC
 16.2, release-checked over a network boot and booted from a card before publishing.
 Wine (`pkgman install wine wine_x86 wine_x86_64`) needs this image or a newer one.
@@ -27,7 +27,7 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 | Audio | HDMI (from image-2026-10-24e: "Raspberry Pi HDMI", 48 kHz stereo, recorded back on the bench) and the 3.5 mm headphone jack ("Raspberry Pi headphones", 44.1 kHz stereo); measured, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ...; **HEVC decoded by the SoC's decoder block** (bit-exact; 1080p at ~115 fps on under half a core, 4K at ~38 fps), the rest in software |
 | CPU | 4 cores (SMP), 600–1500 MHz: the ARM clock follows the load (a cpufreq module; the minimum in the power saving scheduler mode), the core clock stays at 500 MHz; the firmware still throttles when hot. `cat /dev/power/bcm2835_thermal/0`: temperature, throttling, clocks. `time` and ProcessController tell user from kernel time |
-| Storage | SD card at UHS-I DDR50 (~43 MB/s reads); USB 3 storage through the VL805 (reads 60–81 MB/s, writes 49 MB/s; use image-2026-11-04b or later — older images corrupt USB disk data, KNOWN-ISSUES C13) |
+| Storage | SD card at UHS-I DDR50 (~43 MB/s reads, ~35 MB/s writes from image-2026-11-05b); USB 3 storage through the VL805 (reads 60–81 MB/s, writes 49 MB/s; use image-2026-11-04b or later — older images corrupt USB disk data, KNOWN-ISSUES C13) |
 | USB | keyboard, mouse, hubs, storage (VL805 xHCI over PCIe); the bench's Logitech K120 keyboard and Pixart mouse: typing, pointing and everyday desktop use checked by hand (2026-10-25); keys and mouse in SDL games not yet |
 | Network | Gigabit Ethernet (GENET, DHCP; TCP ~915 Mbit/s each way); WiFi (BCM43455: scan, WPA2, DHCP, verified by a boot script that joins through net_server, `scripts/wifi-join-image.sh`; joining from Network preferences takes the same path but has not been tried by hand); NFSv4 client |
 | Web | **WebPositive** (HaikuWebKit 1.10, JavaScript JIT on) and NetSurf 3.11, both in the Applications menu: HTTPS through OpenSSL 3 and curl, CA certificates; the clock is set by NTP when the network comes up (the Pi has no battery clock). Verified: https://www.haiku-os.org/ renders in both |
