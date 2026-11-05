@@ -404,3 +404,35 @@ the devel package was not built against on the Pi (it is what the host build use
 - **Robustness**: a media player killed or crashing mid-decode exercises the driver's dying-team path with MMAL
   (step 1 tested it with vchiq_test only); several decoders at once share the 1024-handle table and the
   firmware's component limit (untested).
+
+## 8. Step 3: H.264 in the media kit (work in progress)
+
+Status (2026-11-05, evening): in progress on Haiku's branch `h264-mmal` (off `vchiq`) and this repository.
+
+### 8.1 How it plugs in (decided)
+
+The HEVC hardware path (`hw-video-decode.md` §0, §3) is **not** a media-kit add-on: it is a second libavcodec
+decoder (`hevc_rpivid`) inside the ffmpeg6 port, registered ahead of `hevc`, which the media kit's ffmpeg plugin
+gets from `avcodec_find_decoder()`; it falls back to the CPU inside itself and delivers ordinary `yuv420p` frames
+that the plugin converts (swscale) to `B_RGB32`. H.264 goes the same way: FFmpeg already has the MMAL decoder
+(`libavcodec/mmaldec.c`, `h264_mmal`, LGPL like the rest of the ffmpeg6 patches; the BSD/MIT rule is about the
+Linux GPL pieces), so ffmpeg6 revision 4 is built `--enable-mmal` against raspberrypi_userland (patch
+`patches/ffmpeg6/0002-mmal-haiku.patch`), and the plugin (`AVCodecDecoder`) prefers `h264_mmal` for H.264 and keeps
+`h264` as its fallback (`FFMPEG_H264_MMAL=0`: software). A separate Decoder add-on (§7.6) was not needed: the
+plugin's reader, timing, seeking and colour conversion are reused as they are.
+
+### 8.2 Notes as they come
+
+- The H.264 clock (vchiq driver, `27a0c0d75b`): a file that opens the `mmal` service holds the block at its
+  maximum; `vchiq: H.264 clock maximum: 250 -> 500 MHz` / `minimum: 500 -> 250 MHz` in the syslog per client.
+- FFmpeg 6.1's mmaldec.c does not compile (a comma missing in `FFMMAL_DEC`): patched.
+- **mmaldec's default `extra_buffers` (10) does not fit the VideoCore's memory** (`gpu_mem` 76 MB): the decoder
+  reports `ENOSPC` on its control port already at 720p (`mmal-h264 -X 10`), mmaldec only logs it and outputs empty
+  frames (grey, then zeroes: green), and at 1080p it loops on "Did not get output frame". After such a failure
+  plus a killed client, the firmware's MMAL service stopped answering (component creation never replied) until a
+  reboot. `mmal-h264 -X 2 -o 3` (what extra_buffers 2 gives) decodes 1080p at 79 fps with the clock held;
+  `-o 1` 51 fps (one output buffer serialises decode and copy at 500 MHz), `-o 4` 78 fps.
+- `mmal-h264` gained the settings mmaldec uses (`-X`, `-C`, `-P`, `-Z`, `-A` framed access units with pts, `-K`
+  parameter sets as a CONFIG buffer): each alone decodes all 300 frames of the 720p clip bit-exact (mapped).
+- Two decoders at once: two 720p decodes in two teams run at 85 fps each; two 1080p: the second gets `ENOSPC`
+  (exits cleanly, the firmware stays usable) — the fallback must handle that.

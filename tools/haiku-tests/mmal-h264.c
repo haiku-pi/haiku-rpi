@@ -15,6 +15,12 @@
  * -i N / -o N: N input / output buffers (default: the ports' recommended numbers);
  * -e: list the ports' supported encodings;
  * -q: no per-event lines.
+ * Settings FFmpeg's h264_mmal decoder uses (to compare): -X N: MMAL_PARAMETER_EXTRA_BUFFERS N on the output port;
+ * -C N: MMAL_PARAMETER_VIDEO_MAX_NUM_CALLBACKS N on the input port; -P: the output buffers from a plain pool
+ * (mmal_pool_create) instead of the port's; -Z: input buffers without payload pointing into the stream in memory
+ * (header-only pool) instead of copies; -A: framed input (MMAL_ES_FORMAT_FLAG_FRAMED), one access unit per buffer
+ * (or several buffers, the last flagged FRAME_END) with a pts each; -K: the bytes before the first slice (the
+ * parameter sets) first, as a buffer flagged CONFIG.
  * The last lines: frames, wall time, frames/s, the CPU time of this team and of the whole system (all CPUs,
  * busy time: the driver's threads that copy the frames are not this team's) during the decode.
  *
@@ -275,6 +281,50 @@ team_cpu_time(void)
 }
 
 
+/* Where the access unit that starts at FROM ends: at the next access unit delimiter, SPS, PPS or SEI after a
+   slice, or at the next slice whose first_mb_in_slice is 0 */
+static size_t
+access_unit_end(const uint8_t* s, size_t n, size_t from)
+{
+	int haveSlice = 0;
+	size_t i = from;
+	for (;;) {
+		size_t sc = i, nal, begin;
+		int type;
+		while (sc + 3 <= n && !(s[sc] == 0 && s[sc + 1] == 0 && s[sc + 2] == 1))
+			sc++;
+		if (sc + 4 > n)
+			return n;
+		nal = sc + 3;
+		type = s[nal] & 0x1f;
+		begin = sc > from && s[sc - 1] == 0 ? sc - 1 : sc;
+		if (haveSlice && begin > from) {
+			if (type == 9 || type == 7 || type == 8 || type == 6)
+				return begin;
+			if ((type == 1 || type == 5) && nal + 1 < n && (s[nal + 1] & 0x80) != 0)
+				return begin;
+		}
+		if (type == 1 || type == 5)
+			haveSlice = 1;
+		i = nal;
+	}
+}
+
+
+/* the bytes before the first slice NAL unit */
+static size_t
+parameter_sets_end(const uint8_t* s, size_t n)
+{
+	size_t i;
+	for (i = 0; i + 4 <= n; i++) {
+		if (s[i] == 0 && s[i + 1] == 0 && s[i + 2] == 1
+			&& ((s[i + 3] & 0x1f) == 1 || (s[i + 3] & 0x1f) == 5))
+			return i > 0 && s[i - 1] == 0 ? i - 1 : i;
+	}
+	return 0;
+}
+
+
 #define CHECK(status, what) \
 	if ((status) != MMAL_SUCCESS) { \
 		fprintf(stderr, "MMAL FAIL: %s: %s\n", what, mmal_status_to_string(status)); \
@@ -296,17 +346,27 @@ main(int argc, char** argv)
 	uint8_t* stream;
 	size_t streamSize, fed = 0;
 	int eosSent = 0, eosReceived = 0, frames = 0, formatChanges = 0, opt;
+	int extraBuffers = -1, plainOutputPool = 0, zeroCopyInput = 0, framed = 0, config = 0;
+	size_t auEnd = 0, configEnd = 0;
+	int64_t accessUnits = 0;
+	int64_t maxCallbacks = 0;
 	bigtime_t start = 0, firstFrame = 0, end, teamStart = 0, busyStart = 0;
 	uint64_t frameBytes = 0;
 	system_info systemInfo;
 	FILE* file;
 
-	while ((opt = getopt(argc, argv, "mqei:o:d:f:r:")) != -1) {
+	while ((opt = getopt(argc, argv, "mqei:o:d:f:r:X:C:PZAK")) != -1) {
 		switch (opt) {
 			case 'm': hashFrames = 1; break;
 			case 'q': sQuiet = 1; break;
 			case 'e': listEncodings = 1; break;
 			case 'i': inputBuffers = atoi(optarg); break;
+			case 'X': extraBuffers = atoi(optarg); break;
+			case 'C': maxCallbacks = atoi(optarg); break;
+			case 'P': plainOutputPool = 1; break;
+			case 'Z': zeroCopyInput = 1; break;
+			case 'A': framed = 1; break;
+			case 'K': config = 1; break;
 			case 'o': outputBuffers = atoi(optarg); break;
 			case 'f':
 				if (strlen(optarg) != 4) {
@@ -384,8 +444,20 @@ main(int argc, char** argv)
 	format->es->video.height = 0;
 	format->es->video.frame_rate.num = 0;
 	format->es->video.frame_rate.den = 1;
+	if (framed)
+		format->flags |= MMAL_ES_FORMAT_FLAG_FRAMED;
+	if (maxCallbacks != 0) {
+		status = mmal_port_parameter_set_uint32(decoder->input[0], MMAL_PARAMETER_VIDEO_MAX_NUM_CALLBACKS,
+			(uint32_t)maxCallbacks);
+		printf("MMAL input MAX_NUM_CALLBACKS %d: %s\n", (int)maxCallbacks, mmal_status_to_string(status));
+	}
 	status = mmal_port_format_commit(decoder->input[0]);
 	CHECK(status, "input format");
+	if (extraBuffers >= 0) {
+		status = mmal_port_parameter_set_uint32(decoder->output[0], MMAL_PARAMETER_EXTRA_BUFFERS,
+			extraBuffers);
+		printf("MMAL output EXTRA_BUFFERS %d: %s\n", extraBuffers, mmal_status_to_string(status));
+	}
 
 	decoder->output[0]->format->encoding = outputEncoding;
 	status = mmal_port_format_commit(decoder->output[0]);
@@ -400,10 +472,13 @@ main(int argc, char** argv)
 	log_format("input", decoder->input[0]);
 	log_format("output", decoder->output[0]);
 
-	inputPool = mmal_port_pool_create(decoder->input[0], decoder->input[0]->buffer_num,
-		decoder->input[0]->buffer_size);
-	outputPool = mmal_port_pool_create(decoder->output[0], decoder->output[0]->buffer_num,
-		decoder->output[0]->buffer_size);
+	inputPool = zeroCopyInput ? mmal_pool_create(decoder->input[0]->buffer_num, 0)
+		: mmal_port_pool_create(decoder->input[0], decoder->input[0]->buffer_num,
+			decoder->input[0]->buffer_size);
+	outputPool = plainOutputPool ? mmal_pool_create(decoder->output[0]->buffer_num,
+			decoder->output[0]->buffer_size)
+		: mmal_port_pool_create(decoder->output[0], decoder->output[0]->buffer_num,
+			decoder->output[0]->buffer_size);
 	if (inputPool == NULL || outputPool == NULL) {
 		fprintf(stderr, "MMAL FAIL: buffer pools\n");
 		goto out;
@@ -439,13 +514,36 @@ main(int argc, char** argv)
 
 		while (!eosSent && (buffer = mmal_queue_get(inputPool->queue)) != NULL) {
 			size_t size = streamSize - fed;
+			uint32_t flags = 0;
+			int64_t pts = MMAL_TIME_UNKNOWN;
+			if (config && fed == 0 && configEnd == 0) {
+				configEnd = parameter_sets_end(stream, streamSize);
+				size = configEnd;
+				flags = MMAL_BUFFER_HEADER_FLAG_CONFIG;
+			} else if (framed) {
+				if (fed >= auEnd) {
+					auEnd = access_unit_end(stream, streamSize, fed);
+					pts = accessUnits++ * 33333;
+				}
+				size = auEnd - fed;
+			}
+			if (zeroCopyInput) {
+				mmal_buffer_header_reset(buffer);
+				buffer->cmd = 0;
+				buffer->alloc_size = decoder->input[0]->buffer_size;
+				buffer->data = stream + fed;
+			}
 			if (size > buffer->alloc_size)
 				size = buffer->alloc_size;
-			memcpy(buffer->data, stream + fed, size);
+			if (!zeroCopyInput)
+				memcpy(buffer->data, stream + fed, size);
 			buffer->offset = 0;
 			buffer->length = size;
-			buffer->flags = size == 0 ? MMAL_BUFFER_HEADER_FLAG_EOS : 0;
-			buffer->pts = buffer->dts = MMAL_TIME_UNKNOWN;
+			buffer->flags = size == 0 ? MMAL_BUFFER_HEADER_FLAG_EOS : flags;
+			if (framed && size > 0 && fed + size == auEnd)
+				buffer->flags |= MMAL_BUFFER_HEADER_FLAG_FRAME_END;
+			buffer->pts = pts;
+			buffer->dts = MMAL_TIME_UNKNOWN;
 			fed += size;
 			eosSent = size == 0;
 			status = mmal_port_send_buffer(decoder->input[0], buffer);
@@ -474,7 +572,10 @@ main(int argc, char** argv)
 					status = MMAL_EIO;
 					goto out;
 				}
-				mmal_port_pool_destroy(decoder->output[0], outputPool);
+				if (plainOutputPool)
+					mmal_pool_destroy(outputPool);
+				else
+					mmal_port_pool_destroy(decoder->output[0], outputPool);
 				outputPool = NULL;
 				status = mmal_format_full_copy(decoder->output[0]->format, event->format);
 				decoder->output[0]->format->encoding = outputEncoding;
@@ -490,8 +591,10 @@ main(int argc, char** argv)
 					decoder->output[0]->buffer_size = decoder->output[0]->buffer_size_min;
 				if (!sQuiet)
 					log_format("output after the format change", decoder->output[0]);
-				outputPool = mmal_port_pool_create(decoder->output[0], decoder->output[0]->buffer_num,
-					decoder->output[0]->buffer_size);
+				outputPool = plainOutputPool ? mmal_pool_create(decoder->output[0]->buffer_num,
+						decoder->output[0]->buffer_size)
+					: mmal_port_pool_create(decoder->output[0], decoder->output[0]->buffer_num,
+						decoder->output[0]->buffer_size);
 				if (outputPool == NULL) {
 					fprintf(stderr, "MMAL FAIL: output pool\n");
 					status = MMAL_ENOMEM;
@@ -573,10 +676,18 @@ out:
 		mmal_port_disable(decoder->output[0]);
 		mmal_component_disable(decoder);
 	}
-	if (inputPool != NULL)
-		mmal_port_pool_destroy(decoder->input[0], inputPool);
-	if (outputPool != NULL)
-		mmal_port_pool_destroy(decoder->output[0], outputPool);
+	if (inputPool != NULL) {
+		if (zeroCopyInput)
+			mmal_pool_destroy(inputPool);
+		else
+			mmal_port_pool_destroy(decoder->input[0], inputPool);
+	}
+	if (outputPool != NULL) {
+		if (plainOutputPool)
+			mmal_pool_destroy(outputPool);
+		else
+			mmal_port_pool_destroy(decoder->output[0], outputPool);
+	}
 	if (decoder != NULL)
 		mmal_component_destroy(decoder);
 	if (sContext.queue != NULL)
