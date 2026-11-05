@@ -1,5 +1,7 @@
 # sibling repos (separate git repos: haiku fork, buildtools fork)
 /sources/
+# read-only reference clones (FreeBSD, raspberrypi/userland: docs/design/vchiq.md)
+/external/
 # build outputs, images, captures
 /artifacts/
 /generated/

@@ -1,0 +1,168 @@
+# VCHIQ on Haiku (H21 step 1): `/dev/vchiq` from FreeBSD's BSD-3 port
+
+Status (2026-11-05): design written, driver being ported on branch `vchiq` (worktree `sources/haiku-vchiq`).
+Plan: `PLAN.md` row 7 (H21); the licence survey is `hw-video-decode.md` §0a.
+
+Citation keys:
+- **[F]** FreeBSD `sys/contrib/vchiq` at `7806832f23fb` (last change to the directory `97e24b41d2d2`, 2026-08-21;
+  arm64 support `aa6b871ea77e`, 2025-11-15). Broadcom/Raspberry Pi files dual BSD-3-Clause or GPL-2.0, used
+  under BSD-3; `compat/vchi_bsd.[ch]` and `vchiq_kmod.c` BSD-2 (Khon, Tymoshenko, McNeill); `compat/list.h` BSD-2
+  (NetBSD Foundation). Clone: `external/freebsd-src` (sparse).
+- **[U]** raspberrypi/userland at `a54a0dbb2b8d` (2024-12-23; the repository is archived): `interface/vchiq_arm`
+  (libvchiq), `interface/vmcs_host/vc_vchi_gencmd.c` (the GCMD client), BSD-3-Clause. Clone: `external/userland`.
+- **[DTS]** the firmware's `bcm2711-rpi-4-b.dtb` (`artifacts/pi-firmware/`).
+- **[H]** `sources/haiku` (`rpi4`).
+- Linux (raspberrypi/linux `vchiq_arm.c`, `vchiq-mmal`, `bcm2835-codec`, `vc-sm-cma`): facts about behaviour
+  only. No Linux code is used; the GPL-only pieces are not read for code.
+
+## 0. Summary
+
+- VCHIQ is a pair of message queues in shared memory between the ARM and the VideoCore (VC) firmware, plus a
+  doorbell in each direction. Services (4-character codes: `GCMD` gencmd, `mmal` the multimedia components,
+  `KEEP` keep-alive, `AUDS` audio, `TVCH`, `smem`...) are opened over it; small messages travel in the slots,
+  large payloads as bulk transfers that the VC's DMA copies to or from page lists.
+- The ARM side is the "slave": it allocates the slot memory, initialises slot zero, then tells the firmware the
+  slots' bus address with the mailbox property tag **`VCHIQ_INIT` (0x00048010)**. From then on the firmware owns
+  part of that memory for good: it is never freed.
+- The port keeps [F]'s core unchanged except where Haiku needs it (`#ifdef __HAIKU__`), and replaces FreeBSD's
+  OS layer with Haiku code. The ioctl ABI is that of [F]/Linux (`vchiq_ioctl.h`) with Linux's return
+  conventions, so step 2 can build Broadcom's libvchiq/libmmal [U] with no change other than the ioctl
+  encoding header (§4).
+- First proof: the kernel opens `GCMD` and asks `version`; the reply text is in the device's `read()`
+  (`cat /dev/vchiq`). Second proof: a small userland test drives the same round trip through the ioctls.
+
+## 1. How VCHIQ starts on the Pi 4
+
+From [DTS], [F] and Linux's documented behaviour:
+
+| What | Value |
+|---|---|
+| DT node | `/soc/mailbox@7e00b840`, `compatible = "brcm,bcm2711-vchiq"` (older boards: `"brcm,bcm2835-vchiq"`) |
+| Registers | `reg = <0x7e00b840 0x3c>` → CPU 0xfe00b840 through `/soc` "ranges" |
+| Doorbells | at the node's base: **+0x00 BELL0** (VC → ARM; reading returns the status and clears it; bit 2 = rung), **+0x08 BELL2** (ARM → VC; writing 0 rings it). [F] uses offsets 0x40/0x48 with `regs_offset = -0x40` for every compatible but the old `"broadcom,bcm2835-vchiq"` |
+| Interrupt | `interrupts = <0 0x22 4>`: GIC SPI 34, level (VC rings BELL0) |
+| DMA | `/soc dma-ranges = <0xc0000000 0x0 0x0 0x40000000 ...>`: the VC sees ARM RAM below 1 GiB at bus 0xC0000000 + physical. The slots, fragments and page lists must be below 1 GiB; every address the VC is given for them is the 0xC alias |
+| Bulk page addresses | bcm2711 ("long bulk space", [F] `g_long_bulk_space`): page list entries hold the **physical** address >> 4 with the run length (pages − 1) in the low 8 bits — 36-bit physical addresses, no alias; older SoCs: bus address | run, 4 KiB runs |
+| Cache line | 64 bytes on arm64 ([F] `g_cache_line_size`); fragments are 2 × 64 bytes |
+| Init | property tag `0x00048010`, one value: the slots' bus address; the firmware answers 0 when it accepted the slots. [F] writes the same address to mailbox channel 3 instead; we use the property interface (`generic/bcm2835_mailbox` already does it) and keep channel 3 as a fallback if the tag is refused |
+
+**Coherency.** The VC does not snoop the ARM caches. Linux allocates the slots with `dma_alloc_coherent`, i.e. a
+non-cacheable mapping; we map them `B_WRITE_COMBINING_MEMORY` (Normal non-cacheable on arm64), as `rpivid` does
+for its DMA memory, after writing back and dropping the lines the clearing left. The core's `wmb()/rmb()/dsb`
+calls are the ordering. No atomic instruction ever touches the shared memory (the core's atomics are on local
+state only), so non-cacheable memory without a global exclusive monitor is fine.
+
+**Order** ([F] `vchiq_platform_init`): allocate slots + fragments → `vchiq_init_slots()` (slot zero: magic,
+version, slot ranges, and `platform_data[]` = fragments' bus address and count) → `vchiq_init_state()` (threads:
+slot handler, recycle, sync) → `VCHIQ_INIT` → the firmware fills in its half (`remote->initialised = 1` by the
+time the synchronous property call returns). Then a client's `CONNECT` queues a CONNECT message; the VC answers
+CONNECT and the state becomes CONNECTED; then `OPEN` of a service by fourcc.
+
+## 2. The Haiku pieces
+
+Directory `src/add-ons/kernel/drivers/misc/vchiq/` (new-style FDT driver like `video/rpivid`):
+
+```
+vchiq_haiku.cpp              driver + device modules (replaces [F] vchiq_kmod.c): FDT attach, doorbell
+                             interrupt, remote_event_signal(), the VCHIQ_INIT property call, DMA memory
+                             helpers, page locking for bulks, device hooks → vchiq_arm.c
+vchiq_haiku.h                the C interface between the C++ glue and the C core
+interface/compat/vchi_haiku.{h,cpp} Linux-flavoured primitives on Haiku's (replaces [F] vchi_bsd.[ch])
+interface/compat/list.h      [F] (NetBSD), unchanged
+interface/vchiq_arm/*        [F] core, ported in place (#ifdef __HAIKU__ where needed)
+interface/vchi/vchi_mh.h     [F], unchanged
+```
+
+- **Attach**: `support()` matches `fdt/compatible` against both compatibles; `init_driver()` reads `reg`, the
+  interrupt and the DMA window (`fdt_device_module_info::get_dma_window`: offset 0xC0000000, end 0x40000000 — logged)
+  and does nothing else. **The firmware handshake happens at the first `open()`**, not at boot: the release image
+  stays exactly as before for every user who never opens `/dev/vchiq`, and nothing the firmware does with the
+  slots can disturb a boot. Once initialised, the state is permanent (`B_KEEP_DRIVER_LOADED`, no uninit path that
+  frees the slots: the VC keeps writing them).
+- **Device**: published as `vchiq` (`/dev/vchiq`, Linux's and FreeBSD's path). One `open()` = one
+  `VCHIQ_INSTANCE_T` ([F] `vchiq_open`), freed in `free()` ([F] `instance_dtr`).
+- **Interrupt**: `install_io_interrupt_handler()` on the node's interrupt. The handler reads BELL0; if bit 2 is
+  set it calls `remote_event_pollall()`, which only flips flags in the shared memory and `up()`s semaphores —
+  `release_sem_etc(..., B_DO_NOT_RESCHEDULE)`, safe in an interrupt — and returns `B_INVOKE_SCHEDULER`.
+- **Slots**: one physically contiguous area below the DMA end, `TOTAL_SLOTS * 4 KiB` + fragments
+  (`VCHIQ_SLOT_ZERO_SLOTS + 2 × 32` slots = ~ 288 KiB), write-combining.
+- **Threads**: the core's slot handler (`VCHIQ-n`, Linux nice −19 → `B_URGENT_DISPLAY_PRIORITY`), recycle
+  (`VCHIQr-n`), sync (`VCHIQs-n`) and the keep-alive thread (`VCHIQka-n`, after the first connection) are kernel
+  threads (`spawn_kernel_thread`, started by `wake_up_process()` = `resume_thread()`).
+- **Bulk transfers** (needed by MMAL, not by GCMD): `vchiq_prepare_bulk_data()` locks the user buffer
+  (`lock_memory_etc(team, B_READ_DEVICE)` for a receive), takes its physical runs (`get_memory_map_etc`),
+  writes a page list into a small non-cacheable contiguous allocation below 1 GiB, cleans (transmit) or flushes
+  (receive) the buffer's lines by virtual address in the caller's context; `vchiq_complete_bulk()` (called from
+  the slot handler, another address space) flushes again through the kernel's physical map
+  (`KERNEL_PMAP_BASE + physical`), copies the head/tail fragments of a receive that is not cache-line aligned,
+  and unlocks the memory. This mirrors [F]'s arm64 code, which keeps the cache lines of a receive invalidated
+  twice for the same reason (speculative fills while the VC writes).
+
+## 3. The FreeBSD OS layer and its Haiku replacement
+
+| [F] | Haiku |
+|---|---|
+| `vchiq_kmod.c`: simplebus probe/attach, `bus_alloc_resource`, `bus_setup_intr`, `bcm_vchiq_intr`, `remote_event_signal` (dsb + write BELL2) | `vchiq_haiku.cpp`: driver module (`support`/`register_device`/`init_driver`/`register_child_devices`), `map_physical_memory` of the registers, `install_io_interrupt_handler`, the same two functions |
+| `vchiq_2835_arm.c`: `bus_dma` coherent allocation, `bcm_mbox_write(chan 3)`, `vm_fault_quick_hold_pages`, `pmap_quick_enter_page`, `cpu_dcache_*` | same file, ported: `vchiq_haiku_dma_alloc()` (`create_area_etc(B_CONTIGUOUS)` + `vm_set_area_memory_type`), the `VCHIQ_INIT` property tag, `lock_memory_etc`/`get_memory_map_etc`, `arm64_dcache_{clean,flush}_range` on the user VA and the physical map |
+| `vchiq_arm.c` cdev: `make_dev`, `devfs_set_cdevpriv`, `d_ioctl` with the kernel's copyin of the argument | `vchiq_arm.c` with `#ifdef __HAIKU__`: `vchiq_haiku_open/free/ioctl` called from the device hooks; the hook copies the argument in and out by `IOCPARM_LEN(op)` (§4) |
+| `vchi_bsd.h` `struct semaphore` (mtx + cv) | a count under a spinlock + a `ConditionVariable` kept inside the structure (`vchi_haiku.cpp`), **not** kernel semaphores: the core makes one per possible service (`VCHIQ_MAX_SERVICES` = 4096 quota events), which would hold 4096 of the system's 65536 kernel semaphores for good. `up()` is interrupt-safe (the doorbell handler); an interrupted waiter passes a wake-up it may have consumed on |
+| `struct mutex` (sx) / `lmutex_*` | Haiku `mutex` (the same `struct mutex` name); `lmutex_lock_interruptible` = `mutex_lock_with_timeout(B_CAN_INTERRUPT, 0)` |
+| `spinlock_t` (sleep mtx) | Haiku `mutex`, as in [F]: nothing takes one from the interrupt handler (the handler only `up()`s) |
+| `rwlock_t` (rw) | `rw_lock` |
+| `struct completion` (mtx + cv) | the same: a count (−1 after `complete_all`, every wait succeeds) under a spinlock + a `ConditionVariable`; only the keep-alive event and the (unused) suspend machinery use them |
+| `struct timer_list` (callout) | stubs that log: the only timer is the suspend timer, and `vchiq_platform_use_suspend_timer()` is 0 |
+| `kproc_create` (`vchiq_thread_create`) | `spawn_kernel_thread` (suspended until `wake_up_process`) |
+| `current`, `current->p_pid` | `find_thread(NULL)`: Linux keys bulk waiters on the task, i.e. the thread |
+| `fatal_signal_pending` | `thread_is_interrupted(thread_get_current_thread(), B_KILL_CAN_INTERRUPT)` |
+| `flush_signals`, `set_user_nice` | no-op / `set_thread_priority` |
+| `kmalloc`/`kzalloc`/`kfree` | `calloc`/`free` |
+| `copy_from_user`/`copy_to_user` | `user_memcpy` (0 or `-EFAULT`) |
+| `jiffies`, `HZ`, `msecs_to_jiffies`, `udelay`, `msleep` | `system_time() / 1000`, 1000, identity, `spin`, `snooze` |
+| `wmb/rmb/mb`, `dsb(sy)` | `dmb ishst` / `dmb ishld` / `dsb sy` (shared memory is outer-shareable non-cacheable: `dsb sy` where the core asks for it) |
+| Linux `-EINVAL` style returns | Haiku's POSIX errors are already negative: the core's `-EXXX` become `EXXX` (59 sites in `vchiq_arm.c`, `vchiq_2835_arm.c`, `vchiq_core.c`), mechanically, under `#ifdef __HAIKU__` where the line differs |
+
+Not ported: `vchiq_debugfs.c`, `vchiq_version.c`, the `/proc` and `dump_phys_mem` stubs (`DUMP_PHYS_MEM` returns
+`B_UNSUPPORTED`), the COMPAT_FREEBSD32 ioctls, suspend/resume (the VC is always wanted; FreeBSD and Linux on
+the Pi do the same).
+
+## 4. The ioctl ABI
+
+- Numbers and structures: [F] `vchiq_ioctl.h` = [U] `vchiq_ioctl.h` (the structures are identical; LP64 on both
+  sides). The numbers are built with `_IO/_IOW/_IOWR` from `<sys/ioccom.h>` (BSD layout, Haiku's
+  `headers/compatibility/bsd`); [U] includes `<linux/ioctl.h>` instead. **Step 2 builds libvchiq with a
+  `linux/ioctl.h` that includes `<sys/ioccom.h>`** — the only change libvchiq needs.
+- Haiku's `ioctl(fd, op, ...)` takes a size argument libvchiq does not pass, so the driver ignores `length`: for
+  `_IOW/_IOWR` it copies `IOCPARM_LEN(op)` bytes in, runs [F]'s handler on the kernel copy and copies the
+  structure back for `_IOWR`; for `_IO` the argument is the value itself (a service handle or the library
+  version) — [F] reads `LIB_VERSION`'s value from the argument pointer, which is the kernel copy's address there
+  (a FreeBSD bug that always enables CLOSE_DELIVERED); Haiku uses the value.
+- Return values follow Linux, which [U] relies on: `AWAIT_COMPLETION` returns the number of completions,
+  `DEQUEUE_MESSAGE` the message size, `GET_CLIENT_ID` the id; errors are negative Haiku codes (`ioctl()` returns
+  −1 with `errno`). A positive `status_t` from a driver's `control()` reaches the caller of `ioctl()` unchanged
+  (`devfs_ioctl` → `fd_ioctl` → `RETURN_AND_SET_ERRNO`). [F] instead writes the counts into the structures and
+  returns 0 (its userland is patched for that).
+
+## 5. Test plan
+
+Network boots only (`scripts/netboot-cycle.sh` / `scripts/pi-session.sh`, under the bench lock); the SD card is
+never touched.
+
+1. **Attach**: boot log `vchiq: registers ..., interrupt N, DMA offset 0xc0000000 below 0x40000000`,
+   `publish device: ... path vchiq`. Nothing else happens at boot.
+2. **Handshake** (first open): `vchiq: slots at bus 0x..., VCHIQ_INIT answered 0, remote initialised 1`.
+3. **Connection + GCMD from the kernel**: reading `/dev/vchiq` opens an instance, connects, opens `GCMD`
+   (version 1, as [U]'s gencmd client), queues `"version\0"` and waits for the reply: an int32 error code, then
+   text ([U] `vc_gencmd_read_response`). `cat /dev/vchiq` prints the doorbell count, the connection state and the
+   firmware's version text. Then `get_mem arm` / `get_mem gpu` / `measure_temp` as further commands (the text can
+   be compared with the mailbox's answers: same memory split, same temperature).
+4. **The ioctl ABI**: `vchiq_test` (a small program, `tools/haiku-tests/vchiq-gcmd.c`): `CONNECT`,
+   `CREATE_SERVICE(GCMD, is_open=1, is_vchi=1)`, `QUEUE_MESSAGE("version")`, `DEQUEUE_MESSAGE` (blocking) and
+   `AWAIT_COMPLETION`, `CLOSE_SERVICE`, close; prints the reply. Run from a netboot `--bootscript`.
+5. **No regression**: `scripts/release-check.sh` on an image of the branch (0 problems); a boot of that image
+   without opening `/dev/vchiq` is unchanged.
+6. Later (step 2): bulk transfers both ways through MMAL (an `image_encode`/`video_decode` component round trip),
+   with buffers not cache-line aligned (the fragments path).
+
+## 6. Progress
+
+(updated as the work goes)
