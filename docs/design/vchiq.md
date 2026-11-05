@@ -514,7 +514,20 @@ High profile, B-frames; frames shown = the display plane's updates per 10 s in t
   when quit during playback with the software decoder (`memcpy` in `BMediaTrack::ReadFrames` from WebKit's
   `videoThread`). At the end of the stream the plugin saw an `AVERROR_INVALIDDATA` from `h264_mmal` and switched to
   the software decoder (harmless there; not explained).
-- **No regression**: `scripts/release-check.sh` on the branch image: see §8.5.
+- **With an audio track** (`h264.sh audio`, the play clips with a 440 Hz AAC track: MediaPlayer's time source then
+  comes from the audio path): 720p30 hardware 46 % of one CPU / 14 % of the system, every frame shown, software
+  67 % / 18 %; 1080p30 hardware 101 % / 29 %, all shown (4–11 late per 10 s), software 168 % / 44 %, all shown but
+  ~215 of 300 late per 10 s. 0 dropped in all four.
+- **Firefox** decodes H.264 with the system's FFmpeg (its FFmpeg platform decoder module dlopens libavcodec and
+  asks `avcodec_find_decoder()`), so it keeps the software `h264`: with ffmpeg6 revision 4 it still plays the H.264
+  test clips (`firefox-video.sh`'s page: 720p 300 frames, 25 dropped; 1080p 300 frames, 60 dropped — as before),
+  no debugger entry, and no MMAL client appears. Hardware H.264 in Firefox would need its decoder module to ask for
+  `h264_mmal` (and its own fallback): open.
+- **No regression**: `scripts/release-check.sh` on the branch image (`f032832df7`, ffmpeg6 6.1.6-4,
+  raspberrypi_userland 20241223-3): `REL result: 0 problems` (24 launch cycles, 0 debugger entries;
+  `artifacts/relcheck/h264-mmal.txt`). Manifest `manifests/2026-11-05-h21-step3-h264-mmal.md`.
+- A trap met on the way: MediaPlayer resumes a file where it was last quit (its `Media:Frame` attribute), so
+  repeated test plays of one file started near its end and seemed to stall; `h264.sh` clears the attribute.
 
 Screenshots: `artifacts/mmal/step3/shots/` (MediaPlayer 720p/1080p hardware and software, seeks, the long play,
 WebPositive).
