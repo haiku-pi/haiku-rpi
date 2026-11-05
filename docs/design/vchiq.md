@@ -75,15 +75,17 @@ interface/vchi/vchi_mh.h     [F], unchanged
 
 - **Attach**: `support()` matches `fdt/compatible` against both compatibles; `init_driver()` reads `reg`, the
   interrupt and the DMA window (`fdt_device_module_info::get_dma_window`: offset 0xC0000000, end 0x40000000 — logged)
-  and does nothing else. **The firmware handshake happens at the first `open()`**, not at boot: the release image
-  stays exactly as before for every user who never opens `/dev/vchiq`, and nothing the firmware does with the
-  slots can disturb a boot. Once initialised, the state is permanent (`B_KEEP_DRIVER_LOADED`, no uninit path that
-  frees the slots: the VC keeps writing them).
+  and does nothing else. **The firmware handshake happens at the first `open()`**, not at boot: a system that
+  never opens `/dev/vchiq` only has the driver loaded (~130 kB of code, a few hundred bytes of data; the core's
+  state, ~460 kB with a semaphore per possible service, is allocated at the first open), and nothing the firmware
+  does with the slots can disturb a boot. Once initialised, the state is permanent (`B_KEEP_DRIVER_LOADED`, no
+  uninit path that frees the slots: the VC keeps writing them).
 - **Device**: published as `vchiq` (`/dev/vchiq`, Linux's and FreeBSD's path). One `open()` = one
   `VCHIQ_INSTANCE_T` ([F] `vchiq_open`), freed in `free()` ([F] `instance_dtr`).
-- **Interrupt**: `install_io_interrupt_handler()` on the node's interrupt. The handler reads BELL0; if bit 2 is
-  set it calls `remote_event_pollall()`, which only flips flags in the shared memory and `up()`s semaphores —
-  `release_sem_etc(..., B_DO_NOT_RESCHEDULE)`, safe in an interrupt — and returns `B_INVOKE_SCHEDULER`.
+- **Interrupt**: `install_io_interrupt_handler()` on the node's interrupt, after the handshake (the level
+  interrupt stays pending until BELL0 is read). The handler reads BELL0; if bit 2 is set it calls
+  `remote_event_pollall()`, which only flips flags in the shared memory and `up()`s semaphores (a spinlock and a
+  condition variable notification, safe in an interrupt), and returns `B_INVOKE_SCHEDULER`.
 - **Slots**: one physically contiguous area below the DMA end, `TOTAL_SLOTS * 4 KiB` + fragments
   (`VCHIQ_SLOT_ZERO_SLOTS + 2 × 32` slots = ~ 288 KiB), write-combining.
 - **Threads**: the core's slot handler (`VCHIQ-n`, Linux nice −19 → `B_URGENT_DISPLAY_PRIORITY`), recycle
@@ -92,11 +94,22 @@ interface/vchi/vchi_mh.h     [F], unchanged
 - **Bulk transfers** (needed by MMAL, not by GCMD): `vchiq_prepare_bulk_data()` locks the user buffer
   (`lock_memory_etc(team, B_READ_DEVICE)` for a receive), takes its physical runs (`get_memory_map_etc`),
   writes a page list into a small non-cacheable contiguous allocation below 1 GiB, cleans (transmit) or flushes
-  (receive) the buffer's lines by virtual address in the caller's context; `vchiq_complete_bulk()` (called from
-  the slot handler, another address space) flushes again through the kernel's physical map
-  (`KERNEL_PMAP_BASE + physical`), copies the head/tail fragments of a receive that is not cache-line aligned,
-  and unlocks the memory. This mirrors [F]'s arm64 code, which keeps the cache lines of a receive invalidated
-  twice for the same reason (speculative fills while the VC writes).
+  (receive) the buffer's lines through the kernel's physical map (`KERNEL_PMAP_BASE + physical`);
+  `vchiq_complete_bulk()` (called from the slot handler, another address space) flushes a receive again, copies
+  the head/tail fragments of a receive that is not cache-line aligned, and unlocks the memory. This mirrors
+  [F]'s arm64 code, which keeps the cache lines of a receive invalidated twice for the same reason (speculative
+  fills while the VC writes). A bulk buffer must lie in one area (a `malloc()`ed one does).
+- **A client that dies with transfers queued** (found on the Pi: a `kill -9` during `vchiq_test -b` panicked in
+  `VMCache::Delete`, "page still has mappings"): Haiku deletes a team's areas (`team_delete_team` →
+  `RemoveAndPut`) *before* its files are closed (`~Team` → `vfs_put_io_context`), and an area must not be wired
+  when it goes, while the VC may still be writing the buffer and only the file's close ends the transfers. The
+  driver listens to `TEAM_REMOVED` (sent before the areas go): each locked buffer of that team moves to a kernel
+  clone of its area (`vm_clone_area(REGION_NO_PRIVATE_MAP)` shares the area's cache), locked there before the
+  team's lock is dropped; the clone keeps the pages until the transfer ends — Linux keeps page references for the
+  same reason. Not cloned at queue time: cloning marks the source area `B_SHARED_AREA`, which would make a
+  client's heap shared with its children after a `fork()`. Not covered: `exec()` while transfers are queued
+  (`exec_team` deletes the areas before any notification); an aborted bulk the VC never acknowledged (the core's
+  dummy bulk drops `remote_data`) leaks its page list and lock, as in [F] and Linux.
 
 ## 3. The FreeBSD OS layer and its Haiku replacement
 
@@ -118,8 +131,9 @@ interface/vchi/vchi_mh.h     [F], unchanged
 | `kmalloc`/`kzalloc`/`kfree` | `calloc`/`free` |
 | `copy_from_user`/`copy_to_user` | `user_memcpy` (0 or `-EFAULT`) |
 | `jiffies`, `HZ`, `msecs_to_jiffies`, `udelay`, `msleep` | `system_time() / 1000`, 1000, identity, `spin`, `snooze` |
-| `wmb/rmb/mb`, `dsb(sy)` | `dmb ishst` / `dmb ishld` / `dsb sy` (shared memory is outer-shareable non-cacheable: `dsb sy` where the core asks for it) |
-| Linux `-EINVAL` style returns | Haiku's POSIX errors are already negative: the core's `-EXXX` become `EXXX` (59 sites in `vchiq_arm.c`, `vchiq_2835_arm.c`, `vchiq_core.c`), mechanically, under `#ifdef __HAIKU__` where the line differs |
+| `wmb/rmb/mb`, `dsb(sy)` | `dsb st` / `dsb ld` / `dsb sy`, Linux's mandatory barriers on arm64 (the VC is outside the inner shareable domain; the shared memory is not cacheable) |
+| Linux `-EINVAL` style returns | Haiku's POSIX errors are already negative: the core's `-EXXX` become `EXXX` (50 sites in `vchiq_arm.c`, 2 in `vchiq_core.c`, the rewritten `vchiq_2835_arm.c`), mechanically |
+| `PHYS_TO_VCBUS`, `g_long_bulk_space` | the node's DMA window (`get_dma_window`); "long bulk space" for `brcm,bcm2711-vchiq` |
 
 Not ported: `vchiq_debugfs.c`, `vchiq_version.c`, the `/proc` and `dump_phys_mem` stubs (`DUMP_PHYS_MEM` returns
 `B_UNSUPPORTED`), the COMPAT_FREEBSD32 ioctls, suspend/resume (the VC is always wanted; FreeBSD and Linux on
@@ -155,13 +169,17 @@ never touched.
    text ([U] `vc_gencmd_read_response`). `cat /dev/vchiq` prints the doorbell count, the connection state and the
    firmware's version text. Then `get_mem arm` / `get_mem gpu` / `measure_temp` as further commands (the text can
    be compared with the mailbox's answers: same memory split, same temperature).
-4. **The ioctl ABI**: `vchiq_test` (a small program, `tools/haiku-tests/vchiq-gcmd.c`): `CONNECT`,
-   `CREATE_SERVICE(GCMD, is_open=1, is_vchi=1)`, `QUEUE_MESSAGE("version")`, `DEQUEUE_MESSAGE` (blocking) and
-   `AWAIT_COMPLETION`, `CLOSE_SERVICE`, close; prints the reply. Run from a netboot `--bootscript`.
-5. **No regression**: `scripts/release-check.sh` on an image of the branch (0 problems); a boot of that image
-   without opening `/dev/vchiq` is unchanged.
-6. Later (step 2): bulk transfers both ways through MMAL (an `image_encode`/`video_decode` component round trip),
-   with buffers not cache-line aligned (the fragments path).
+4. **The ioctl ABI by hand**: `tools/haiku-tests/vchiq-gcmd.c`: a completion thread in `AWAIT_COMPLETION`
+   answering `SERVICE_CLOSED` with `CLOSE_DELIVERED` (as libvchiq's), `LIB_VERSION`, `CONNECT`, `GET_CONFIG`,
+   a VCHI-style `GCMD` service (`QUEUE_MESSAGE` + `DEQUEUE_MESSAGE`), a plain one (reply through
+   `AWAIT_COMPLETION`), `CLOSE_SERVICE`, `SHUTDOWN`.
+5. **Broadcom's libvchiq and `vchiq_test`** ([U], built by `scripts/build-vchiq-test.sh`): the firmware has
+   vchiq_test's server services built in ("func", "echo"), so `-f` (functional), `-b` (bulk echo, with `-a`/`-A`
+   client/server misalignment), `-c` (control) and `-p` (ping) run against it — the bulk path, both directions,
+   fragments included, without MMAL. Then clients killed with transfers queued. All of it:
+   `tools/pi-tests/vchiq.sh` ("VCHIQ result: N problems").
+6. **No regression**: `scripts/release-check.sh` on an image of the branch (0 problems).
+7. Later (step 2): MMAL components (`vc.ril.video_decode`) on libmmal.
 
 ## 6. Progress
 
