@@ -1,6 +1,8 @@
 # VCHIQ on Haiku (H21 step 1): `/dev/vchiq` from FreeBSD's BSD-3 port
 
-Status (2026-11-05): **step 2 works on the Pi** (§7: Broadcom's libmmal on Haiku, H.264 decoded by the VideoCore,
+Status (2026-11-05): **step 3 works on the Pi** (§8: H.264 through the media kit on the VideoCore — MediaPlayer and
+WebPositive, `h264_mmal` with the plugin's software fallback, the H.264 clock held; branch `h264-mmal`, not merged).
+Step 2 (§7: Broadcom's libmmal on Haiku, H.264 decoded by the VideoCore,
 1080p at 53–72 fps for ~4 % of the system's CPU, frames equal to ffmpeg's but for a firmware footroom quirk).
 Step 1 — branch `vchiq` (worktree `sources/haiku-vchiq`, pushed, not
 merged): `/dev/vchiq`, the firmware handshake, message round trips (gencmd), the ioctl ABI driven by Broadcom's

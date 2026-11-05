@@ -20,7 +20,7 @@ Citation keys:
   (`codec@7eb10000`, `brcm,bcm2711-hevc-dec`). It is a stateless, register-driven decoder: no
   firmware, no VCHIQ, no microcode. It needs a clock from the VideoCore firmware (mailbox clock 11),
   memory it can DMA, and its interrupt. **H.264 is not reachable this way**: on the Pi 4 it is decoded
-  by the VideoCore firmware behind MMAL/VCHIQ — a different, much larger project, out of scope.
+  by the VideoCore firmware behind MMAL/VCHIQ — done since as H21 (§0a, `vchiq.md`).
 - **Split**: libavcodec's own HEVC decoder parses everything (parameter sets, slice headers, the DPB,
   reference lists, output order). A new hwaccel in libavcodec turns that state into the block's
   programming — a command buffer for phase 1 plus phase-2 register values — exactly the information
@@ -33,7 +33,15 @@ Citation keys:
   `yuv420p10le` system-memory frames, which the plugin already converts for its consumers. No
   change to the plugin or to MediaPlayer is needed for stage 2.
 
-## 0a. H.264: a licence-clean route (survey 2026-11-02, not scheduled)
+## 0a. H.264: a licence-clean route (survey 2026-11-02; done as H21, 2026-11-05)
+
+**Done** (`vchiq.md`): (1) FreeBSD's VCHIQ as the `vchiq` driver (`/dev/vchiq`), (2) Broadcom's libmmal/libvchiq/
+VCOS as the raspberrypi_userland package, (3) FFmpeg's own MMAL decoder `h264_mmal` in ffmpeg6 revision 4, which the
+media kit's ffmpeg plugin prefers for H.264 and replaces by the software `h264` when it does not open or fails
+(`vchiq.md` §8.1): MediaPlayer and WebPositive decode H.264 on the VideoCore (1080p30 at 88 % of one CPU instead of
+159 %, 1080p60 at 24 fps instead of collapsing), with the H.264 block held at 500 MHz while MMAL is in use. Unlike
+`hevc_rpivid` (inside libavcodec, its own CPU fallback) the fallback is in the plugin, as the VideoCore parses the
+whole stream. Branches `vchiq` + `h264-mmal`, not merged yet. The survey as it was:
 
 H.264 on the Pi 4 is decoded by the VideoCore firmware (its `vc.ril.video_decode` MMAL component),
 reached through VCHIQ (shared-memory message queues + doorbells). Linux does it in the Raspberry Pi
@@ -254,6 +262,10 @@ runs without frame threads. Stage 3 removes it: the plugin asks after the first 
 block took the stream and otherwise reopens the plain `hevc` decoder.
 
 ## 4. Media kit
+
+(H.264, for comparison: `h264_mmal` is chosen by name in `AVCodecDecoder` with `h264` kept as its fallback, in place
+— see `vchiq.md` §8.1. HEVC needs no such code: `hevc_rpivid` is found by `avcodec_find_decoder()` and falls back
+inside libavcodec.)
 
 Nothing to change for stage 2: `AVCodecDecoder::Setup` calls `avcodec_find_decoder`, which returns
 `hevc_rpivid`; MediaPlayer gets `yuv420p` frames as from the CPU decoder. Stage 3: the reopen above,
