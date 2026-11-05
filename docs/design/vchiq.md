@@ -396,8 +396,8 @@ the devel package was not built against on the Pi (it is what the host build use
   (`mmal-h264.c`) is the skeleton; it must become callback-driven with timeouts, seek = port flush.
 - **Clock**: ask for the H.264 clock (or turbo) while decoding (above), else 1080p is 53 fps, not 72.
 - **Zero-copy later**: `OPQV` output keeps frames on the VideoCore (1.3 % CPU at 1080p) but only a firmware
-  component (`vc.ril.video_render`, `vc.ril.hvs`) can show them, outside the app_server's planes; our own buffer
-  import (stage-6 planes, `hw-video-decode.md` §2) is the route to zero-copy display.
+  component (`vc.ril.video_render`) can show them, outside the app_server's planes; our own buffer
+  import (stage-6 planes, `gpu-stage6.md` §5) is the route to zero-copy display.
 - **Robustness**: a media player killed or crashing mid-decode exercises the driver's dying-team path with MMAL
   (step 1 tested it with vchiq_test only); several decoders at once share the 1024-handle table and the
   firmware's component limit (untested).
