@@ -1,0 +1,166 @@
+h264_mmal on Haiku: the VideoCore's H.264 decoder through MMAL
+
+FFmpeg's MMAL decoders (libavcodec/mmaldec.c) on the Raspberry Pi 4 under
+Haiku: Broadcom's libmmal/libvchiq/VCOS (raspberrypi_userland, BSD-3) over the
+vchiq driver's /dev/vchiq. Haiku's media kit plugin picks h264_mmal for H.264
+when it opens and falls back to h264 otherwise (haiku-rpi
+docs/design/vchiq.md, step 3).
+
+  configure    mmal found without bcm_host (raspberrypi_userland does not
+               build it; the decoder only calls bcm_host_init()): libvchiq_arm
+               and libvcos instead, as raspberrypi_userland's mmal.pc lists
+  mmaldec.c    no bcm_host on Haiku; h264_mmal takes its packets through
+               h264_mp4toannexb and sends the parameter sets as that filter
+               outputs them (Annex-B, also for an "avcC" record) instead of
+               avctx->extradata; a log line when the decoder is set up and one
+               with the frame and packet counts when it is closed; the comma
+               missing after caps_internal in FFMMAL_DEC (6.1 does not compile
+               it)
+
+LGPL-2.1-or-later, as the files it changes.
+
+diff -ruN a/configure b/configure
+--- a/configure
++++ b/configure
+@@ -6889,7 +6889,8 @@
+                                check_lib mbedtls mbedtls/ssl.h mbedtls_ssl_init -lmbedtls -lmbedx509 -lmbedcrypto ||
+                                die "ERROR: mbedTLS not found"; }
+ enabled mediacodec        && { enabled jni || die "ERROR: mediacodec requires --enable-jni"; }
+-enabled mmal              && { check_lib mmal interface/mmal/mmal.h mmal_port_connect -lmmal_core -lmmal_util -lmmal_vc_client -lbcm_host ||
++enabled mmal              && { check_lib mmal interface/mmal/mmal.h mmal_port_connect -lmmal_core -lmmal_util -lmmal_vc_client -lvchiq_arm -lvcos ||
++                               check_lib mmal interface/mmal/mmal.h mmal_port_connect -lmmal_core -lmmal_util -lmmal_vc_client -lbcm_host ||
+                                { ! enabled cross_compile &&
+                                  add_cflags -isystem/opt/vc/include/ -isystem/opt/vc/include/interface/vmcs_host/linux -isystem/opt/vc/include/interface/vcos/pthreads -fgnu89-inline &&
+                                  add_ldflags -L/opt/vc/lib/ &&
+diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
+--- a/libavcodec/mmaldec.c
++++ b/libavcodec/mmaldec.c
+@@ -24,7 +24,9 @@
+  * MMAL Video Decoder
+  */
+ 
++#ifndef __HAIKU__
+ #include <bcm_host.h>
++#endif
+ #include <interface/mmal/mmal.h>
+ #include <interface/mmal/mmal_parameters_video.h>
+ #include <interface/mmal/util/mmal_util.h>
+@@ -34,6 +36,7 @@
+ #include <stdatomic.h>
+ 
+ #include "avcodec.h"
++#include "bsf.h"
+ #include "codec_internal.h"
+ #include "decode.h"
+ #include "hwconfig.h"
+@@ -93,6 +96,8 @@
+     int eos_received;
+     int eos_sent;
+     int extradata_sent;
++    int64_t total_packets;
++    int64_t total_frames;
+     int interlaced_frame;
+     int top_field_first;
+ } MMALDecodeContext;
+@@ -187,8 +192,11 @@
+ {
+     MMALDecodeContext *ctx = avctx->priv_data;
+ 
+-    if (ctx->decoder)
++    if (ctx->decoder) {
+         ffmmal_stop_decoder(avctx);
++        av_log(avctx, AV_LOG_INFO, "mmal: %"PRId64" frames decoded from %"PRId64
++               " packets\n", ctx->total_frames, ctx->total_packets);
++    }
+ 
+     mmal_component_destroy(ctx->decoder);
+     ctx->decoder = NULL;
+@@ -360,7 +368,9 @@
+ 
+     ctx->pkt = avctx->internal->in_pkt;
+ 
++#ifndef __HAIKU__
+     bcm_host_init();
++#endif
+ 
+     if (mmal_vc_init()) {
+         av_log(avctx, AV_LOG_ERROR, "Cannot initialize MMAL VC driver!\n");
+@@ -448,6 +458,8 @@
+     if ((status = mmal_component_enable(decoder)))
+         goto fail;
+ 
++    av_log(avctx, AV_LOG_INFO, "mmal: VideoCore %s decode, %dx%d\n",
++           av_fourcc2str(format_in->encoding), avctx->width, avctx->height);
+     return 0;
+ 
+ fail:
+@@ -499,8 +511,10 @@
+         buf  = avpkt->buf;
+         data = avpkt->data;
+         size = avpkt->size;
+-        if (!is_extradata)
++        if (!is_extradata) {
+             ctx->packets_sent++;
++            ctx->total_packets++;
++        }
+     } else {
+         if (ctx->eos_sent)
+             goto done;
+@@ -750,6 +764,7 @@
+         }
+ 
+         ctx->frames_output++;
++        ctx->total_frames++;
+ 
+         if ((ret = ffmal_copy_frame(avctx, frame, buffer)) < 0)
+             goto done;
+@@ -773,9 +788,12 @@
+     int ret = 0;
+     int got_frame = 0;
+ 
+-    if (avctx->extradata_size && !ctx->extradata_sent) {
+-        avpkt->data = avctx->extradata;
+-        avpkt->size = avctx->extradata_size;
++    // The parameter sets as the bitstream filter outputs them: Annex-B, also
++    // for an "avcC" record (MP4, Matroska), as the packets.
++    const AVCodecParameters *par = avctx->internal->bsf->par_out;
++    if (par->extradata_size && !ctx->extradata_sent) {
++        avpkt->data = par->extradata;
++        avpkt->size = par->extradata_size;
+         ctx->extradata_sent = 1;
+         if ((ret = ffmmal_add_packet(avctx, avpkt, 1)) < 0)
+             return ret;
+@@ -830,7 +848,7 @@
+     .version    = LIBAVUTIL_VERSION_INT,
+ };
+ 
+-#define FFMMAL_DEC(NAME, ID) \
++#define FFMMAL_DEC(NAME, ID, BSFS) \
+     const FFCodec ff_##NAME##_mmal_decoder = { \
+         .p.name         = #NAME "_mmal", \
+         CODEC_LONG_NAME(#NAME " (mmal)"), \
+@@ -840,10 +858,11 @@
+         .init           = ffmmal_init_decoder, \
+         .close          = ffmmal_close_decoder, \
+         FF_CODEC_RECEIVE_FRAME_CB(ffmmal_receive_frame), \
++        .bsfs           = BSFS, \
+         .flush          = ffmmal_flush, \
+         .p.priv_class   = &ffmmal_dec_class, \
+         .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE, \
+-        .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE \
++        .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE, \
+         .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_MMAL, \
+                                                          AV_PIX_FMT_YUV420P, \
+                                                          AV_PIX_FMT_NONE}, \
+@@ -851,7 +870,7 @@
+         .p.wrapper_name = "mmal", \
+     };
+ 
+-FFMMAL_DEC(h264, AV_CODEC_ID_H264)
+-FFMMAL_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO)
+-FFMMAL_DEC(mpeg4, AV_CODEC_ID_MPEG4)
+-FFMMAL_DEC(vc1, AV_CODEC_ID_VC1)
++FFMMAL_DEC(h264, AV_CODEC_ID_H264, "h264_mp4toannexb")
++FFMMAL_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO, NULL)
++FFMMAL_DEC(mpeg4, AV_CODEC_ID_MPEG4, NULL)
++FFMMAL_DEC(vc1, AV_CODEC_ID_VC1, NULL)
