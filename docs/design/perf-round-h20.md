@@ -1398,7 +1398,8 @@ equal (all four A/B sessions). 0 mismatches in 13 comparisons.
 entries, Firefox 9668 / 3058 / 3046 ms. Card boot (`sd-cycle.sh --flash`, SHA-256 verified, 04:11): hrev60314+284, the new `DMAResource` line, DDR50, 0 PANIC,
 loader → cursor **5.62 s** (C2's A: 5.42–5.63), desktop on HDMI. Logs: `artifacts/h20-c4/` (sweep, ab-*, relcheck),
 `artifacts/uart/20261105-0[234]*-c4-*`, `artifacts/uart/20261105-0[34]*-session-c4-haiku-*.log`; images deleted
-afterwards; MEGA24.
+afterwards; mega24 put back on the card (04:45, `20261105-042111-mega24-restore.log`: flash SHA-256 verified, MEGA end, 0 PANIC,
+hrev60314+282).
 
 ## 7. Still unmeasured, in one list
 
