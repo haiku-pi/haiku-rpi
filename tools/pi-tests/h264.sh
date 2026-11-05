@@ -29,6 +29,8 @@ say() { echo "H264 $*"; }
 fail() { say "FAIL: $*"; problems=$((problems + 1)); }
 gpu() { cat /dev/vchiq 2> /dev/null | grep -a -E "^gencmd get_mem gpu|H.264 clock" | sed "s/^/H264 $1 /"; }
 shot() { screenshot -s "$dir/shot-$1.png" > /dev/null 2>&1 && say "screenshot $dir/shot-$1.png"; }
+# MediaPlayer resumes a file where it last stopped (its "Media:Frame" attribute): every play starts at the start
+forget_positions() { for f in "$dir"/*.mp4; do rmattr Media:Frame "$f" 2> /dev/null; done; }
 players() { ps | awk '$1 ~ /MediaPlayer$/ { print $(NF-3) }'; }
 # wait_for TEXT FILE SECS: until FILE has TEXT (0) or SECS pass (1)
 wait_for() {
@@ -58,9 +60,12 @@ report() {
 play_one() {
 	log="$dir/$2.log"
 	syslogStart=$(wc -l < /var/log/syslog)
+	forget_positions
 	if [ -n "$4" ]; then
+		forget_positions
 		env "$4" /boot/system/apps/MediaPlayer "$dir/$1" > "$log" 2>&1 &
 	else
+		forget_positions
 		/boot/system/apps/MediaPlayer "$dir/$1" > "$log" 2>&1 &
 	fi
 	team=$!
@@ -135,6 +140,7 @@ play)
 seek)
 	log="$dir/seek.log"
 	gpu "seek before:"
+	forget_positions
 	/boot/system/apps/MediaPlayer "$dir/play-1080p30.mp4" > "$log" 2>&1 &
 	sleep 6
 	say "position at 6 s: $(hey MediaPlayer get Position of Window 0 2>&1 | grep -o -E '[0-9]{4,}' | head -n 1)"
@@ -168,22 +174,25 @@ seek)
 	quit_players
 	report "$log" seek
 	# close and reopen, five times
-	for i in 1 2 3 4 5; do
-		/boot/system/apps/MediaPlayer "$dir/play-720p30.mp4" > "$dir/reopen-$i.log" 2>&1 &
+	for n in 1 2 3 4 5; do
+		forget_positions
+		/boot/system/apps/MediaPlayer "$dir/play-720p30.mp4" > "$dir/reopen-$n.log" 2>&1 &
 		sleep 6
 		quit_players
-		frames=$(grep -a -o "mmal: [0-9]* frames decoded" "$dir/reopen-$i.log" | awk '{print $2}')
-		say "reopen $i: $(grep -a '^AVCodecDecoder' "$dir/reopen-$i.log" | head -n 1), ${frames:-no} frames from the VideoCore"
-		[ -n "$frames" ] && [ "$frames" -gt 60 ] || fail "reopen $i: no hardware decode"
+		frames=$(grep -a -o "mmal: [0-9]* frames decoded" "$dir/reopen-$n.log" | awk '{print $2}')
+		say "reopen $n: $(grep -a '^AVCodecDecoder' "$dir/reopen-$n.log" | head -n 1), ${frames:-no} frames from the VideoCore"
+		[ -n "$frames" ] && [ "$frames" -gt 60 ] || fail "reopen $n: no hardware decode"
 	done
 	gpu "seek after:"
 	;;
 two)
 	gpu "two before:"
+	forget_positions
 	/boot/system/apps/MediaPlayer "$dir/play-1080p30.mp4" > "$dir/two-a.log" 2>&1 &
 	a=$!
 	sleep 5
 	# a second window of the same team (MediaPlayer is single-launch: the running one opens it)
+	forget_positions
 	/boot/system/apps/MediaPlayer "$dir/play-720p30.mp4" > "$dir/two-b.log" 2>&1
 	sleep 8
 	say "windows: $(hey MediaPlayer count Window 2>&1 | grep -o -E 'result.*' | head -n 1); teams: $(players | tr '\n' ' ')"
@@ -194,12 +203,14 @@ two)
 	report "$dir/two-a.log" "two windows"
 	# another team at the same time (MediaPlayer is single-launch: a second one hands its file to the first):
 	# ffmpeg's h264_mmal decoding the 1080p file while the player plays it, then a third decoder (two windows)
+	forget_positions
 	/boot/system/apps/MediaPlayer "$dir/play-1080p30.mp4" > "$dir/two-c.log" 2>&1 &
 	c=$!
 	sleep 5
 	timeout 120 ffmpeg -nostdin -loglevel info -c:v h264_mmal -i "$dir/play-1080p30.mp4" -t 20 -f null - > "$dir/two-d.log" 2>&1 &
 	d=$!
 	sleep 3
+	forget_positions
 	/boot/system/apps/MediaPlayer "$dir/play-720p30.mp4" > "$dir/two-e.log" 2>&1
 	sleep 7
 	./teamstat -i 10 $c $d | while read -r line; do say "player + ffmpeg: $line"; done
@@ -213,13 +224,14 @@ two)
 	;;
 kill)
 	gpu "kill before:"
-	for i in 1 2 3; do
-		/boot/system/apps/MediaPlayer "$dir/play-1080p30.mp4" > "$dir/kill-$i.log" 2>&1 &
+	for n in 1 2 3; do
+		forget_positions
+		/boot/system/apps/MediaPlayer "$dir/play-1080p30.mp4" > "$dir/kill-$n.log" 2>&1 &
 		t=$!
-		sleep $((4 + i))
+		sleep $((4 + n))
 		kill -9 $t
 		sleep 2
-		say "killed $t after $((4 + i)) s: $(grep -a -c 'mmal: VideoCore' "$dir/kill-$i.log") hardware decoder(s) were open"
+		say "killed $t after $((4 + n)) s: $(grep -a -c 'mmal: VideoCore' "$dir/kill-$n.log") hardware decoder(s) were open"
 	done
 	grep -a "vchiq:" /var/log/syslog | tail -n 8 | while read -r line; do say "syslog: $line"; done
 	cat /dev/vchiq 2> /dev/null | grep -a -E "^State|Service|clone|H.264 clock" | head -n 12 | while read -r line; do say "vchiq: $line"; done
@@ -230,6 +242,7 @@ kill)
 long)
 	gpu "long before:"
 	log="$dir/long.log"
+	forget_positions
 	/boot/system/apps/MediaPlayer "$dir/long-720p30.mp4" > "$log" 2>&1 &
 	t=$!
 	sleep 15
