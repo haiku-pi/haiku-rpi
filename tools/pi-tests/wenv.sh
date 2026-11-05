@@ -1,6 +1,8 @@
 # wenv.sh — sourced in a shell on the Pi (scripts/pi-session.sh puts it in /boot/home): the Wine in
 # /boot/system/non-packaged with the games' prefix, as tools/pi-tests/wine-games.sh runs it
-export PATH=/boot/system/non-packaged/bin:$PATH WINEPREFIX=/boot/home/wineprefix
+# The games' prefix unless one is set: on the mega image use its own (WINEPREFIX=$HOME/.wine), or wine reg
+# and friends quietly create and change a second prefix.
+export PATH=/boot/system/non-packaged/bin:$PATH WINEPREFIX=${WINEPREFIX:-/boot/home/wineprefix}
 export XKB_CONFIG_ROOT=/boot/system/non-packaged/data/X11/xkb
 export WINEDEBUG=${WINEDEBUG:-err+all,fixme-all} WINE_D3D_CONFIG=${WINE_D3D_CONFIG:-renderer=gl}
 # a full boot volume makes Wine fail in misleading ways (a prefix stops part-way, programs crash at start),
