@@ -443,6 +443,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | C2 (page faults on files read the missing pages around them, 64 KiB clusters, files on a partition) | worktree builds of `rpi4` b195a41e64: A without, C with haiku `c2-fault-readaround` a38b19efab (B = without the partition test, dropped) | Firefox from a BFS directory, cold first window after a card boot 14 047 ms (median of 5; 13 686–14 145); packaged Firefox 7710, WebPositive 2628; mapped files fault in at 8–10 MB/s | **8358 ms (8303–8772, −5.7 s, −40.5 %)**; packaged Firefox 7749, WebPositive 2641, Terminal 97 = (B: +486 / +163); warm, boot (cursor 5.42–5.63 s) and raw card reads unchanged; mapped files 23–32 MB/s, MD5 24/24 on every boot; x86-64 KVM: a 108 MiB library on BFS dlopen cold 550–567 → 77–88 ms | 13 card boots A×5, B×3, C×3, catall×2, 21:50–00:52; x86-64 6 + 6 KVM runs | `artifacts/uart/2026110[45]-*-c2-*.log`, `artifacts/qemu-x86/2026110[45]-23*-{c2,perf,fs,boot}-x86-*.log` |
 | C4 (SD card writes in 512 KiB commands: 128 DMA segments, 512 KiB bounce buffers) | image-2026-11-05 (A) vs worktree build of `rpi4` a38b19efab + haiku `c4-sd-writes` 529875f0eb, 85d80f06f9 (B); Linux 6.18 on the same card | raw 1 MiB writes 24.3 MB/s sustained (median of 6 × 1 GiB; 22.3–36.7, bimodal), 512 KiB–4 MiB 23.9; BFS 1 GiB + fsync 26.2; raw 1 MiB reads 34–36; Linux 32.7 | **35.6 MB/s (33.7–36.0, +46 %, above Linux)**, 512 KiB–4 MiB 35.2–36.4 steady; BFS 1 GiB 32.3 (+23 %; file cache/page writer still 128 KiB); raw 1 MiB reads 43–44; 128 KiB requests −1–2 MB/s; SHA-256 13/13 across Haiku and Linux; release check 0 problems; card boot cursor 5.62 s | 7 network sessions (A1, B1 first variant, A2 B2 A3 B3), 2 Linux flash-lane runs, 1 release check, 1 card boot, 11-05 02:55–04:15 | `artifacts/h20-c4/`, `artifacts/uart/20261105-0[34]*-{c4-*,session-c4-haiku-*}.log` |
 | C4b (page writer transfers of up to 128 I/O vectors; file cache reads of > 128 KiB in chunks of up to 512 KiB) | worktree builds of `rpi4` 265d2b03dd: A without, B with haiku `fc-request-size` 72ea4b2993 + afd7f0590c | BFS `dd` 1 GiB + fsync 31.3 MB/s (median of 9; 24.1–32.5); patterned 1 GiB 26.2; 128 MiB in 128 KiB 19.8; cold 1 GiB read in 1 MiB 35.9; `cat` 29.0, `cp` 13.0 | **34.2** (33.3–34.7, +9.4 %, 93 % of raw); **33.3 (+27 %)**; **30.9 (+57 %)**; **42.4 (+18 %)**; 38.9 (+34 %), 17.2 (+32 %); ≤ 128 KiB reads, 4 KiB rows, `md5sum`, USB = or noise; 0 bad bytes / 66 checks, MD5 48/48, checkfs clean; power cut A = B; relcheck 0; cursor 5.41 (A 5.42); x86-64 AHCI + NVMe FS, bigfile, 4 metadata + 6 data power cuts PASS | 6 network sessions A,B ×3 + 4 power-cut sessions + 1 release check + 2 card boots, 11-05 05:11–06:40; x86-64 68 KVM runs (20 FS sequence, 36 data-cut variants, 12 timing A/B) | `artifacts/h20-c4b/`, `artifacts/uart/20261105-0[5-6]*-{session-c4b-*,c4b-boot*}.log`, `artifacts/qemu-x86/20261105-05*-*-f[cx]*.log` |
+| C6 / G2 (measurement: Firefox's first-clip drops; no change) | image-2026-11-05b as is (+ test files) | W43 121–226 / 300 (network), 61 (card, logging on); W44 32/37 | network first clip 30–93 (median 47.5), relaunch 46–56, after 30 s 0; card 9–21; every drop a VideoSink drop, decoder 0; not I/O (pre-read 21, warm relaunch as bad), not GL/audio; CPU contention from Firefox start-up work (2 busy loops alone: 54/55); priority 15 no help (scheduler placement, `wakelat`); prelaunch + newtab preload off: 24/24 | 4 network boots + 1 wakelat boot + 3 card boots of one flash, 11-05 14:56–15:50 | `artifacts/uart/20261105-1*-g2-*.log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -1587,6 +1588,102 @@ spinning into idle time, and the governor turning that into a lower clock is it 
 session. If a faster link (5 GHz, another AP: C8/§7) makes the WiFi path CPU-bound, the interrupt-time rule above is the
 fix to try first, A/B'd for idle clock, temperature after 5 min idle and the C0b start-cost test.
 
+### C6 / G2 results: the first clip after Firefox starts — CPU contention from Firefox's own start-up work (2026-11-05 14:56–15:50)
+
+**Setup.** image-2026-11-05b (`rpi4` afd7f0590c, hrev60314+287; Firefox 157.0.1-6, DT_RELR libxul) as is; files added
+per boot only. New bootscript `tools/pi-tests/g2-video.sh`: a plan of Firefox starts (`LABEL DELAY PREREAD CLIP...`,
+one line per start; the first start of a disk makes a new profile, later starts a copy of it). Each start opens a
+local page that plays the clips in order in a 1280×720 element (muted unless the clip has audio), 2.5 s apart, and
+reports per clip `getVideoPlaybackQuality()` (frames / dropped), Firefox's split counters (`mozParsedFrames`,
+`mozDecodedFrames`, `mozPresentedFrames`, `mozPaintedFrames`: parsed − decoded = frames the decoder skipped,
+decoded − presented = **VideoSink** drops, presented − painted = compositor drops), time to first frame and the gaps
+between presented frames (`requestVideoFrameCallback`), the drop count every 250 ms, and the CPU time of every
+Firefox thread over the clip (`ps -a` at each clip's start, by team). Label suffixes: `-prio` raises the threads on the
+frame path (Renderer, SwComposite, Compositor, ImageBridge*, Media*, `av:*` decoder threads, RemVidChild, IPC I/O,
+IPDL) to priority 15 every second; `-busy` runs two shell busy loops during the first clip only; `g2-prefs-LABEL.js`
+is appended to the profile's `user.js`. Clips: the 10 s testsrc2 clips of `scripts/make-web-video-clips.sh`
+(H.264 720p High 3 Mbit/s, VP9 720p; no audio track) and `h264-720p-aac.mp4` (the same with a 440 Hz AAC track,
+made for this test). 4 network boots (`netboot-cycle.sh --bootscript … --add …`), 3 card boots of one flash
+(`image-add.sh` copy of 11-05b, `sd-cycle.sh --flash`, then two boots without flashing, per-boot plans
+`g2-plan-K.txt`). mega25 put back afterwards. 0 PANIC / debug_server lines in all 8 logs.
+
+**Numbers today (dropped of 300; first / second clip of the same start).** "new profile" = the first Firefox start
+after boot, cold file cache; "relaunch" = a later start in the same boot (profile kept, every file in the cache).
+
+| | H.264 first | H.264 again | VP9 |
+|---|---|---|---|
+| network boot, new profile (4 boots) | **30 / 93 / 62 / 33** (median 47.5) | 13 / 20 / 11 / 6 | after H.264 in the same start: 4, 3 / 0 |
+| network boot, relaunch, file cache warm (3) | **56 / 48 / 46** | 3 / 7 / 1 | VP9 first: **45**, again 2 |
+| network boot, 30 s after the window opened | **0** | 0 | (AAC clip third: 1) |
+| card boot 1 (fresh flash), new profile | **9** | 0 | after H.264: 0 |
+| card boot 1, relaunch | **17** | 0 | VP9 first: **15**, again 0 |
+| card boot 2 (cold, profile from boot 1), VP9 first | (third: 0) | (0) | **16**, again 0 |
+| card boot 3 (cold) after `cat` of the Firefox package + system ffmpeg (295 MiB, 5.7 s) | **21** | 0 | |
+
+W43 had 121–226 (network) and 61 (card, logging on); W44 32/37. The network figure today is the W44 one, with a wide
+spread (30–93); the card is lower than ever recorded (9–21). VP9 first drops as much as H.264 first; the codec does
+not matter.
+
+**Attribution.**
+- **Not I/O.** A relaunch with every file in the cache drops as much as a cold start or more (network 46–56 vs
+  30–93; card 15–17 vs 9), and on the card a full pre-read of the Firefox package and the ffmpeg libraries brings the
+  window up 3.7 s sooner (3.1 vs 6.8 s) but the first clip still drops 21. The 11-04/05 read-around (C2,
+  a38b19efab) is in the image but cannot be involved: Firefox and ffmpeg6 are packages (packagefs), which it skips.
+  W43's 121–226 came from the remote disk of the time (2.9 MB/s, since 24× faster); that part is gone.
+- **Not decoder warm-up or codec library loading.** `mozDecodedFrames` = `mozParsedFrames` = 300 in all 39 clips
+  measured with the split counters (network boots 3–4, the card): the decoder never skipped a frame. Time to first frame 1.1–1.2 s for the first clip of a new profile,
+  0.36–0.63 s for a relaunch, 0.05–0.16 s after that; the RDD stall "up to 1.8 s" of W43 does not occur any more
+  (longest gap between presented frames in a first clip: 91–1006 ms on the network, 93–167 ms on the card; the long
+  ones mid-clip, not at the start).
+- **Not the compositor and not GL.** `mozPaintedFrames` ≈ `mozPresentedFrames` (±2) everywhere: every drop is a
+  **VideoSink drop**, a frame that reached the sink after its display time had passed. Firefox composites in software
+  here (the `Renderer` and `SwComposite` threads of software WebRender; no GL context on the video path), so Mesa's
+  shader cache is not involved.
+- **Not the audio sink.** The test clips have no audio track; the AAC clip, played after the delay, dropped 1 (one
+  226 ms gap at 0.1 s, the sink starting).
+- **It is CPU: Firefox's own start-up work in the first ~10–15 s after its window opens, next to software video
+  presentation that already needs a core.** In every clip the parent's `Renderer` + `SwComposite` take 4.6–6.1 +
+  3.6–5.1 s of CPU per 10 s of 720p (≈1 CPU), first clip or not. In a first clip the Firefox teams use 28–32 CPU-s
+  in ~11 s on the network (2.6–3.0 CPUs; steady state 13–14) — the parent's main thread 4.8–7.3 s, one or two content
+  processes started meanwhile (~2.0 and ~1.8 s each: Firefox's preallocated process and the preloaded new-tab page),
+  DOM workers 1.1–1.7 s, IndexedDB I/O threads 0.6–1.6 s — plus app_server's share of drawing the window (not counted).
+  On the card the first-clip total is 19.5–23.9 CPU-s and the parent's main thread 2.4–3.7 s: the card boot has no
+  network (no DHCP on the Pi LAN), the network boots have the host's NAT to the internet, and only the network runs
+  show the URL-classifier update thread and 0.8–2.0 s of `Socket Thread` in their first clips — consistent with
+  Firefox's online start-up tasks (Safe Browsing, Remote Settings) as the network/card difference; not isolated.
+  **Proof by substitution:** in the same Firefox, 30 s after its start (0 drops alone), two shell busy loops during
+  the first clip give **54 and 55 drops**, the clip after it (no load) 6 and 0. Any ~2 CPUs of other work does it;
+  nothing specific to start-up.
+- **Thread priority does not help, and why.** Raising the whole frame path to priority 15: relaunch 39 / 35 / 44 (vs
+  46–56), and with the busy loops **62** (vs 54–55): no effect. `tools/haiku-tests/wakelat.c` (new; bootscript
+  `tools/pi-tests/wakelat.sh`, one network boot) separates wake-up latency from placement: one periodic thread wakes
+  within 5–10 µs (p99) next to 0–3 busy threads at either priority (Haiku's scheduler is in low-latency mode); but
+  **three threads that each work 16 of every 33 ms** (the Renderer/SwComposite pattern) next to three busy threads
+  miss 17 of 900 deadlines at priority 10 and **27 at priority 15** (late up to 20 ms), where a priority-respecting
+  scheduler would miss none — the busy threads are priority 10. Code (`scheduler.cpp` `enqueue()`,
+  `low_latency.cpp` `choose_core()`/`rebalance()`): a woken thread goes to its previous core while cache affinity holds
+  (or the least-loaded core), and preempts only if it outranks the thread running on *that* CPU; a core running a
+  lower-priority busy thread is never chosen for it because, by load, it is the fullest. So priority does not move
+  work across cores. That is a property of Haiku's scheduler (upstream as well), worth its own item (§7); it is not
+  G2's fix, since Firefox sets no thread priorities on Haiku (`nsThread` changes priority only in chaos mode).
+- **What reduces it.** Firefox prefs (in `user.js`, no rebuild): `dom.ipc.processPrelaunch.enabled` false **and**
+  `browser.newtab.preload` false → network relaunch first clip **24 / 24** (vs 46–56; second clip 6 / 3), card 13 (vs
+  15–17); one CPU-heavy content process less at start (6 Firefox teams instead of 10), ~4 CPU-s less in the first
+  clip. Either half alone: 39 (prelaunch off) / 38 (preload off) — both are needed. Delaying the prelaunch
+  (`dom.ipc.processPrelaunch.delayMs` 20000): 42, no gain. Their cost is **unmeasured**: without a preallocated
+  process, opening a tab for a new site waits for a content process start (~2 CPU-s on this board), and a new tab's
+  page is built on demand.
+
+**Decision: no fix in our code; G2 documented as a CPU-headroom effect.** The cause is Firefox's upstream start-up
+work competing with software-composited video on four 1.5 GHz cores; nothing in Haiku's media kit, the decoders, the
+I/O path or Mesa is on it. A wait of ~15–30 s after Firefox opens, or playing the clip again, avoids it. The prefs
+halve it; shipping them (a `defaults/pref` file in the Firefox package: a repackage and revision −7 of
+`build-firefox.sh`'s package step, no compile) trades new-tab latency for it and is left to the owner, with the
+new-tab cost to be measured first. The real headroom fix is GPU compositing in Firefox (the ≈1 CPU of
+Renderer + SwComposite per 720p stream; also the 1080p drops of W44 10-29 18:45) — Gecko work, out of scope. Logs
+`artifacts/uart/20261105-1{45655,50424,51030,52106}-g2-net[1-4].log`, `…-153015-g2-wakelat.log`,
+`…-15{3402,4446,4735}-g2-card[1-3].log`.
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
@@ -1610,7 +1707,12 @@ fix to try first, A/B'd for idle clock, temperature after 5 min idle and the C0b
 - `KDEBUG_LEVEL 1 → 0`, out-of-line atomics, OpenBLAS (C11).
 - First-frame compile hitches of the games with a cold Mesa shader cache: the games bench boots a fresh image
   every time (cold cache by construction) but reports steady-state fps only.
-- Cause of G2's first-clip stalls (C6).
+- (Cause of G2's first-clip drops: measured 11-05, §6 "C6 / G2 results" — CPU contention from Firefox's start-up
+  work; not I/O, decoder, audio or GL.) Open from it: the new-tab cost of `dom.ipc.processPrelaunch.enabled` /
+  `browser.newtab.preload` off; whether the network-boot extra is Firefox's online start-up tasks (a run with the
+  NAT off). **Scheduler:** woken threads are placed by cache affinity / load, and preempt only on the CPU chosen, so a
+  higher priority never displaces a lower-priority thread on another core (`wakelat 33 300 15 3 16000 3`: 27/900
+  deadline misses at priority 15 vs 17 at 10) — a candidate item of its own.
 
 ## 8. Script and tool index for the measurements above
 
@@ -1628,7 +1730,8 @@ fix to try first, A/B'd for idle clock, temperature after 5 min idle and the C0b
 | GL frame rate + CPU of one program in a window (N3) | `tools/pi-tests/gl-pace.sh LABEL WARMUP SECS CMD` (fps from `HAIKU_EGL_FPS`, the team's and app_server's CPU by `ps -a`, `pmustat -a`); bootscript `tools/pi-tests/n3-pace.sh` (two Mesas in one boot by `__EGL_VENDOR_LIBRARY_FILENAMES`) |
 | Process start over a session | `tools/pi-tests/startcost-steps.sh` (forkbench after each desktop step), `startcost-clock.sh` (forkbench with the ARM clock sampled) |
 | Wine | `tools/pi-tests/prefix-timeline.sh`, `x86-cpubench.sh`, `wine-games.sh`; `tools/wine-tests/cpubench.c`, `prefix-timeline.py` |
-| Firefox | `tools/pi-tests/firefox-video.sh`, `ffstall.sh`, `ffv-prof.sh`, `firefox-start-loop.sh` |
+| Firefox | `tools/pi-tests/firefox-video.sh`, `ffstall.sh`, `ffv-prof.sh`, `firefox-start-loop.sh`; first-clip drops (C6/G2): `tools/pi-tests/g2-video.sh` (bootscript; plan `/boot/home/g2-plan.txt`, see its header; `netboot-cycle.sh --bootscript … --add CLIP:/boot/home/CLIP --add PLAN:/boot/home/g2-plan.txt --until 'G2V end'`) |
+| Scheduler wake-up / placement under load | `tools/haiku-tests/wakelat.c` (periodic threads next to busy ones: lateness, deadline misses), bootscript `tools/pi-tests/wakelat.sh` |
 | DT_RELR | `tools/pi-tests/relr.sh`, `scripts/relr-image.sh`, `artifacts/relr/` |
 | Cold starts, page-fault read-around (C2) | `scripts/c2-image.sh [--mode launch\|catall] IMG OUT` (bootscript `tools/pi-tests/c2.sh`: cold + warm Terminal, WebPositive, packaged and BFS-tree Firefox; `tools/haiku-tests/mmapcat.c` fault-in rates + MD5 of mapped files; disklat) → `scripts/sd-cycle.sh --flash OUT --secs 900 --until 'C2 end'` → `scripts/c2-table.py --a LOGS --b LOGS`; x86-64: `tools/x86-tests/c2.sh` (`scripts/x86-test.sh c2 IMG --scratch S --file artifacts/c2/x86/c2data.tar:/boot/home/x86t/c2data.tar`) |
 | Python | `tools/pi-tests/python.sh` |
