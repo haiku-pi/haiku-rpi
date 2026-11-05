@@ -27,11 +27,11 @@ work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNE
 ## Quick start
 
 **Download** the SD card image (unofficial, built from these sources):
-[releases/image-2026-11-05b](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-05b) — 336 MB,
-`haiku-pi4-2026-11-05b.img.xz`, for an 8 GB or larger card:
+[releases/image-2026-11-05c](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-05c) — 336 MB,
+`haiku-pi4-2026-11-05c.img.xz`, for an 8 GB or larger card:
 
 ```sh
-xz -dc haiku-pi4-2026-11-05b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dc haiku-pi4-2026-11-05c.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Or build the image yourself on an x86-64 Linux host and write it to a microSD card:
@@ -76,7 +76,7 @@ These numbers were measured on the bench Pi (4 GB) between 2026-10-18 and 2026-1
 | Games | Timedemos in a 1280×720 window (2026-11-03): QuakeSpasm 80 fps · Yamagi Quake II 102 fps · vkQuake (Vulkan) 55 fps · OpenArena 53 fps · SuperTuxKart 1.5 about 38 fps in a race |
 | Video | ffmpeg 6.1 codecs in the media kit. **HEVC is decoded by the SoC's decoder block**: 1080p at about 115 fps (bit-exact), 4K at about 38 fps. **H.264 is decoded by the VideoCore** (VCHIQ + MMAL, from image-2026-11-05c): 1080p about 79 fps at ~8 % of a core, used by MediaPlayer and WebPositive (one 1080p stream at a time; Firefox decodes on the CPU) |
 | Audio | HDMI (48 kHz stereo, from image-2026-10-24e) and the 3.5 mm headphone jack (44.1 kHz stereo), through the media kit |
-| Storage | SD card at UHS-I DDR50 (about 43 MB/s read, 35 MB/s write from image-2026-11-05b); USB 3 storage through the VL805 (reads 60–81 MB/s, writes 49 MB/s; correct data from image-2026-11-04b — older images corrupt USB disks, KNOWN-ISSUES C13) |
+| Storage | SD card at UHS-I DDR50 (about 43 MB/s read, 35 MB/s write from image-2026-11-05c); USB 3 storage through the VL805 (reads 60–81 MB/s, writes 49 MB/s; correct data from image-2026-11-04b — older images corrupt USB disks, KNOWN-ISSUES C13) |
 | Network | Gigabit Ethernet (GENET), TCP about 915 Mbit/s each way; WiFi (BCM43455, WPA2); NFSv4 client |
 | Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching, discovery and pairing by PIN. Bluetooth keyboards, mice and audio are untested |
 | Web | WebPositive (HaikuWebKit, JavaScript JIT) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback |

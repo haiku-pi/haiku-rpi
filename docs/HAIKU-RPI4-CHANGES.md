@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **281 commits of its own** (2026-10-18 to 2026-11-05; counted
-2026-11-05 at `rpi4` 44cc183c0c). To list them, in `sources/haiku`:
+On top of that base the fork carries **294 commits of its own** (2026-10-18 to 2026-11-05; counted
+2026-11-05 at `rpi4` f032832df7). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -481,6 +481,26 @@ userspace half is a `hevc_rpivid` hwaccel in FFmpeg 6.1, carried as
 | `be395e19f4` | Interface 2: a decode pipeline | `RPIVID_SUBMIT` queues and `RPIVID_WAIT` collects (`RPIVID_DECODE` remains as both). Phase 1 of picture N+1 runs into a second scratch set while phase 2 reconstructs picture N, as in Linux's driver, in strict FIFO order so references are complete. Buffers are reference-counted per job, and close waits for the file's pictures. With ffmpeg6 6.1.6-3: 1080p 20 Mbit/s at 115 fps using 0.46 cores (the CPU decoder manages 25 fps on 4), 2160p at 38 fps, bit-exact. |
 
 ---
+
+### H.264 on the VideoCore: VCHIQ + MMAL
+
+The Pi 4's H.264 decoder sits behind the VideoCore firmware. VCHIQ (shared-memory queues and doorbells to the
+firmware) is FreeBSD's BSD-3 core with a Haiku OS layer; Broadcom's BSD-3 libmmal/libvchiq/VCOS come as the
+`raspberrypi_userland` package (recipe and patches in this repository, `scripts/build-mmal.sh`); FFmpeg's own
+`h264_mmal` decoder drives it ([design/vchiq.md](design/vchiq.md)). Linux's GPL-only vchiq-mmal / bcm2835-codec /
+vc-sm-cma were behaviour references only.
+
+| commit | change | what and why |
+|---|---|---|
+| `6c2778b0b1` | vchiq: the VCHIQ core imported from FreeBSD | FreeBSD 7806832f23fb `sys/contrib/vchiq`, unchanged (Broadcom GPL-2.0 OR BSD-3, used as BSD-3), so later fixes merge |
+| `2252a8dc97` | vchiq: the Haiku port | FDT driver for `brcm,bcm2711-vchiq` (doorbell GIC 66), `/dev/vchiq` with the Linux/FreeBSD ioctl ABI, slots below 1 GiB uncached at bus 0xC0000000 + phys, `VCHIQ_INIT` (0x48010) through the mailbox at the first open; bulk transfers on locked user pages with cache maintenance |
+| `34660bcc50` | build: the driver in the arm64 Haiku package | |
+| `10807a2f0c` | vchiq: semaphores and completions without kernel semaphores | the core makes one per possible service: 4096 kernel semaphores held for good; now spinlock + condition variable |
+| `a0ffe46806` | vchiq: the core's state allocated at the first connection | nothing at boot |
+| `f47b5639b5`, `6e8be068c5` | vchiq: keep a dying team's bulk buffers | Haiku deletes a dying team's memory before closing its files while the VideoCore may still be writing into it (a panic when a client was killed mid-transfer); such buffers move to kernel copies of their areas |
+| `27a0c0d75b` | vchiq: the H.264 block at its maximum clock while MMAL is in use | the firmware drops it 500 → 250 MHz ~2 min after power-on; held: 720p 111 → 171 fps, 1080p 53 → 79 |
+| `dd03227336`, `f1cdfb5723` | ffmpeg plugin: prefer hardware video decoders, fall back to software | `h264_mmal` (and `hevc_rpivid`) by name first; if it does not open or fails, `h264` takes over in place (from the start or the next key frame); kept fed with 8 packets (70–90 ms 1080p stalls gone); `FFMPEG_H264_MMAL=0` forces software. MediaPlayer 1080p30: 88 % of a core, all frames on time (software 159 %, mostly late) |
+| `0a7fa72b63`, `8a9829b9ab`, `f032832df7` | repository: ffmpeg6 6.1.6-4 (with `h264_mmal`: 2 extra buffers instead of 10, the FFmpeg 6.1 compile fix, end-of-stream frames) and raspberrypi_userland 20241223-1…-3 (MMAL reply waits bounded at 5 s; VCOS's thread key deleted at unload — MediaPlayer crashed at every quit) | |
 
 ## 9. Audio
 
