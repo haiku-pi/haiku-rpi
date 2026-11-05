@@ -28,7 +28,7 @@ say() { echo "H264 $*"; }
 fail() { say "FAIL: $*"; problems=$((problems + 1)); }
 gpu() { cat /dev/vchiq 2> /dev/null | grep -a -E "^gencmd get_mem gpu|H.264 clock" | sed "s/^/H264 $1 /"; }
 shot() { screenshot -s "$dir/shot-$1.png" > /dev/null 2>&1 && say "screenshot $dir/shot-$1.png"; }
-players() { ps | awk '$1 ~ /MediaPlayer$/ { print $2 }'; }
+players() { ps | awk '$1 ~ /MediaPlayer$/ { print $(NF-3) }'; }
 # wait_for TEXT FILE SECS: until FILE has TEXT (0) or SECS pass (1)
 wait_for() {
 	i=0
@@ -80,9 +80,9 @@ info)
 	;;
 ffmpeg)
 	for name in h264-720p h264-1080p; do
-		ffmpeg -nostdin -loglevel info -c:v h264_mmal -i "$name.mp4" -fps_mode passthrough -f framemd5 \
+		timeout 120 ffmpeg -nostdin -y -loglevel info -c:v h264_mmal -i "$name.mp4" -fps_mode passthrough -f framemd5 \
 			-pix_fmt yuv420p "$name.mmal.framemd5" > "$name.ffmpeg-mmal.txt" 2>&1 || fail "$name: ffmpeg h264_mmal"
-		grep -a "mmal:" "$name.ffmpeg-mmal.txt" | while read -r line; do say "$name: $line"; done
+		tr '\r' '\n' < "$name.ffmpeg-mmal.txt" | grep -a -E "mmal:|MMAL|rror" | head -n 5 | while read -r line; do say "$name: $line"; done
 		grep -v "^#" "$name.mmal.framemd5" | awk -F', *' '{print $6}' > "$name.mmal.md5"
 		total=$(grep -v "^#" "$name.framemd5" | wc -l)
 		decoded=$(wc -l < "$name.mmal.md5")
@@ -91,26 +91,28 @@ ffmpeg)
 		[ "$mapped" = "$total" ] && [ "$decoded" = "$total" ] || fail "$name: frames differ"
 		for codec in "h264_mmal" "h264 -threads 4" "h264 -threads 1"; do
 			TIMEFORMAT="%R s, CPU %U s user %S s system"
-			t=$( { time ffmpeg -nostdin -loglevel error -c:v $codec -i "$name.mp4" -f null - > out.txt 2>&1; } 2>&1 ) \
+			t=$( { time timeout 120 ffmpeg -nostdin -loglevel error -c:v $codec -i "$name.mp4" -f null - > out.txt 2>&1; } 2>&1 ) \
 				|| fail "$name: ffmpeg $codec"
 			say "$name: ffmpeg -c:v $codec: $t"
 		done
 	done
 	;;
 clock)
+	# (the system's MMAL, mmal-h264 from this directory: step 2's with mmaldec's settings as options)
 	m=/boot/home/mmal
-	export LIBRARY_PATH="$m/lib:${LIBRARY_PATH:-%A/lib:/boot/system/non-packaged/lib:/boot/system/lib}"
 	settings=/boot/home/config/settings/kernel/drivers/vchiq
 	mkdir -p "$(dirname $settings)"
 	for mode in held firmware held; do
 		if [ $mode = firmware ]; then echo "video_clock false" > $settings; else rm -f $settings; fi
 		for clip in h264-720p h264-1080p; do
-			"$m/mmal-h264" -q "$m/clips/$clip.h264" > out.txt 2>&1 || fail "mmal-h264 $clip ($mode)"
-			grep -a -E "^MMAL (time|cpu)" out.txt | while read -r line; do say "clock $mode $clip: $line"; done
+			for o in 1 3; do
+				timeout 60 ./mmal-h264 -q -o $o "$m/clips/$clip.h264" > out.txt 2>&1 || fail "mmal-h264 $clip ($mode)"
+				grep -a -E "^MMAL (time|cpu)" out.txt | while read -r line; do say "clock $mode $clip, $o output buffers: $line"; done
+			done
 		done
-		"$m/mmal-h264" -q -f OPQV "$m/clips/h264-1080p.h264" > /dev/null 2>&1 &
+		timeout 60 ./mmal-h264 -q -f OPQV "$m/clips/h264-1080p.h264" > /dev/null 2>&1 &
 		sleep 1
-		"$m/vchiq-gcmd" "measure_clock h264" 2>&1 | grep "dequeue" | sed "s/^VCHIQTEST dequeue /H264 clock $mode during a decode: /"
+		timeout 20 "$m/vchiq-gcmd" "measure_clock h264" 2>&1 | grep "dequeue" | sed "s/^VCHIQTEST dequeue /H264 clock $mode during a decode: /"
 		wait
 	done
 	rm -f $settings
@@ -190,7 +192,7 @@ two)
 	/boot/system/apps/MediaPlayer "$dir/play-1080p30.mp4" > "$dir/two-c.log" 2>&1 &
 	c=$!
 	sleep 5
-	ffmpeg -nostdin -loglevel info -c:v h264_mmal -i "$dir/play-1080p30.mp4" -t 20 -f null - > "$dir/two-d.log" 2>&1 &
+	timeout 120 ffmpeg -nostdin -loglevel info -c:v h264_mmal -i "$dir/play-1080p30.mp4" -t 20 -f null - > "$dir/two-d.log" 2>&1 &
 	d=$!
 	sleep 3
 	/boot/system/apps/MediaPlayer "$dir/play-720p30.mp4" > "$dir/two-e.log" 2>&1

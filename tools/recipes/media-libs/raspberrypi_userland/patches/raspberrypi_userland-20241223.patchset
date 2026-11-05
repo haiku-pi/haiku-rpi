@@ -1,7 +1,7 @@
 From 82ba1a6fc2a865459528d830902db60312e638c5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:23:23 +0100
-Subject: [PATCH 1/8] vcos: initialise the pthread_once_t controls with
+Subject: [PATCH 1/9] vcos: initialise the pthread_once_t controls with
  VCOS_ONCE_INIT
 
 current_thread_key_once and cmd_globals.initialized relied on a zeroed
@@ -46,7 +46,7 @@ index 77ce58c..02030e7 100644
 From fa5e55c1f7c763c9efa09ee605eefbc5b9d58851 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:23:23 +0100
-Subject: [PATCH 2/8] vchiq_arm: don't shadow the global vchiq_lib_mutex
+Subject: [PATCH 2/9] vchiq_arm: don't shadow the global vchiq_lib_mutex
 
 vchiq_lib_init() created a function-local static vchiq_lib_mutex, so the
 file-scope one that vchiq_close_service(), alloc_msgbuf() etc. lock was
@@ -75,7 +75,7 @@ index 133d5ca..40adab9 100755
 From fc0d32cb61c7e089f9014c3278e7ed04ec03bf0b Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:23:32 +0100
-Subject: [PATCH 3/8] Haiku support for VCOS, libvchiq and the MMAL VideoCore
+Subject: [PATCH 3/9] Haiku support for VCOS, libvchiq and the MMAL VideoCore
  client
 
 - the ioctl numbers from <sys/ioccom.h> (Haiku's /dev/vchiq uses the BSD
@@ -154,7 +154,7 @@ index 02030e7..e664c95 100644
 From 9538a4dacab170189bc5d5473b922c7f72733f32 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:34:46 +0100
-Subject: [PATCH 4/8] vchiq_arm: 64-bit clean
+Subject: [PATCH 4/9] vchiq_arm: 64-bit clean
 
 vchiq_dump_phys_mem() took the service handle for a pointer, which it is
 not (find_service_by_handle() maps it, as everywhere else); the trace
@@ -205,7 +205,7 @@ index 40adab9..098667f 100755
 From 60ddfe3847fe6ad132b6b8b5353b97caa8e8daf8 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:29:45 +0100
-Subject: [PATCH 5/8] mmal: the VideoCore's message layout on 64-bit hosts
+Subject: [PATCH 5/9] mmal: the VideoCore's message layout on 64-bit hosts
 
 The MMAL service on the VideoCore parses its messages with the layout they
 have on a 32-bit ARM host, which is why the CMake build leaves MMAL out on
@@ -1200,7 +1200,7 @@ index 343922b..cea7a7f 100644
 From a24b73e2c26ea27dea26fcd2e4eef92b1f53e732 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:29:45 +0100
-Subject: [PATCH 6/8] Haiku: a Makefile for VCOS, libvchiq and MMAL's VideoCore
+Subject: [PATCH 6/9] Haiku: a Makefile for VCOS, libvchiq and MMAL's VideoCore
  client
 
 makefiles/haiku/Makefile builds libvcos, libvchiq_arm, libmmal_core,
@@ -1321,7 +1321,7 @@ index 0000000..61a4ffc
 From 9fced5f4dfcf9baf8dbfd88fb72b33e87ae81872 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 19:24:03 +0100
-Subject: [PATCH 7/8] mmal: take refcount_lock in mmal_vc_shm_exit()
+Subject: [PATCH 7/9] mmal: take refcount_lock in mmal_vc_shm_exit()
 
 mmal_vc_shm_exit() unlocked refcount_lock without having locked it,
 so two components destroyed at once could race on the count and the
@@ -1352,7 +1352,7 @@ index aa81309..407d0f7 100644
 From 89ccab8f9240d6739883a619678dc33753f865f2 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 20:46:29 +0100
-Subject: [PATCH 8/8] mmal: wait for the VideoCore's replies for 5 s at most
+Subject: [PATCH 8/9] mmal: wait for the VideoCore's replies for 5 s at most
 
 mmal_vc_sendwait_message() waited for a reply for good (its FIXME), so a
 VideoCore that stopped answering (seen after its decoder failed with ENOSPC)
@@ -1451,6 +1451,48 @@ index 3a61a3b..09ee1b3 100644
  
     mmal_vc_release_internal(client);
     LOG_TRACE("got reply (len %i/%i)", (int)*destlen, (int)waiter->destlen);
+-- 
+2.53.0
+
+
+From bbdf3785b8c854ef99e883fd908122d741521254 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 21:09:08 +0100
+Subject: [PATCH 9/9] vcos: delete the current-thread key when VCOS is
+ deinitialised
+
+The key's destructor (vcos_dummy_thread_cleanup) is in libvcos. When the
+library is unloaded - it is a dependency of FFmpeg's libavcodec, which a
+media plugin loads and unloads - the threads that ran VCOS code keep a value
+for the key, and the first of them to exit afterwards calls the destructor
+in the unmapped library (MediaPlayer crashed when it quit). vcos_dtor()
+-> vcos_platform_deinit() now deletes the key.
+---
+ interface/vcos/pthreads/vcos_pthreads.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/interface/vcos/pthreads/vcos_pthreads.c b/interface/vcos/pthreads/vcos_pthreads.c
+index e664c95..3dcc8f9 100644
+--- a/interface/vcos/pthreads/vcos_pthreads.c
++++ b/interface/vcos/pthreads/vcos_pthreads.c
+@@ -436,6 +436,17 @@ end:
+ void vcos_platform_deinit(void)
+ {
+    vcos_term(VCOS_INIT_ALL);
++
++   /* The library may be unloaded now (it is a dependency of a plugin, say): the threads that ran VCOS code
++    * still have a value for the key, and when they exit, their key destructor would be called in the unloaded
++    * code. */
++   if (_vcos_thread_current_key_created)
++   {
++      static const VCOS_ONCE_T once_init = VCOS_ONCE_INIT;
++      pthread_key_delete(_vcos_thread_current_key);
++      _vcos_thread_current_key_created = 0;
++      current_thread_key_once = once_init;
++   }
+ }
+ 
+ void vcos_global_lock(void)
 -- 
 2.53.0
 

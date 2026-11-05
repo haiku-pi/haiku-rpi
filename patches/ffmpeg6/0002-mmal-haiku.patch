@@ -21,7 +21,11 @@ docs/design/vchiq.md, step 3).
                frame it owed, receive_frame() returns AVERROR_EXTERNAL from then
                on (the caller falls back to the software decoder) instead of
                logging every packet's error; a single 100 ms wait without a
-               frame is no error
+               frame is no error; draining sends the end-of-stream buffer
+               (since FFmpeg 5 the end comes as AVERROR_EOF from
+               ff_decode_get_packet(), not as the empty packet mmaldec waited
+               for, so the frames the decoder still held were lost) and waits
+               for the decoder's last frames instead of returning EAGAIN
 
 LGPL-2.1-or-later, as the files it changes.
 
@@ -147,14 +151,18 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      } else {
          if (ctx->eos_sent)
              goto done;
-@@ -696,10 +719,21 @@
+@@ -696,10 +719,25 @@
              // in this unlikely situation.
              buffer = mmal_queue_timedwait(ctx->queue_decoded_frames, 100);
              if (!buffer) {
-+                // One miss is not an error (the caller sends more packets);
-+                // a decoder that stopped is one.
-+                if (++ctx->stalls < MAX_STALLS)
++                // One miss is not an error (the caller sends more packets,
++                // or, draining, has none and waits on); a decoder that
++                // stopped is one.
++                if (++ctx->stalls < MAX_STALLS) {
++                    if (ctx->eos_sent)
++                        continue;
 +                    goto done;
++                }
 +                if (ctx->eos_sent) {
 +                    av_log(avctx, AV_LOG_WARNING, "No end of stream from MMAL.\n");
 +                    ctx->eos_received = 1;
@@ -170,7 +178,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
          } else {
              buffer = mmal_queue_get(ctx->queue_decoded_frames);
              if (!buffer)
-@@ -750,6 +784,7 @@
+@@ -750,6 +788,7 @@
          }
  
          ctx->frames_output++;
@@ -178,7 +186,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  
          if ((ret = ffmal_copy_frame(avctx, frame, buffer)) < 0)
              goto done;
-@@ -773,9 +808,18 @@
+@@ -773,9 +812,18 @@
      int ret = 0;
      int got_frame = 0;
  
@@ -200,7 +208,29 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
          ctx->extradata_sent = 1;
          if ((ret = ffmmal_add_packet(avctx, avpkt, 1)) < 0)
              return ret;
-@@ -818,7 +862,9 @@
+@@ -785,6 +833,12 @@
+     if (ret == 0) {
+         if ((ret = ffmmal_add_packet(avctx, avpkt, 0)) < 0)
+             return ret;
++    } else if (ret == AVERROR_EOF) {
++        // Draining (since FFmpeg 5 the end comes as AVERROR_EOF, not as an
++        // empty packet): an end-of-stream buffer, after which the decoder
++        // outputs the frames it still holds.
++        if (!ctx->eos_sent && (ret = ffmmal_add_packet(avctx, avpkt, 0)) < 0)
++            return ret;
+     } else if (ret < 0 && !(ret == AVERROR(EAGAIN)))
+         return ret;
+ 
+@@ -807,7 +861,7 @@
+         return ret;
+ 
+     if (!got_frame && ret == 0)
+-        return AVERROR(EAGAIN);
++        return ctx->eos_received ? AVERROR_EOF : AVERROR(EAGAIN);
+     else
+         return ret;
+ }
+@@ -818,7 +872,9 @@
  };
  
  static const AVOption options[]={
@@ -211,7 +241,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      {"extra_decoder_buffers", "extra MMAL internal buffered frames", offsetof(MMALDecodeContext, extra_decoder_buffers), AV_OPT_TYPE_INT, {.i64 = 10}, 0, 256, 0},
      {NULL}
  };
-@@ -830,7 +876,7 @@
+@@ -830,7 +886,7 @@
      .version    = LIBAVUTIL_VERSION_INT,
  };
  
@@ -220,7 +250,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      const FFCodec ff_##NAME##_mmal_decoder = { \
          .p.name         = #NAME "_mmal", \
          CODEC_LONG_NAME(#NAME " (mmal)"), \
-@@ -840,10 +886,11 @@
+@@ -840,10 +896,11 @@
          .init           = ffmmal_init_decoder, \
          .close          = ffmmal_close_decoder, \
          FF_CODEC_RECEIVE_FRAME_CB(ffmmal_receive_frame), \
@@ -233,7 +263,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
          .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_MMAL, \
                                                           AV_PIX_FMT_YUV420P, \
                                                           AV_PIX_FMT_NONE}, \
-@@ -851,7 +898,7 @@
+@@ -851,7 +908,7 @@
          .p.wrapper_name = "mmal", \
      };
  
