@@ -20,8 +20,8 @@ revision=4
 unpublished=true
 [ "${1:-}" = --publish ] && unpublished=false
 mmal="/boot/system/develop/headers/raspberrypi_userland"
-[ -f "$root/artifacts/sysroot-arm64$mmal/interface/mmal/mmal.h" ] \
-	|| { echo "build-ffmpeg: no MMAL headers in the sysroot (scripts/build-mmal.sh --package)" >&2; exit 1; }
+# (a recreated sysroot has none: build-mmal.sh --package puts them there)
+[ -f "$root/artifacts/sysroot-arm64$mmal/interface/mmal/mmal.h" ] || "$root/scripts/build-mmal.sh" --package
 "$root/scripts/cross-port.sh" --patches "$root/patches/ffmpeg6" "$recipe" script '
 ./configure --enable-cross-compile --target-os=haiku --arch=aarch64 \
 	--cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --strip="$STRIP" --pkg-config=pkg-config \
