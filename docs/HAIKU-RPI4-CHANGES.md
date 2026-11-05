@@ -11,8 +11,8 @@ merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 
 and on 2026-10-31 (`e500bbf968`, 22 more), so the merge base is now **hrev60314** (`c9859af553`, 2026-10-30).
 Upstream is merged again every weekend; see [log/](log/).
 
-On top of that base the fork carries **280 commits of its own** (2026-10-18 to 2026-11-05; counted
-2026-11-05 at `rpi4` afd7f0590c). To list them, in `sources/haiku`:
+On top of that base the fork carries **281 commits of its own** (2026-10-18 to 2026-11-05; counted
+2026-11-05 at `rpi4` 44cc183c0c). To list them, in `sources/haiku`:
 
 ```
 git log --no-merges $(git merge-base rpi4 upstream/master)..rpi4
@@ -122,6 +122,7 @@ section for its area gives the detail.
 | 54 | **usb_disk's teardown could deadlock with its own I/O thread** | `d3cc8e3fd1` | `usb_disk_uninit_driver()` deleted each LUN's I/O scheduler while holding the device lock; that waits for the scheduler thread, which needs the same lock in `usb_disk_do_io()`. With reads queued when a stick drops off its port, both wait forever, and on the USB explore thread every later driver registration blocks too — the most consistent explanation of one stalled boot (not reproduced: 40/40 + 20/20 clean). Schedulers are now deleted before the lock is taken, and I/O for a removed device fails at once. Upstream code. |
 | 55 | **A page fault on a file read one 4 KiB page per disk request** | `a38b19efab` | Programs fault their pages in scattered over their files, so a cold start from a plain file system was bound by per-request cost (0.59 ms per 4 KiB on the Pi's card: 8–10 MB/s). A fault that misses the cache of a file on a disk partition now reads the run of missing pages around it within its 64 KiB cluster in one request (as FreeBSD's `vm_fault`), only with pages reservable without waiting, and re-reads the faulting page alone on error; packagefs keeps its own chunked read. Firefox from a BFS folder, cold: 14.05 → 8.36 s; x86-64 (KVM): a 108 MiB library 560 → 80 ms. Every architecture. |
 | 56 | **The system launch_daemon restarted services during a shutdown** | `f49813a540` | Its "shutdown in progress?" check went through a BRoster, which finds the registrar by asking the launch_daemon — refused on its own main thread — so the check always failed and every service that ended during a shutdown was started again. When a shutdown waits (a crash alert), package_daemon was restarted, refused by the registrar and restarted again every 25–110 ms. Now the system launch_daemon asks its registrar job's port directly (1 s timeout). KVM: guard test 4/4 relaunched → 0/2, loop 5/8 → 0/6. Upstream since 0749734769 (2019). |
+| 57 | **`rm -rf` could deadlock BFS against a running `sync`** | `44cc183c0c` | `bfs_io()`'s finished hook dropped the I/O's vnode reference with `put_vnode()` in the I/O scheduler's notifier thread; for a file unlinked meanwhile that deleted the inode there and started a transaction, waiting for the journal held by `rm`, which waited for an inode lock only the notifier could release. Now `vfs_put_vnode()` hands the deletion to the vnode undertaker. KVM: 6/25 hangs → 0/50 (p ≈ 9·10⁻⁴). Upstream since 551a9b9a01 (2024) ([design/bfs-rmrf-hang.md](design/bfs-rmrf-hang.md)). |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
 (`8eca4824c9`, `aa1366f629`), FDT `get_dma_window()` (`08e65e6449`, `f2e5b2fab8`), SD high speed /
@@ -226,6 +227,7 @@ load, which QEMU did not provide. The last subsection is code that every archite
 | `f6c52282df` ★ | Image notifications fit their pointer | 256-byte event buffer instead of 128: `profile -a` resolves programs started after it (design/perf-round-h20.md §6). |
 | `a9db442988` ★ | **Sub-transaction starts look only at changed blocks** | The block cache keeps, per transaction, the blocks made writable or discarded since the current sub-transaction started; the start walks those (the full walk stays for the first start and after an abort/detach). `BLOCK_CACHE_CHECK_SUB_TRANSACTIONS` compares with the full walk. Walk CPU in a Firefox first start 616–1055 → 26–59 ms ([design/perf-round-h20.md](design/perf-round-h20.md) N6). |
 | `9799738757` ★ | **BFS ends its journal before failing a mount** | A corrupt volume (unreadable root node, damaged bitmap) panicked the kernel in `block_cache_delete()` when its mount failed; now the mount fails with B_BAD_VALUE (was KNOWN-ISSUES C14, fixed in image-2026-11-04c). |
+| `44cc183c0c` ★ | **BFS: the I/O finished hook leaves the vnode's last put to the undertaker** | Fixes a deadlock of `rm -rf` with a concurrent `sync` (row 57). |
 | `a38b19efab` ★ | **Page faults read around the faulting file page** | Missing pages within the 64 KiB cluster are read in one request for files on a disk partition (not packagefs); mapped files fault in at 23–32 MB/s instead of 8–10, contents checked identical ([design/perf-round-h20.md](design/perf-round-h20.md) C2). |
 
 ### Interrupt controller (GICv2) and the CPU stall
