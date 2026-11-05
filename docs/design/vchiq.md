@@ -263,8 +263,9 @@ checked against ffmpeg's software decode (§7.4).
   fails on any compiler warning but [U]'s own two (`vchiq_use_service`/`vchiq_release_service` declared with
   `VCHIQ_STATUS_T` and `int32_t`), runs the ABI check (§7.2), builds `tools/haiku-tests/mmal-h264.c` and copies the
   libraries to `artifacts/mmal/lib` for a test session; `--package` makes the two hpkgs
-  (`scripts/package-port.py`; kept in `artifacts/mmal/packages/`, **not** in the published `artifacts/packages/`
-  while the driver is on an unmerged branch); `--clips` makes the test streams and ffmpeg's reference hashes.
+  (`scripts/package-port.py`; moved to `artifacts/mmal/packages/`, **not** left in the published
+  `artifacts/packages/` while the driver is on an unmerged branch; package-port.py also extracts both into the
+  sysroot's `boot/system/`, so later cross-builds find libmmal there as well as in `non-packaged/`); `--clips` makes the test streams and ffmpeg's reference hashes.
 
 ### 7.2 The patches (`raspberrypi_userland-20241223.patchset`, 7 commits on [U])
 
@@ -329,7 +330,8 @@ H.264 block at **250 MHz**, its clock from ~2 minutes after power-on (see "The H
 | 1080p in-range | 51.1 fps (5.87 s) | 0.45 s = 7.3–8.1 % / 3.4–3.9 % | 51.5 fps, 1.3 % | 41 fps, 7.3 s CPU | 102 fps, 9.4 s CPU |
 
 - Three timed runs each, within 0.1 %. First frame 44 ms (720p) / 74–89 ms (1080p) after the start. The rates
-  with `-m` (15 fps at 1080p, 80 % of a CPU) are the MD5 of every frame on the callback thread, not the decoder.
+  with `-m` (15 fps at 1080p, 80 % of a CPU) are the MD5 of every frame, computed in the test's main loop before
+  the (single) output buffer goes back to the decoder, not the decoder.
 - **The decoder is the limit, not the copies**: the opaque output (no bulk transfer) runs at the same rate. The
   bulk copy of a 3.1 MB frame costs ~166 MB/s of frames at 4 % of the system's CPU (step 1's bulk echo: 4 MiB in
   27.5 ms per round trip). The decoder asks for one output buffer (`buffer_num_recommended` 1, 3 133 440 bytes:
@@ -377,7 +379,8 @@ the devel package was not built against on the Pi (it is what the host build use
 - Patch 5's handle table is process-wide (1024 handles: components, buffers in flight, delayed events); beyond
   that `mmal_port_send_buffer()` fails with `MMAL_ENOSPC`.
 - The H.264 block at 250 MHz outside the boot-time turbo period (§7.4): a decoder should ask for its clock while it
-  runs (property `SET_CLOCK_RATE`, clock id 6 = H264, as `bcm2835_cpufreq` sets the core clock once; or turbo),
+  runs (property `SET_CLOCK_RATE` 0x38002 with clock id 6, H264 in the firmware's mailbox property documentation, not
+  yet in `bcm2835_mailbox.h` — as `v3d` and `bcm2835_cpufreq` set the core clock to its maximum; or turbo),
   measured gain 1.36–1.4×.
 - The footroom −1 of the output stage (§7.4): unavoidable on this path; a check against a software decoder must
   map it (as `mmal.sh` does) or use streams without such samples.
