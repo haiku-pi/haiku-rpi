@@ -405,34 +405,139 @@ the devel package was not built against on the Pi (it is what the host build use
   (step 1 tested it with vchiq_test only); several decoders at once share the 1024-handle table and the
   firmware's component limit (untested).
 
-## 8. Step 3: H.264 in the media kit (work in progress)
+## 8. Step 3: H.264 in the media kit (MediaPlayer, WebPositive)
 
-Status (2026-11-05, evening): in progress on Haiku's branch `h264-mmal` (off `vchiq`) and this repository.
+Status (2026-11-05): **works on the Pi** (network boots of the `h264-mmal` image). Haiku branch `h264-mmal` (off
+`vchiq`, pushed, not merged): `27a0c0d75b` the H.264 clock · `dd03227336` the plugin prefers the hardware decoder
+· `f1cdfb5723` the fallback whenever it fails · `0a7fa72b63`, `8a9829b9ab`, `f032832df7` the packages in the
+arm64 repository. This repository: `patches/ffmpeg6/0002-mmal-haiku.patch` (ffmpeg6 6.1.6-4), raspberrypi_userland
+revision 3 (patches 8 and 9), `tools/build/UserBuildConfig` (raspberrypi_userland in the regular image when the
+tree's repository lists it), tests `tools/pi-tests/h264.sh`, `tools/media-tests/vdecode.cpp`,
+`tools/media-tests/gen-h264-clips.sh`, `tools/haiku-tests/teamstat.c`. Raw results: `artifacts/mmal/step3/`.
 
-### 8.1 How it plugs in (decided)
+### 8.1 How it plugs in
 
 The HEVC hardware path (`hw-video-decode.md` §0, §3) is **not** a media-kit add-on: it is a second libavcodec
 decoder (`hevc_rpivid`) inside the ffmpeg6 port, registered ahead of `hevc`, which the media kit's ffmpeg plugin
-gets from `avcodec_find_decoder()`; it falls back to the CPU inside itself and delivers ordinary `yuv420p` frames
-that the plugin converts (swscale) to `B_RGB32`. H.264 goes the same way: FFmpeg already has the MMAL decoder
-(`libavcodec/mmaldec.c`, `h264_mmal`, LGPL like the rest of the ffmpeg6 patches; the BSD/MIT rule is about the
-Linux GPL pieces), so ffmpeg6 revision 4 is built `--enable-mmal` against raspberrypi_userland (patch
-`patches/ffmpeg6/0002-mmal-haiku.patch`), and the plugin (`AVCodecDecoder`) prefers `h264_mmal` for H.264 and keeps
-`h264` as its fallback (`FFMPEG_H264_MMAL=0`: software). A separate Decoder add-on (§7.6) was not needed: the
-plugin's reader, timing, seeking and colour conversion are reused as they are.
+gets from `avcodec_find_decoder()`; it falls back to the CPU inside itself and hands out ordinary `yuv420p` frames
+that the plugin converts (swscale) to `B_RGB32`. H.264 goes the same way, with two differences:
 
-### 8.2 Notes as they come
+- FFmpeg already has the decoder: `libavcodec/mmaldec.c`, `h264_mmal` (LGPL like the rest of the ffmpeg6 patches;
+  the BSD/MIT rule of H21 is about Linux's GPL pieces). ffmpeg6 revision 4 is built `--enable-mmal` against
+  raspberrypi_userland's headers (`scripts/build-ffmpeg.sh`), and libavcodec links `libmmal_core`, `libmmal_util`,
+  `libmmal_vc_client` (the package then requires them: `lib:libmmal_*`).
+- `h264_mmal` cannot become the CPU decoder the way `hevc_rpivid` does (the VideoCore parses the whole stream), so
+  the fallback is in the plugin: `AVCodecDecoder` takes `h264_mmal` for H.264 when FFmpeg has it and keeps `h264`;
+  when `h264_mmal` does not open (no `/dev/vchiq`, the VideoCore's memory taken by another decoder) or fails later
+  (any error but EAGAIN/EOF), the stream goes to `h264` in place — from the start if the hardware decoder had not
+  given a frame yet (the packets it was given are kept, at most 300, and given again), else from the next key
+  frame. It prints `AVCodecDecoder: video decoder h264_mmal` or `AVCodecDecoder: h264_mmal failed (REASON): h264
+  continues ...`. `FFMPEG_H264_MMAL=0` in the environment keeps the software decoder (the A/B of §8.3).
+- Frames: `yuv420p` (I420 copied out of the VideoCore's buffer by mmaldec), converted by the plugin to `B_RGB32`
+  like every other decoder's. MediaPlayer shows them on a display plane (stage 6), WebPositive draws them.
+- Priority: by name in the plugin (`avcodec_find_decoder_by_name("h264_mmal")`), not by libavcodec's registration
+  order, so `avcodec_find_decoder(AV_CODEC_ID_H264)` — what other FFmpeg users get — stays the software decoder
+  (the ffmpeg command line uses the hardware one with `-c:v h264_mmal`, without a fallback).
 
-- The H.264 clock (vchiq driver, `27a0c0d75b`): a file that opens the `mmal` service holds the block at its
-  maximum; `vchiq: H.264 clock maximum: 250 -> 500 MHz` / `minimum: 500 -> 250 MHz` in the syslog per client.
-- FFmpeg 6.1's mmaldec.c does not compile (a comma missing in `FFMMAL_DEC`): patched.
-- **mmaldec's default `extra_buffers` (10) does not fit the VideoCore's memory** (`gpu_mem` 76 MB): the decoder
-  reports `ENOSPC` on its control port already at 720p (`mmal-h264 -X 10`), mmaldec only logs it and outputs empty
-  frames (grey, then zeroes: green), and at 1080p it loops on "Did not get output frame". After such a failure
-  plus a killed client, the firmware's MMAL service stopped answering (component creation never replied) until a
-  reboot. `mmal-h264 -X 2 -o 3` (what extra_buffers 2 gives) decodes 1080p at 79 fps with the clock held;
-  `-o 1` 51 fps (one output buffer serialises decode and copy at 500 MHz), `-o 4` 78 fps.
-- `mmal-h264` gained the settings mmaldec uses (`-X`, `-C`, `-P`, `-Z`, `-A` framed access units with pts, `-K`
-  parameter sets as a CONFIG buffer): each alone decodes all 300 frames of the 720p clip bit-exact (mapped).
-- Two decoders at once: two 720p decodes in two teams run at 85 fps each; two 1080p: the second gets `ENOSPC`
-  (exits cleanly, the firmware stays usable) — the fallback must handle that.
+### 8.2 What had to be fixed on the way
+
+| Where | Problem (found on the Pi) | Fix |
+|---|---|---|
+| mmaldec.c (FFmpeg 6.1) | does not compile (a comma missing in `FFMMAL_DEC`) | patch 0002 |
+| mmaldec.c | default `extra_buffers` 10: the VideoCore's memory (76 MB `gpu_mem`) holds no more than ~8 1080p buffers → `ENOSPC` on the control port, mmaldec only logs it and outputs empty frames (grey, then green), at 1080p it loops on "Did not get output frame"; such a failed decoder plus a killed client left the firmware's MMAL service not answering until a reboot | `extra_buffers` 2 (3 output buffers: 79 fps at 1080p with the clock held, §8.3); after an error event, or 2 s without a frame it owed, `receive_frame()` returns `AVERROR_EXTERNAL` from then on (→ the plugin's fallback); one 100 ms wait without a frame is no error |
+| mmaldec.c | since FFmpeg 5 the end of a stream comes as `AVERROR_EOF` from `ff_decode_get_packet()`, not as the empty packet mmaldec waited for: the end-of-stream buffer was never sent, the last 5–10 frames the decoder held were lost (290/300) | EOS sent on `AVERROR_EOF`; while draining it waits for the decoder's frames instead of returning EAGAIN |
+| mmaldec.c | the media plugin sends a packet only when no frame is ready, so the decoder ran dry, and with B-frames it needs several packets before its next frame: a 70–90 ms gap every 15–30 frames at 1080p (MediaPlayer dropped 143 frames in 25 s) | the decoder is kept supplied with 8 packets (`receive_frame()` asks for more before it returns a frame): no gap over 40 ms (`vdecode`) |
+| mmaldec.c | avcC (MP4) | `.bsfs = "h264_mp4toannexb"`; the parameter sets go to the decoder as the filter outputs them (Annex-B) |
+| libmmal (patch 8) | `mmal_vc_sendwait_message()` waited for the VideoCore's reply for good (upstream's FIXME): a VideoCore that stops answering hung its client, also at close | 5 s at most, then `MMAL_EIO`; the waiter is abandoned and the reply handler drops a late reply (decided under the client's lock) |
+| VCOS (patch 9) | libvcos's current-thread key keeps its destructor in libvcos; when the media plugin unloads libavcodec (and with it libvcos), the next thread that ran VCOS code and exits calls into the unmapped library: **MediaPlayer crashed on every quit** (also with `FFMPEG_H264_MMAL=0`, as libavcodec loads the library) | `vcos_platform_deinit()` (the library's destructor) deletes the key |
+
+### 8.3 Results (Pi 4, network boot of the `h264-mmal` image, firmware Oct 15 2026)
+
+**The H.264 clock** (`tools/pi-tests/h264.sh clock`, step 2's `mmal-h264` on the Annex-B clips, the clock held by
+the driver vs left to the firmware with `video_clock false`; `measure_clock h264` during each decode: 500 000 992 Hz
+vs 250 000 496 Hz):
+
+| Clip (300 frames, noise) | firmware (250 MHz) | held (500 MHz), 1 output buffer | held, 3 output buffers (mmaldec's) |
+|---|---|---|---|
+| 720p | 111 fps | 114 fps | **171 fps** (1.54×) |
+| 1080p | 53 fps | 51 fps | **79 fps** (1.49×) |
+
+With one output buffer the VideoCore waits for each frame's copy (a 3 MB bulk transfer), so the clock gains only
+with several buffers. Every MMAL client raises and lowers it: `vchiq: H.264 clock maximum: 250 -> 500 MHz` /
+`minimum: 500 -> 250 MHz` in the syslog.
+
+**Bit-exactness through libavcodec** (`h264.sh ffmpeg`: `ffmpeg -c:v h264_mmal` on the MP4 clips, i.e. avcC +
+length-prefixed NAL units through the bitstream filter): 300 of 300 frames of the 720p and the 1080p clip equal to
+ffmpeg's software decode with the samples below 16 lowered by one (§7.4's firmware quirk). Times: 720p 2.16 s
+(h264 on 4 threads 2.19 s, 6.3 s of CPU vs 2.4 s), 1080p 4.47 s (4.50 s, 14.3 s of CPU vs 4.7 s).
+
+**MediaPlayer** (`h264.sh play`: 20 s measured from 5 s after the start, 60-s clips, testsrc2 with light noise,
+High profile, B-frames; frames shown = the display plane's updates per 10 s in the display driver's statistics):
+
+| Clip | decoder | MediaPlayer's CPU (of one CPU) | system (of 4 CPUs) | shown per 10 s | dropped (producer) |
+|---|---|---|---|---|---|
+| 720p30 4 Mbit/s | h264_mmal | 40 % | 11 % | 301–302 (all) | 0 |
+| | h264 (CPU) | 65 % | 17 % | 301–302 | 0 |
+| 1080p30 8 Mbit/s | h264_mmal | 88 % | 24 % | 301–302, 1–6 late | 1 |
+| | h264 (CPU) | 159 % | 41 % | 301–302, ~285 late | 0 |
+| 1080p60 12 Mbit/s | h264_mmal | 70 % | 19 % | 240 (24 fps) | 0 |
+| | h264 (CPU) | 103 % | 27 % | 7–8 (collapses) | 288–353 |
+
+- What remains of the CPU with the hardware decoder is the copy out of MMAL's buffer and mostly the plugin's
+  conversion to `B_RGB32` (swscale has no NEON path for yuv420p → bgra: "No accelerated colorspace conversion");
+  `vdecode` (media kit, as fast as it goes, frames to RGB32): 720p 107 fps at 134 % of a CPU (software: 122 fps at
+  284 %), 1080p 50 fps at 121 % (software: 57 fps at 313 %, its conversion overlapping the decode threads). That
+  conversion is why 1080p60 shows 24 fps.
+- **Seek** (`h264.sh seek`, 1080p30): pause holds the position (5.70 s = 5.70 s 2 s later); a seek to 40 s plays on
+  from there (43.8 s after 4 s), back to 10 s too (13.7 s); six seeks in a row; no error. **Close and reopen** five
+  times: each decodes on the VideoCore (172 frames in 6 s).
+- **Killed mid-decode** (`h264.sh kill`, `kill -9` of MediaPlayer playing 1080p, three times): the driver's
+  dying-team path with MMAL (`vchiq: team 3049 went away with a bulk transfer queued: its 3133440 bytes are kept
+  until the transfer ends` — one 1080p frame), the clock goes back to 250 MHz, only GCMD/KEEP remain, and the next
+  player decodes on the VideoCore at full rate.
+- **Two players** (`h264.sh two`): one 1080p decoder takes ~45 MB of the VideoCore's relocatable memory (`get_mem
+  reloc` 47 M free → 2 M), so a second H.264 stream does not open on it: the second MediaPlayer window prints
+  `h264_mmal failed (does not open): h264 continues from the start` and plays on the CPU; no crash. ffmpeg's
+  `-c:v h264_mmal` in another team at the same time fails to open (the command line has no fallback). Two 720p
+  decodes fit (step 2's test: 85 fps each). Memory back to 47 M after both quit.
+- **5.5-minute play** (`h264.sh long`, 720p30, 330 s): 9875 frames, 13 dropped; MediaPlayer 88.3 → 90.5 MB in RAM
+  between 15 s and 295 s, the VideoCore's free memory 47 M before and after; a second check over 105 s: 83.2 → 83.3
+  MB with the hardware decoder (software: 103.7 → 104.6 MB). No leak.
+- **HEVC** (`h264.sh hevc`): MediaPlayer still decodes `hd.mp4`/`fhd.mp4` on rpivid ("rpivid: hardware HEVC decode,
+  1920x1080 8-bit, clock 500 MHz").
+- **WebPositive** (`h264.sh web`, `file:///boot/home/h264/video.html`): `<video>` goes through the media kit
+  (`MediaPlayerPrivateHaiku`, `BMediaFile`), so through `h264_mmal`: 1769 frames from the VideoCore, the picture
+  right (screenshot). Two things that are not the decoder's: WebKit's Haiku media player runs ahead of real time
+  (the 60-s clip ends after ~25 s; with the software decoder too: 44.7 s of video after 25 s), and it crashed once
+  when quit during playback with the software decoder (`memcpy` in `BMediaTrack::ReadFrames` from WebKit's
+  `videoThread`). At the end of the stream the plugin saw an `AVERROR_INVALIDDATA` from `h264_mmal` and switched to
+  the software decoder (harmless there; not explained).
+- **No regression**: `scripts/release-check.sh` on the branch image: see §8.5.
+
+Screenshots: `artifacts/mmal/step3/shots/` (MediaPlayer 720p/1080p hardware and software, seeks, the long play,
+WebPositive).
+
+### 8.4 Limits and open points
+
+- One H.264 stream at 1080p on the VideoCore at a time (its memory: `gpu_mem` 76 MB); others fall back to the CPU.
+  A larger `gpu_mem` would take RAM from the ARM — not changed.
+- The firmware's I420 output is one code value off for samples below video black (§7.4): invisible in playback.
+- Profiles: what the firmware decodes (High profile 8-bit 4:2:0 up to level 4.2, 1920×1088; no High 10 / 4:2:2,
+  no 4K). A stream the firmware refuses fails (an error event) and goes to the CPU through the fallback; not
+  tested with such a stream.
+- The plugin's conversion to RGB32 (no NEON yuv420p → bgra in swscale) is now the cost of video playback: a NEON
+  path or a YCbCr display plane (KNOWN-ISSUES F2: YCbCr overlays show black) would remove most of it. Zero-copy of
+  the VideoCore's frames (no `vc-sm-cma`) and handing frames to the plane without the copy are later work.
+- ffmpeg's command line and other direct FFmpeg users get the software decoder unless they ask for `h264_mmal`
+  (which then has no fallback).
+- `exec()` with bulk transfers queued (§6) still open.
+
+### 8.5 To ship
+
+1. Merge `vchiq` and `h264-mmal` into `rpi4` (h264-mmal contains vchiq).
+2. Publish `raspberrypi_userland-20241223-3` (+ `_devel`) and `ffmpeg6-6.1.6-4` (+ `_devel`) from
+   `artifacts/mmal/packages/` (`scripts/build-ffmpeg.sh --publish` / move them into `artifacts/packages/`; the
+   three parts of a revision bump: the hpkgs, the copies in `generated.arm64/download/`, the versions in
+   `build/jam/repositories/HaikuPorts/arm64` — on the branch).
+3. The regular image then carries `raspberrypi_userland` (UserBuildConfig adds it when the repository lists it)
+   and the vchiq driver; nothing else changes in the image lists.
