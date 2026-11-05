@@ -222,6 +222,7 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
 - **Measure**: Linux `dd oflag=direct` on the flash lane vs Haiku `iocheck.sh`/raw writes, same card, same
   sizes (1 MiB, 64 MiB); a second, different card on Haiku; `scripts/sd-cycle.sh --read-back` for integrity.
 - **Still unmeasured**: the card's write speed on Linux; a second card. (C0 11-03: still unmeasured, the card was in use.)
+  → Measured 11-05 (§6 "C4 results"): the driver path, not the card; fixed (512 KiB commands), raw writes 24 → 36 MB/s.
 
 ### C5. Wine first-start: the prefix
 
@@ -439,6 +440,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | N7 (SDIO data blocks moved in the interrupt handler) | worktree builds of `rpi4` 4d433669a8: A without, B with haiku `n7-sdio-wait` 6018671453 | WiFi TCP 64 MiB: up 49.5 / down 46.8 Mbit/s; 226 / 183 M cycles per MiB; CPUs busy 19.6 / 15.9 %; `spin` + `system_time` 59 / 47 % of non-idle | 49.2 / 46.1 Mbit/s (ARM clock held at 1500 MHz: 49.3 / 46.5 = A); 151 / 126 M cycles per MiB (−33 / −31 %; at 1500 MHz kernel cycles −34 / −31 %); busy 11.6 / 8.9 %; spin 32 / 18 %; bring-up 5/5 one join; SD card probe + raw read unchanged | 10 network boots A/B alternating + 1 (a dropped variant) + 2 lost to a script race, 11-04 14:05–15:33 | `artifacts/h20-n7/`, `artifacts/uart/20261104-1*-session-n7-*.log` |
 | C1 (DT_RELR for Firefox's libxul.so) | image-2026-11-04c + `relr-image.sh`: A = libxul relinked as is, B = the same with `-z pack-relative-relocs` (157.0.1-5 objects, GCC 13.3; both linked by the 16.2 cross tools) | Firefox tree in `/boot/home`, cold first window after a card boot 15 624 ms (median; 15 582–16 018); warm 3126 ms | **13 774 ms** (13 722–13 784, **−1850 ms, −11.8 %**); warm 3102.5 ms (−0.75 %); same-binary packaged Firefox control 8260 → 8199 cold, 3112.5 → 3106 warm; controls equal; 0 debugger entries | 6 card boots A,B,A,B,A,B (flashed each time) + 6 network boots, 11-04 17:00–20:20 | `artifacts/uart/20261104-*-relr-c1-[AB]-{sd,net}[123].log` |
 | C2 (page faults on files read the missing pages around them, 64 KiB clusters, files on a partition) | worktree builds of `rpi4` b195a41e64: A without, C with haiku `c2-fault-readaround` a38b19efab (B = without the partition test, dropped) | Firefox from a BFS directory, cold first window after a card boot 14 047 ms (median of 5; 13 686–14 145); packaged Firefox 7710, WebPositive 2628; mapped files fault in at 8–10 MB/s | **8358 ms (8303–8772, −5.7 s, −40.5 %)**; packaged Firefox 7749, WebPositive 2641, Terminal 97 = (B: +486 / +163); warm, boot (cursor 5.42–5.63 s) and raw card reads unchanged; mapped files 23–32 MB/s, MD5 24/24 on every boot; x86-64 KVM: a 108 MiB library on BFS dlopen cold 550–567 → 77–88 ms | 13 card boots A×5, B×3, C×3, catall×2, 21:50–00:52; x86-64 6 + 6 KVM runs | `artifacts/uart/2026110[45]-*-c2-*.log`, `artifacts/qemu-x86/2026110[45]-23*-{c2,perf,fs,boot}-x86-*.log` |
+| C4 (SD card writes in 512 KiB commands: 128 DMA segments, 512 KiB bounce buffers) | image-2026-11-05 (A) vs worktree build of `rpi4` a38b19efab + haiku `c4-sd-writes` 529875f0eb, 85d80f06f9 (B); Linux 6.18 on the same card | raw 1 MiB writes 24.3 MB/s sustained (median of 6 × 1 GiB; 22.3–36.7, bimodal), 512 KiB–4 MiB 23.9; BFS 1 GiB + fsync 26.2; raw 1 MiB reads 34–36; Linux 32.7 | **35.6 MB/s (33.7–36.0, +46 %, above Linux)**, 512 KiB–4 MiB 35.2–36.4 steady; BFS 1 GiB 32.3 (+23 %; file cache/page writer still 128 KiB); raw 1 MiB reads 43–44; 128 KiB requests −1–2 MB/s; SHA-256 13/13 across Haiku and Linux; release check 0 problems; card boot cursor 5.62 s | 7 network sessions (A1, B1 first variant, A2 B2 A3 B3), 2 Linux flash-lane runs, 1 release check, 1 card boot, 11-05 02:55–04:15 | `artifacts/h20-c4/`, `artifacts/uart/20261105-0[34]*-{c4-*,session-c4-haiku-*}.log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -1324,12 +1326,88 @@ to its heap chunks (would save fault round trips there, not card time); (c) the 
 packaged first start; (d) the bimodal raw card read times. Images deleted after the run; mega23 put back on the card
 (01:16, `20261105-005552-mega23-restore.log`: MEGA end, 0 PANIC, hrev60314+273).
 
+### C4 results: SD card writes in 512 KiB commands (2026-11-05 02:55–04:30)
+
+**Attribution first: the same card under Linux.** The flash lane (Raspberry Pi kernel 6.18.56-v8+, the firmware's
+device tree) and Haiku ran the same program, `tools/haiku-tests/diskwrite.c` (sequential `pwrite`s of one request size
+from a pseudo-random buffer, `fsync`, timed; `O_DIRECT` on Linux, Haiku's raw devices are not cached), driven by
+`tools/pi-tests/sdwrite.sh`, at the same place on the card (from 1 GiB in). Both systems run the card the same way:
+UHS-I DDR50, 50 MHz, 1.8 V, 4 bits, ADMA2 (Linux's `ios` and `mmc0: new UHS-I speed DDR50 SDXC card`; Haiku's
+`mmc_disk: DDR50, 50 MHz`). The card: "SR64G", 59.5 GiB. The board: revision `c03111` (Pi 4 B rev 1.1, BCM2711 **B0**):
+`emmc2bus` `dma-ranges` = the first 1 GiB of RAM on both systems, so most buffers have to be bounced.
+
+| MB/s (10^6 B/s) | 4 KiB | 64 KiB | 128 KiB | 256 KiB | 512 KiB | 1 MiB | 4 MiB | 1 GiB in 1 MiB, ×3 | 4 KiB random |
+|---|---|---|---|---|---|---|---|---|---|
+| Linux (03:03 sweep; 04:03 `sizes`, 3 rounds of 128 MiB) | 2.08 | 17.4 | 23.0; 23.4–23.5 | 28.6 | 32.7; 32.9–33.2 | 33.3; 33.2–33.3 | 33.7–33.9 | 32.5 / 32.5 / 32.0; 32.7 / 32.8 / 32.7 | 602 writes/s |
+| Haiku, image-2026-11-05 (A1 sweep) | 2.05 | 17.3 | 25.6 | 25.9 | 25.5 | 25.6 | — | 25.3 / 25.8 / 25.8 | 767 writes/s |
+
+Linux's queue: `max_segments` 128 × 4 KiB pages, and `/sys/block/mmcblk0/stat` counts **512 KiB per request** (1 MiB
+writes = 2 requests; the 128 KiB runs = 128 KiB). The card is size-sensitive: Linux limited to 128 KiB commands writes
+23 MB/s, no better than Haiku. Haiku was flat at **25.5 MB/s from 128 KiB up** — a cap, not the card. Small and random
+writes were equal (or Haiku faster). Verdict: **the driver path, ~1.3×**, not the card. (The 10-23 "6–8 MB/s
+sustained" was not reproduced on any run today, Linux or Haiku: lowest 1 GiB run 22.3 MB/s.)
+
+**Why 128 KiB.** Two limits, each 128 KiB: (1) `sdhci_fdt` published 32 DMA segments per transfer, and buffers are
+mostly single 4 KiB pages; (2) on this B0 board every page above 1 GiB is bounced, and `DMAResource` builds a bounced
+operation from at most one bounce buffer, capped at `kMaxBounceBufferSize` = 32 pages (8edea64c6b, 10-25). The syslog's
+`DMAResource@…: low/high 0/40000000, max segment count 32` line shows both. Which limit a run hits depends on where its
+buffer landed: a buffer below 1 GiB and physically contiguous already made long commands (A's occasional 36.9 MB/s
+runs), which is why the first variant alone (B1: 128 segments) still measured 25.5–26.0 flat in `sizes`. No CMD12/CMD23,
+busy-wait or ADMA2 issue showed: at equal command size Haiku (auto-CMD12, interrupt on transfer complete) matches or
+beats Linux (CMD23).
+
+**Fix** (haiku branch `c4-sd-writes`, pushed, not merged; on `rpi4` a38b19efab):
+- `529875f0eb` sdhci_fdt: 128 DMA segments per transfer (as Linux's `SDHCI_MAX_SEGS`): 512 KiB commands for buffers in
+  the DMA window. With ADMA2 one command moves them all (one 4 KiB descriptor table holds 512).
+- `85d80f06f9` DMAResource: bounce buffers of up to 512 KiB (was 128), and never larger than the device's maximum
+  transfer (usb_disk keeps 1 × 128 KiB); the bounce buffers are printed in the `DMAResource@` syslog line
+  (`bounce buffers 16 x 524288` for the card). Cost: the card's 16 bounce buffers take 8 MiB below 1 GiB instead of 2.
+
+**A/B** (network sessions on the card's raw device and on a BFS made fresh each time on its second partition;
+A = image-2026-11-05 (hrev60314+282), B = the worktree build with both commits (hrev60314+284), same options; A2 B2 A3
+B3 alternating, 03:38–04:03; per session `sdwrite.sh ab`: `sizes`, 1 GiB ×3, `disklat`, `bfs`):
+
+| | A (A2, A3) | B (B2, B3) | Linux |
+|---|---|---|---|
+| raw 128 KiB requests | 25.6–26.5 | 23.4–24.5 | 23.4–23.5 |
+| raw 512 KiB | 22.1–25.8 (median 23.9) | **35.2–36.1** (35.7) | 32.9–33.2 |
+| raw 1 MiB | 24.0–37.1 (31.4, bimodal) | **34.9–36.4** (35.8) | 33.2–33.3 |
+| raw 4 MiB | 22.6–28.5 (23.9) | **35.2–36.2** (35.6) | 33.7–33.9 |
+| raw 1 GiB ×3 (sustained) | 36.7 / 30.2 / 24.2; 23.0 / 22.3 / 24.4 (24.3) | **35.3 / 33.7 / 35.2; 35.9 / 36.0 / 35.9** (35.6) | 32.7 ×3 |
+| BFS 1 GiB + fsync | 26.3; 26.2 | **32.5; 32.1** (+23 %) | — |
+| BFS 128 MiB + fsync (iocheck's test) | 28.7 / 22.9 / 31.6; 29.3 / 24.5 / 31.8 (29.0) | 29.8 / 23.2 / 32.7; 33.1 / 21.5 / 32.8 (31.3) | — |
+| raw reads, `disklat` 1 MiB / 128 KiB / 4 KiB | 34.1 / 36.1 / 6.8; 35.8 / 36.6 / 5.9 | **44.3 / 40.4 / 6.8; 43.3 / 36.1 / 6.2** | dd 1 MiB direct 42 |
+
+Raw sequential writes **+46 %** sustained (24.3 → 35.6 MB/s, now above Linux's 32.7), steady from 512 KiB up instead of
+bimodal; 1 MiB reads 34–36 → 43–44 MB/s (the same bounce cap held them, so the old 42.6–45 figure was the lucky case);
+128 KiB requests 1–2 MB/s slower (one bounce buffer per 128 KiB request either way; within the card's spread between
+sessions, not chased). The 4 KiB random write rate: A 767/s, B1 516/s, Linux 602/s (the card's own state; not
+re-measured per side). **BFS gains less (+23 %)**: the file cache (`file_cache.cpp` `MAX_IO_VECS` 32) and the page
+writer (`PageWriteTransfer::fVecs[32]`) still hand the disk at most 32 pages per request, so BFS data writes stay at
+128 KiB commands unless pages happen to be contiguous; raising those two is a VM change, left for a follow-up (expected:
+BFS up to the raw 35 MB/s). The 128 MiB + fsync test is dominated by its first-write variance (21.5–33.1 on both sides).
+`pkgman install` was not timed: a network session installs to its remote disk, and a card-booted session needs a
+repository server — the BFS rows stand for it.
+
+**Integrity.** `pattern.bin` (64 MiB random, SHA-256 9de9b843…): Haiku A wrote slot 0 → read back on Haiku A and on
+Linux (twice): equal; Linux wrote slot 1 → read on Haiku B1 and B3: equal; **Haiku B wrote slot 2 (33.5 MB/s) → read
+back on Haiku B and on Linux: equal**; the same file copied through B's file cache onto BFS and read after a remount:
+equal (all four A/B sessions). 0 mismatches in 13 comparisons.
+
+**Checks on B.** `scripts/release-check.sh` (network boot, 04:07): **0 problems**, 24 launch cycles, 0 debugger
+entries, Firefox 9668 / 3058 / 3046 ms. Card boot (`sd-cycle.sh --flash`, SHA-256 verified, 04:11): hrev60314+284, the new `DMAResource` line, DDR50, 0 PANIC,
+loader → cursor **5.62 s** (C2's A: 5.42–5.63), desktop on HDMI. Logs: `artifacts/h20-c4/` (sweep, ab-*, relcheck),
+`artifacts/uart/20261105-0[234]*-c4-*`, `artifacts/uart/20261105-0[34]*-session-c4-haiku-*.log`; images deleted
+afterwards; MEGA24.
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
   Wine prefix, the post-0028 Warcraft III profile, WiFi CPU load.)
 - A system-wide profile with the applications attributed (needs N1). (N2's cause: found, C0b.)
-- The SD card's write speed on Linux (C4); a second card on Haiku; the Wine prefix from the card (C5).
+- (The SD card's write speed on Linux: measured 11-05, §6 "C4 results" — Haiku was capped at 128 KiB commands, fixed.)
+  Open from C4: the file cache and page writer's 32-page transfers (BFS writes 32 vs raw 35 MB/s); a second card on
+  Haiku; the Wine prefix from the card (C5).
 - The WiFi limit without the bench AP (another AP or 5 GHz, C8).
 - The fraction of Firefox's package a first launch touches, and the order's stability (C2).
 - (Cold-card effect of DT_RELR from a BFS tree: measured 11-04, §6 "C1 results".) The same cold A/B with Firefox
@@ -1353,7 +1431,7 @@ packaged first start; (d) the bimodal raw card read times. Images deleted after 
 | Launch times, Firefox, quirks of a release image | `scripts/release-check.sh IMG [LABEL]` (`tools/pi-tests/relcheck.sh`, `tools/haiku-tests/launchtime.cpp`) |
 | GL present path | `tools/gl-tests/present-bench.cpp`, `tools/pi-tests/gpu-present*.sh`, `tools/pi-tests/glmark2.sh` (`GM2 … Score`), `tools/pi-tests/gpu-stage6.sh` |
 | Boot | `scripts/sd-cycle.sh --flash IMG --secs 120`, `scripts/boot-times.sh LOG`, `scripts/boot-bench.sh` (reliability) |
-| Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c` |
+| Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c`; SD writes on Haiku and Linux (C4): `tools/pi-tests/sdwrite.sh` + `tools/haiku-tests/diskwrite.c` (in a session, or in the flash lane by `sd-cycle.sh --script`; destroys the card's data) |
 | BFS metadata writes, journal (N6) | `tools/haiku-tests/bfsmeta.c` (files + appends + attributes, per-file time; `--loop` for power cuts), `bfsbits.c` (on-disk bitmap vs used_blocks; the blocks a `checkfs` freed and what they held), `tools/pi-tests/n6-firefox.sh` (Firefox first start with a new profile, under `profile -a`), `scripts/pi-session.sh stop --no-sync` (power cut), `checkfs -c` |
 | Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh`; in a session: `scripts/n7-wifi.sh LABEL` (`tools/pi-tests/n7-wifi.sh`: join + DHCP time, TCP up/down under `pmustat`, ARM clock samples, clock-held runs with kernel cycles, `profile`, SD probe check), `tools/haiku-tests/n7-table.py` |
 | Profiling | `profile -a -k -S` (N1: misses teams started after it), `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py` (`--self`: flat top of callgrind output), `profsum.py` (rank text profiles, a symbol by thread), `lookupsim.py`; desktop workload `tools/pi-tests/c0-desktop.sh` |
