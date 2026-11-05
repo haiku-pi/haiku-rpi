@@ -13,6 +13,7 @@
 #   play    MediaPlayer on play-720p30, play-1080p30 and play-1080p60, the hardware decoder and the software one
 #           (FFMPEG_H264_MMAL=0): the decoder in use, dropped frames, the team's and the system's CPU over 20 s, the
 #           frames shown (the overlay plane's updates, from the display driver's statistics)
+#   audio   the same on play-720p30-aac and play-1080p30-aac (with an AAC track: MediaPlayer's usual configuration)
 #   seek    pause, play, seek forward and back, quit, reopen; screenshots
 #   two     two players at once (a second window of MediaPlayer, which is single-launch), then a player with
 #           ffmpeg's h264_mmal in another team and a second window: three decoders
@@ -141,6 +142,13 @@ play)
 		play_one $clip.mp4 "$clip-sw" 20 FFMPEG_H264_MMAL=0 shot
 	done
 	gpu play:
+	;;
+audio)
+	# the play-*-aac.mp4 copies with a 440 Hz AAC track: the media kit's time source then comes from the audio path
+	for clip in play-720p30-aac play-1080p30-aac; do
+		play_one $clip.mp4 "$clip-hw" 20
+		play_one $clip.mp4 "$clip-sw" 20 FFMPEG_H264_MMAL=0
+	done
 	;;
 seek)
 	log="$dir/seek.log"

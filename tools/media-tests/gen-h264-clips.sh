@@ -15,6 +15,7 @@
 #   play-1080p60.mp4                30 s, 1920x1080, 60 fps, light noise, 12 Mbit/s (above the VideoCore's rate
 #                                   at its minimum clock)
 #   long-720p30.mp4                 330 s, 1280x720, 30 fps, 2 Mbit/s (the 5-minute play)
+#   play-720p30-aac.mp4, play-1080p30-aac.mp4   the same video with a 440 Hz AAC track
 #   video.html                      a page with a <video> of play-720p30.mp4 (WebPositive)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -50,6 +51,10 @@ play play-720p30 1280x720 30 60 4M
 play play-1080p30 1920x1080 30 60 8M
 play play-1080p60 1920x1080 60 30 12M
 play long-720p30 1280x720 30 330 2M
+for name in play-720p30 play-1080p30; do
+	ff -i "$out/$name.mp4" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=60" -map 0:v -map 1:a -c:v copy \
+		-c:a aac -b:a 128k -shortest "$out/$name-aac.mp4"
+done
 
 cat > "$out/video.html" << 'EOF'
 <!DOCTYPE html>
