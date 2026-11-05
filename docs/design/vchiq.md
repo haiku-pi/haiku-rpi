@@ -1,6 +1,8 @@
 # VCHIQ on Haiku (H21 step 1): `/dev/vchiq` from FreeBSD's BSD-3 port
 
-Status (2026-11-05): **step 1 works on the Pi** — branch `vchiq` (worktree `sources/haiku-vchiq`, pushed, not
+Status (2026-11-05): **step 2 works on the Pi** (§7: Broadcom's libmmal on Haiku, H.264 decoded by the VideoCore,
+1080p at 53–72 fps for ~4 % of the system's CPU, frames equal to ffmpeg's but for a firmware footroom quirk).
+Step 1 — branch `vchiq` (worktree `sources/haiku-vchiq`, pushed, not
 merged): `/dev/vchiq`, the firmware handshake, message round trips (gencmd), the ioctl ABI driven by Broadcom's
 unchanged libvchiq, bulk transfers both ways (functional test and echo up to 1 MiB, misaligned), clients killed
 mid-transfer. §6 has the results and what step 2 starts from.
@@ -315,6 +317,11 @@ coded 1920×1088, cropped), `h264-1080p-inrange` (1080p without noise, every sou
 
 ### 7.4 Results (Pi 4, firmware Oct 15 2026, `tools/pi-tests/mmal.sh`: 0 problems)
 
+Sessions `20261105-103359-session-mmal` (the first agent: run 2 = 0 problems), `20261105-192557-session-mmal2`
+(patch 7 builds: the whole script again, 0 problems, the same numbers within 1 %; the format dumps) and
+`20261105-193208-session-mmal3` (the clock, below). Raw output: `artifacts/mmal/results/`. The table is with the
+H.264 block at **250 MHz**, its clock from ~2 minutes after power-on (see "The H.264 clock"):
+
 | Stream | MMAL → I420 copied out | CPU (team / all 4 CPUs) | opaque (no copy) | ffmpeg 1 thread | ffmpeg 4 threads |
 |---|---|---|---|---|---|
 | 720p | **111 fps** (2.70 s) | 0.21 s = 7.7–9 % of one CPU / 3.6–4.1 % | 112 fps, 1.7 % | 61 fps, 4.9 s CPU | 137 fps, 6.3 s CPU |
@@ -327,8 +334,13 @@ coded 1920×1088, cropped), `h264-1080p-inrange` (1080p without noise, every sou
   bulk copy of a 3.1 MB frame costs ~166 MB/s of frames at 4 % of the system's CPU (step 1's bulk echo: 4 MiB in
   27.5 ms per round trip). The decoder asks for one output buffer (`buffer_num_recommended` 1, 3 133 440 bytes:
   1920×1088 I420).
-- During a decode: `measure_clock h264` 250 MHz, `core` 500 MHz, `arm` 750 MHz. A faster H.264 clock
-  (`h264_freq`) is a lever for later, not tested.
+- **The H.264 clock.** The first ~2 minutes after power-on (the firmware's boot-time turbo period, the same one
+  perf-round-h20.md C0b saw on the ARM) the H.264 block runs at **500 MHz** and the decoder is 1.36–1.4× faster:
+  720p **155 fps** (1.93 s), 1080p **72 fps** (4.17 s), measured twice on a fresh boot with `measure_clock h264`
+  sampled during each decode; minutes later, same boot, 250 MHz and 111 / 53 fps again (`get_throttled` 0x0,
+  52 °C: not heat). Our `bcm2835_cpufreq` never requests turbo, so the firmware runs the block at its minimum. An
+  output buffer count of 3 (`-o 3`) or SAND output change nothing (2.697 s either way): the block's clock is the
+  limit. At 500 MHz MMAL beats ffmpeg on 4 threads at 1080p (72 vs 66 fps).
 - Against ffmpeg on 4 threads: ffmpeg is 23–25 % faster on the noisy clips and 2× on the in-range one, for
   **15–18× the CPU time** of the whole system during the MMAL decode (6.3 s vs 0.42 s at 720p, 14.5 s vs 0.81 s at
   1080p); MMAL is 1.8× (720p) / 1.9× (1080p) faster than one software thread.
@@ -351,6 +363,11 @@ reference pictures would drift through the P and B frames, and every frame of th
 exact. The firmware clamps/offsets the footroom when it writes a picture out; no MMAL parameter for it is known.
 For playback it is invisible (values below 16 are blacker than black and clipped on display).
 
+**The packages, on the Pi**: `pkgman install` of both hpkgs (from `artifacts/mmal/packages/`) on the session's
+disk puts the libraries in `/boot/system/lib` and the headers in `develop/headers/raspberrypi_userland`;
+`mmal-h264` then runs on them without the test's `LIBRARY_PATH` (720p 111 fps, PASS). The image has no compiler, so
+the devel package was not built against on the Pi (it is what the host build uses).
+
 ### 7.5 Limits and open points
 
 - Copies only: every frame crosses by a VCHIQ bulk transfer into the client's memory (no vcsm/vc-sm-cma, GPL).
@@ -359,3 +376,28 @@ For playback it is invisible (values below 16 are blacker than black and clipped
   re-tested with MMAL).
 - Patch 5's handle table is process-wide (1024 handles: components, buffers in flight, delayed events); beyond
   that `mmal_port_send_buffer()` fails with `MMAL_ENOSPC`.
+- The H.264 block at 250 MHz outside the boot-time turbo period (§7.4): a decoder should ask for its clock while it
+  runs (property `SET_CLOCK_RATE`, clock id 6 = H264, as `bcm2835_cpufreq` sets the core clock once; or turbo),
+  measured gain 1.36–1.4×.
+- The footroom −1 of the output stage (§7.4): unavoidable on this path; a check against a software decoder must
+  map it (as `mmal.sh` does) or use streams without such samples.
+
+### 7.6 What step 3 (a media-kit decoder add-on) needs
+
+- **Build**: the add-on links `-lmmal -lmmal_core -lmmal_util -lmmal_vc_client -lvchiq_arm -lvcos` (`mmal.pc`)
+  from `raspberrypi_userland_devel`; the image needs `raspberrypi_userland` (jam: the hpkg in
+  `generated.arm64/download/` + `build/jam/repositories/HaikuPorts/arm64` + the image's package list) and the
+  `vchiq` driver merged into `rpi4`. Both stay off the published repository until then.
+- **Shape**: a `Decoder` add-on (`src/add-ons/media/plugins/`) for `B_MEDIA_ENCODED_VIDEO` H.264 (and MPEG-2 /
+  MJPEG / VC-1 if the firmware has the licences: the input port lists H264, MVC, MJPG only on this board) that
+  creates `vc.ril.video_decode` per stream, passes the container's packets (with pts) as input buffers, sets the
+  extradata (avcC → Annex-B parameter sets: the test feeds Annex-B only), takes the format-changed event, returns
+  I420 (or NV12/YV12) frames copied by VCHIQ bulk into the media kit's buffers. The test program's loop
+  (`mmal-h264.c`) is the skeleton; it must become callback-driven with timeouts, seek = port flush.
+- **Clock**: ask for the H.264 clock (or turbo) while decoding (above), else 1080p is 53 fps, not 72.
+- **Zero-copy later**: `OPQV` output keeps frames on the VideoCore (1.3 % CPU at 1080p) but only a firmware
+  component (`vc.ril.video_render`, `vc.ril.hvs`) can show them, outside the app_server's planes; our own buffer
+  import (stage-6 planes, `hw-video-decode.md` §2) is the route to zero-copy display.
+- **Robustness**: a media player killed or crashing mid-decode exercises the driver's dying-team path with MMAL
+  (step 1 tested it with vchiq_test only); several decoders at once share the 1024-handle table and the
+  firmware's component limit (untested).
