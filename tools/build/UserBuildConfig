@@ -37,6 +37,11 @@ if $(HAIKU_BUILD_PROFILE) = pi-mmc {
 	AddHaikuImageSystemPackages libsdl2 ;
 	# ffmpeg: the media kit's ffmpeg plugin (MediaPlayer's decoders)
 	AddHaikuImageSystemPackages ffmpeg6 ;
+	# MMAL for ffmpeg's h264_mmal (H.264 on the VideoCore; docs/design/vchiq.md): only a tree whose arm64
+	# repository lists it (Haiku's h264-mmal branch, with the vchiq driver)
+	if [ IsPackageAvailable raspberrypi_userland ] {
+		AddHaikuImageSystemPackages raspberrypi_userland ;
+	}
 	# as the nightly profile: the system sounds and the MIDI soundfont (zstd-compressed "any" packages
 	# from the x86_64 repository: packagefs reads them with the zstd feature)
 	AddHaikuImageSystemPackages sounds_community_default timgmsoundfont ;
