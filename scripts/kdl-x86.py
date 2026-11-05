@@ -35,15 +35,35 @@ if "kdebug>" not in text():
     sys.exit("kdl-x86: no KDL prompt")
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.connect(a.sock)
+def drain(quiet=1.0, limit=60):
+    # read the socket until the log has been quiet for QUIET s: a long output that is still on its way
+    # (QEMU holds it back while nobody reads the socket) would swallow the next command's characters
+    t0 = time.time(); last = len(text()); still = time.time()
+    while time.time() - t0 < limit:
+        try:
+            s.settimeout(0.2); s.recv(65536)
+        except socket.timeout:
+            pass
+        now = len(text())
+        if now != last:
+            last = now; still = time.time()
+        elif time.time() - still >= quiet:
+            return
+
+drain()
 for cmd in a.cmds:
     cmd = cmd.format(**values)
     n = text().count("kdebug>")
-    s.sendall((cmd + "\r").encode())
+    # one character at a time: KDL polls the UART, and a burst right after a long output loses characters
+    for ch in cmd + "\r":
+        s.sendall(ch.encode())
+        time.sleep(0.02)
     t = time.time()
     while time.time() - t < 20 and text().count("kdebug>") <= n:
         try:
             s.settimeout(0.2); s.recv(65536)
         except socket.timeout:
             pass
+    drain()
     print("kdl-x86: sent %r" % cmd)
 s.close()

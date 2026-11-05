@@ -1087,6 +1087,9 @@ maximum transfer (rounded up to a page).
    `20261105-061012-bfsrep-r265.iso-uefi-ahci.log` (hung), `-061200-…` (completed),
    `20261105-061600-bfsrep-up.iso-uefi-ahci.log` (upstream, hung), `-061733-…` (completed). Not investigated further
    (no KDL capture); a candidate for the next x86-64 round, and possibly for arm64 (a BFS unlink path with attributes).
+   **Investigated (task 122): [bfs-rmrf-hang.md](bfs-rmrf-hang.md)** — a deadlock with the first boot's `sync`: BFS's
+   I/O finished hook drops the last reference of an unlinked inode in the I/O notifier thread (upstream `551a9b9a01`);
+   fixed on branch `bfs-rmrf-hang` (0/50 hangs against 6/25).
 5. Another session used the harness at the same time (images `fcx.iso`, groups `pcbig`, `bigfile`; rows in the
    same `results.tsv`) and the free disk space dropped from 45 to 22 GB during the run; mine stayed within the 12 GB
    rule. Its untracked files (`scripts/c4b-*`, `tools/x86-tests/pcbig.sh`, `tools/haiku-tests/fcfile.c`) are not part

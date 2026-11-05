@@ -63,6 +63,7 @@ done
 # FS
 try bfsmeta cc -O2 -o "$out/bfsmeta" "$t/bfsmeta.c"
 try bfsbits cc -O2 -o "$out/bfsbits" "$t/bfsbits.c"
+try kdl cc -O2 -o "$out/kdl" "$t/kdl.c"
 # APP, MEDIA, NET, PERF
 try launchtime cxx -O2 -I "$priv/interface" -o "$out/launchtime" "$t/launchtime.cpp" -lbe
 try bitmapcheck cxx -O2 -o "$out/bitmapcheck" "$t/bitmapcheck.cpp" -lbe
