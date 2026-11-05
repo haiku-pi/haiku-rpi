@@ -183,8 +183,47 @@ ok (arm64 build flags, `-Werror`). No arm64 run: QEMU virt and the Pi not tried 
   The branch is off `265d2b03dd`; rpi4 has since moved to `afd7f0590c` (C4b: page writer and file cache request
   sizes), which touches no BFS file, so the merge is clean. C4b does not change the race: the page writer holds its
   vnode references until all of its transfers are notified, so only synchronous writers and readers can lose the race.
-- The Pi probe (optional in the task) was not run.
+- The Pi probe: run, see §7 (the hang did not reproduce on the Pi, fixed or not).
 - Upstream: the same bug is in upstream master (`4f1074d5e1`, 2026-11-04: the hook is unchanged). We do not send
   changes upstream for now (AGENTS.md); the commit is written to be sendable.
 - `scripts/x86-bfsrm.sh` catches the race only on a first boot (the first-login `sync`); a `sync` loop beside every
   `rm` did not reproduce it (0 of 3 unfixed runs, 15 rounds), so the probe stays first-boot only.
+
+## 7. Pi check (2026-11-05, arm64, network boots only)
+
+Images: **fixed** `artifacts/images/haiku-pi4-bfsfix.img` = rpi4 `44cc183c0c` (`scripts/build.sh -sHAIKU_PI_GL=1
+-sHAIKU_IMAGE_SIZE=4500 @pi-mmc`, rc 0; its `bfs` add-on imports `vfs_put_vnode`); **unfixed**
+`haiku-pi4-2026-11-05b.img` = `afd7f0590c` (the release, sha256 03c1aa51...). The SD card was never written or mounted;
+the scratch volume is a BFS made by the probe on the USB disk `/dev/disk/usb/0/0/raw`, by that path only.
+
+**The probe** (`tools/pi-tests/bfsrm.sh`, driver `scripts/pi-bfsrm.sh IMG N LABEL`): one network boot per run; the
+netboot disk is a fresh copy of the image, so every run is a first boot and the first-login `PostInstallScript`'s
+`sync` runs. The probe is the UserBootscript: mkfs + mount of the stick, then 2 rounds of `bfsmeta 4000` and
+`rm -rf` in the background (a hang detector: after 60 s, `kdl` and the driver types `bt`/`threads`/`bt` of the
+notifiers; never needed). Overlap: a once-a-second sample of the first-login script's processes. On the Pi that
+script lives from ~48.5 s to ~58.5 s after power-on, a `sync` at its end (devices in id order: /boot's slow network
+disk, then the stick), and round 1's `rm` (3-9 s) falls inside that window in 39 of 41 runs (`PIS seen=1`); in 5 of the 20
+unfixed runs `rm` took 8-9 s and ended with the first-login script, i.e. it was held up by the sync.
+
+| | hung / runs |
+|---|---|
+| fixed 44cc183c0c, first boot, 2 rounds | **0 / 20** |
+| unfixed afd7f0590c, first boot, 2 rounds | **0 / 20** |
+| unfixed, no first boot: 40 rounds of `bfsmeta` + `rm -rf` with a `sync` loop beside (`tools/pi-tests/bfsrm-loop.sh`, one session) | 0 / 40 |
+
+The two alternated series (alternating unfixed, fixed; `artifacts/bfsrm-pi/bfsrm.tsv`) ran 09:00-12:45; two rows in it
+are NOBOOT: the other project's session held the bench for 2 h and the cycles' lock wait ended; the pair was run again.
+So: **the hang did not reproduce on the Pi**. With the x86-64 rate of 24 % per first boot, 0 in 20 would have a chance
+of 0.76^20 = 0.4 %; the Pi's rate is therefore lower (slower `rm` and I/O, a different order of events), or the Pi's first-boot sync does not hit
+the window the notifier race needs (it flushes /boot, over the network, first; the scratch volume at the very end).
+Whatever the reason, **the fix is not shown to be needed on arm64, and is shown not to hurt**: no hang, no debugger
+entry, no panic, no user fault in any of the 41 probe boots, the session or the relcheck.
+
+Regression checks on the fixed image: `tools/pi-tests/usb-bfs.sh` ×2 (the stick, 323 MB in 72 files): md5 after copy
+and after remount the same, `checkfs` 0 blocks not allocated / already set / could be freed, both runs (`artifacts/bfsrm-pi/usb-bfs-fixed.txt`);
+`scripts/release-check.sh` (relcheck): **REL result: 0 problems**, 24 launch cycles clean, 0 debugger entries.
+
+Odd, not chased: `bfsmeta 4000` took 1.4-8 s in round 1 and 17-20 s in later rounds (the write-back of the USB disk after the first
+boot's sync is over); in two fixed runs the wall clock jumped during round 1 (`date +%s` differences of 1.79·10^9; the system clock set
+during boot), so those rm times are meaningless, the hang detector is not affected (it counts seconds in a loop).
+The merge of `bfs-rmrf-hang` is thus justified by the x86-64 evidence and by the code (the hook is arch-neutral); the Pi shows no regression.
