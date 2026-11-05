@@ -441,6 +441,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | C1 (DT_RELR for Firefox's libxul.so) | image-2026-11-04c + `relr-image.sh`: A = libxul relinked as is, B = the same with `-z pack-relative-relocs` (157.0.1-5 objects, GCC 13.3; both linked by the 16.2 cross tools) | Firefox tree in `/boot/home`, cold first window after a card boot 15 624 ms (median; 15 582–16 018); warm 3126 ms | **13 774 ms** (13 722–13 784, **−1850 ms, −11.8 %**); warm 3102.5 ms (−0.75 %); same-binary packaged Firefox control 8260 → 8199 cold, 3112.5 → 3106 warm; controls equal; 0 debugger entries | 6 card boots A,B,A,B,A,B (flashed each time) + 6 network boots, 11-04 17:00–20:20 | `artifacts/uart/20261104-*-relr-c1-[AB]-{sd,net}[123].log` |
 | C2 (page faults on files read the missing pages around them, 64 KiB clusters, files on a partition) | worktree builds of `rpi4` b195a41e64: A without, C with haiku `c2-fault-readaround` a38b19efab (B = without the partition test, dropped) | Firefox from a BFS directory, cold first window after a card boot 14 047 ms (median of 5; 13 686–14 145); packaged Firefox 7710, WebPositive 2628; mapped files fault in at 8–10 MB/s | **8358 ms (8303–8772, −5.7 s, −40.5 %)**; packaged Firefox 7749, WebPositive 2641, Terminal 97 = (B: +486 / +163); warm, boot (cursor 5.42–5.63 s) and raw card reads unchanged; mapped files 23–32 MB/s, MD5 24/24 on every boot; x86-64 KVM: a 108 MiB library on BFS dlopen cold 550–567 → 77–88 ms | 13 card boots A×5, B×3, C×3, catall×2, 21:50–00:52; x86-64 6 + 6 KVM runs | `artifacts/uart/2026110[45]-*-c2-*.log`, `artifacts/qemu-x86/2026110[45]-23*-{c2,perf,fs,boot}-x86-*.log` |
 | C4 (SD card writes in 512 KiB commands: 128 DMA segments, 512 KiB bounce buffers) | image-2026-11-05 (A) vs worktree build of `rpi4` a38b19efab + haiku `c4-sd-writes` 529875f0eb, 85d80f06f9 (B); Linux 6.18 on the same card | raw 1 MiB writes 24.3 MB/s sustained (median of 6 × 1 GiB; 22.3–36.7, bimodal), 512 KiB–4 MiB 23.9; BFS 1 GiB + fsync 26.2; raw 1 MiB reads 34–36; Linux 32.7 | **35.6 MB/s (33.7–36.0, +46 %, above Linux)**, 512 KiB–4 MiB 35.2–36.4 steady; BFS 1 GiB 32.3 (+23 %; file cache/page writer still 128 KiB); raw 1 MiB reads 43–44; 128 KiB requests −1–2 MB/s; SHA-256 13/13 across Haiku and Linux; release check 0 problems; card boot cursor 5.62 s | 7 network sessions (A1, B1 first variant, A2 B2 A3 B3), 2 Linux flash-lane runs, 1 release check, 1 card boot, 11-05 02:55–04:15 | `artifacts/h20-c4/`, `artifacts/uart/20261105-0[34]*-{c4-*,session-c4-haiku-*}.log` |
+| C4b (page writer transfers of up to 128 I/O vectors; file cache reads of > 128 KiB in chunks of up to 512 KiB) | worktree builds of `rpi4` 265d2b03dd: A without, B with haiku `fc-request-size` 72ea4b2993 + afd7f0590c | BFS `dd` 1 GiB + fsync 31.3 MB/s (median of 9; 24.1–32.5); patterned 1 GiB 26.2; 128 MiB in 128 KiB 19.8; cold 1 GiB read in 1 MiB 35.9; `cat` 29.0, `cp` 13.0 | **34.2** (33.3–34.7, +9.4 %, 93 % of raw); **33.3 (+27 %)**; **30.9 (+57 %)**; **42.4 (+18 %)**; 38.9 (+34 %), 17.2 (+32 %); ≤ 128 KiB reads, 4 KiB rows, `md5sum`, USB = or noise; 0 bad bytes / 66 checks, MD5 48/48, checkfs clean; power cut A = B; relcheck 0; cursor 5.41 (A 5.42); x86-64 AHCI + NVMe FS, bigfile, 4 metadata + 6 data power cuts PASS | 6 network sessions A,B ×3 + 4 power-cut sessions + 1 release check + 2 card boots, 11-05 05:11–06:40; x86-64 68 KVM runs (20 FS sequence, 36 data-cut variants, 12 timing A/B) | `artifacts/h20-c4b/`, `artifacts/uart/20261105-0[5-6]*-{session-c4b-*,c4b-boot*}.log`, `artifacts/qemu-x86/20261105-05*-*-f[cx]*.log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -1401,14 +1402,148 @@ loader → cursor **5.62 s** (C2's A: 5.42–5.63), desktop on HDMI. Logs: `arti
 afterwards; mega24 put back on the card (04:45, `20261105-042111-mega24-restore.log`: flash SHA-256 verified, MEGA end, 0 PANIC,
 hrev60314+282).
 
+### C4b results: the page writer and the file cache in 512 KiB requests (2026-11-05 04:50–07:10)
+
+**Where the 32-page caps are** (`rpi4` 265d2b03dd), and which path each one bounds:
+
+| Cap | Where | Bounds | Verdict |
+|---|---|---|---|
+| `PageWriteTransfer::fVecs[32]` (and the check against its size) | `vm/vm_page_writer.cpp:143`, `:342` | **(a) every file data write to disk.** The page writer thread (`PageWriterRun::AddPage`) and fsync (`VMCache::WriteModified` → `vm_page_write_modified_page_range`, the stack transfer at `:790`) start a new transfer when 32 *vectors* are full. Pages per transfer are not capped (`MaxPagesPerWrite()` −1 for vnode caches), so physically contiguous pages could already make longer requests; file cache pages are mostly single pages, so in practice ~128 KiB | **raised** |
+| `MAX_IO_VECS` 32 → `kMaxChunkSize` | `cache/file_cache.cpp:41`, `:786` (arrays `:397/:401`, `:528/:531`; reservations `:745`, `:788`) | **(b) reads through the file cache**: the uncached parts of a `read()` are read in synchronous chunks of ≤ 32 pages, so a 1 MiB `read()` reached the disk as eight 128 KiB reads. Not a write bound: `write_to_cache()` only fills the cache (`writeThrough` is hard-wired `false`, `:536`) | **raised for reads of > 32 pages** |
+| `kNumPages` 256 per page-writer run; `kMaxPages` 256 per range write | `vm_page_writer.cpp:551`, `:764` | how many pages one run / one fsync transfer keeps busy (1 MiB) | **kept**: the "no huge busy runs" bound |
+| `kZeroVecCount` 32 | `file_cache.cpp:109` | zero-fill writes only in the low-memory bypass (`write_zeros_to_file`) | not on a measured path; kept |
+| `MAX_TEMP_IO_VECS` 8 | `fs/vfs.cpp:351` (`common_file_io_vec_pages`) | would cap writes at 8 vectors, but only for file systems' `read_pages`/`write_pages` hooks: `vfs_read_pages`/`vfs_write_pages` (`:4701`, `:4729`) go through `vfs_vnode_io` → `bfs_io` (`bfs/kernel_interface.cpp:499` → `do_iterative_fd_io`, `:532`) | not on BFS's path |
+| `kMaxSubRequests` 8; BFS `fileVecs[8]` | `fs/vfs_request_io.cpp:154`; `bfs/kernel_interface.cpp:429`, `:474` | file extents per iteration, not bytes | not a size cap |
+| block cache | `cache/block_cache.cpp:1305` | merges up to `IOV_MAX` consecutive blocks; metadata and journal only | not relevant |
+| BFS's own data writes | `bfs/Inode.cpp:1823` (`WriteAt` → `file_cache_write`), `:1848` (gap fill, 1 GiB pieces) | no cap of their own; data is not journaled (`:1763`) | — |
+| I/O scheduler quantum | `device_manager/IOSchedulerSimple.cpp:225`, `:608` (`fMinOwnerBandwidth = fBlockSize * 1024`) → `DMAResource::TranslateNext(…, quantum)` (`dma_resources.cpp:437`) | every operation ≤ 1024 blocks: **512 KiB** on a 512-byte-block disk (why C4's raw 1 MiB and 4 MiB requests ran at the 512 KiB rate) | the natural target; the DMA resource splits further by the device's own limits (usb_disk: 128 KiB) |
+
+**Change** (haiku branch **`fc-request-size`** on `rpi4` 265d2b03dd, pushed, not merged; +104 / −32 lines):
+- **`72ea4b2993`** kernel/vm: page writer transfers of up to 128 I/O vectors. A transfer takes its vectors from
+  the caller: a page-writer run hands them out in turn from one array of as many vectors as the run has pages (only
+  the run's last transfer still grows; no page needs more than one vector), `vm_page_write_modified_page_range()`
+  allocates one next to its wrappers (`HEAP_DONT_WAIT_FOR_MEMORY`, the same fall-back to one page). At most
+  `kMaxTransferVecs` = 128 vectors (512 KiB of single pages) per transfer; busy pages per run or range write unchanged
+  (256). The transfers lose their inline 512 bytes (256 per writer: −128 KiB of kernel heap per disk's writer, +4 KiB
+  for the run's array). A short write still fails the whole transfer, now up to 128 pages instead of 32 (same rule).
+- **`afd7f0590c`** file_cache: read large requests in chunks of up to 512 kB. A read of more than 32 pages gets
+  chunks of up to 128 pages, their pages and vectors in one 3 KiB heap block (`HEAP_DONT_WAIT_FOR_MEMORY`, only when
+  not in a low-memory state; otherwise the 32-page chunks). Reads of ≤ 32 pages and all writes keep the 32-page arrays
+  on the stack (moved from `read_into_cache()`/`write_to_cache()` up into `do_cache_io()`: stack use unchanged).
+  **No read-ahead**: the file cache has none and gets none; only what the caller asked for is read, in fewer requests.
+
+**Pass bar:** BFS 1 GiB + fsync median of ≥ 6 runs per side above A's range or ≥ +5 %; large
+cold reads (≥ 512 KiB requests) faster; reads in ≤ 128 KiB requests, small-request writes and the utilities not
+slower beyond A's own spread; every byte written read back equal (offset-dependent pattern + MD5 after remounts);
+checkfs clean; boot and release check unchanged.
+
+**Protocol.** Two worktree builds (`sources/haiku-fc`, the main cross tools, same options as the release image:
+`-sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc`): **A** = `rpi4` 265d2b03dd (C4 included), **B** = + the two commits;
+the kernel in B carries the new `cache_chunk` symbols (nm). Network sessions A1 B1 A2 B2 A3 B3 alternating
+(05:11–06:13), each `scripts/c4b-round.sh IMG LABEL` (`pi-session.sh` on IMG, then over ssh `tools/pi-tests/c4b.sh ab`,
+`c4b.sh usb` and `tools/pi-tests/usb-bfs.sh`), on the card's raw device (controls) and a BFS made fresh each round on
+its second partition, mounted by its path at `/sd` (never `mountvolume`). New tool `tools/haiku-tests/fcfile.c`:
+writes or reads a file in requests of one size (write + fsync timed, as `dd conv=fsync`; the read time excludes the
+check), each 8-byte word = splitmix64(seed ^ offset/8), so a misplaced or stale page is found, not only a wrong hash.
+Cold = after an unmount + mount (the volume's cache dropped). Table: `scripts/c4b-table.py --a A1 A2 A3 --b B1 B2 B3`.
+
+| MB/s, per round (median) | A (A1, A2, A3) | B (B1, B2, B3) | B − A |
+|---|---|---|---|
+| raw write 256 MiB in 1 MiB (control) | 37.3 / 36.9 / 37.0 (37.0) | 36.8 / 37.2 / 36.8 (36.8) | −0.5 % |
+| raw read 1 MiB, disklat (control) | 44.5 / 44.8 / 44.8 (44.8) | 44.8 / 44.4 / 44.4 (44.4) | −0.9 % |
+| **BFS `dd` 1 GiB + fsync** (C4's test), 3 per round | 30.0 / 24.1 / 32.1 / 32.5 / 26.0 / 31.3 / 31.5 / 25.8 / 32.0 (**31.3**) | 34.6 / 33.3 / 34.2 / 34.7 / 34.2 / 33.7 / 34.6 / 34.4 / 33.9 (**34.2**) | **+9.4 %**; B's lowest above A's median; the dips to 24–26 gone |
+| BFS `dd` 128 MiB + fsync, 3 per round | 22.7–32.2 (29.7) | 29.7–34.7 (31.0) | +4.4 % (first-write variance, as in C4) |
+| fcfile write 1 GiB in 1 MiB + fsync | 26.2 / 26.1 / 26.2 (26.2) | 33.3 / 33.9 / 33.2 (**33.3**) | **+27.4 %** |
+| fcfile write 128 MiB in 128 KiB + fsync | 19.8 / 20.3 / 19.0 (19.8) | 31.3 / 30.4 / 30.9 (**30.9**) | **+56.5 %** |
+| fcfile write 64 MiB in 64 KiB + fsync | 21.0 / 24.3 / 19.3 (21.0) | 29.1 / 31.5 / 30.6 (30.6) | +45.9 % |
+| fcfile write 64 MiB in 4 KiB + fsync | 18.8 / 19.7 / 19.9 (19.7) | 29.1 / 27.9 / 30.8 (29.1) | +47.5 % |
+| **cold read 1 GiB in 1 MiB** | 36.3 / 35.9 / 35.4 (35.9) | 42.3 / 42.4 / 42.5 (**42.4**) | **+18.2 %** (raw 1 MiB: 44.4–44.8) |
+| cold read 128 MiB in 512 KiB / 1 MiB | 30.4 / 32.9 / 30.4; 30.1 / 32.8 / 30.0 (30.4; 30.1) | 41.7 / 41.8 / 41.5; 41.3 / 41.9 / 41.6 (41.7; 41.6) | +37 %, +38 % |
+| cold read 1 GiB in 128 KiB | 36.8 / 36.6 / 36.0 (36.6) | 34.3 / 36.7 / 39.2 (36.7) | = (same code path) |
+| cold read 128 MiB in 128 KiB / 64 KiB | 30.4 / 33.1 / 30.4; 22.0 / 28.4 / 22.0 | 34.1 / 38.2 / 35.7; 26.5 / 26.4 / 29.2 | +17 %, +21 % (same code path: see below) |
+| cold read in 4 KiB (128 MiB; 64 MiB file written in 4 KiB) | 7.03 / 7.05 / 7.06; 6.71 / 6.94 / 6.96 | 7.02 / 7.07 / 6.77; 7.04 / 6.74 / 6.72 | = |
+| cold read 64 MiB in 64 KiB (file written in 64 KiB) | 33.6 / 33.8 / 28.7 (33.6) | 29.3 / 33.4 / 32.3 (32.3) | −4 %, inside A's range |
+| `cat` 128 MiB, cold | 29.0 / 31.8 / 29.0 (29.0) | 37.9 / 39.7 / 38.9 (**38.9**) | **+34 %** (so `cat` reads in requests > 128 KiB; not traced) |
+| `cp` 128 MiB, cold, + sync | 12.6 / 13.3 / 13.0 (13.0) | 17.2 / 17.6 / 15.7 (**17.2**) | **+32 %** |
+| `md5sum` 1 GiB, cold | 19.9 / 18.6 / 20.2 (19.9) | 18.5 / 17.9 / 21.8 (18.5) | −7 %, ranges overlap (CPU-bound at ~19 MB/s on both) |
+| USB stick: fcfile write 512 MiB + fsync; cold read | 9.2 / 10.3 / 9.5; 75.6 / 75.5 / 74.7 | 44.4 / 9.6 / 11.0; 83.0 / 78.1 / 79.1 | the stick's own state (bimodal, B1's 44 not repeated); reads +5 % |
+| USB stick: `usb-bfs.sh` (323 MB of packages from the network disk, MD5s, remount, checkfs) | 46 / 43 / 45 s | 43 / 45 / 45 s | = (network-bound) |
+
+Reading. **(a) Writes**: every write through the file cache is faster, most where the page writer was the limit —
+the 1 GiB patterned file +27 %, files written and fsynced in smaller pieces +46…57 % (the fsync's transfers carry
+the most pages per vector change). The `dd`-from-zero 1 GiB, C4's figure, moves 31.3 → 34.2 MB/s (C4's B: 32.3),
+**93 % of the card's raw 1 MiB write rate measured in the same sessions (36.8)** and steady (A dips to 24–26 in a third of
+its runs, B never below 33.3). **(b) Reads**: requests of ≥ 512 KiB +18…38 %, to 94–95 % of the raw 1 MiB read
+rate; the system's `cat` and `cp` +32…34 %. Reads in ≤ 128 KiB requests run the unchanged code; the 1 GiB file
+shows no difference, the 128 MiB file read in 64/128 KiB requests is 17–21 % faster on B — that file was itself
+written by B's kernel in 512 KiB commands, so this is the card reading data written in larger commands faster (or
+its noise), not the read path; the 4 KiB rows, the 64 KiB-written file and `md5sum` are within A's spread. **Pass.**
+
+**Integrity.** Per round: 4 card files with offset-dependent content checked byte by byte on 9 cold reads, the `cp`
+copy checked, a patterned 512 MiB USB file read back after a remount (11 content checks); 8 MD5 comparisons (the
+card files and the copy after remounts against the MD5s taken from the cache, the USB file, `usb-bfs.sh`'s two).
+Files whose last page is partial, read in requests over 128 KiB, are covered by `cp` and the MD5s of `usb-bfs.sh`'s
+72 packages (Pi) and of the x86 FS group's 2277-file copy. All 6 rounds: **0 bad bytes in 66 content checks, MD5 48
+of 48 equal; checkfs 54 of 54
+"0 blocks" lines** (not allocated / already set / could be freed); 0 PANIC, debug_server or KDL lines in the 6
+sessions' serial logs.
+
+**Power cut** (`c4b-round.sh IMG LABEL cut 25` then `check`, once per side): a fresh BFS, a 128 MiB file written +
+fsynced (B: through the new transfers), then a 2 GiB write started in the background and the power cut 25 s in
+(`pi-session.sh stop --no-sync`; A had written 835 MiB, B 882 MiB into the file cache); the next boot mounted the
+partition by its path (journal replay 70 / 73 ms), `checkfs -c`, the fsynced file checked byte by byte, a new 256 MiB
+file written and read back after a remount, `checkfs -c` again. **A and B alike: checkfs 0 / 0 / 0 blocks both
+times, the fsynced file intact (content ok, same MD5), the in-flight file absent** — its creation had not reached
+the on-disk journal yet (BFS journals metadata only; the same on x86, below); the rewrite read back equal.
+
+**x86-64 under KVM** (`sources/haiku-fc-x86`, a new detached worktree at afd7f0590c, `scripts/build-x86.sh`; image
+`artifacts/h20-c4b/fcx.iso`, its kernel with the new `cache_chunk` symbols; `scripts/c4b-x86.sh`, `scripts/c4b-x86-ab.sh`): scratch BFS volume on **AHCI** and on
+**NVMe**, fresh for each group:
+- FS group (bfsmeta, copy of /boot/system's apps + lib with MD5s before and after a remount, fragwrite, checkfs,
+  bfsbits): **PASS on both** (checkfs "28 blocks could be freed", as on the earlier images, C2).
+- bigfile (1.06 GiB written + sync, MD5 from the cache and after a remount, checkfs, bfsbits): **PASS on both**; a
+  timing A/B against `rpi4` 265d2b03dd's x86 image (`fxa.iso` = the re-check's `r265.iso`), alternating, 3 rounds:
+  write + sync AHCI 6 / 3 / 3 s → 4 / 3 / 3 s, NVMe 3 / 2 / 6 → 2 / 2 / 2 s; read after remount 7 / 6 / 6 → 6 / 6 / 6 s,
+  4 / 4 / 4 → 4 / 4 / 3 s; MD5 12 of 12 (1 s resolution: not slower anywhere).
+- Power cuts during metadata writes (`scripts/x86-powercut.sh`, bfsmeta 20 000 files, 2 per disk): **4 of 4
+  PASS** (journal replay, checkfs "2–4 blocks could be freed", bfsbits, a write after).
+- Power cuts during a large data write (new group `tools/x86-tests/pcbig.sh`, 3 per disk): a synced 64 MiB file, a
+  file grown by a 4 MiB random chunk every 50 ms and synced at 512 MiB, the power cut at 1 GiB; next boot: **6 of 6
+  PASS** — checkfs 0 blocks, the 64 MiB file's MD5 equal, the synced 512 MiB **128 of 128 chunks as written** (the
+  size after the replay is the synced 512 MiB; the growth after it is lost with its journal entries), a new 256 MiB
+  file's MD5 after a remount, checkfs again 0. (Three earlier variants of the group — cut at 512 MiB; the file synced at
+  4 MiB first; the paced write — 16 cuts, all PASS, could only show that an unsynced file's growth is lost with its
+  journal entries (the file absent, or at its synced 4 MiB): under KVM the write is in RAM until a sync, so the
+  mid-write sync was added to put data written by the new transfers on the disk before the cut. Their rows are in
+  `results.tsv` under the same group.)
+- 0 PANIC/KDL, 0 debugger entries in all runs. (The first launch of `c4b-x86.sh` failed before booting: the label
+  with the long ISO name made QEMU's QMP socket path longer than 108 bytes; its rows are `x86-fc-afd7f0590c.iso`
+  "no log" lines in `results.tsv`.)
+
+**Boot and release check (B).** `scripts/release-check.sh` (network boot, 06:24–06:28): **0 problems**, 24 launch
+cycles, 0 debugger entries, Firefox 9502 / 3065 / 3051 ms (C4's B: 9668 / 3058 / 3046). Card boots, flashed with
+SHA-256 verify: **B loader → cursor 5.41 s, A 5.42 s** (06:28 and 06:37; C2's A: 5.42–5.63); 0 PANIC.
+
+**Not done / open.** Device limits are not plumbed into the VM: a transfer is capped at 128 vectors for every disk,
+and devices with smaller limits split it below (usb_disk 128 KiB per operation); a disk with 4 KiB blocks has a
+4 MiB scheduler quantum and could take larger transfers. Reads stay synchronous chunk by chunk (no queue depth); a
+sequential read-ahead in the file cache was deliberately not added. Logs: `artifacts/h20-c4b/` (A1–A3, B1–B3,
+cutA/B, checkA/B, relcheck.out, x86*.txt), `artifacts/uart/20261105-0[5-7]*-session-c4b-*.log`,
+`artifacts/uart/20261105-0[67]*-c4b-boot[AB].log`, `artifacts/qemu-x86/20261105-05*-{fs,bigfile,pc1,pc2,pcbig}-f*.log`.
+Images deleted afterwards (`fcA.img`, `fcB.img`; `fxa.iso` was a copy of `artifacts/x86-images/r265.iso`); mega24 put
+back on the card (07:09, `20261105-064651-mega24-restore.log`: flash SHA-256 verified, MEGA end, 0 PANIC,
+hrev60314+282).
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
   Wine prefix, the post-0028 Warcraft III profile, WiFi CPU load.)
 - A system-wide profile with the applications attributed (needs N1). (N2's cause: found, C0b.)
 - (The SD card's write speed on Linux: measured 11-05, §6 "C4 results" — Haiku was capped at 128 KiB commands, fixed.)
-  Open from C4: the file cache and page writer's 32-page transfers (BFS writes 32 vs raw 35 MB/s); a second card on
-  Haiku; the Wine prefix from the card (C5).
+  Open from C4: a second card on Haiku; the Wine prefix from the card (C5). (The file cache and page writer's 32-page
+  transfers: raised by C4b, §6 "C4b results" — BFS 1 GiB writes 34.2 vs raw 36.8 MB/s.) Open from C4b: device
+  limits plumbed into the page writer's transfer size (4 KiB-block disks take more); queued (asynchronous) chunked
+  reads.
 - The WiFi limit without the bench AP (another AP or 5 GHz, C8).
 - The fraction of Firefox's package a first launch touches, and the order's stability (C2).
 - (Cold-card effect of DT_RELR from a BFS tree: measured 11-04, §6 "C1 results".) The same cold A/B with Firefox
@@ -1433,6 +1568,7 @@ hrev60314+282).
 | GL present path | `tools/gl-tests/present-bench.cpp`, `tools/pi-tests/gpu-present*.sh`, `tools/pi-tests/glmark2.sh` (`GM2 … Score`), `tools/pi-tests/gpu-stage6.sh` |
 | Boot | `scripts/sd-cycle.sh --flash IMG --secs 120`, `scripts/boot-times.sh LOG`, `scripts/boot-bench.sh` (reliability) |
 | Storage | `tools/pi-tests/iocheck.sh`, `perf-report.sh`, `coldstart.sh`, `coldcat.sh`; `tools/haiku-tests/disklat.c`, `nocacheread.c`; SD writes on Haiku and Linux (C4): `tools/pi-tests/sdwrite.sh` + `tools/haiku-tests/diskwrite.c` (in a session, or in the flash lane by `sd-cycle.sh --script`; destroys the card's data) |
+| File cache / page writer request sizes (C4b) | `scripts/c4b-round.sh IMG LABEL [ab\|cut [WAIT]\|check]` (`tools/pi-tests/c4b.sh`: raw controls, BFS writes + cold reads by request size, MD5s after remounts, USB, power cut; `tools/haiku-tests/fcfile.c`: files with offset-dependent content, written / read / checked in requests of one size) → `scripts/c4b-table.py --a A1.. --b B1..`; x86-64: `scripts/c4b-x86.sh ISO [CUTS [data]]` (FS, bigfile, metadata and data power cuts on AHCI + NVMe; `tools/x86-tests/pcbig.sh`), `scripts/c4b-x86-ab.sh ISO_A ISO_B` (bigfile timing A/B; `tools/x86-tests/bigfile.sh` comes from the x86-64 re-check of C4) |
 | BFS metadata writes, journal (N6) | `tools/haiku-tests/bfsmeta.c` (files + appends + attributes, per-file time; `--loop` for power cuts), `bfsbits.c` (on-disk bitmap vs used_blocks; the blocks a `checkfs` freed and what they held), `tools/pi-tests/n6-firefox.sh` (Firefox first start with a new profile, under `profile -a`), `scripts/pi-session.sh stop --no-sync` (power cut), `checkfs -c` |
 | Network, WiFi | `tools/pi-tests/net-perf.sh`, `scripts/net-perf-server.sh`, `scripts/wifi-join-image.sh`; in a session: `scripts/n7-wifi.sh LABEL` (`tools/pi-tests/n7-wifi.sh`: join + DHCP time, TCP up/down under `pmustat`, ARM clock samples, clock-held runs with kernel cycles, `profile`, SD probe check), `tools/haiku-tests/n7-table.py` |
 | Profiling | `profile -a -k -S` (N1: misses teams started after it), `pmustat` (`tools/pi-tests/pmustat.sh`), `tools/haiku-tests/cgcallers.py` (`--self`: flat top of callgrind output), `profsum.py` (rank text profiles, a symbol by thread), `lookupsim.py`; desktop workload `tools/pi-tests/c0-desktop.sh` |
