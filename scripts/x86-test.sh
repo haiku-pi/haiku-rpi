@@ -24,7 +24,7 @@ esac
 script="$root/tools/x86-tests/$group.sh"
 [ -f "$script" ] || { echo "x86-test: no $script" >&2; exit 2; }
 tests="$root/artifacts/x86-tests" secs=1800 files=() qargs=()
-fw=uefi disk=ahci smp=4 mem=4G nic=virtio extra=""
+fw=uefi disk=ahci smp=4 mem=4G nic=virtio extra="" sdisk=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--tests) tests="$(realpath "$2")"; shift 2 ;;
@@ -36,13 +36,14 @@ while [ $# -gt 0 ]; do
 	--mem) mem="$2"; qargs+=("$1" "$2"); shift 2 ;;
 	--nic) nic="$2"; qargs+=("$1" "$2"); shift 2 ;;
 	--machine|--topo) extra="$extra,${1#--}=$2"; qargs+=("$1" "$2"); shift 2 ;;
+	--scratch-disk) sdisk="$2"; qargs+=("$1" "$2"); shift 2 ;;
 	--legacy-virtio) extra="$extra,legacy-virtio"; qargs+=("$1"); shift ;;
 	*) qargs+=("$1"); shift ;;
 	esac
 done
 [ -d "$tests" ] || { echo "x86-test: no tests in $tests (scripts/build-x86-tests.sh)" >&2; exit 2; }
-config="$fw-$disk-smp$smp-$mem-$nic$extra"
-label="$group-$image-$fw-$disk"
+config="$fw-$disk-smp$smp-$mem-$nic$extra${sdisk:+,scratch=$sdisk}"
+label="$group-$image-$fw-$disk${sdisk:+-s${sdisk/virtio-scsi/vs}}"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/x86-test.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 printf 'default_action kill\n' > "$tmp/debug_server"

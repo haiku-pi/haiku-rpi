@@ -4,7 +4,7 @@
 #
 #   scripts/x86-matrix.sh [--configs "NAME ..."] IMAGE...      (IMAGE: rpi4, up, kd1 or a path)
 #
-# Configurations: uefi-ahci uefi-nvme uefi-virtio-scsi uefi-usb bios-ahci bios-ide bios-cdrom uefi-smp1
+# Configurations: uefi-ahci uefi-nvme uefi-virtio-scsi uefi-usb bios-ahci bios-ide bios-cdrom bios-nvme bios-virtio-scsi bios-usb uefi-smp1
 # uefi-512m uefi-legacy-virtio (virtio-scsi with disable-modern=on: the I/O-port BAR path) uefi-e1000
 # uefi-rtl8139 uefi-smt (-smp 4 as 2 cores x 2 threads). Rows go to artifacts/qemu-x86/results.tsv.
 set -uo pipefail
@@ -20,6 +20,9 @@ args_of() {
 	uefi-usb) echo "--fw uefi --disk usb" ;;
 	bios-ahci) echo "--fw bios --disk ahci" ;;
 	bios-ide) echo "--fw bios --disk ide" ;;
+	bios-nvme) echo "--fw bios --disk nvme" ;;
+	bios-virtio-scsi) echo "--fw bios --disk virtio-scsi" ;;
+	bios-usb) echo "--fw bios --disk usb" ;;
 	bios-cdrom) echo "--fw bios --disk cdrom" ;;
 	uefi-smp1) echo "--fw uefi --disk ahci --smp 1" ;;
 	uefi-512m) echo "--fw uefi --disk ahci --mem 512M" ;;

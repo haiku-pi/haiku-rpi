@@ -982,3 +982,118 @@ an x86 network boot (R2's other branch), the GCC 16.2 x86-64 build (phase 2b).
 - [x] phase 4: four fixes on `x86-fix` (pushed, not merged), arm64 compile-checked
 - [ ] not run: SD, USB data disk, RNG, MEDIA, DBG (§9.5)
 - [ ] merge `x86-fix` into rpi4 after an arm64 run (QEMU virt + a Pi FS run for R1)
+
+## 10. Re-check at rpi4 265d2b03dd (2026-11-05, KVM)
+
+Why: since the matrix of §9 (rpi4 `a779571e90`) these generic changes landed: `a38b19efab` (VM page-fault
+read-around), `f49813a540` (launch_daemon shutdown guard), `d3cc8e3fd1` (usb_disk teardown) and **`265d2b03dd`
+(DMAResource bounce buffers up to 512 kB)**. The last one is the risky one on x86-64: R1 (§9.4) was a 16-bit length in
+the bounce path, and the NVMe, AHCI/IDE, virtio-scsi and USB drivers get bounce buffers from the same code. All four
+R-fixes (`3a0be104e3`, `444704d5f1`, `c8c59043a7`, `a2cf89efd1`) are ancestors of this commit, so the baseline is
+the "fix" column of §9.2, not "ours".
+
+**Result: no regression.** Every test that has a baseline passes as before. No PANIC, no KDL, no `vm_page_fault` in any
+run. No Pi time.
+
+- Image: `sources/haiku-x86` detached at rpi4 `265d2b03dd` (`scripts/build-x86.sh build rpi4`, heavy-build guarded,
+  incremental, 58 s, rc 0, no compiler warning: 7 jam "independent target" lines). Pinned as
+  `artifacts/x86-images/r265.iso` (the first eleven BOOT runs name it `rpi4-265d2b03dd.iso`: the same file). Every
+  serial log has the new `bounce buffers N x SIZE` field, so the image is not stale.
+- Same harness as §9 (QEMU 11, q35, UEFI = edk2, 4 GB, SMP 4, virtio-net, a fresh qcow2 overlay per run). New:
+  `qemu-x86.sh --scratch-disk ahci|nvme|virtio-scsi|usb` (the scratch BFS disk's controller; default as before, AHCI),
+  `x86-test.sh` passes it through and puts it in the config column, `x86-powercut.sh IMAGE N FILES [options]` forwards
+  options to both boots, `x86-matrix.sh` gains `bios-nvme|bios-virtio-scsi|bios-usb`, and two groups:
+  `tools/x86-tests/bigfile.sh` (large file, below) and `bfsrep.sh` (the `rm -rf` probe, below).
+
+### 10.1 Results
+
+| test | config | before (§9.2) | now | log (artifacts/qemu-x86/) |
+|---|---|---|---|---|
+| BOOT | UEFI AHCI | PASS | PASS | `20261105-045702-boot-rpi4-265d2b03dd.iso-uefi-ahci.log` |
+| BOOT | UEFI NVMe | fix: PASS | PASS | `20261105-045716-boot-rpi4-265d2b03dd.iso-uefi-nvme.log` |
+| BOOT | UEFI virtio-scsi, and legacy (`disable-modern=on`) | PASS | PASS / PASS | `20261105-050441-boot-r265.iso-uefi-virtio-scsi.log`, `-050515-` |
+| BOOT | UEFI USB boot disk | PASS, waits for the boot device (R4) | PASS, waits (R4, same) | `20261105-045732-boot-rpi4-265d2b03dd.iso-uefi-usb.log` |
+| BOOT | BIOS AHCI, BIOS IDE (`-machine pc`) | PASS | PASS / PASS | `-045747-…-bios-ahci.log`, `-045759-…-bios-ide.log` |
+| BOOT | BIOS CD (El Torito) | Welcome window | Welcome window (screenshot), no bootscript, as before | `20261105-045855-boot-rpi4-265d2b03dd.iso-bios-cdrom.png` |
+| BOOT | SMP 1, 512 MB, 2 cores × 2 threads, e1000, rtl8139 | PASS | PASS (all five) | `-045809-`, `-045825-`, `-045839-` (uefi-ahci logs) and r265 e1000/rtl8139 logs |
+| BOOT | BIOS virtio-scsi, BIOS USB (new) | not run | PASS; BIOS USB waits (R4) | `20261105-051040-boot-r265.iso-bios-virtio-scsi.log`, `-051118-…-bios-usb.log` |
+| BOOT | BIOS NVMe (new) | not run | **no output at all, on r265, on `a779571e90` and on hrev60314** | `20261105-050537-boot-r265.iso-bios-nvme.log` (0 lines) |
+| PWR | `shutdown -r`, `shutdown -q -r`, `shutdown`: UEFI AHCI, BIOS AHCI | PASS | PASS (3 boots each, power-off) | `20261105-051622-pwr-r265.iso-uefi-ahci.log`, `-051722-…-bios-ahci.log` |
+| PWR | the same on UEFI NVMe (new; R1's symptom) | not run | PASS | `20261105-051818-pwr-r265.iso-uefi-nvme.log` |
+| FS | fs group on AHCI (bfsmeta, copy + MD5, remount, fragwrite, checkfs, bfsbits) | PASS | PASS; copy 627 448 KiB in 9 s | `20261105-051917-fs-r265.iso-uefi-ahci.log` |
+| FS | fs group on **NVMe** (boot and scratch both NVMe) | not run (R1) | **PASS**; copy in 6 s | `20261105-052315-fs-r265.iso-uefi-nvme-snvme.log` |
+| FS | 3 power cuts, AHCI | PASS 3/3 | PASS 3/3 (checkfs 2/4/6 "blocks could be freed", bfsbits S−U = 0, write after) | `20261105-052653-pc1-…` to `-052840-pc2-…` (`pc1/pc2-r265.iso-uefi-ahci`) |
+| FS | 3 power cuts, **NVMe** | not run | **PASS 3/3** (same counts) | `20261105-052851-pc1-…` to `-053029-pc2-…` (`-uefi-nvme-snvme`) |
+| FS | boot-disk write integrity (254 files, 80 MB, MD5, restart, MD5), AHCI and NVMe | fix: PASS | PASS / PASS | `20261105-053346-bootio-r265.iso-uefi-ahci.log`, `-053413-…-nvme.log` |
+| BIG | 1.06 GiB (1 133 937 000 B) written through BFS, `sync`, MD5, unmount + mount, MD5, checkfs, bfsbits: scratch on AHCI | new | **PASS** (write 17 s, read-back 8 s) | `20261105-053040-bigfile-r265.iso-uefi-ahci-sahci.log` |
+| BIG | scratch on NVMe | new | **PASS** (21 s, 3 s) | `20261105-053120-bigfile-r265.iso-uefi-nvme-snvme.log` |
+| BIG | scratch on virtio-scsi | new | **PASS** (23 s, 5 s) | `20261105-053201-bigfile-r265.iso-uefi-ahci-svs.log` |
+| BIG | scratch on USB (usb-storage, xHCI) | new | **PASS** (20 s, 15 s) | `20261105-053253-bigfile-r265.iso-uefi-ahci-susb.log` |
+| C2 | mmapcat MD5 of 24 mapped files, 4 access orders, after a restart | PASS ok 24 bad 0 | **PASS ok 24 bad 0**; dlopentime package + BFS PASS | `20261105-053438-c2-r265.iso-uefi-ahci.log` |
+
+The BIG test writes a 3 MiB + 4097 byte random chunk 360 times (so every chunk starts at another offset inside the
+file's blocks: partial-block writes through each driver's bounce path). The expected MD5 comes from the same chunks
+piped into `md5sum`, never through the disk; the file's MD5 equalled it from the cache and after the remount, and
+`checkfs -c` and `bfsbits` were clean, on all four controllers.
+
+Timing, for what it is worth (one run each, KVM, another session's QEMU ran beside mine at times): `bfsmeta` 4000
+files 146–155 µs/file on AHCI in the fs group (80 on NVMe) against 86 for the "fix" image in §9; an alternating
+A/B of five rounds (`bfsrep`) gave 119/125/67/71/81 µs on r265 against 129/88/64/74/68 on the fix image: noise.
+
+### 10.2 DMAResource bounce buffers (the `DMAResource@` serial line)
+
+Before `265d2b03dd` the cap was 128 kB (32 pages) for every driver. Now it is 512 kB, and no more than the device's
+maximum transfer (rounded up to a page).
+
+| driver (QEMU device) | max transfer | bounce buffers now | before | logs |
+|---|---|---|---|---|
+| `nvme_disk` (nvme) | 524 288 | **8 × 524 288** (4 MiB) | 8 × 131 072 | `…uefi-nvme.log`, `bigfile…nvme-snvme` (twice: boot and scratch disk) |
+| `ahci` (ICH9, `ide-hd`) | 130 560 | 32 × 131 072 (4 MiB) | the same | `…uefi-ahci.log`, `…bios-ahci.log` |
+| `ahci`, ATAPI CD | 522 240 | **32 × 524 288** (16 MiB) | 32 × 131 072 | `…bios-cdrom.log` |
+| `ata` (PIIX, `-machine pc`) | 33 553 920 | **32 × 524 288** (16 MiB) | 32 × 131 072 | `…bios-ide.log` |
+| `virtio_scsi` (scsi-hd) | 65 536 | 32 × **65 536** (2 MiB) | 32 × 131 072 (above its limit) | `…uefi-virtio-scsi.log` |
+| `usb_disk` (usb-storage) | 131 072 | 1 × 131 072 | the same | `…uefi-usb.log`, `bigfile…susb.log` |
+
+- The IDE and ATAPI cases take 16 MiB of bounce memory at boot; a 512 MB IDE boot (`bios-ide --mem 512M`) still
+  works (`20261105-053551-boot-r265.iso-bios-ide.log`: 347 MB free at the desktop).
+- AHCI's 131 072 is 512 bytes above its 130 560 maximum transfer: the cap is rounded up to a page, not down. No
+  failure seen (all AHCI runs above).
+- `bounce buffers 0 x 0` never appears; a maximum transfer of 0 is normalised to "unlimited" before the cap.
+
+### 10.3 Odd things
+
+1. **The first rebuild shipped an ESP with a 0-byte `BOOTX64.EFI`**, and every UEFI boot ended in the EFI shell
+   (`20261105-045151-boot-rpi4-265d2b03dd.iso-uefi-ahci.log`; that run's rows are INCOMPLETE and not a result).
+   Cause: the build keeps host file attributes in `generated.x86_64/attributes/<inode>/`, keyed by inode number, and
+   never removes them with the file. `haiku_loader.efi` was rebuilt onto an inode whose directory still held another
+   file's `BEOS:APP_VERSION`; `fat_shell cp` tried to write that attribute onto the FAT volume and left an empty
+   file (`Error while writing to attribute 'BEOS:APP_VERSION' … Read-only file system` in the build log, which still
+   ends in rc 0). Fix, outside the source tree: delete `attributes/<inode>`, `esp.image` and the ISO, rebuild. Worth a
+   guard in `build-x86.sh`: the build log has the message, the exit status does not.
+2. **`scripts/x86-test.sh` / `qemu-x86.sh` failed without a log on `virtio-scsi` labels**: the QMP socket path
+   (`run-<ts>-<group>-<image>-<fw>-<disk>/qmp.sock`) exceeded the 108-byte limit for `rpi4-265d2b03dd.iso`. The image
+   was renamed `r265.iso` and `x86-test.sh` abbreviates the scratch label.
+3. **BIOS + NVMe never boots** (SeaBIOS prints nothing to COM1): the same on `a779571e90` and on hrev60314
+   (`20261105-051200-boot-b.iso-bios-nvme.log`, `-051415-…`). Not a regression; a new configuration.
+4. **`rm -rf` of a 4000-file directory hangs about half the time, on all images.** Found by the timing probe
+   `bfsrep` (new, `tools/x86-tests/bfsrep.sh`: `bfsmeta /scratch/metaN 4000`, then `rm -rf`, then `sync`, five rounds,
+   fresh scratch disk, AHCI). The guest stops printing at "bfsmeta done, removing" and never reaches "removed, syncing",
+   so it is `rm -rf` of the freshly written files (4 writes and 2 attributes each). Runs that finished all five rounds
+   / runs in total: hrev60314 **4 of 6**, rpi4 `a779571e90` **6 of 10**, the fix image 1 of 2, r265 **6 of 13** (the
+   first runs of each image used a script version without the markers; a run that stopped after round 1 counts as hung;
+   the last ten were alternated r265 / `a779571e90`: 4 of 5 and 2 of 5). The rates overlap, so there is no sign that
+   this range changed it, and upstream has it too: a pre-existing, intermittent hang, not a regression. The established
+   FS group does not hit it (its `rm -rf` is of 2277 files without attributes, after a remount). Logs:
+   `20261105-061012-bfsrep-r265.iso-uefi-ahci.log` (hung), `-061200-…` (completed),
+   `20261105-061600-bfsrep-up.iso-uefi-ahci.log` (upstream, hung), `-061733-…` (completed). Not investigated further
+   (no KDL capture); a candidate for the next x86-64 round, and possibly for arm64 (a BFS unlink path with attributes).
+5. Another session used the harness at the same time (images `fcx.iso`, groups `pcbig`, `bigfile`; rows in the
+   same `results.tsv`) and the free disk space dropped from 45 to 22 GB during the run; mine stayed within the 12 GB
+   rule. Its untracked files (`scripts/c4b-*`, `tools/x86-tests/pcbig.sh`, `tools/haiku-tests/fcfile.c`) are not part
+   of this commit.
+
+### 10.4 Not run
+
+SD (`--sd`) with the new 512 kB bounce buffers (the case `265d2b03dd` was made for, on the Pi), USB data disk on
+EHCI, RNG, MEDIA, DBG — unchanged from §9.5. The core group (THR/TLS/LIBC/VM) was not re-run: nothing in this range
+touches it except the VM read-around (`a38b19efab`), which the C2 check and every boot exercise.

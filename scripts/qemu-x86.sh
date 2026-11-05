@@ -4,7 +4,7 @@
 #
 #   scripts/qemu-x86.sh [--image IMG] [--fw uefi|bios] [--machine q35|pc]
 #                       [--disk ahci|nvme|virtio-scsi|usb|ide|cdrom] [--smp N] [--topo cores=2,threads=2]
-#                       [--mem 4G] [--nic virtio|e1000|rtl8139|none] [--legacy-virtio] [--scratch IMG] [--sd IMG] [--audio]
+#                       [--mem 4G] [--nic virtio|e1000|rtl8139|none] [--legacy-virtio] [--scratch IMG [--scratch-disk ahci|nvme|virtio-scsi|usb]] [--sd IMG] [--audio]
 #                       [--bootscript FILE] [--add FILE:PATH]... [--desktop] [--bfs-shell PATH]
 #                       [--secs N] [--until REGEX] [--shot-every N] [--label L] [--vnc] [--gdb] [--keep]
 #                       [--serial-sock]
@@ -37,7 +37,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$root/local.conf" ] && . "$root/local.conf"
 img="$root/sources/haiku-x86/generated.x86_64/haiku-nightly-anyboot.iso"
 bfs="$root/sources/haiku-x86/generated.x86_64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
-fw=uefi machine="" disk=ahci smp=4 topo="" mem=4G nic=virtio scratch="" sd="" audio=0 legacy=""
+fw=uefi machine="" disk=ahci smp=4 topo="" mem=4G nic=virtio scratch="" scratchdisk=ahci sd="" audio=0 legacy=""
 serialsock=0 bootscript="" adds=() desktop=0 secs=0 until="" every=20 label=x86 display=(-display none) gdb=() keep=0
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -50,6 +50,7 @@ while [ $# -gt 0 ]; do
 	--mem) mem="$2"; shift 2 ;;
 	--nic) nic="$2"; shift 2 ;;
 	--scratch) scratch="$(realpath "$2")"; shift 2 ;;
+	--scratch-disk) scratchdisk="$2"; shift 2 ;;
 	--sd) sd="$(realpath "$2")"; shift 2 ;;
 	--audio) audio=1; shift ;;
 	--legacy-virtio) legacy=",disable-modern=on"; shift ;;
@@ -121,7 +122,16 @@ else
 	*) echo "qemu-x86: --disk ahci|nvme|virtio-scsi|usb|ide|cdrom" >&2; exit 2 ;;
 	esac
 fi
-[ -n "$scratch" ] && cmd+=(-drive "file=$scratch,if=none,format=raw,id=sc0" -device ide-hd,drive=sc0,bus=ide.1)
+if [ -n "$scratch" ]; then
+	cmd+=(-drive "file=$scratch,if=none,format=raw,id=sc0")
+	case "$scratchdisk" in
+	ahci) cmd+=(-device ide-hd,drive=sc0,bus=ide.1) ;;
+	nvme) cmd+=(-device nvme,drive=sc0,serial=h22scratch) ;;
+	virtio-scsi) cmd+=(-device virtio-scsi-pci,id=vs1 -device scsi-hd,drive=sc0,bus=vs1.0) ;;
+	usb) cmd+=(-device usb-storage,bus=xhci.0,drive=sc0) ;;
+	*) echo "qemu-x86: --scratch-disk ahci|nvme|virtio-scsi|usb" >&2; exit 2 ;;
+	esac
+fi
 [ -n "$sd" ] && cmd+=(-drive "file=$sd,if=none,format=raw,id=sd0" -device sdhci-pci -device sd-card,drive=sd0)
 [ "$audio" = 1 ] && cmd+=(-audiodev none,id=snd -device intel-hda -device hda-duplex,audiodev=snd)
 case "$nic" in

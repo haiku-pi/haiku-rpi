@@ -4,7 +4,7 @@
 # qemu-x86.sh --until) after FILES files; then boot again and check the volume (pc2.sh: journal replay on
 # mount, checkfs -c, bfsbits, a new write). The same scratch disk goes through all N cuts.
 #
-#   scripts/x86-powercut.sh IMAGE [N [FILES]]       (IMAGE as scripts/x86-test.sh; N 3, FILES 20000)
+#   scripts/x86-powercut.sh IMAGE [N [FILES [x86-test.sh options...]]]   (IMAGE as scripts/x86-test.sh; N 3, FILES 20000)
 #
 # Rows in artifacts/qemu-x86/results.tsv (groups pc1, pc2); pc1 ends in a power cut by design, so its
 # "poweroff FAIL" row is expected.
@@ -12,6 +12,8 @@ set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -ge 1 ] || { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 image="$1" n="${2:-3}" files="${3:-20000}"
+shift $(($# < 3 ? $# : 3))
+extra=("$@")	# further scripts/x86-test.sh options for both boots, e.g. --disk nvme --scratch-disk nvme
 bfs="$root/sources/haiku-x86/generated.x86_64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/x86-pc.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
@@ -22,9 +24,9 @@ LD_LIBRARY_PATH="${bfs%/objects/*}/objects/linux/lib" "$bfs" --initialize "$scra
 fails=0
 for i in $(seq 1 "$n"); do
 	echo "x86-powercut: $image cut $i of $n after $files files"
-	"$root/scripts/x86-test.sh" pc1 "$image" --secs 600 --scratch "$scratch" \
+	"$root/scripts/x86-test.sh" pc1 "$image" --secs 600 --scratch "$scratch" "${extra[@]+"${extra[@]}"}" \
 		--until "X86T pc1 info loop bfsmeta: loop: $files files" 2>&1 | grep -E '^(pc1|kernel) '
-	"$root/scripts/x86-test.sh" pc2 "$image" --secs 600 --scratch "$scratch" 2>&1 \
+	"$root/scripts/x86-test.sh" pc2 "$image" --secs 600 --scratch "$scratch" "${extra[@]+"${extra[@]}"}" 2>&1 \
 		| grep -E '^(pc2|kernel|qemu) '
 	[ "${PIPESTATUS[0]}" = 0 ] || fails=$((fails + 1))
 done
