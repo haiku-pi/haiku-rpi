@@ -1,6 +1,9 @@
 # VCHIQ on Haiku (H21 step 1): `/dev/vchiq` from FreeBSD's BSD-3 port
 
-Status (2026-11-05): design written, driver being ported on branch `vchiq` (worktree `sources/haiku-vchiq`).
+Status (2026-11-05): **step 1 works on the Pi** — branch `vchiq` (worktree `sources/haiku-vchiq`, pushed, not
+merged): `/dev/vchiq`, the firmware handshake, message round trips (gencmd), the ioctl ABI driven by Broadcom's
+unchanged libvchiq, bulk transfers both ways (functional test and echo up to 1 MiB, misaligned), clients killed
+mid-transfer. §6 has the results and what step 2 starts from.
 Plan: `PLAN.md` row 7 (H21); the licence survey is `hw-video-decode.md` §0a.
 
 Citation keys:
@@ -183,4 +186,56 @@ never touched.
 
 ## 6. Progress
 
-(updated as the work goes)
+### 2026-11-05: step 1 done on the Pi (network boots; branch `vchiq`)
+
+Commits on `vchiq` (base `rpi4` 44cc183c0c): `6c2778b0b1` import of [F] (verbatim) · `2252a8dc97` the port ·
+`34660bcc50` packaging · `10807a2f0c` semaphores without kernel semaphores · `a0ffe46806` state allocated at the
+first connection · `f47b5639b5` buffers of a dying team · `6e8be068c5` a log line for that case.
+
+- **Attach** (boot log): `vchiq: doorbells 0xfe00b840, interrupt 66, DMA offset 0xc0000000 below 0x40000000,
+  36-bit bulk addresses` and `publish device: ... path vchiq` — `/dev/vchiq` at the root, as on Linux (the root
+  scan at boot probes every driver directory).
+- **Handshake** (first open): `VCHIQ_INIT with slots at bus 0xc1d79000: No error (answer 0x0)`, `local ver 8 (min
+  3), remote ver 8`.
+- **GCMD round trip, kernel side** (`cat /dev/vchiq`):
+  `gencmd version: (0) Oct 15 2026 14:15:04 / Copyright (c) 2012 Broadcom / version
+  df9569873467b7e6383f1073788144864249d65f (clean) (release) (start)`, `get_mem arm: arm=948M`, `get_mem gpu:
+  gpu=76M`, `measure_temp: temp=48.7'C`; then the core's state dump (`State 0: CONNECTED`, services GCMD and KEEP).
+- **ioctl ABI by hand** (`vchiq-gcmd`): every step ok, `DEQUEUE_MESSAGE` returns 129 / 13 (the sizes),
+  `AWAIT_COMPLETION` delivers the plain service's reply (`temp=50.6'C`) and the `SERVICE_CLOSED` completions,
+  answered by `CLOSE_DELIVERED`; `VCHIQTEST end: PASS`.
+- **Broadcom's libvchiq + `vchiq_test`** (`tools/pi-tests/vchiq.sh`, `VCHIQ result: 0 problems`):
+  `-f 1` functional test passes (all of it: bulk sizes 1–63 bytes at every client/server alignment, at the page
+  boundary, 64 B–16 KiB with misalignment; three runs in a row, also after the kills); bulk echo: 1 KiB 196 µs,
+  64 KiB 288 µs, 1 MiB 7.3 ms per round trip (sent and received back: ~140 MiB/s each way), misaligned (`-a 3 5`, `-a 31 1`, `-A 100 7`)
+  all fine; `-c 1000` 50 µs per message; ping ok. Clients killed during 1 MiB bulks, 1 KiB bulks, pings and control
+  floods: no clone left, the next bulk test passes, only GCMD and KEEP remain. 136 725 doorbell interrupts in one
+  run.
+- **Found and fixed on the Pi**: a client killed with bulks queued panicked the kernel (`VMCache::Delete`: page
+  still has mappings): Haiku deletes a team's areas before closing its files (§2, "A client that dies").
+- **The `-f` failure of the first session** ("no more listeners" at vchiq_test.c:833) came after a client was
+  killed in the middle of a functional test by a VCOS assertion (below); on a fresh boot and after the kill matrix
+  it passes every time.
+- **The dying-team path, seen**: a client killed during a 1 MiB bulk — `vchiq: team 490 went away with a bulk
+  transfer queued: its 1048576 bytes are kept until the transfer ends`; no clone left afterwards, the next tests pass
+  (head `6e8be068c5`, `tools/pi-tests/vchiq.sh`: 0 problems).
+- **No regression**: `scripts/release-check.sh` on the branch's image (regular `@pi-mmc` with GL, `f47b5639b5`):
+  `REL result: 0 problems` (launch cycles 24, 0 debugger entries) — that check never opens `/dev/vchiq`, i.e. the
+  driver as every user gets it.
+
+### What step 2 (libmmal) starts from
+
+- libvchiq and VCOS (pthreads) build for Haiku from [U] unchanged except: the `linux/ioctl.h` / `linux/param.h`
+  shims (`tools/haiku-tests/vchiq-shim`), `-std=gnu11` (K&R prototypes vs C23), and **two zero-initialised objects
+  that only Linux accepts**, patched by `scripts/build-vchiq-test.sh` and to be carried as patches:
+  `vcos_pthreads.c`'s `current_thread_key_once` (Haiku's `PTHREAD_ONCE_INIT` is `{ -1 }`: the thread key is never
+  made, `vcos_init()` aborts) and `vchiq_lib.c`'s function-local `static VCOS_MUTEX_T vchiq_lib_mutex` in
+  `vchiq_lib_init()`, which shadows the global one that `alloc_msgbuf()` etc. lock (libroot asserts on a zeroed
+  `pthread_mutex_t`). Expect more of the same kind in libmmal (grep for zeroed `VCOS_ONCE_T` / mutexes).
+- The firmware has MMAL (`vc.ril.video_decode` strings in `start4.elf`), and the vchiq test server — use
+  `vchiq_test -f` as the first regression check of any driver change.
+- Next: libmmal (`interface/mmal`: core, vc client, util) as a Haiku package or port; `mmal_vc_api` opens the
+  "mmal" service over this driver; a first `vc.ril.video_decode` H.264 decode to memory with bulk-copied buffers
+  (no zero-copy: `vc-sm-cma` is GPL; our own buffer import later).
+- Open: `exec()` while bulk transfers are queued still hits the wired-area assertion (no notification before
+  `exec_team` deletes the areas); an aborted bulk the VC never acknowledged leaks its lock, as in [F]/Linux.
