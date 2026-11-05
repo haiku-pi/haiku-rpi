@@ -238,4 +238,14 @@ of its own registrar job (`FindJob(get_leaf(B_REGISTRAR_SIGNATURE))`, `Team()`/`
 launch data hands to BRoster), with a 1 s send and reply timeout: the registrar asks the launch_daemon for its
 ports while it starts (`AuthenticationManager.cpp:752`, from `Registrar::ReadyToRun()`), so an unbounded wait
 there could deadlock both if a service ended in that window. On a timeout or error the service is restarted, as
-before. Compiles for arm64 (`scripts/arm64-compile-check.sh`) and x86_64 (warnings unchanged).
+before. Compiles for arm64 (`scripts/arm64-compile-check.sh`: ok) and x86_64 (incremental `@nightly-anyboot`,
+jam rc 0, no warning in `src/servers/launch`).
+
+Scope: this closes the restart-on-exit path (`B_SYSTEM_OBJECT_UPDATE`/`B_TEAM_DELETED`), the one the Pi run took.
+Two other paths can still start a system service that quit during a shutdown, and are left as they were: a request
+for its launch data (`_HandleGetLaunchData()` launches a service that is not launched; `Job::TeamDeleted()` resets
+it to "not launched", `src/servers/launch/Job.cpp:423`), and another job that requires it being launched (the
+requirements loop of `_LaunchJob()`). Neither was seen.
+
+Worktree note: `sources/haiku-x86` is now on branch `launch-restart-loop` (not a detached `rpi4`), and its
+`haiku-nightly-anyboot.iso` has the fix; the unfixed reference image is `artifacts/x86-images/rpi4-a779571e90.iso`.
