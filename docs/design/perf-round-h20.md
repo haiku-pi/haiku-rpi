@@ -94,7 +94,8 @@ Each row is merged on `rpi4` (the image carries it) unless marked.
 | SD card faster than 50 MB/s | hardware: EMMC2 base clock 100 MHz, SDR104 out of reach (P5) | KNOWN-ISSUES.md:35 |
 | Ethernet | at gigabit's TCP ceiling (~940 Mbit/s payload): 914 / 918 | HARDWARE-SUPPORT.md:105 |
 | 64-bit-load ones'-complement checksum | within noise both ways, not kept | W43 10-20 22:30 |
-| 64 KB page-fault read-around | no gain (Firefox 21.8–23.4 s vs 21.6–23.0), not committed | W43 10-24 22:37 |
+| 64 KB page-fault read-around | no gain (Firefox 21.8–23.4 s vs 21.6–23.0), not committed. **Superseded by C2 (11-05)**: that run measured the *packaged* Firefox inside a 14.5 s DNS wait; on BFS files the same idea is −5.7 s (C2), on packagefs it costs +0.49 s, so it runs only for files on a partition | W43 10-24 22:37; §6 "C2 results" |
+| Trace-based package prefetch (C2 part ii) | not built: pre-reading the whole Firefox package takes 5.2 s and saves 3.2 s of the 7.7 s first start; the first start touches about the whole package, so a replayed trace reads about as much; only an idle-time prefetch after boot could gain, by moving ~5 s of card reads and ~100 MB of RAM there | §6 "C2 results" |
 | Fixed 128 KiB × 16 packagefs read-ahead pool | regression: loader → cursor +2.4 s, first Firefox 16.9 s | W43 10-24 23:21 |
 | Skipping the icache flush in `Protect()` | no measurable change, reverted | W43 10-24 13:46 |
 | Per-drawable readback buffer in Wine's full-screen path | no change (24.5/21.4 vs 21.1/21.1 fps); superseded by real display modes | W43 10-23 05:20 |
@@ -186,6 +187,7 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
   guardrail; 3 cold card boots per side, MD5 of the package as in the 10-24 tests.
 - **Still unmeasured**: what fraction of the package the first launch touches; the page-fault order's stability
   between boots (needed for a recorded trace to help).
+  → Measured 11-04/05 (the pre-read experiment, page-fault read-around for files on a partition): §6 "C2 results".
 
 ### C3. Boot: what remains after 21.3 → 5.6 s
 
@@ -436,6 +438,7 @@ of this section with its image, date, labels and `artifacts/uart` logs.
 | N5 (TLS of start-up images without the generation check) | worktree builds of `rpi4` b90cb3f0d4: A without, B with haiku `rpi4` c6cab6cc9e + 4d433669a8 | python3 `sum(i*i…)` 1e7: `__tls_get_addr` 19.4 % of ticks, 12.87 G instructions, 7.97 G cycles, 5181 ms median; tlsbench 17.35 ns | 9.8 %, 11.60 G (−9.9 %), 7.65 G (−4 %), 5104 ms (−1.5 %); tlsbench 14.68 ns (a dlopen()ed library's 16.0 → 17.35 ns); TLS test PASS (A fails the 64-byte alignment) | 6 network boots A/B alternating + 1, 11-04 11:43–12:29 | `artifacts/h20-n5/`, `artifacts/uart/20261104-1*-session-n5-*.log` |
 | N7 (SDIO data blocks moved in the interrupt handler) | worktree builds of `rpi4` 4d433669a8: A without, B with haiku `n7-sdio-wait` 6018671453 | WiFi TCP 64 MiB: up 49.5 / down 46.8 Mbit/s; 226 / 183 M cycles per MiB; CPUs busy 19.6 / 15.9 %; `spin` + `system_time` 59 / 47 % of non-idle | 49.2 / 46.1 Mbit/s (ARM clock held at 1500 MHz: 49.3 / 46.5 = A); 151 / 126 M cycles per MiB (−33 / −31 %; at 1500 MHz kernel cycles −34 / −31 %); busy 11.6 / 8.9 %; spin 32 / 18 %; bring-up 5/5 one join; SD card probe + raw read unchanged | 10 network boots A/B alternating + 1 (a dropped variant) + 2 lost to a script race, 11-04 14:05–15:33 | `artifacts/h20-n7/`, `artifacts/uart/20261104-1*-session-n7-*.log` |
 | C1 (DT_RELR for Firefox's libxul.so) | image-2026-11-04c + `relr-image.sh`: A = libxul relinked as is, B = the same with `-z pack-relative-relocs` (157.0.1-5 objects, GCC 13.3; both linked by the 16.2 cross tools) | Firefox tree in `/boot/home`, cold first window after a card boot 15 624 ms (median; 15 582–16 018); warm 3126 ms | **13 774 ms** (13 722–13 784, **−1850 ms, −11.8 %**); warm 3102.5 ms (−0.75 %); same-binary packaged Firefox control 8260 → 8199 cold, 3112.5 → 3106 warm; controls equal; 0 debugger entries | 6 card boots A,B,A,B,A,B (flashed each time) + 6 network boots, 11-04 17:00–20:20 | `artifacts/uart/20261104-*-relr-c1-[AB]-{sd,net}[123].log` |
+| C2 (page faults on files read the missing pages around them, 64 KiB clusters, files on a partition) | worktree builds of `rpi4` b195a41e64: A without, C with haiku `c2-fault-readaround` a38b19efab (B = without the partition test, dropped) | Firefox from a BFS directory, cold first window after a card boot 14 047 ms (median of 5; 13 686–14 145); packaged Firefox 7710, WebPositive 2628; mapped files fault in at 8–10 MB/s | **8358 ms (8303–8772, −5.7 s, −40.5 %)**; packaged Firefox 7749, WebPositive 2641, Terminal 97 = (B: +486 / +163); warm, boot (cursor 5.42–5.63 s) and raw card reads unchanged; mapped files 23–32 MB/s, MD5 24/24 on every boot; x86-64 KVM: a 108 MiB library on BFS dlopen cold 550–567 → 77–88 ms | 13 card boots A×5, B×3, C×3, catall×2, 21:50–00:52; x86-64 6 + 6 KVM runs | `artifacts/uart/2026110[45]-*-c2-*.log`, `artifacts/qemu-x86/2026110[45]-23*-{c2,perf,fs,boot}-x86-*.log` |
 
 ### C0 results (2026-11-03 20:55–22:05, image-2026-11-03c, network sessions)
 
@@ -1204,6 +1207,123 @@ Pi check (network boot, `scripts/release-check.sh`): 0 problems, 0 debugger entr
 cycles clean; headless screenshots of a local page (first 9.0 s, then 3.2 s) and of https://www.haiku-os.org/ (5.2 / 4.9 s,
 a full 1366x3352 render).
 
+### C2 results: page faults on files read the missing pages around them (2026-11-04 21:50 – 11-05 01:00)
+
+**Where the cold time goes (code read, `rpi4` b195a41e64).** `fault_get_page()` (vm.cpp) reads a page missing from a
+file's cache with `cache->Read(offset, 1 vec, B_PAGE_SIZE)` → `VMVnodeCache::Read()` → `vfs_read_pages()` → the file
+system: **one 4 KiB request per page fault**, no clustering, no sequential detection. The only multi-page reads on
+the mapping path are at `mmap` time (`_vm_map_file`: an async prefetch of the first 1 MB, 67b8a53cbe, and
+`pre_map_area_pages()` of pages already cached). Upstream Haiku is the same (master's `fault_get_page`, no fault
+read-ahead commit found). Linux reads 128 KiB around a fault (centred; `VM_EXEC` 64 KiB-aligned on arm64; off after
+`mmap_miss` > 100 for a file) and FreeBSD a 16-page aligned cluster for a fault that does not follow the previous one,
+a window growing to 255 pages for sequential ones (`vm_fault_readahead`). On the card a 4 KiB read costs 0.59 ms
+(disklat, below): mapped files faulted in at **8–10 MB/s**. Packaged programs escape most of it because packagefs
+decompresses whole 64 KiB heap chunks into its own cache (`CachedDataReader`), so a fault there is a chunk read — the
+reason for C1's side finding (the same Firefox 15.6 s from BFS, 8.2 s from its package).
+
+**Images and protocol.** Worktree builds (`sources/haiku-c2`, `generated.arm64` configured with the main cross tools,
+`download/` hard-linked) of `rpi4` b195a41e64 (Firefox 157.0.1-6, DT_RELR libxul): **A** = as is, **B** = + the first
+read-around commit, **C** = + the partition test (below); each kernel-only (`vm.o`, `vnode_store.h` users). Each image
+through `scripts/c2-image.sh`: bootscript `tools/pi-tests/c2.sh`, `/boot/home/ffx` = the -6 Firefox tree as plain BFS
+files (`artifacts/relr/ffx-relr`: the same binaries as the package), `/boot/home/c2data` = 24 seeded test files (1 B to
+8 MiB, page-size edge cases, 64 MB) with their host MD5s. Per boot, after 25 s: round 1 (cold) and rounds 2–3 (warm)
+of Terminal, WebPositive, the packaged Firefox, the BFS Firefox (launchtime, first window); then every c2data file
+mapped and its pages touched in one of four orders (`tools/haiku-tests/mmapcat.c`: forward, reverse, every 7th,
+random; the mapping's MD5 against the host's; fault-in rate per order); `md5sum -c` of the same files; `disklat` raw
+card reads. Card boots by `scripts/sd-cycle.sh --flash` (SHA-256 verified, power off between, every boot the first of
+a fresh flash), A,B,A,B,A,B (21:50–23:53), then C,A,C,A,C (23:53–00:52). Table: `scripts/c2-table.py`.
+
+**Baselines (A, 5 card boots).** Terminal cold 92–99 ms; WebPositive cold 2613–2635 ms (warm 688); packaged Firefox cold
+7681–7760 ms (median 7710; warm 3080); **BFS Firefox cold 13 686–14 145 ms (median 14 047; warm 3079)**; mapped-file fault-in
+7.6–9.6 MB/s; raw reads 4 KiB 0.58–0.61 ms, 64 KiB 1.84–2.67, 128 KiB 3.31–4.05, 1 MiB 26.4–32.6 ms; loader → cursor
+5.42–5.63 s; 0 PANIC/debug_server. (The packaged cold start is 7.7 s here against §1's 8.2 s: the -6 libxul's packed
+relocations — C1's derived 0.3–0.5 s — and a different launch order, WebPositive before it; not separated.)
+
+**The decisive experiment (§6 step 2, `--mode catall`, 2 card boots of A).** Round 1 reads all files of the packaged
+Firefox with `cat` (5210 / 5211 ms), then launches it: **4511 / 4515 ms** (cold 7710, warm 3080); then the BFS tree (8669 /
+8382 ms for 277 MB), then its launch: **4332 / 4313 ms** (cold 14 047). So the packaged first start is ~3.2 s of file I/O
+and ~1.4 s of other first-start work (profile, fonts, the rest of the system), and the BFS first start ~9.7 s of I/O
+that a sequential read does in 8.5 s. **Part (ii), the trace-based package prefetch, is not worth building**: reading
+the whole package costs 5.2 s to save 3.2 s, and the first start touches about all of it (§4: ~108 MB read of a 102 MB
+package), so a replayed trace would read about as much; it could only pay as an idle-time prefetch after boot, moving
+~5 s of card reads and ~100 MB of RAM there for a launch that may not come (§3 row). Part (i) is where the gap is.
+
+**Change** (haiku branch **`c2-fault-readaround`**, one commit **a38b19efab** on `rpi4` d3cc8e3fd1, pushed, not merged;
+the same tree is the tip of `c2-readahead`, a695afd793 — that branch's c529d35fb4 squashed my two measured commits onto
+a newer `rpi4` and reverted d3cc8e3fd1's usb_disk.cpp by mistake, put back by a695afd793; land `c2-fault-readaround`).
+`fault_get_page()`: when the page is missing from a vnode cache whose file lies on a disk partition,
+`fault_read_around()` takes the run of missing pages around it inside its **64 KiB aligned cluster** (stops at a
+cached or busy page and at the end of the file), inserts them busy (the faulting page `ACTIVE`, the others `CACHED` +
+`busy_io`, as `read_into_cache()` leaves its reads), unlocks, reads them with **one** `cache->Read()`, and marks them
+unbusy (a page the cache dropped meanwhile is freed as in the file cache; a page the read did not fill before the end
+of the file is dropped). Pages for the run come from a second reservation taken with `vm_page_try_reserve_pages()`:
+**it never waits for memory**; when it fails, or the neighbours are cached, the single-page read runs unchanged. If the
+run does not bring the faulting page (an error, a short read), the fault restarts with `singlePageRead` set, so it
+reads and reports that page exactly as before. "On a partition" = the vnode cache has the device's modified page
+queue (`vfs_get_vnode_cache()` gives one exactly when `mount->partition != NULL`; new
+`VMVnodeCache::IsOnPartition()`): BFS, FAT, ext2… on a disk or image file; not packagefs, nfs4, ramfs. 64 KiB from
+disklat: a 64 KiB read costs 3.5× a 4 KiB one (2.06 vs 0.585 ms), 128 KiB 5.7×; and FreeBSD's random-fault cluster. No
+sequential growth and no waste guard in this step (one variable; the strictly sequential consumer, the 12 MB RELA
+walk, is gone with -6). +167 / −1 lines (vm.cpp, vnode_store.h).
+
+**B, read-around for every vnode cache (604ae215bc, dropped).** BFS Firefox 8631 / 8643 / 8152 ms (−5.4 s), but the
+**packaged Firefox +486 ms** (8196 / 8175 / 8216 against A's 7681–7760) and **WebPositive +163 ms** (2777–2796 against
+2613–2635), every B boot outside A's range: a file-aligned 64 KiB on packagefs usually spans two heap chunks, so a
+fault decompressed (and read) a second chunk the start may not need. Hence C.
+
+| card boots: cold first window, ms (per boot; median) | A (5) | C (3) | C − A | B (3, dropped) |
+|---|---|---|---|---|
+| **Firefox from a BFS directory** | 14047 / 14145 / 13686 / 13813 / 14097 (**14 047**) | 8358 / 8772 / 8303 (**8358**) | **−5689 (−40.5 %)** | 8631 / 8643 / 8152 (8631) |
+| Firefox, packaged | 7686 / 7760 / 7710 / 7681 / 7737 (7710) | 7747 / 7749 / 7781 (7749) | +39 (+0.5 %) | 8196 / 8175 / 8216 (8196) |
+| WebPositive | 2613 / 2621 / 2633 / 2635 / 2628 (2628) | 2641 / 2622 / 2642 (2641) | +13 (+0.5 %) | 2796 / 2791 / 2777 (2791) |
+| Terminal | 97 / 96 / 98 / 92 / 99 (97) | 98 / 96 / 97 (97) | 0 | 99 / 94 / 94 (94) |
+| warm medians (rounds 2–3): BFS Firefox / Firefox / WebPositive / Terminal | 3078.5 / 3079.5 / 687.5 / 66 | 3088 / 3084 / 681.5 / 65.5 | +0.3 / +0.1 / −0.9 / −0.8 % | 3074.5 / 3057 / 686 / 66 |
+| mapped-file fault-in, MB/s: forward / reverse / every 7th / random (per boot) | 8.3–9.6 / 8.4–9.3 / 7.6–8.3 / 8.2–8.4 | 22.9–31.7 / 27.8–28.8 / 26.5–28.9 / 27.5–32.4 | ~3.3× | 27.4–31.4 / 26.3–28.3 / 27.9–29.4 / 29.4–31.8 |
+| mapped files' MD5 = host; `md5sum -c` | 24/24 and 24/24, every boot | 24/24 and 24/24, every boot | | 24/24, every boot |
+| raw card read, mean ms: 4 KiB / 64 KiB / 1 MiB | 0.58–0.61 / 1.84–2.67 / 26.4–32.6 | 0.58–0.60 / 1.84–2.29 / 26.5–27.6 | = | 0.59–0.60 / 2.22–2.63 / 30.2–32.5 |
+| loader → desktop cursor (`boot-times.sh`), s | 5.63 / 5.63 / 5.42 / 5.42 / 5.63 | 5.63 / 5.63 / 5.42 | = | 5.63 / 5.63 / 5.62 |
+| PANIC / debug_server / KDL lines | 0 | 0 | | 0 |
+
+The raw reads of 64 KiB and up are bimodal from boot to boot (1 MiB: 26.4–27.6 or 29.3–32.6 ms) on **both** kernels
+(A boots 3–5, all three B boots): the card or its state after the flash, not the change (the raw device path does not
+touch the fault code); the 4 KiB time, which decides the fault path, is 0.58–0.61 ms on all 11.
+
+**x86-64 under KVM** (`haiku-x86-fix` worktree at a2cf89efd1 = A, + the two commits cherry-picked = B, branch
+`c2-readahead-x86` local only; the worktree switched back to `x86-fix` and rebuilt afterwards). New test group
+`tools/x86-tests/c2.sh` on a fresh BFS scratch volume (IDE): boot 1 copies the largest library of `/boot/system/lib`
+(libLLVM-12.so, 108 MiB) and the c2data files to it and restarts; boot 2: WebPositive cold/warm, `dlopentime` of the
+library from its package then of the BFS copy, the mapped-file check. A,B,A,B,A,B:
+
+| x86-64 KVM, 3 runs each | A | B |
+|---|---|---|
+| dlopen of the 108 MiB library from BFS, cold (first) | 550 / 567 / 561 ms | **79 / 77 / 77 ms** (−86 %; a trial run before: 88) |
+| the same library from its package, cold | 152–158 ms | 147–157 ms |
+| mapped-file fault-in, MB/s (4 orders) | 38–46 | 404–444 |
+| mapped files' MD5 | 24/24 ×3 | 24/24 ×4 (incl. the trial run) |
+| WebPositive cold / warm | 438–439 / 129–136 ms | 433–455 / 124–130 ms |
+| `x86-perf.sh` (perf group): kernel → desktop, first / second boot; app cold starts; dlopen libbe/libtracker/PNG | 4.49 / 4.32 s; — | 4.55 / 4.35 s (within the A ranges 4.40–4.72 / 4.29–4.34); all apps and dlopens ±noise (`x86-perf-table.py`) |
+| FS group (bfsmeta, copy + MD5, remount, fragwrite, checkfs, bfsbits), BOOT group | — | all PASS (checkfs "28 blocks could be freed", the same as A's 11-04 run) |
+
+**Correctness.** File contents never changed: every mapped c2data file matched its host MD5 in every order on every
+boot (A 5, B 3, C 3, QEMU arm64 virt 1, x86-64 7), and `md5sum -c` (read path) too; 0 PANIC, debug_server or KDL lines
+in all 13 card logs and all KVM runs. The read-around reads only pages absent from the cache, under the cache lock it
+inserted them with, so a cached or dirty page is never overwritten; errors and short reads fall back to the old path.
+Release check (network boot, `scripts/release-check.sh` on C without the bootscript, 00:52): **0 problems**, 24 launch cycles, 0 debugger entries; Firefox-1/2/3 windows
+9628 / 3079 / 3090 ms (network boot; 11-04c 9885 / 3210 / 3212, -6 9698 / 3189 / 3216).
+
+**Reading against §6 step 4.** The pass bar there (packaged first launch ≥ 1.5 s faster) was written for part (ii);
+the experiment shows (ii) cannot reach it, and part (i) does not aim at the packaged case. Scored as part (i):
+**BFS-tree cold first start −5.7 s (−40.5 %), 13× the A-to-A spread (459 ms)**; packaged Firefox +39 ms and WebPositive
++13 ms, inside A's spread (79 / 22 ms): not slower; boot unchanged; raw card rates unchanged; mapped-file contents
+unchanged; x86-64 −86 % on the same kind of load with boot and packaged starts unchanged. **Pass: ready to land as
+a38b19efab.** Who gains: every program, library or data file mapped from a disk file system — user-installed or
+built programs, Wine prefixes, non-packaged trees, mmap'ed data — on every architecture; packaged software is
+untouched. Open (not done here): (a) sequential growth of the cluster (FreeBSD's ahead window) and a Linux-style
+`mmap_miss` waste guard, if a random-access mapped workload shows wasted reads; (b) a packagefs read-around aligned
+to its heap chunks (would save fault round trips there, not card time); (c) the 1.4 s of non-I/O work in the
+packaged first start; (d) the bimodal raw card read times. Images deleted after the run; mega23 put back on the card
+(01:16, `20261105-005552-mega23-restore.log`: MEGA end, 0 PANIC, hrev60314+273).
+
 ## 7. Still unmeasured, in one list
 
 - (Measured by C0 on 11-03, §6 "C0 results": the desktop-session profile and its pmustat figures, the network-boot
@@ -1214,8 +1334,9 @@ a full 1366x3352 render).
 - The fraction of Firefox's package a first launch touches, and the order's stability (C2).
 - (Cold-card effect of DT_RELR from a BFS tree: measured 11-04, §6 "C1 results".) The same cold A/B with Firefox
   **as a package** (packagefs read-ahead): only derived (~0.3–0.5 s); and the page-cache footprint of the relocation pages.
-- BFS page-in of a big application tree with no read-ahead on faults: Firefox's tree from `/boot/home` cold 15.6 s against
-  8.2 s from its package (C1 results) — input for C2.
+- (BFS page-in of a big application tree with no read-ahead on faults: measured and fixed by C2, §6 "C2 results".) Open
+  from C2: sequential growth of the fault cluster and a waste guard (Linux's `mmap_miss`); read-around on packagefs aligned
+  to its 64 KiB heap chunks; why the card's raw 64 KiB–1 MiB reads take 25 % longer on some boots (both kernels).
 - Today's boot phase table (C3).
 - Which Wine games are CPU-bound; any per-setting Box64/FEX game rate (C9).
 - The stage-6 re-run after `stage6-keying` (C10, owned by F2) and MediaPlayer's per-frame RGB32 conversion cost.
@@ -1241,5 +1362,6 @@ a full 1366x3352 render).
 | Wine | `tools/pi-tests/prefix-timeline.sh`, `x86-cpubench.sh`, `wine-games.sh`; `tools/wine-tests/cpubench.c`, `prefix-timeline.py` |
 | Firefox | `tools/pi-tests/firefox-video.sh`, `ffstall.sh`, `ffv-prof.sh`, `firefox-start-loop.sh` |
 | DT_RELR | `tools/pi-tests/relr.sh`, `scripts/relr-image.sh`, `artifacts/relr/` |
+| Cold starts, page-fault read-around (C2) | `scripts/c2-image.sh [--mode launch\|catall] IMG OUT` (bootscript `tools/pi-tests/c2.sh`: cold + warm Terminal, WebPositive, packaged and BFS-tree Firefox; `tools/haiku-tests/mmapcat.c` fault-in rates + MD5 of mapped files; disklat) → `scripts/sd-cycle.sh --flash OUT --secs 900 --until 'C2 end'` → `scripts/c2-table.py --a LOGS --b LOGS`; x86-64: `tools/x86-tests/c2.sh` (`scripts/x86-test.sh c2 IMG --scratch S --file artifacts/c2/x86/c2data.tar:/boot/home/x86t/c2data.tar`) |
 | Python | `tools/pi-tests/python.sh` |
 | Process / thread / memory | `tools/haiku-tests/forkbench.c`, `membench.c`, `tlsbench.c`, `threadstack.sh` |

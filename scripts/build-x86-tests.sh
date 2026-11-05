@@ -72,6 +72,7 @@ try keyinject cxx -O2 -I "$priv/app" -o "$out/keyinject" "$t/keyinject.cpp" -lbe
 try tswatch cxx -O2 -o "$out/tswatch" "$t/tswatch.cpp" -lmedia -lbe
 try systime cc -O2 -o "$out/systime" "$t/systime.c"
 try dlopentime cc -O2 -o "$out/dlopentime" "$t/dlopentime.c"
+try mmapcat cc -O2 -o "$out/mmapcat" "$t/mmapcat.c"
 try resolvetime cc -O2 -o "$out/resolvetime" "$t/resolvetime.c" -lnetwork
 # DBG
 for v in 4 5; do
