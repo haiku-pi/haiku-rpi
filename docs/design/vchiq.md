@@ -339,7 +339,17 @@ offsets/pitches (`buffer->type->video`: pitch 1920/960/960, offsets 0/2088960/26
 equal ffmpeg's **exactly where no decoded sample is below 16** (297 of 300 frames of the in-range clip; the three
 others and every frame of the noisy clips have such samples); with every ffmpeg sample `v` in 1…15 replaced by
 `v − 1` (0 stays 0, 16…255 unchanged), **all 900 frames are equal**. So the decoded picture is the same; the
-I420 output differs by one code value in the footroom below video black. (Where this happens is §7.5.)
+I420 output differs by one code value in the footroom below video black.
+
+**Where: the firmware's output stage, not the decoding.** Frame 0 of the 720p stream written by the decoder as
+SAND (`-f SAND`: the column format the VideoCore decodes into, 128-byte columns of 1080 lines — 720 of Y, then
+360 of interleaved UV —, `pitch[0]` 138240 = the column stride, UV at 92160), as NV12 and as I420, compared with
+ffmpeg's frame 0 on the host: Y identical in all three (no Y sample below 16 in that frame); U and V differ in
+exactly the samples whose value is 1…15 (17 542 and 18 415 of them), each by −1, identically in all three formats.
+So the mapping is there in the decoder's own format already, and it is not in the reconstruction: a −1 in the
+reference pictures would drift through the P and B frames, and every frame of the three streams is otherwise
+exact. The firmware clamps/offsets the footroom when it writes a picture out; no MMAL parameter for it is known.
+For playback it is invisible (values below 16 are blacker than black and clipped on display).
 
 ### 7.5 Limits and open points
 
