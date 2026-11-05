@@ -11,7 +11,7 @@ HOMEPAGE="https://github.com/raspberrypi/userland"
 COPYRIGHT="2010-2024 Broadcom Europe Ltd
 	2015-2024 Raspberry Pi (Trading) Ltd"
 LICENSE="Raspberry Pi userland"
-REVISION="1"
+REVISION="2"
 srcGitRev="a54a0dbb2b8dcf9bafdddfc9a9374fb51d97e976"
 SOURCE_URI="https://github.com/raspberrypi/userland/archive/$srcGitRev.tar.gz"
 CHECKSUM_SHA256="e977277a280d76fdb6fc8c8f8c43d6e93aea29565253bf07f8d2b3356116c2fc"

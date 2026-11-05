@@ -15,7 +15,13 @@ docs/design/vchiq.md, step 3).
                avctx->extradata; a log line when the decoder is set up and one
                with the frame and packet counts when it is closed; the comma
                missing after caps_internal in FFMMAL_DEC (6.1 does not compile
-               it)
+               it); extra_buffers 2 instead of 10 (the VideoCore's memory, 76 MB
+               on the Pi 4, holds no more: the decoder fails with ENOSPC and
+               outputs empty frames); after an error event, or 2 s without a
+               frame it owed, receive_frame() returns AVERROR_EXTERNAL from then
+               on (the caller falls back to the software decoder) instead of
+               logging every packet's error; a single 100 ms wait without a
+               frame is no error
 
 LGPL-2.1-or-later, as the files it changes.
 
@@ -53,7 +59,13 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  #include "codec_internal.h"
  #include "decode.h"
  #include "hwconfig.h"
-@@ -93,6 +96,8 @@
+@@ -89,10 +92,14 @@
+ 
+     int64_t packets_sent;
+     atomic_int packets_buffered;
++    atomic_int error;       // an MMAL_EVENT_ERROR's status: the decoder stops
++    int stalls;             // waits for a frame in a row that timed out
+     int64_t frames_output;
      int eos_received;
      int eos_sent;
      int extradata_sent;
@@ -62,7 +74,25 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      int interlaced_frame;
      int top_field_first;
  } MMALDecodeContext;
-@@ -187,8 +192,11 @@
+@@ -101,6 +108,10 @@
+ // packets (where each packet contains 1 frame).
+ #define MAX_DELAYED_FRAMES 16
+ 
++// A decoder that has given no frame for this many waits of 100 ms while it
++// should have is taken to have failed (end of stream when draining).
++#define MAX_STALLS 20
++
+ static void ffmmal_poolref_unref(FFPoolRef *ref)
+ {
+     if (ref &&
+@@ -181,14 +192,18 @@
+     av_assert0(atomic_load(&ctx->packets_buffered) == 0);
+ 
+     ctx->frames_output = ctx->eos_received = ctx->eos_sent = ctx->packets_sent = ctx->extradata_sent = 0;
++    ctx->stalls = 0;
+ }
+ 
+ static av_cold int ffmmal_close_decoder(AVCodecContext *avctx)
  {
      MMALDecodeContext *ctx = avctx->priv_data;
  
@@ -75,7 +105,18 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  
      mmal_component_destroy(ctx->decoder);
      ctx->decoder = NULL;
-@@ -360,7 +368,9 @@
+@@ -230,8 +245,10 @@
+     MMAL_STATUS_T status;
+ 
+     if (buffer->cmd == MMAL_EVENT_ERROR) {
++        MMALDecodeContext *ctx = avctx->priv_data;
+         status = *(uint32_t *)buffer->data;
+         av_log(avctx, AV_LOG_ERROR, "MMAL error %d on control port\n", (int)status);
++        atomic_store(&ctx->error, status ? (int)status : MMAL_EIO);
+     } else {
+         av_log(avctx, AV_LOG_WARNING, "Unknown MMAL event %s on control port\n",
+                av_fourcc2str(buffer->cmd));
+@@ -360,7 +377,9 @@
  
      ctx->pkt = avctx->internal->in_pkt;
  
@@ -85,7 +126,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  
      if (mmal_vc_init()) {
          av_log(avctx, AV_LOG_ERROR, "Cannot initialize MMAL VC driver!\n");
-@@ -448,6 +458,8 @@
+@@ -448,6 +467,8 @@
      if ((status = mmal_component_enable(decoder)))
          goto fail;
  
@@ -94,7 +135,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      return 0;
  
  fail:
-@@ -499,8 +511,10 @@
+@@ -499,8 +520,10 @@
          buf  = avpkt->buf;
          data = avpkt->data;
          size = avpkt->size;
@@ -106,7 +147,30 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      } else {
          if (ctx->eos_sent)
              goto done;
-@@ -750,6 +764,7 @@
+@@ -696,10 +719,21 @@
+             // in this unlikely situation.
+             buffer = mmal_queue_timedwait(ctx->queue_decoded_frames, 100);
+             if (!buffer) {
++                // One miss is not an error (the caller sends more packets);
++                // a decoder that stopped is one.
++                if (++ctx->stalls < MAX_STALLS)
++                    goto done;
++                if (ctx->eos_sent) {
++                    av_log(avctx, AV_LOG_WARNING, "No end of stream from MMAL.\n");
++                    ctx->eos_received = 1;
++                    goto done;
++                }
+                 av_log(avctx, AV_LOG_ERROR, "Did not get output frame from MMAL.\n");
+-                ret = AVERROR_UNKNOWN;
++                atomic_store(&ctx->error, MMAL_EIO);
++                ret = AVERROR_EXTERNAL;
+                 goto done;
+             }
++            ctx->stalls = 0;
+         } else {
+             buffer = mmal_queue_get(ctx->queue_decoded_frames);
+             if (!buffer)
+@@ -750,6 +784,7 @@
          }
  
          ctx->frames_output++;
@@ -114,7 +178,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
  
          if ((ret = ffmal_copy_frame(avctx, frame, buffer)) < 0)
              goto done;
-@@ -773,9 +788,12 @@
+@@ -773,9 +808,18 @@
      int ret = 0;
      int got_frame = 0;
  
@@ -124,13 +188,30 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
 +    // The parameter sets as the bitstream filter outputs them: Annex-B, also
 +    // for an "avcC" record (MP4, Matroska), as the packets.
 +    const AVCodecParameters *par = avctx->internal->bsf->par_out;
++
++    // After an error event the decoder gives nothing more (its caller can
++    // fall back to a software decoder)
++    if (atomic_load(&ctx->error))
++        return AVERROR_EXTERNAL;
++
 +    if (par->extradata_size && !ctx->extradata_sent) {
 +        avpkt->data = par->extradata;
 +        avpkt->size = par->extradata_size;
          ctx->extradata_sent = 1;
          if ((ret = ffmmal_add_packet(avctx, avpkt, 1)) < 0)
              return ret;
-@@ -830,7 +848,7 @@
+@@ -818,7 +862,9 @@
+ };
+ 
+ static const AVOption options[]={
+-    {"extra_buffers", "extra buffers", offsetof(MMALDecodeContext, extra_buffers), AV_OPT_TYPE_INT, {.i64 = 10}, 0, 256, 0},
++    // (the VideoCore's memory on the Raspberry Pi 4 - 76 MB by default - holds
++    // no more at 1080p: with more the decoder fails with ENOSPC)
++    {"extra_buffers", "extra buffers", offsetof(MMALDecodeContext, extra_buffers), AV_OPT_TYPE_INT, {.i64 = 2}, 0, 256, 0},
+     {"extra_decoder_buffers", "extra MMAL internal buffered frames", offsetof(MMALDecodeContext, extra_decoder_buffers), AV_OPT_TYPE_INT, {.i64 = 10}, 0, 256, 0},
+     {NULL}
+ };
+@@ -830,7 +876,7 @@
      .version    = LIBAVUTIL_VERSION_INT,
  };
  
@@ -139,7 +220,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
      const FFCodec ff_##NAME##_mmal_decoder = { \
          .p.name         = #NAME "_mmal", \
          CODEC_LONG_NAME(#NAME " (mmal)"), \
-@@ -840,10 +858,11 @@
+@@ -840,10 +886,11 @@
          .init           = ffmmal_init_decoder, \
          .close          = ffmmal_close_decoder, \
          FF_CODEC_RECEIVE_FRAME_CB(ffmmal_receive_frame), \
@@ -152,7 +233,7 @@ diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
          .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_MMAL, \
                                                           AV_PIX_FMT_YUV420P, \
                                                           AV_PIX_FMT_NONE}, \
-@@ -851,7 +870,7 @@
+@@ -851,7 +898,7 @@
          .p.wrapper_name = "mmal", \
      };
  

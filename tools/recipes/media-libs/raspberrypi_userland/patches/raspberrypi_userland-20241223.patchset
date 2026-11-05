@@ -1,7 +1,7 @@
-From ea17b45d2e79d15629dee9d31a522a8df0312fed Mon Sep 17 00:00:00 2001
+From 82ba1a6fc2a865459528d830902db60312e638c5 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:23:23 +0100
-Subject: [PATCH 1/7] vcos: initialise the pthread_once_t controls with
+Subject: [PATCH 1/8] vcos: initialise the pthread_once_t controls with
  VCOS_ONCE_INIT
 
 current_thread_key_once and cmd_globals.initialized relied on a zeroed
@@ -43,10 +43,10 @@ index 77ce58c..02030e7 100644
 2.53.0
 
 
-From e0d221710a6e469655031ea2ed8d19adea79c438 Mon Sep 17 00:00:00 2001
+From fa5e55c1f7c763c9efa09ee605eefbc5b9d58851 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:23:23 +0100
-Subject: [PATCH 2/7] vchiq_arm: don't shadow the global vchiq_lib_mutex
+Subject: [PATCH 2/8] vchiq_arm: don't shadow the global vchiq_lib_mutex
 
 vchiq_lib_init() created a function-local static vchiq_lib_mutex, so the
 file-scope one that vchiq_close_service(), alloc_msgbuf() etc. lock was
@@ -72,10 +72,10 @@ index 133d5ca..40adab9 100755
 2.53.0
 
 
-From 9f798343ad9ac32a9788f1f7956cf7dbc760cb7e Mon Sep 17 00:00:00 2001
+From fc0d32cb61c7e089f9014c3278e7ed04ec03bf0b Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:23:32 +0100
-Subject: [PATCH 3/7] Haiku support for VCOS, libvchiq and the MMAL VideoCore
+Subject: [PATCH 3/8] Haiku support for VCOS, libvchiq and the MMAL VideoCore
  client
 
 - the ioctl numbers from <sys/ioccom.h> (Haiku's /dev/vchiq uses the BSD
@@ -151,10 +151,10 @@ index 02030e7..e664c95 100644
 2.53.0
 
 
-From 24470cdc0a283bb5b3ad171527b7accb5dfe3cb9 Mon Sep 17 00:00:00 2001
+From 9538a4dacab170189bc5d5473b922c7f72733f32 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:34:46 +0100
-Subject: [PATCH 4/7] vchiq_arm: 64-bit clean
+Subject: [PATCH 4/8] vchiq_arm: 64-bit clean
 
 vchiq_dump_phys_mem() took the service handle for a pointer, which it is
 not (find_service_by_handle() maps it, as everywhere else); the trace
@@ -202,10 +202,10 @@ index 40adab9..098667f 100755
 2.53.0
 
 
-From 285985c6a62171f3cce301e537a21013398d92be Mon Sep 17 00:00:00 2001
+From 60ddfe3847fe6ad132b6b8b5353b97caa8e8daf8 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:29:45 +0100
-Subject: [PATCH 5/7] mmal: the VideoCore's message layout on 64-bit hosts
+Subject: [PATCH 5/8] mmal: the VideoCore's message layout on 64-bit hosts
 
 The MMAL service on the VideoCore parses its messages with the layout they
 have on a 32-bit ARM host, which is why the CMake build leaves MMAL out on
@@ -1197,10 +1197,10 @@ index 343922b..cea7a7f 100644
 2.53.0
 
 
-From ffcab963a2899aefe761bca18aa4152ea9099963 Mon Sep 17 00:00:00 2001
+From a24b73e2c26ea27dea26fcd2e4eef92b1f53e732 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 10:29:45 +0100
-Subject: [PATCH 6/7] Haiku: a Makefile for VCOS, libvchiq and MMAL's VideoCore
+Subject: [PATCH 6/8] Haiku: a Makefile for VCOS, libvchiq and MMAL's VideoCore
  client
 
 makefiles/haiku/Makefile builds libvcos, libvchiq_arm, libmmal_core,
@@ -1318,10 +1318,10 @@ index 0000000..61a4ffc
 2.53.0
 
 
-From 5273c3d496a9fa3c4b1f6c8eb324553598e35227 Mon Sep 17 00:00:00 2001
+From 9fced5f4dfcf9baf8dbfd88fb72b33e87ae81872 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
 Date: Thu, 5 Nov 2026 19:24:03 +0100
-Subject: [PATCH 7/7] mmal: take refcount_lock in mmal_vc_shm_exit()
+Subject: [PATCH 7/8] mmal: take refcount_lock in mmal_vc_shm_exit()
 
 mmal_vc_shm_exit() unlocked refcount_lock without having locked it,
 so two components destroyed at once could race on the count and the
@@ -1345,6 +1345,112 @@ index aa81309..407d0f7 100644
     if (mmal_vc_shm_initialised <= 0)
        goto unlock;
  
+-- 
+2.53.0
+
+
+From 89ccab8f9240d6739883a619678dc33753f865f2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 5 Nov 2026 20:46:29 +0100
+Subject: [PATCH 8/8] mmal: wait for the VideoCore's replies for 5 s at most
+
+mmal_vc_sendwait_message() waited for a reply for good (its FIXME), so a
+VideoCore that stopped answering (seen after its decoder failed with ENOSPC)
+hung its client, also while the client closed its components. After 5 s the
+call now fails with MMAL_EIO and abandons its waiter; the reply handler drops
+a reply that comes later (the sender's destination is gone) and releases the
+waiter. The two sides decide under the client's lock.
+---
+ interface/mmal/vc/mmal_vc_client.c | 41 +++++++++++++++++++++++++-----
+ 1 file changed, 35 insertions(+), 6 deletions(-)
+
+diff --git a/interface/mmal/vc/mmal_vc_client.c b/interface/mmal/vc/mmal_vc_client.c
+index 3a61a3b..09ee1b3 100644
+--- a/interface/mmal/vc/mmal_vc_client.c
++++ b/interface/mmal/vc/mmal_vc_client.c
+@@ -55,6 +55,7 @@ typedef struct MMAL_WAITER_T
+ {
+    VCOS_SEMAPHORE_T sem;
+    unsigned inuse;
++   unsigned abandoned;           /**< Its sender stopped waiting: the reply handler releases it */
+    void *dest;                   /**< Where to write reply */
+    size_t destlen;               /**< Max length for reply */
+ } MMAL_WAITER_T;
+@@ -210,6 +211,7 @@ static MMAL_STATUS_T create_waitpool(MMAL_WAITPOOL_T *waitpool)
+    for (i=0; i<MAX_WAITERS; i++)
+    {
+       waitpool->waiters[i].inuse = 0;
++      waitpool->waiters[i].abandoned = 0;
+       status = vcos_semaphore_create(&waitpool->waiters[i].sem,
+                                      "mmal waiter", 0);
+       if (status != VCOS_SUCCESS)
+@@ -239,6 +241,9 @@ static void destroy_waitpool(MMAL_WAITPOOL_T *waitpool)
+    vcos_semaphore_delete(&waitpool->sem);
+ }
+ 
++/** How long mmal_vc_sendwait_message() waits for the VideoCore's reply */
++#define MMAL_VC_REPLY_TIMEOUT_MS 5000
++
+ /** Grab a waiter from the pool. Return immediately if one already
+   * available, or wait for one to become available.
+   */
+@@ -562,12 +567,24 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+                vchiq_release_message(service, vchiq_header);
+                break;
+             }
++            /* under the client's lock: mmal_vc_sendwait_message() gives up on a waiter under it */
++            vcos_mutex_lock(&client.lock);
++            if (waiter->abandoned)
++            {
++               waiter->abandoned = 0;
++               vcos_mutex_unlock(&client.lock);
++               LOG_ERROR("reply %u came after its sender stopped waiting: dropped", msg->msgid);
++               vchiq_release_message(service, vchiq_header);
++               release_waiter(&client, waiter);
++               break;
++            }
+             int len = vcos_min(waiter->destlen, vchiq_header->size);
+             waiter->destlen = len;
+             LOG_TRACE("copying payload @%p to %p len %d", waiter->dest, msg, len);
+             memcpy(waiter->dest, msg, len);
+             vchiq_release_message(service, vchiq_header);
+             vcos_semaphore_post(&waiter->sem);
++            vcos_mutex_unlock(&client.lock);
+          }
+       }
+       break;
+@@ -749,13 +766,25 @@ MMAL_STATUS_T mmal_vc_sendwait_message(struct MMAL_CLIENT_T *client,
+       }
+    }
+ 
+-   /* now wait for the reply...
+-    *
+-    * FIXME: we could do with a timeout here. Need to be careful to cancel
+-    * the semaphore on a timeout.
+-    */
++   /* now wait for the reply, for a while: a VideoCore that does not answer must not hang its client (an
++    * application closing its decoder) for good. The waiter is then abandoned: the reply handler drops a late
++    * reply and releases it. */
+    /* coverity[lock] This semaphore isn't being used as a mutex */
+-   vcos_semaphore_wait(&waiter->sem);
++   if (vcos_semaphore_wait_timeout(&waiter->sem, MMAL_VC_REPLY_TIMEOUT_MS) != VCOS_SUCCESS)
++   {
++      MMAL_BOOL_T replied;
++      vcos_mutex_lock(&client->lock);
++      replied = vcos_semaphore_trywait(&waiter->sem) == VCOS_SUCCESS;
++      if (!replied)
++         waiter->abandoned = 1;
++      vcos_mutex_unlock(&client->lock);
++      if (!replied)
++      {
++         LOG_ERROR("no reply to message %u in %d ms", msgid, MMAL_VC_REPLY_TIMEOUT_MS);
++         mmal_vc_release_internal(client);
++         return MMAL_EIO;
++      }
++   }
+ 
+    mmal_vc_release_internal(client);
+    LOG_TRACE("got reply (len %i/%i)", (int)*destlen, (int)waiter->destlen);
 -- 
 2.53.0
 

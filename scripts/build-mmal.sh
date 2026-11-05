@@ -12,7 +12,8 @@
 #    against the unpatched source's 32-bit layout (external/userland at the recipe's commit);
 # 3. tools/haiku-tests/mmal-h264.c -> artifacts/mmal/mmal-h264, with the libraries in artifacts/mmal/lib for a test
 #    session (tools/pi-tests/mmal.sh copies and runs them: LIBRARY_PATH);
-# --package: scripts/package-port.py -> artifacts/mmal/packages/raspberrypi_userland{,_devel}-20241223-1-arm64.hpkg
+# --package: scripts/package-port.py -> artifacts/mmal/packages/raspberrypi_userland{,_devel}-20241223-REV-arm64.hpkg
+#    (REV: the recipe's REVISION; 2 = patch 8, the bounded reply wait)
 #    (moved out of the published artifacts/packages/; package-port.py also extracts both into the sysroot's boot/system);
 # --clips: the test streams artifacts/mmal/clips/<name>.h264 (the host's ffmpeg + libx264: synthetic pictures with
 #    noise, High profile, B-frames, Annex-B; one of them without samples outside the video range), ffmpeg's software
@@ -62,10 +63,12 @@ inc="$work/install/boot/system/non-packaged/develop/headers/raspberrypi_userland
 echo "build-mmal: $out/mmal-h264, $out/lib/ (userland $(echo "$rev" | cut -c1-12) + patchset)"
 
 if $package; then
-	"$root/scripts/package-port.py" "$recipe" --revision 1
+	revision="$(sed -n 's/^REVISION="\(.*\)"$/\1/p' "$recipe")"
+	"$root/scripts/package-port.py" "$recipe" --revision "$revision"
 	# out of artifacts/packages/ (what publish-repo.sh publishes) while the VCHIQ driver is on an unmerged branch
 	mkdir -p "$out/packages"
-	mv "$root"/artifacts/packages/raspberrypi_userland{,_devel}-20241223-1-arm64.hpkg "$out/packages/"
+	rm -f "$out"/packages/raspberrypi_userland{,_devel}-20241223-*-arm64.hpkg
+	mv "$root"/artifacts/packages/raspberrypi_userland{,_devel}-20241223-"$revision"-arm64.hpkg "$out/packages/"
 	echo "build-mmal: packages in $out/packages/"
 fi
 
