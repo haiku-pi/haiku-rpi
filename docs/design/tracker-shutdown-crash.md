@@ -161,11 +161,81 @@ directly in a day of bench time; the evidence for the fix is the mechanism (iden
 
 - Tracker's quit took up to 3.6 s in the crash run (the fault came 3.6 s after `shutdown -r`); how long it
   normally takes on a first boot was not measured (the dropped poller above).
-- The respawn storm in the crash run: from the fault on, launch_daemon restarted package_daemon every
-  ~0.2 s for 350 s, each start failing "failed to init server application: System shutting down". launch_daemon
-  restarts a service only when `IsShutDownInProgress()` fails or says no (`src/servers/launch/LaunchDaemon.cpp:587`);
-  the registrar answers `fShutdownProcess != NULL` (`src/servers/registrar/Registrar.cpp:435`), which should have
-  been true while the shutdown window stood. Not seen in any clean shutdown; not explained.
+- ~~The respawn storm in the crash run~~: explained and fixed, see the next section.
 - libbe's static objects destroyed under running loopers (above).
 - `bfs: Could not find value in index "size"!` / `"last_modified"` at the final sync (also in QEMU): not looked at
   (renkuos-fixes.md Open).
+
+## launch_daemon restart loop during the shutdown (2026-11-05)
+
+In the crash run, from 0.2 s after the fault (72.665 s) to the end of the log (420.08 s), the serial log has 3043
+`package_daemon: ... failed to init server application: System shutting down` lines: package_daemon was started
+again every 0.114 s (its own timestamps; the log's 0.2 s granularity made it look like "every 0.2 s"), for as
+long as the crash alert held the shutdown.
+
+**Verdict: a bug, upstream's (hrev60314 has the same code; we only changed the environment pipe in
+`LaunchDaemon.cpp`). The system launch_daemon's "don't restart during a shutdown" check (upstream 0749734769,
+2019) never works: it cannot reach the registrar, so the check fails and every system service that ends during a
+shutdown is started again. Fixed on branch `launch-restart-loop` (f49813a540).**
+
+Why package_daemon ended: it was **told to quit**, not a crash. It lives in `/boot/system/servers`, so the registrar
+counts it as a system app (`TRoster::_IsSystemApp()`, `src/servers/registrar/TRoster.cpp:1849`) and asks it to quit
+in the system-app phase (`ShutdownProcess.cpp:1385`), after `fRoster->SetShuttingDown(true)` (`:1381`). Every
+restarted package_daemon then fails to register (`TRoster.cpp:191`, `B_SHUTTING_DOWN`), prints the line
+(`src/servers/package/PackageDaemon.cpp:291`) and exits, and the launch_daemon starts it again.
+
+Why the launch_daemon restarted it: the check at `src/servers/launch/LaunchDaemon.cpp:583-592` builds a `BRoster`
+and asks `IsShutDownInProgress()`; any error counts as "no shutdown". In the **system** launch_daemon (which owns
+package_daemon and the other system services) that BRoster has no messenger:
+
+1. `BRoster::_InitMessenger()` finds the registrar by asking the launch_daemon for its launch data
+   (`src/kits/app/Roster.cpp:2692`, `BLaunchRoster().GetData(B_REGISTRAR_SIGNATURE)`).
+2. `BLaunchRoster` gets the launch_daemon's port from `get_launch_daemon_port()`, which returns -1 when the
+   caller is the launch_daemon's main thread, so that it does not wait on itself
+   (`src/system/libroot/os/launch.cpp:24`). `MessageReceived()` runs on that thread.
+3. So the request fails, `_IsShutDownInProgress()` (`Roster.cpp:1355`) sends on an invalid messenger
+   (`B_BAD_PORT_ID`), and `_LaunchJob(job)` runs (`LaunchDaemon.cpp:591`). The constructor even says so:
+   `SetWithoutRegistrar(true)` with "We may not be able to talk to the registrar" (`:381`).
+
+It is not the registrar being stuck behind the alert: its main looper answers `B_REG_IS_SHUT_DOWN_IN_PROGRESS`
+itself (`Registrar.cpp:251`, `:435`) and `fShutdownProcess` stays set while the shutdown window stands. The user
+(session) launch_daemon is a different team, so its BRoster works and its check does.
+
+Why it was seen only once: the loop runs only between package_daemon's quit (system-app phase) and the phase that
+SIGTERMs and kills every non-vital team, the launch_daemon included (`_QuitNonApps()`, `ShutdownProcess.cpp:1395`,
+`:1728`). In a clean shutdown that is well under a second, and none of the clean Pi logs has a single
+"System shutting down" line. Only a shutdown that waits there (here `_WaitForDebuggedTeams()` after the
+system-app phase, on Tracker's crash alert) makes it visible. It wastes CPU while the user looks at the alert;
+it does not stop the shutdown.
+
+### Reproduction (x86-64 KVM)
+
+`tools/x86-tests/shutdown-respawn.sh` (UserBootscript for `scripts/qemu-x86.sh`; `tools/haiku-tests/teamcrash.c`
+for the guard mode). Images: ours unfixed = `artifacts/x86-images/rpi4-a779571e90.iso`, upstream = hrev60314
+(`sources/haiku-x86-up`), fixed = `sources/haiku-x86` at f49813a540 (`rpi4` a38b19efab + the fix). Logs in
+`artifacts/qemu-x86/2026110[5]-*-{resp,resploop,respguard,respe,rlk,rlxt,rlxtr,rstop4}-*.log`.
+
+- **guard** (deterministic): a crash 1 s into `shutdown -r` holds the shutdown at its alert; package_daemon is
+  killed 10 s later. Unfixed, the launch_daemon starts a new package_daemon every time: ours 2/2, upstream 2/2
+  (`rlk-rpi4`, `respe-old`, `rlk-up`, `respe-up`). Fixed: 0/2 (`respe-fix`, `respguard-fix`).
+- **loop** (the Pi symptom): net_server, mount_server, syslog_daemon and power_daemon stopped with SIGSTOP, then
+  `shutdown -r`; the registrar waits 3 s for each in the system-app phase. When package_daemon was asked to quit
+  before them, the loop runs (about every 25 ms here): ours unfixed 3/4 runs (273, 259, 1067 lines), upstream 2/4
+  (692, 524). Fixed: 0/6 runs with any line (chance at the unfixed 5/8 rate: (3/8)^6 ≈ 0.003). The runs without
+  a line are probably those where package_daemon came after the stopped servers in the quit order (registration
+  order), not traced.
+- The same loop with a crash alert as on the Pi: ours (`rlxt-rpi4`, 331 lines; `rlxp-rpi4`, 1562) and upstream
+  (`rlxtr-up`, 1294), each in some of the runs (the alert must reach the registrar before the system-app phase
+  ends).
+- Regression check, fixed image: package_daemon killed with no shutdown is started again at once, and a clean
+  `shutdown -r` completes (`rnorm-fix`).
+
+### Fix (haiku branch `launch-restart-loop`: f49813a540 on `rpi4` a38b19efab, pushed to `origin`, not merged)
+
+`launch_daemon: don't restart system services during a shutdown` — `LaunchDaemon::_IsShutDownInProgress()`: the
+user launch_daemon keeps the BRoster question; the system launch_daemon asks the registrar directly, at the port
+of its own registrar job (`FindJob(get_leaf(B_REGISTRAR_SIGNATURE))`, `Team()`/`DefaultPort()` — the same port the
+launch data hands to BRoster), with a 1 s send and reply timeout: the registrar asks the launch_daemon for its
+ports while it starts (`AuthenticationManager.cpp:752`, from `Registrar::ReadyToRun()`), so an unbounded wait
+there could deadlock both if a service ended in that window. On a timeout or error the service is restarted, as
+before. Compiles for arm64 (`scripts/arm64-compile-check.sh`) and x86_64 (warnings unchanged).
