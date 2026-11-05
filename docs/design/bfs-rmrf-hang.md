@@ -96,8 +96,10 @@ The cycle, with G and F two files of the directory being removed:
 in the block cache, not written through `bfs_io()`, so the reader is the file's. The stack offset `+0x99` fits the
 second call.)
 
-Even without the cycle, a transaction in the notifier is wrong: a full log makes `Transaction::Start()` flush it and
-wait for block writes to the same device, which this same thread would have to notify.
+Even without the cycle, a transaction in the notifier is costly: only requests with callbacks go through the notifier
+(`IOSchedulerSimple.cpp:421-431`; the block cache's plain writes are notified inline), so it cannot wait for itself,
+but while it waits for the journal, or for a log flush when the log is full, every callback-bearing request of that
+device (page writer transfers, file-cache reads and writes) waits behind it.
 
 Why it is upstream's and not ours: the hook, the reference and the notification order are upstream code; none of our
 commits touches `bfs/kernel_interface.cpp`, `IORequest::NotifyFinished()`'s order or `dec_vnode_ref_count()` (our
