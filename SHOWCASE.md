@@ -185,8 +185,8 @@ register is [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md); the main open points (
   SD card, a 720p H.264 clip plays with 0 of 300 dropped).
 - **Display planes** (new in image-2026-11-03c): an overlay stays black after a mode change, and full-screen GL
   on a plane is 1–2 % slower than a copy in two games at 1080p.
-- No hardware H.264 decoding (on the BCM2711 that is VideoCore firmware; a BSD-licensed route is planned
-  last); desktop OpenGL stops at 2.1 (OpenGL ES 3.1 is there); HDMI audio only on the first port, with the
+- Hardware H.264 decoding only in MediaPlayer and WebPositive, one 1080p stream at a time (Firefox decodes
+  H.264 on the CPU); desktop OpenGL stops at 2.1 (OpenGL ES 3.1 is there); HDMI audio only on the first port, with the
   monitor connected at boot.
 - Windows programs: x86 memory ordering under Box64's defaults, and two game demos that crash (Unreal
   Tournament's OpenGL renderer, Need for Speed's races).

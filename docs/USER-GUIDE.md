@@ -398,9 +398,11 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
 
 - HEVC **Main** and **Main 10**, 4:2:0, 32 to 4096 pixels per side. Range extensions and screen
   content coding are not supported by the block.
-- **H.264 is decoded on the CPU.** On the Pi 4 the H.264 hardware sits behind the VideoCore
-  firmware, which this port does not drive. The CPU is fast enough for files: FFmpeg decodes 300
-  frames of 1080p H.264 in 2.9 s on four threads, several times real time (2026-10-20).
+- **H.264 is decoded by the VideoCore** in MediaPlayer and WebPositive (from image-2026-11-05c): the
+  media kit's ffmpeg plugin uses `h264_mmal` and falls back to the CPU when the hardware decoder
+  cannot open (a second 1080p player, for one) or fails. 1080p30 in MediaPlayer takes 88 % of a core with
+  every frame on time (159 % and mostly late on the CPU). `FFMPEG_H264_MMAL=0` forces the CPU decoder.
+  Firefox decodes H.264 on the CPU (KNOWN-ISSUES P2).
 - MediaPlayer converts every decoded frame to RGB on the CPU before showing it (the ffmpeg plugin delivers
   B_RGB32). From image-2026-11-03c the RGB frames are shown on a display plane (scaled by the display hardware,
   no copy by app_server); YCbCr frames and showing the decoder's output without a copy are future work

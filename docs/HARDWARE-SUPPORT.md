@@ -77,7 +77,7 @@ before this port, and the rpi4 branch carries fixes to it (named by their commit
 | Component | Haiku driver | Status | Measured (date) | Limitations / missing |
 |---|---|---|---|---|
 | HEVC decoder block (`codec@7eb10000`) | `drivers/video/rpivid` (`/dev/video/rpivid/0`) + libavcodec `hevc_rpivid` (ffmpeg6 6.1.6-3, `patches/ffmpeg6/`) | ✅ | 9 test streams, 2324 pictures, all bit-exact against FFmpeg's CPU decoder. 1080p 20 Mbit/s: **114.8 fps** at 4.0 ms of CPU per frame (CPU decoder on 4 threads: 25.5 fps, 127 ms). 1080p Main 10: 80.4 fps. 2160p 30 Mbit/s: **38.2 fps** (CPU: 6.0). 2160p Main 10: 23.7 fps (10-20, [design/hw-video-decode.md](design/hw-video-decode.md)) | HEVC only: Main and Main 10, 4:2:0, 32–4096 luma samples per side; anything else is decoded on the CPU. No zero-copy display (the media kit plugin converts to B_RGB32). MediaPlayer and Firefox use it with no change of their own |
-| H.264 hardware decode | — | ⬜ | — | On the Pi 4, H.264 is decoded by the VideoCore firmware behind MMAL/VCHIQ; a BSD-licensed route is planned last in the backlog (PLAN H21). H.264 is decoded on the CPU (1080p, 300 frames: 6.0 s on one thread, 2.9 s on four; 10-20) |
+| H.264 hardware decode | `drivers/misc/vchiq` (FreeBSD's VCHIQ core, BSD-3) + Broadcom's libmmal (`raspberrypi_userland`) + ffmpeg6's `h264_mmal` | ✅ from image-2026-11-05c | VideoCore `vc.ril.video_decode`: 1080p 79 fps, 720p 171 fps with the H.264 clock held at 500 MHz, ~8 % of a core; frames equal ffmpeg's (below-black values one lower); MediaPlayer 1080p30 88 % of a core, all on time (software 159 %, mostly late) (11-05) | MediaPlayer and WebPositive only (Firefox decodes in software); one 1080p stream at a time (the VideoCore's 76 MB), others fall back to the CPU; firmware limits: High profile, 8-bit 4:2:0, ≤ 1920×1088 (KNOWN-ISSUES P2) |
 
 ## 7. Audio
 
@@ -233,7 +233,7 @@ From the "Next" list of [log/WEEK-2026-W45.md](log/WEEK-2026-W45.md) (2026-11-03
    ([design/wine-x86.md](design/wine-x86.md)).
 7. **Smaller items**: WiFi throughput (49/46 Mbit/s on the bench's 2.4 GHz AP; F4); WebPositive's Web Inspector data (F7);
    HDMI audio on the second port and after a hot-plug (P3).
-8. **H.264 hardware decoding** (H21, last in the backlog): through the VideoCore firmware's MMAL over VCHIQ, by a
-   BSD-licensed route ([design/hw-video-decode.md](design/hw-video-decode.md) §0a).
+8. **H.264 hardware decoding**: done in image-2026-11-05c (VCHIQ + MMAL, [design/vchiq.md](design/vchiq.md)); H.264
+   encode, the camera/ISP and JPEG over the same channel are not started.
 
 Not started: I²C, SPI.
