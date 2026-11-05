@@ -1659,13 +1659,15 @@ not matter.
   `tools/pi-tests/wakelat.sh`, one network boot) separates wake-up latency from placement: one periodic thread wakes
   within 5–10 µs (p99) next to 0–3 busy threads at either priority (Haiku's scheduler is in low-latency mode); but
   **three threads that each work 16 of every 33 ms** (the Renderer/SwComposite pattern) next to three busy threads
-  miss 17 of 900 deadlines at priority 10 and **27 at priority 15** (late up to 20 ms), where a priority-respecting
-  scheduler would miss none — the busy threads are priority 10. Code (`scheduler.cpp` `enqueue()`,
+  miss 17 of 900 deadlines at priority 10 and **27 at priority 15** (late up to 20 ms; one run of each), where a
+  priority-respecting scheduler would miss none at 15 — the busy threads are priority 10. Code (`scheduler.cpp` `enqueue()`,
   `low_latency.cpp` `choose_core()`/`rebalance()`): a woken thread goes to its previous core while cache affinity holds
   (or the least-loaded core), and preempts only if it outranks the thread running on *that* CPU; a core running a
   lower-priority busy thread is never chosen for it because, by load, it is the fullest. So priority does not move
-  work across cores. That is a property of Haiku's scheduler (upstream as well), worth its own item (§7); it is not
-  G2's fix, since Firefox sets no thread priorities on Haiku (`nsThread` changes priority only in chaos mode).
+  work across cores. That placement is the low-latency mode's design (upstream, 2013–14; our 2486477fab of 10-29 only
+  changed `rebalance()`'s load measure), worth its own item (§7). It is not G2's fix: every Firefox thread runs at
+  priority 10 on Haiku (all `ps -a` snapshots of these runs; whether Gecko asks for none or NSPR's Haiku port drops
+  the request was not checked), and even the forced boost above did not help.
 - **What reduces it.** Firefox prefs (in `user.js`, no rebuild): `dom.ipc.processPrelaunch.enabled` false **and**
   `browser.newtab.preload` false → network relaunch first clip **24 / 24** (vs 46–56; second clip 6 / 3), card 13 (vs
   15–17); one CPU-heavy content process less at start (6 Firefox teams instead of 10), ~4 CPU-s less in the first
@@ -1712,7 +1714,7 @@ Renderer + SwComposite per 720p stream; also the 1080p drops of W44 10-29 18:45)
   `browser.newtab.preload` off; whether the network-boot extra is Firefox's online start-up tasks (a run with the
   NAT off). **Scheduler:** woken threads are placed by cache affinity / load, and preempt only on the CPU chosen, so a
   higher priority never displaces a lower-priority thread on another core (`wakelat 33 300 15 3 16000 3`: 27/900
-  deadline misses at priority 15 vs 17 at 10) — a candidate item of its own.
+  deadline misses at priority 15 vs 17 at 10, one run each) — a candidate item of its own.
 
 ## 8. Script and tool index for the measurements above
 
