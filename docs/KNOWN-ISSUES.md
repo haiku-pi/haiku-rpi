@@ -10,7 +10,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-11-17 23:20** (the newest entry: 2026-11-17 23:12).
+Checked against the weekly logs up to **2026-11-17 23:53** (the newest entry: 2026-11-17 23:12).
 
 ## 1. Correctness: crashes and hangs
 
