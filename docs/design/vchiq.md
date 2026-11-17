@@ -510,7 +510,8 @@ High profile, B-frames; frames shown = the display plane's updates per 10 s in t
 - **WebPositive** (`h264.sh web`, `file:///boot/home/h264/video.html`): `<video>` goes through the media kit
   (`MediaPlayerPrivateHaiku`, `BMediaFile`), so through `h264_mmal`: 1769 frames from the VideoCore, the picture
   right (screenshot). Two things that are not the decoder's: WebKit's Haiku media player runs ahead of real time
-  (the 60-s clip ends after ~25 s; with the software decoder too: 44.7 s of video after 25 s), and it crashed once
+  (the 60-s clip ends after ~25 s; with the software decoder too: 44.7 s of video after 25 s; **real time since the
+  11-17 upstream merge**, ffmpeg add-on 427f8164c6: 32.4 s of video ~35 s after the start), and it crashed once
   when quit during playback with the software decoder (`memcpy` in `BMediaTrack::ReadFrames` from WebKit's
   `videoThread`). At the end of the stream the plugin saw an `AVERROR_INVALIDDATA` from `h264_mmal` and switched to
   the software decoder (harmless there; not explained).
