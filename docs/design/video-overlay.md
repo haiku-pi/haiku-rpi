@@ -107,38 +107,39 @@ switch), the same decoder, the picture right.
 - 720p30 in the first column: 298 of 300 updates `late` — the producer's phase sat within 2 ms of the blank for the
   whole run (in the other runs 0–2); all frames shown, none dropped.
 
-## 4. Still to run (the bench went to other agents; 2026-11-18 19:45)
+### 3.1 Network session `v1b` (2026-11-18 20:44–21:00, image at 4683784899, MediaPlayer of 6cda54a399 copied in; 0 PANIC)
 
-The image of 4683784899 is built (`sources/haiku-v1-overlay/generated.arm64/haiku-pi4-regular.img`, hrev of `rpi4`
-2753face8e + the branch; rebuild with `scripts/build.sh --generated sources/haiku-v1-overlay/generated.arm64
--sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc` after configuring that directory as in gl-client-pointer.md §7).
-Two short sessions (~10 min each):
+| Clip | MediaPlayer's CPU | shown per 10 s | dropped |
+|---|---|---|---|
+| H.264 720p30 (h264_mmal) | **13.2 %** | 301–302, 0 late | 0 |
+| H.264 1080p30 | **24.7 %** | 301–302, 0 late | 0 |
+| H.264 1080p60 | 13.4 % | **now real time** (`rate`: 14.57 s of video after 15 s; before: 23.98 fps slow motion), but only 34–68 frames shown in all: 203 dropped | 203 |
+| HEVC 720p30 (rpivid) | 11.9 % | all | 0 |
+| HEVC 1080p30 | 23.0 % | all | 0 |
+| **HEVC 10-bit 1080p30** | **43.4 %** (was 67.3 % at ~3 fps) | **all**, `B_YUV420 (hevc_rpivid yuv420p10le …)` | **0** (was 287) |
+| H.264 1080p30, software decoder (`FFMPEG_H264_MMAL=0`) | 98.3 % (P2: 159 %) | all, 0 late | 0 |
 
-```sh
-F="artifacts/v1-overlay/overlaytest artifacts/v1-overlay/teamstat artifacts/v1-overlay/vdecode tools/pi-tests/video-overlay.sh \
-   artifacts/media-tests/h264/play-720p30.mp4 artifacts/media-tests/h264/play-1080p30.mp4 artifacts/media-tests/h264/play-1080p60.mp4 \
-   artifacts/v1-overlay/clips/play-hevc-720p30.mp4 artifacts/v1-overlay/clips/play-hevc-1080p30.mp4 artifacts/v1-overlay/clips/play-hevc10-1080p30.mp4"
-# after: the fixes (1080p60 at 60 fps, 10-bit HEVC through B_YUV420), overlaytest at 1080p (BT.709)
-scripts/pi-session.sh start --image sources/haiku-v1-overlay/generated.arm64/haiku-pi4-regular.img --minutes 20 --label v1b
-scripts/pi-ssh.sh "mkdir -p /boot/home/h264" && scripts/pi-ssh.sh put $F /boot/home/h264/
-scripts/pi-ssh.sh "cd /boot/home/h264 && sh video-overlay.sh play after && sh video-overlay.sh ovl"   # HDMI: hdmi_snap during ovl
-scripts/pi-session.sh stop
-# before: the release image, same clips and script (overlaytest's B_YUV420 layout differs there: no ovl)
-scripts/pi-session.sh start --image artifacts/images/haiku-pi4-2026-11-18.img --minutes 15 --label v1-before
-scripts/pi-ssh.sh "mkdir -p /boot/home/h264" && scripts/pi-ssh.sh put $F /boot/home/h264/
-scripts/pi-ssh.sh "cd /boot/home/h264 && sh video-overlay.sh play before"
-scripts/pi-session.sh stop
-```
+- **1080p60 at real time does not keep up**: the VideoCore decodes ~69 frames/s back to back (`vdecode`, 14.1 ms mean,
+  39 ms max), with no headroom at 60; MediaPlayer decodes one frame when it is due and, once a frame is late, drops
+  it — and its supplier then *seeks* to the next frame wanted (`ProxyVideoSupplier::FillBuffer`), back to the
+  previous key frame (up to 60 frames), which makes every later frame late too: the same collapse as the software
+  decoder's at 1080p60 in P2. Before a9465e1c3f the stream ran at 23.98 fps, every frame shown, in slow motion (and
+  out of step with any audio track). Open (§5).
+- `noplane` (six overlaytests hold all six planes): MediaPlayer's YUV overlay bitmaps fail (`COULDN'T CREATE BUFFERS`),
+  NodeManager falls back to B_RGB32 drawn by app_server, the plugin switches its output without reopening the decoder
+  (`video output now B_RGB32, 7680 bytes per row`, one `video decoder h264_mmal` line), picture right on HDMI
+  (`shots/b-noplane.png`), 60.8 % (the app_server path).
+- `mode` (1280×720 and back while playing): **MediaPlayer crashed** — `memcpy` from `VideoConsumer::_HandleBuffer`
+  with FAR 0: a frame arrived while app_server had overlays suspended, when an overlay bitmap's `Bits()` is NULL. The
+  copy has done that since before this work (RGB32 overlays too); fixed in 92db783ffc (`LockBits()`, which fails
+  while suspended; the frame is skipped). Not yet re-run.
+- overlaytest B_YUV420 at 1920×1080 (BT.709): bars right on HDMI (`shots/b-ovl1080.png`); its alpha census said
+  BAD because the window is larger than the screen and the crashed player's alert sat under it (73 000 non-opaque
+  pixels outside the overlay already before it was shown) — the test's geometry, not keying.
+- `h264.sh seek` 0 problems (pause, seeks forward and back, 5 reopens on the VideoCore); `h264.sh web` 0 problems
+  (WebPositive, h264_mmal, RGB32 through the new `Decode()`-time conversion).
 
-Then the checks of `video-overlay.sh` (same session as "after", each ~1 min): `rate` (1080p60 at real time: position
-after 15 s > 11 s), `noplane` (six overlaytests hold the planes: MediaPlayer falls back to B_RGB32 drawn by
-app_server, one `video output now B_RGB32` line), `mode` (1280×720 and back while playing; F2's black overlay), and
-h264.sh's `seek` and `web` (put `tools/pi-tests/h264.sh` and the clips' `video.html` too), `video-overlay.sh play sw
-FFMPEG_H264_MMAL=0` with `CLIPS=play-1080p30`.
-
-Expected after: `play-1080p60` 600 updates per 10 s (it was 240), `play-hevc10-1080p30` with `video output B_YUV420
-(hevc_rpivid yuv420p10le …)` and far fewer drops; the other rows as in §3. **Not verified on the Pi yet: a9465e1c3f,
-4683784899, 6cda54a399** (§3 ran 098abbcd52).
+### 3.2 QEMU
 
 QEMU virt (2026-11-18 18:10, the image at 4683784899 with a test bootscript; no VideoCore, no overlays): MediaPlayer
 on `play-720p30.mp4` and `play-854x480.mp4` takes `preferred color space: B_YUV420`, the gate turns it into B_RGB32
@@ -160,13 +161,21 @@ frames copied out of the disk image with bfs_shell and compared on the host, **m
 Also: `6cda54a399` MediaPlayer fills a frame it could not read with B_YUV420 black (Y 16, Cb/Cr 128), not zeros
 (dark green).
 
+## 4. Still to run
+
+- The release image in the same session conditions (the *before* column) and the mode change on it.
+- The mode change with 92db783ffc.
+
 ## 5. Open
 
 - **One copy is left before the consumer's**: mmaldec copies the VideoCore's buffer into an AVFrame (3 MB at 1080p);
   avoiding it means handing the MMAL buffer out as the frame (mmaldec does that only for its opaque format) with
   only 3 output buffers in the VideoCore's memory. rpivid: its SAND → planar conversion on the CPU stays (the SAND
   plane of `gpu-stage6.md` §5 is still design only).
-- **Mode change** while a video overlay is shown (F2): not touched; still black until the overlay is shown again.
+- **Mode change** while a video overlay is shown (F2): MediaPlayer's crash fixed (92db783ffc, not re-run yet); whether
+  the overlay stays black afterwards is still open.
+- **1080p60 H.264 at real time**: MediaPlayer needs to decode ahead (or skip forward by decoding instead of seeking
+  to a key frame) to show it; the VideoCore's rate (~69 fps) leaves no headroom.
 - ffmpeg's command line (`-c:v h264_mmal`) still reports 23.98 fps for every stream: mmaldec tells the VideoCore
   24000/1001 and hands the echo back as the stream's rate; fixing it is a ffmpeg6 patch (not done; the plugin no
   longer trusts it).
