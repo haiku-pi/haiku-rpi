@@ -13,6 +13,12 @@
 #                (the overlay plane's updates in the display driver's statistics). LABEL names the run, ENV
 #                (e.g. FFMPEG_YUV420=0) goes into the player's environment
 #   hold CLIP    MediaPlayer on CLIP for 40 s (for HDMI snapshots taken from the host meanwhile)
+#   rate         MediaPlayer on play-1080p60: its position after 15 s (real time: ~15 s of video; slow motion at
+#                23.98 fps: ~6 s) and the frames shown
+#   noplane      six overlaytests hold all six overlay planes, then MediaPlayer on play-1080p30: no overlay, so
+#                it must fall back to B_RGB32 drawn by app_server (one "video output now B_RGB32" line, the
+#                same decoder)
+#   mode         MediaPlayer on play-1080p30, the screen to 1280x720 and back while it plays (KNOWN-ISSUES F2)
 # MP=PATH runs another MediaPlayer binary (its file name must stay "MediaPlayer"); CLIPS="a b" plays only those
 # (names without .mp4).
 # Lines start with "VOV "; each phase ends with "VOV <phase> result: N problems".
@@ -84,6 +90,42 @@ hold)
 	sleep 40
 	quit_players
 	grep -a -E "^AVCodecDecoder|rpivid: hardware" "$dir/hold.log" | sort | uniq -c | while read -r line; do say "hold log: $line"; done
+	;;
+rate)
+	label=rate
+	start_player play-1080p60.mp4 "$dir/rate.log"
+	sleep 15
+	p=$(hey MediaPlayer get Position of Window 0 2>&1 | grep -o -E '[0-9]{4,}' | head -n 1)
+	say "rate: position after 15 s: $p us"
+	quit_players
+	[ -n "$p" ] && [ "$p" -gt 11000000 ] || fail "play-1080p60 is not played at real time"
+	tail -n 30 /var/log/syslog | grep -a -o "plane [0-9]: .*" | while read -r l; do say "rate shown: $l"; done
+	;;
+noplane)
+	pids=""
+	for i in 1 2 3 4 5 6; do
+		./overlaytest -s rgb32 -f 10 -h 40 > "$dir/noplane-$i.log" 2>&1 &
+		pids="$pids $!"
+		sleep 2
+	done
+	sleep 3
+	label=noplane
+	play_one play-1080p30.mp4 play-1080p30 10
+	for t in $pids; do kill $t 2> /dev/null; done
+	grep -a -q "video output now B_RGB32" "$dir/noplane-play-1080p30.log" || fail "no fallback seen"
+	;;
+mode)
+	label=mode
+	start_player play-1080p30.mp4 "$dir/mode.log"
+	sleep 6
+	screenmode 1280 720 > /dev/null 2>&1
+	say "mode: 1280x720"
+	sleep 6
+	screenmode 1920 1080 > /dev/null 2>&1
+	say "mode: 1920x1080"
+	sleep 8
+	quit_players
+	tail -n 40 /var/log/syslog | grep -a -o "plane [0-9]: .*" | while read -r l; do say "mode shown: $l"; done
 	;;
 *)
 	echo "unknown phase $phase" >&2

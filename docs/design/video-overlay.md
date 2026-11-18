@@ -130,14 +130,35 @@ scripts/pi-ssh.sh "cd /boot/home/h264 && sh video-overlay.sh play before"
 scripts/pi-session.sh stop
 ```
 
+Then the checks of `video-overlay.sh` (same session as "after", each ~1 min): `rate` (1080p60 at real time: position
+after 15 s > 11 s), `noplane` (six overlaytests hold the planes: MediaPlayer falls back to B_RGB32 drawn by
+app_server, one `video output now B_RGB32` line), `mode` (1280×720 and back while playing; F2's black overlay), and
+h264.sh's `seek` and `web` (put `tools/pi-tests/h264.sh` and the clips' `video.html` too), `video-overlay.sh play sw
+FFMPEG_H264_MMAL=0` with `CLIPS=play-1080p30`.
+
 Expected after: `play-1080p60` 600 updates per 10 s (it was 240), `play-hevc10-1080p30` with `video output B_YUV420
-(hevc_rpivid yuv420p10le …)` and far fewer drops; the other rows as in §3.
+(hevc_rpivid yuv420p10le …)` and far fewer drops; the other rows as in §3. **Not verified on the Pi yet: a9465e1c3f,
+4683784899, 6cda54a399** (§3 ran 098abbcd52).
 
 QEMU virt (2026-11-18 18:10, the image at 4683784899 with a test bootscript; no VideoCore, no overlays): MediaPlayer
 on `play-720p30.mp4` and `play-854x480.mp4` takes `preferred color space: B_YUV420`, the gate turns it into B_RGB32
 (no YUV output line, no renegotiation), `h264_mmal failed (does not open): h264 continues from the start`, 0 dropped,
 0 PANIC; `vdecode` (software h264): B_YUV420 98.7 frames/s at 330 % CPU vs B_RGB32 53.7 frames/s at 264 % (QEMU's
 emulated CPU: only the ratio means anything).
+
+QEMU virt, 2026-11-18 19:45 (the image at 4683784899 + `vdecode` with `VDEC_DUMP`/`VDEC_SWITCH`; software h264,
+frames copied out of the disk image with bfs_shell and compared on the host, **measured**):
+
+| Check | Result |
+|---|---|
+| B_YUV420, 20 frames of `h264-720p.mp4` (plane copy) | 20 of 20 bit-identical to ffmpeg's `framemd5` |
+| B_YUV420 → B_RGB32 after 10 frames (output-only switch) | frames 0–9 bit-identical; 10–19 RGB at 51 dB PSNR against the host's bgra of frames 10–19 (another swscale build): the decoder went on, no restart |
+| B_RGB32 → B_YUV420 after 10 frames | frames 0–9 RGB at 51 dB; **frames 10–19 bit-identical to ffmpeg's frames 10–19** |
+| interlaced 720×576 (yadif in the plugin), B_YUV420 and B_RGB32 | frame k bit-identical (YUV) / 51 dB (RGB) to the host's `yadif` frame k−1: the filter's one-frame delay, as before (frame 0 is the field-interleaved picture); the two spaces agree with each other at 51 dB |
+| MediaPlayer, no overlays (RGB32 through the gate) | plays `play-720p30.mp4` to the end, picture right (QEMU screenshot `artifacts/qemu/20261118-194920-virt.png`) |
+
+Also: `6cda54a399` MediaPlayer fills a frame it could not read with B_YUV420 black (Y 16, Cb/Cr 128), not zeros
+(dark green).
 
 ## 5. Open
 
