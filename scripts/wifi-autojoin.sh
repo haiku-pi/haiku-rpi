@@ -2,7 +2,7 @@
 # wifi-autojoin.sh — runs tools/pi-tests/wifi-autojoin.sh (a saved WiFi network re-joined after a reboot,
 # docs/design/wifi-autojoin.md) on the Pi of a running session (scripts/pi-session.sh start).
 #
-#   scripts/wifi-autojoin.sh LABEL join|save|check|down|up [SECS] [now]
+#   scripts/wifi-autojoin.sh LABEL join|joinbad|save|check|down|up|cycle [SECS] [now (check) | N (cycle)]
 #
 # The network comes from local.conf (WIFI_SSID, WIFI_PSK or WIFI_PSK_FILE, WIFI_GATEWAY), as for
 # scripts/n7-wifi.sh. LABEL must be the running session's label (scripts/pi-session.sh start --label LABEL):

@@ -104,4 +104,13 @@ Passphrase checks: "leak lines" 0 in every syslog, the host wrapper found it in 
   stays on the interface. The test grades by the link flag and the association, not by ping.
 
 **Not tested:** the SD-card boot (inferred unaffected, §1.3); Network preferences / the Deskbar menu (§3); a
-network with a wpa_supplicant (none on arm64); the 30 s retry after a first scan that misses the AP; open networks.
+network with a wpa_supplicant (none on arm64); the 30 s retry after a first scan that misses the AP; open networks;
+the 30 s hold-off and the drop of a pending entry by an auto-join followed by a link (neither path was seen ending in
+a link); SSIDs or passphrases with spaces or `" # ; ' = { } \` (the settings writer escapes them with backslashes,
+`DriverSettingsMessageAdapter` `EscapeString`, and the driver-settings parser reads that back — by reading only).
+
+**For the main session:** 77d28ba987 keeps Dru Satori as author (with his Signed-off-by) although most of its lines
+are the haiku-pi adaptation; re-author it at integration if preferred. Docs to correct with the merge: USER-GUIDE §9.2
+("Preferences → Network takes the same path"; "remembered across reboots is untested"), HANDS-ON check 7 (a first
+WPA2 join from the preferences cannot ask for the passphrase), and image-2026-11-18's note that saved WiFi networks
+are re-joined after boot (nothing wrote the entry in that image; on a network boot no DHCP followed either).

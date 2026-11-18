@@ -13,6 +13,9 @@
 #                                                   150) for the association and the address net_server makes by
 #                                                   itself, then ping GATEWAY; NOW=now: report the state at once
 #   passphrase | sh wifi-autojoin.sh down|up        take the interface down / bring it back (retry test)
+#   passphrase | sh wifi-autojoin.sh cycle SSID GATEWAY [SECS] [N]
+#                                                   N times (default 3): down, up, wait up to SECS for the link
+#                                                   to come back by itself
 #
 # Lines "WAJ ...". The passphrase is only compared against (it is never printed): the saved-network file is
 # reported as counts and names, never shown; the syslog lines shown are filtered against it, and the number of
@@ -110,6 +113,20 @@ down)
 up)
 	ifconfig "$dev" up
 	say "up: $(ifconfig "$dev" 2>&1 | grep -a -o 'flags.*' | head -n 1), $(up_s)"
+	;;
+cycle)
+	for n in $(seq 1 "${5:-3}"); do
+		ifconfig "$dev" down
+		sleep 3
+		ifconfig "$dev" up
+		s=$(date +%s)
+		for i in $(seq 1 "$secs"); do
+			associated && break
+			sleep 1
+		done
+		say "cycle $n: link $(associated && echo yes || echo no) after $(( $(date +%s) - s )) s, address $(addr)"
+	done
+	syslog_report 12
 	;;
 *)
 	say "unknown mode"

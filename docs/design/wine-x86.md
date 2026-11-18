@@ -254,6 +254,11 @@ the packages are not rebuilt. **Not tested:** a Pi without any IPv4 address othe
 still crashes, as on Windows without a network adapter: its limit); more than one race; the race on WiFi only;
 the x86-64 / arm64 builds of ws2_32 (rebuilt by the next build-wine.sh run). Trap: `scripts/disk-add-tree.sh`
 copies no symlinks (the Wine tree's `bin/wine`, `wineboot`, …: 13 links) — they were made by hand on the Pi.
+Known gap in 0032: on Haiku `add_entry()` still skips `if_get_physical()`, so an interface's type and hardware
+address are left as `malloc` gave them (the loopback interface is then not typed as loopback and is listed by
+`GetAdaptersInfo`, as in the table above); harmless for W11, to be set (loopback / Ethernet, zeroed address) in a
+later patch. Merge gate for 0031–0033: a full `build-wine.sh` package build and mega-smoke (only the two libraries
+were tried); the shared cross tree (artifacts/wine-11.21/cross) and the patched source tree already carry them.
 
 ## Test programs (to be chosen and license-checked at the start)
 
