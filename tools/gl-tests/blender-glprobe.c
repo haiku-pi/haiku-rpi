@@ -15,9 +15,11 @@
  *   gather  textureGather
  *   egl     (-e) two shared surfaceless EGL contexts, one current on a second thread while the main thread's
  *           is current: a texture made there is read here (the driver side of Blender's job-thread contexts)
- *   thread  (-t) the same through SDL: a hidden-window context (GHOST's offscreen context) made current on a
- *           second thread. Stock SDL2's Haiku backend keeps one process-wide current context and unlocks the
- *           main thread's BGLView from the worker: expected to end in the debugger without the per-thread fix.
+ *   thread  (-t) the same through SDL: a hidden-window context (GHOST's offscreen context) held current on a
+ *           second thread while the main thread re-activates, draws and swaps its window, then released.
+ *           Stock SDL2's Haiku backend keeps one process-wide current context, so each thread unlocks the
+ *           other's BGLView; our HGL only prints "wrong thread" for that and goes on (HaikuPorts' x86-64
+ *           stack stopped in the debugger). Grade by those lines too (tools/pi-tests/blender-probe.sh).
  *
  *   blender-glprobe [-e] [-t] [-x]      -x: print the whole extension list
  *
@@ -122,6 +124,9 @@ static const struct { const char *name; GLenum e; } kLimits[] = {
 	{ "MAX_GEOMETRY_TOTAL_OUTPUT_COMPONENTS", 0x8DE1 },
 	{ "MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS", 0x8C8B },
 	{ "MAX_SAMPLES", 0x8D57 },
+	{ "MAX_VERTEX_SHADER_STORAGE_BLOCKS", 0x90D6 },
+	{ "MAX_FRAGMENT_SHADER_STORAGE_BLOCKS", 0x90DA },
+	{ "MAX_COMPUTE_SHADER_STORAGE_BLOCKS", 0x90DB },
 };
 
 /* the extensions gl_backend.cc / gl_shader.cc test (3.6), plus 4.x/5.x hard requirements for comparison */
@@ -335,8 +340,18 @@ caps(void)
 	/* what Blender 3.6 derives (gl_backend.cc capabilities_init) */
 	int version = gl_version();
 	SAY("blender compute_shader_support %d", has_extension("GL_ARB_compute_shader") && version >= 43);
-	SAY("blender shader_storage_buffer_objects_support %d",
-		has_extension("GL_ARB_shader_storage_buffer_object"));
+	/* the extension, and at least 8 blocks in the vertex, fragment and compute stages */
+	GLint ssboVS = 0, ssboFS = 0, ssboCS = 0;
+	p_glGetIntegerv(0x90D6, &ssboVS);
+	p_glGetIntegerv(0x90DA, &ssboFS);
+	p_glGetIntegerv(0x90DB, &ssboCS);
+	while (p_glGetError() != GL_NO_ERROR)
+		;
+	GLint ssboMin = ssboVS < ssboFS ? ssboVS : ssboFS;
+	ssboMin = ssboCS < ssboMin ? ssboCS : ssboMin;
+	SAY("blender shader_storage_buffer_objects_support %d (extension %d, min blocks VS/FS/CS %d >= 8)",
+		has_extension("GL_ARB_shader_storage_buffer_object") && ssboMin >= 8,
+		has_extension("GL_ARB_shader_storage_buffer_object"), ssboMin);
 	SAY("blender shader_image_load_store_support %d", has_extension("GL_ARB_shader_image_load_store"));
 	SAY("blender explicit_location/texture_storage/stencil_texturing %d", version >= 43);
 	SAY("blender base_instance_support %d", has_extension("GL_ARB_base_instance") && version >= 40);
@@ -692,11 +707,16 @@ egl_threads(void)
 	return sFailures;
 }
 
+/* Blender's pattern: a job thread holds its offscreen context while the main thread keeps drawing (and
+ * swapping) its window, then the job releases its context. */
 struct sdl_worker {
 	SDL_Window *window;
 	SDL_GLContext context;
+	SDL_sem *made;      /* worker → main: context current, texture made */
+	SDL_sem *go;        /* main → worker: release now */
 	GLuint texture;
 	int status;
+	bool still_current; /* the worker's context was still usable after the main thread's draw */
 };
 
 static int
@@ -704,11 +724,35 @@ sdl_worker_main(void *data)
 {
 	struct sdl_worker *w = data;
 	w->status = SDL_GL_MakeCurrent(w->window, w->context);
-	if (w->status == 0) {
+	if (w->status == 0)
 		w->texture = make_pattern_texture();
+	SDL_SemPost(w->made);
+	SDL_SemWait(w->go);
+	if (w->status == 0) {
+		w->still_current = p_glGetString(GL_VERSION) != NULL;
 		SDL_GL_MakeCurrent(NULL, NULL); /* GHOST_ContextSDL::releaseDrawingContext() */
 	}
 	return 0;
+}
+
+/* the main thread draws its window while the worker holds its context: clear, read back, swap */
+static bool
+main_draws(SDL_Window *window, SDL_GLContext context, char *detail, size_t size)
+{
+	GLubyte px[4] = { 0 };
+	int status = SDL_GL_MakeCurrent(window, context); /* Blender re-activates the window context */
+	const GLubyte *version = p_glGetString(GL_VERSION);
+	if (status == 0 && version != NULL) {
+		p_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		p_glViewport(0, 0, 16, 16);
+		p_glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+		p_glClear(GL_COLOR_BUFFER_BIT);
+		p_glReadPixels(2, 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+		SDL_GL_SwapWindow(window);
+	}
+	snprintf(detail, size, "make-current %d, context %s, pixel %u %u %u", status,
+		version != NULL ? "usable" : "LOST", px[0], px[1], px[2]);
+	return status == 0 && version != NULL && px[1] == 255 && px[0] == 0;
 }
 
 static SDL_GLContext
@@ -797,16 +841,29 @@ main(int argc, char **argv)
 		if (offscreen == NULL) {
 			check(false, "sdl thread", SDL_GetError());
 		} else {
-			SAY("INFO sdl thread: making the offscreen context current on a second thread "
-				"(stock SDL2: expect a debugger stop in BGLView::UnlockGL)");
-			struct sdl_worker w = { hidden, offscreen, 0, -1 };
+			/* Stock SDL2 keeps one process-wide current BGLView: the worker unlocks the main
+			 * thread's view and vice versa. On our HGL that only prints "UnlockGL is called from
+			 * wrong thread" / "Unlocking BLocker ... from wrong thread" and goes on, so the checks
+			 * below may pass anyway: blender-probe.sh grades any such line as a FAIL. */
+			SAY("INFO sdl thread: offscreen context held on a second thread while the main thread draws");
+			struct sdl_worker w = { hidden, offscreen, SDL_CreateSemaphore(0), SDL_CreateSemaphore(0), 0,
+				-1, false };
 			SDL_Thread *thread = SDL_CreateThread(sdl_worker_main, "blender-glprobe job", &w);
+			SDL_SemWait(w.made);
+			char drawDetail[96];
+			bool drew = main_draws(window, context, drawDetail, sizeof(drawDetail));
+			check(drew, "sdl thread: main window draws while the job holds its context", drawDetail);
+			SDL_SemPost(w.go);
 			SDL_WaitThread(thread, NULL);
-			char detail[128] = "worker could not make its context current";
-			/* the main thread's context must still be current here */
-			bool ok = w.status == 0 && SDL_GL_GetCurrentContext() == context
+			check(w.status == 0 && w.still_current, "sdl thread: job context still current after the main draw",
+				w.status == 0 ? NULL : "worker could not make its context current");
+			char detail[128] = "no texture";
+			SDL_GL_MakeCurrent(window, context);
+			bool ok = w.status == 0 && p_glGetString(GL_VERSION) != NULL
 				&& read_shared_texture(w.texture, detail, sizeof(detail));
-			check(ok, "sdl thread (offscreen context current on a second thread)", detail);
+			check(ok, "sdl thread: job's texture seen by the main context (shared)", detail);
+			SDL_DestroySemaphore(w.made);
+			SDL_DestroySemaphore(w.go);
 			SDL_GL_DeleteContext(offscreen);
 		}
 		if (hidden)

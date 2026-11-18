@@ -8,8 +8,9 @@ Start by analyzing if this is possible, and then plan implementation accordingly
 feasible on our desktop OpenGL 3.3 core (Mesa `v5-gl`, [docs/design/desktop-gl.md](desktop-gl.md)). The UI goes
 through Blender's own **GHOST_SDL** backend on our SDL2, but only after three things none of the existing ports
 have:
-1. **SDL2: a per-thread current GL context in the Haiku backend.** Without it, F12 render and material preview
-   crash, as they do in HaikuPorts' x86-64 `blender3`.
+1. **SDL2: a per-thread current GL context in the Haiku backend.** Without it, every job-thread context switch
+   (F12 render, material preview, shader compiles) unlocks another thread's BGLView. HaikuPorts' x86-64
+   `blender3` crashes there; on our HGL it is a less predictable lock/context drift (§3.2).
 2. **GHOST_SDL asks for the core profile.** Stock GHOST asks for profile 0 and would get our compatibility 3.1,
    which Blender rejects.
 3. **EEVEE Legacy patched for 4 colour attachments.** V3D 4.2 has 4 and EEVEE's opaque surface shader writes 6,
@@ -118,7 +119,7 @@ the milestones below.
 | Blender 3.6 reads | Our v3d core 3.3 (source) | Effect |
 |---|---|---|
 | `ARB_compute_shader` && GL ≥ 4.3 | no | GPU subdivision off (CPU subdivision, as on any GL 3.3 GPU) [B36 `subdiv_modifier.cc:104`]; the real-time compositor (3.5+) off; curves/hair via transform feedback [B36 `draw_curves.cc:40-45`] |
-| `ARB_shader_storage_buffer_object` | no: VS/GS have 0 SSBOs [M `v3d_screen.c:172`] | only the draw-debug and EEVEE Next paths use it; both are guarded [B36 `draw_debug.cc`, `eevee_next/eevee_engine.cc:37`] |
+| `ARB_shader_storage_buffer_object` | advertised (fragment/compute: 32 blocks when the kernel reports cache flush), but VS/GS have **0** [M `v3d_screen.c:172`, `st_extensions.c:552`] | Blender takes min(VS, FS, CS blocks) and turns SSBOs off below 8 [B36 `gl_backend.cc:563-572`], so: off. Only the draw-debug and EEVEE Next paths use it; both are guarded [B36 `draw_debug.cc`, `eevee_next/eevee_engine.cc:37`] |
 | `ARB_shader_image_load_store` | no (`image_store_formatted = false`) | none for Legacy/Workbench |
 | `ARB_shader_draw_parameters` | no (no `draw_parameters` cap) | uniform `gpu_BaseInstance` workaround [B36 `gl_shader.cc:863`] |
 | `ARB_base_instance` | yes, but Blender ignores it below GL 4.0 | — |
@@ -137,7 +138,7 @@ the milestones below.
 | UBO size | 64 KiB | — |
 | buffer-texture texels | **65536** (gallium default; v3d sets no cap) | a limit for big hair systems; possible Mesa change |
 | float render targets | RGBA16F, RGBA32F, R11F_G11F_B10F renderable | blending on 32F unverified → step 0 checks it |
-| depth clamp, seamless cube maps | emulated / always on (desktop-gl.md §5) | Blender 3.6 uses neither in Legacy/Workbench |
+| depth clamp, seamless cube maps | emulated / always on (desktop-gl.md §5) | Blender 3.6 never enables GL_DEPTH_CLAMP (grep of source/blender: only dynamic paint's own `depth_clamp` field) and does not rely on non-seamless filtering |
 
 ### 2.4 Reference: Pi 4 on Linux
 - Raspberry Pi OS ships Blender 3.4.1. It starts only with `MESA_GL_VERSION_OVERRIDE=3.3`, because Linux v3d stops
@@ -171,14 +172,22 @@ the milestones below.
 ### 3.2 Why it crashes: one process-wide current context
 - SDL2's Haiku backend keeps the current context in the application object, `SDL_BApp::_current_context` [S
   `src/main/haiku/SDL_BApp.h:233-240`]. `HAIKU_GL_MakeCurrent()` unlocks *that* view and locks the new one.
-- `BGLView::LockGL()` takes `fDisplayLock`, a BLocker owned by the locking thread, and `UnlockGL()` from another
-  thread stops in the debugger [G `src/HGL/GLView.cpp:492-518`].
+- `BGLView::LockGL()` takes `fDisplayLock`, a BLocker owned by the locking thread [G `src/HGL/GLView.cpp:492-518`].
+  On **our** stack, `UnlockGL()` from another thread only prints "UnlockGL is called from wrong thread". It then
+  calls `eglMakeCurrent(NO_CONTEXT)` on the *calling* thread and unlocks the BLocker anyway, and
+  `BLocker::Unlock()` from a non-owner also only prints "Unlocking BLocker … from wrong thread" ("the Be Book
+  explicitly allows any thread … to unlock" [`sources/haiku` `src/kits/support/Locker.cpp:114-125`]). The
+  HaikuPorts x86-64 trace stopped in `_kern_debugger` on a different HGL.
 - Blender makes contexts current on other threads all the time:
   - the shader-compilation job [B36 `draw_manager_shader.c:82-88`];
   - render (F12) via `DRW_render_context_enable` [B36 `draw_manager.c:3131-3150`];
   - light baking, and preview renders.
-- So the first worker-thread `SDL_GL_MakeCurrent` unlocks the main thread's view from the worker. This is the
-  HaikuPorts trace exactly.
+- So the first worker-thread `SDL_GL_MakeCurrent` unlocks the main thread's view from the worker, and the
+  worker's release unlocks the main thread's again. That is the HaikuPorts trace. On our stack it may not crash
+  at once: each thread unbinds its own EGL context and releases the other's lock, so lock counts and "which context
+  is current where" drift until something deadlocks, draws into nothing or (with debug checks) stops. The
+  bug is the same, the symptom is less predictable, and a probe that only checks rendered results can pass with
+  the bug present. Hence the step-0 grading on the "wrong thread" lines.
 - Mesa/EGL themselves are per-thread: `eglMakeCurrent` binds to the calling thread, and the HGL view already
   passes `BGL_SHARE_CONTEXT` to `eglCreateContext` with the caller's current context [G `GLView.cpp:298-300`].
   `blender-glprobe -e` checks that the driver side works with two threads.
@@ -221,7 +230,8 @@ the main context from their own thread, under a lock [B36 `draw_manager_shader.c
 
 3.6's hard requirements [B36 `platform_unix.cmake:106-158,446,552`]:
 - JPEG, PNG, ZLIB, Zstd, Epoxy, Freetype, Threads;
-- **OpenImageIO (REQUIRED, unconditional)**, which needs OpenEXR + Imath, TIFF and (2.4) Boost;
+- **OpenImageIO (REQUIRED, unconditional)**, which needs OpenEXR + Imath, TIFF and, for 2.4, Boost (*recalled*,
+  not checked against OIIO's CMake; HaikuPorts' OIIO 2.5 recipe still lists `boost_thread`);
 - Python (technically optional, but the UI is written in Python).
 
 TBB gates Cycles. Everything else can be switched off.
@@ -244,7 +254,7 @@ TBB gates Cycles. Everything else can be switched off.
 | OpenSubdiv | GPU/CPU subdivision | 3.5.0 | off (Blender's own subsurf) | yes (CPU) | 3.5/3.7 | no | 0.3 d |
 | FFmpeg | video I/O, VSE | 6.0 | off | ffmpeg6 | ffmpeg6 | **packaged** 6.1.6 | 0 |
 | OpenAL / libsndfile / audaspace | audio | — | off | SDL audio + sndfile | yes | no | 0.3 d |
-| Embree | Cycles BVH | 4.1.0 | off (Cycles' own BVH2) | 4.x (arm64 via its NEON path); HaikuPorts has only **3.12.2**, too old for arm64 | 3.12.2 | no | 1 d |
+| Embree | Cycles BVH | 4.1.0 | off (Cycles' own BVH2) | 4.x (arm64 via its NEON path); HaikuPorts has only **3.12.2**, too old for arm64 (*recalled*: arm64 arrived in Embree 3.13; check at M6) | 3.12.2 | no | 1 d |
 | OpenVDB (+ blosc, Boost iostreams) | volumes | 10.0 | off | maybe | openvdb-13 / openvdb7 | no | 1 d (heavy C++) |
 | Alembic, USD, MaterialX, OpenCOLLADA | interchange | — | off | Alembic, COLLADA maybe; USD later (very heavy) | alembic 1.8.3, opencollada | no | 0.5 d each, USD 2+ d |
 | OSL (+ LLVM), OpenImageDenoise (+ ISPC), OpenPGL, OpenXR, GMP, potrace, libharu, jemalloc | Cycles OSL, denoise, path guiding, VR, exact booleans, grease-pencil export | — | off | GMP, potrace, haru cheap; OSL/OIDN/OpenPGL no (LLVM / ISPC cross builds) | partly | no | — |
@@ -273,6 +283,8 @@ their own.
   - `_Py_IDENTIFIER` / `_PyObject_GetAttrId`, whose public forms 3.12 removed;
   - `_PyLong_AsInt`, `_PyObject_LookupAttr`, `_PySet_NextEntry` and `_PyThreadState_UncheckedGet`, which 3.13
     removed.
+  - (The counts are measured. Which CPython release removed each name is *recalled*, not checked against
+    CPython's headers.)
 - 4.x/5.x carry a compatibility layer for these; 3.6 does not. Porting 3.6 to 3.14 means backporting it (2–4 d,
   estimated), with every add-on then running on a Python it was never tested with.
 - **Decision: build CPython 3.10.22** from HaikuPorts' `python3.10` recipe, generalising `scripts/build-python.sh`
@@ -280,6 +292,36 @@ their own.
   x86-64 `blender3`.
 - Add `numpy_python310` 1.26.4 in the fuller build (Blender's pin is 1.23.5; 1.26 builds with meson like our 2.5.4).
 - It coexists with python3.14; Blender links `libpython3.10.so.1.0`.
+
+### 4.2 Build-time generators: Blender does not cross-compile by itself
+
+Blender builds tools and then runs them during its own build:
+- `makesdna` → `dna.c`, `dna_type_offsets.h`, `dna_verify.c` [B36 `makesdna/intern/CMakeLists.txt:78-99`];
+- `makesrna` → the `rna_*_gen.c` files [B36 `makesrna/intern/CMakeLists.txt:387-406`];
+- `datatoc` / `datatoc_icon` for GLSL sources, fonts and icons [B36 `build_files/cmake/macros.cmake:960-1025`];
+- `msgfmt` for translations (off in the minimal build).
+
+There is no `CMAKE_CROSSCOMPILING` handling anywhere in 3.6 (grep: none). With `tools/cmake/haiku-arm64.cmake`
+these become arm64 Haiku executables the Linux host cannot run, and HaikuPorts never met this because it builds
+natively.
+
+Plan:
+1. Configure the same 3.6.23 tree for the **host** (Linux, system compiler) with the same `WITH_*` options. RNA
+   output depends on them through `#ifdef`s, and the host configure needs host development packages or stub find
+   modules for its REQUIRED libraries.
+2. Build only `makesdna makesrna datatoc datatoc_icon`.
+3. In the cross configure, a small CMake patch: `if(CMAKE_CROSSCOMPILING)` → `add_executable(<tool> IMPORTED)`
+   with `IMPORTED_LOCATION` from `-DBLENDER_HOST_TOOLS=DIR` instead of building the tool.
+
+The struct layout is safe to share: the host (x86-64) and the target (arm64) are both LP64 little-endian, and
+`dna_verify.c`, compiled for the target, asserts every DNA struct size against what `makesdna` computed, so any
+difference fails the build instead of corrupting .blend files.
+
+`PYTHON_EXECUTABLE` is used at build time only by audaspace's Python module (off in the minimal build) [B36
+`extern/audaspace/CMakeLists.txt:1133-1143`]; that would need the host Python, not the target's 3.10.
+
+Fallback: build the generators natively on the Pi with our native GCC package and copy them back. That is slow
+and needs the bench, so it is not preferred.
 
 ## 5. Engines and performance
 
@@ -323,7 +365,7 @@ their own.
 
 | # | Risk | Cheap check |
 |---|---|---|
-| R1 | **The SDL thread bug** (§3.2): render and preview crash. Certain on stock SDL2. | `blender-glprobe -t` (step 0) reproduces it in seconds. After the patch, the same command must PASS. |
+| R1 | **The SDL thread bug** (§3.2): cross-thread BGLView unlocks. HaikuPorts' x86-64 render/preview crash; on our HGL a quieter lock/context drift. Certain on stock SDL2. | `blender-probe.sh` step 0: the `sdlthread` line counts "wrong thread" messages (FAIL when > 0) beside the probe's own render checks. After the patch: 0 lines and all `-t` checks PASS. |
 | R2 | **The EEVEE Legacy 6-output shader** (§2.2). Certain from source. | `blender-glprobe` `mrt6` INFO line (step 0); M5 patch + Material Preview. |
 | R3 | The desktop-GL stack is not merged yet (Blender needs core 3.3: mesa/libglvnd `v5-gl` + SDL2 glview-core). | Done when desktop-gl.md §8 is merged; until then the -91 test packages (step 0). |
 | R4 | Mesa/EGL with shared contexts on two threads, on Haiku (never exercised: our GL programs use one thread). | `blender-glprobe -e` (step 0). |
@@ -334,6 +376,7 @@ their own.
 | R9 | Performance too low to be "usable": viewport fps, shader-compile stalls, 4 GB. | M4/M5 measurements; fallback: Workbench-only + Cycles is still a full modelling/rendering suite. |
 | R10 | GHOST_SDL limits (no Unicode text input, no tablet, windowed-mode quirks HaikuPorts worked around with `-p`). | M4 hands-on list; a native GHOST is the known remedy (§3.5). |
 | R11 | Track B (5.3/Vulkan): SSBO-per-stage limit and attachments; SDL3; deps. | `blender-vkprobe` (step 0); everything else waits for it. |
+| R12 | **Build-time generators** (§4.2): Blender runs `makesdna`, `makesrna`, `datatoc`, `datatoc_icon` (+ `msgfmt` with i18n) that it builds itself; a cross build makes them Haiku binaries the host cannot run, and 3.6 has no `CMAKE_CROSSCOMPILING` path. | M2 step 1: a host-native configure that builds only those targets, with the same `WITH_*` options; then the cross configure imports them. The DNA layout check (`dna_verify.c`, compiled for the target) catches any host/target struct-layout difference at compile time. |
 
 ## 7. Plan
 
@@ -346,10 +389,11 @@ Prerequisites, all on the host already:
 - `artifacts/desktop-gl/libSDL2-2.0.so.0` (SDL2 with the glview-core patch);
 - `artifacts/gl-build/gl-tests/glinfo`;
 - the two probes, built below.
-Image: the one desktop-gl.md §6 used (the games-bench image of image-2026-11-18).
+Image: the newest regular image, `artifacts/images/haiku-pi4-2026-11-19.img`. No games are needed. If its Mesa is
+already the merged desktop-GL Mesa (26.2.7 newer than -3 with core 3.3), skip the `pkgman install` line.
 
 ```
-# host: build the probes (warning-free, checked 2026-11-19 against a copy of artifacts/sysroot-arm64)
+# host: build the probes (both warning-free with exactly these commands, checked 2026-11-19)
 CC=sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-gcc
 S=artifacts/sysroot-arm64
 mkdir -p artifacts/blender-probe
@@ -361,7 +405,7 @@ $CC --sysroot=$S -std=gnu11 -O2 -Wall -Wextra -Isources/mesa/include tools/gl-te
 cp artifacts/gl-build/gl-tests/glinfo artifacts/desktop-gl/libSDL2-2.0.so.0 artifacts/blender-probe/
 
 # Pi: one session
-scripts/pi-session.sh start --image IMG --label blprobe
+scripts/pi-session.sh start --image artifacts/images/haiku-pi4-2026-11-19.img --minutes 60 --label blprobe
 scripts/pi-ssh.sh put artifacts/blender-probe artifacts/desktop-gl/mesa-26.2.7-91-arm64.hpkg \
     tools/pi-tests/blender-probe.sh /boot/home/
 scripts/pi-ssh.sh pkgman install -y /boot/home/mesa-26.2.7-91-arm64.hpkg
@@ -379,8 +423,9 @@ Read the result:
   - `mrt6 link: fails … invalid explicit location 4`;
   - `limit MAX_DRAW_BUFFERS 4`;
   - `limit MAX_TEXTURE_BUFFER_SIZE 65536`.
-- **Expected crash:** `sdlthread` with stock SDL2: a `debug_server` line, or "UnlockGL is called from wrong
-  thread". That reproduces R1.
+- **Expected FAIL (R1 reproduced):** `BPR blprobe sdlthread: FAIL N cross-thread BGLView unlocks`, with stock
+  SDL2. The probe's own `sdl thread:` render checks may still PASS on our HGL (§3.2). A `crash:` line from
+  `debug_server` is the HaikuPorts form of the same bug.
 - **Vulkan:** `BVK Blender 4.5 list: 2 missing; Blender 5.3 list: 0 missing`, plus the
   `maxPerStageDescriptorStorageBuffers 8` line.
 - **What changes the plan:**
@@ -392,8 +437,8 @@ Read the result:
 
 | M | What | Pass criterion | Effort |
 |---|---|---|---|
-| **M1** | SDL2 `haiku-gl-thread-context` patch (§3.2); libsdl2 revision with glview-core + thread patches | `blender-glprobe -t` PASS on the Pi; STK, Quake II GL3 and the `desktop-gl.sh` regression list unchanged | 0.5–1 d |
-| **M2** | Dependency stack for the minimal build (§4): epoxy, Imath, OpenEXR, libtiff, Boost subset, oneTBB (HaikuPorts patchset), OIIO 2.4.15, sse2neon, Python 3.10.22 (`build-python.sh --version`); a `scripts/build-blender.sh` that configures Blender 3.6.23 with `tools/cmake/haiku-arm64.cmake` and the §4 minimal options + HaikuPorts' 7 patches + ours (GHOST core profile), all under `heavy-build.sh` | `blender` links for Haiku arm64; each dependency packaged with `package-port.py` | 3–5 d |
+| **M1** | SDL2 `haiku-gl-thread-context` patch (§3.2); libsdl2 revision with glview-core + thread patches | `blender-probe.sh`: `sdlthread: PASS no cross-thread BGLView unlocks` and the three `sdl thread:` checks PASS; STK, Quake II GL3 and the `desktop-gl.sh` regression list unchanged | 0.5–1 d |
+| **M2** | Host-native generator build (§4.2: `makesdna`, `makesrna`, `datatoc`, `datatoc_icon`, imported into the cross build by a small CMake patch, ~1–1.5 d). Dependency stack for the minimal build (§4): epoxy, Imath, OpenEXR, libtiff, Boost subset, oneTBB (HaikuPorts patchset), OIIO 2.4.15, sse2neon, Python 3.10.22 (`build-python.sh --version`); a `scripts/build-blender.sh` that configures Blender 3.6.23 with `tools/cmake/haiku-arm64.cmake` and the §4 minimal options + HaikuPorts' 7 patches + ours (GHOST core profile), all under `heavy-build.sh` | `blender` links for Haiku arm64; each dependency packaged with `package-port.py` | 4–6.5 d |
 | **M3** | Headless: `blender -b --factory-startup -E CYCLES -o /boot/home/cube_#### -f 1` on the default scene (and `--python-expr` for bpy) | a PNG of the default cube rendered by Cycles on the Pi, render time logged; 0 PANIC | 0.5–1 d |
 | **M4** | UI through GHOST_SDL: windowed start, Workbench viewport, edit mode, save/load .blend, preferences window (second SDL window), F12 Cycles render into the image editor | hands-on checklist + HDMI screenshots; viewport fps measured on the default scene and on a 100 k-triangle mesh | 1–2 d |
 | **M5** | EEVEE Legacy on 4 targets: Blender patch (§2.2; SSS off, 3-output opaque variant), shader-compile timing | Material Preview and an EEVEE F12 render of a lit scene correct (compare with an x86-64 reference render of the same .blend); SSS-off warning shown once | 1–2 d |
@@ -401,8 +446,8 @@ Read the result:
 | M7 (later) | native GHOST_SystemHaiku (§3.5) if the SDL limits (Unicode input, tablet, window quirks) matter in use | — | 4–8 d |
 | Track B | Blender 5.3 on V3DV: only if step 0's 5.3 list is clean — then a separate design note (SSBO limit in V3DV, SDL3 port of our Haiku patches, Python 3.13/3.14, the 5.x dependency set) | — | weeks |
 
-Total to a usable, packaged Blender 3.6 (M1–M6): **8–15 agent-days**, *estimated*. The first visible result,
-Cycles rendering on the Pi (M3), comes after about 5–7 of those.
+Total to a usable, packaged Blender 3.6 (M1–M6): **9–16.5 agent-days**, *estimated*. The first visible result,
+Cycles rendering on the Pi (M3), comes after about 6–8.5 of those.
 
 ### Mesa / v3d work this may need
 - **None for M1–M4**, if step 0 passes.

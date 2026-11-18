@@ -8,8 +8,10 @@
 # says) and glinfo. Needs the desktop-GL branch stack (docs/design/desktop-gl.md: Mesa v5-gl + libglvnd v5-gl
 # installed as the -91 test packages) and an SDL2 with patches/libsdl2/libsdl2-2.32.10-haiku-glview-core.patch;
 # a libSDL2 in DIR is used first (LIBRARY_PATH). Output lines start with "BPR "; each program's own lines
-# follow, its log in /tmp/bpr-LABEL-*.txt. The SDL thread check runs last and alone: with stock SDL2 it is
-# expected to stop in the debugger (the HaikuPorts Blender crash), which is its answer.
+# follow, its log in /tmp/bpr-LABEL-*.txt. The SDL thread check runs last and alone. Stock SDL2 has one
+# process-wide current context: each thread unlocks the other's BGLView, which our HGL/BLocker only report as
+# "wrong thread" (HaikuPorts' x86-64 stack stopped in the debugger there) — so any such line is a FAIL even
+# when the probe's own checks pass.
 dir=$1 label=${2:-run}
 [ -x "$dir/blender-glprobe" ] || { echo "usage: $0 DIR [LABEL]" >&2; exit 2; }
 export PATH=$dir:/boot/system/non-packaged/bin:$PATH
@@ -33,9 +35,16 @@ run egl blender-glprobe -e
 grep -E '^BGP ' /tmp/bpr-$label-egl.txt
 run vkprobe blender-vkprobe
 grep -E '^BVK ' /tmp/bpr-$label-vkprobe.txt
-# last: may end in the debugger (stock SDL2); a debugger stop shows up as a status other than 0..N
+# last: may also end in the debugger
 run sdlthread blender-glprobe -t
-grep -E '^BGP (PASS|FAIL|INFO) sdl thread|UnlockGL' /tmp/bpr-$label-sdlthread.txt
+grep -E '^BGP (PASS|FAIL|INFO) sdl thread' /tmp/bpr-$label-sdlthread.txt
+wrong=$(grep -a -c 'wrong thread' /tmp/bpr-$label-sdlthread.txt)
+if [ "$wrong" = 0 ]; then
+	echo "BPR $label sdlthread: PASS no cross-thread BGLView unlocks"
+else
+	echo "BPR $label sdlthread: FAIL $wrong cross-thread BGLView unlocks (SDL2 has one process-wide current context)"
+	grep -a 'wrong thread' /tmp/bpr-$label-sdlthread.txt | head -n 3
+fi
 grep -a debug_server /var/log/syslog 2> /dev/null | grep -a -i -E 'thread|team' | tail -n 3 \
 	| while read -r l; do echo "BPR $label crash: $l"; done
 echo "BPR $label done"
