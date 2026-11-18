@@ -184,6 +184,22 @@ Risks:
    the **same** Mesa build (`MESA_EXTENSION_OVERRIDE=-GL_MESA_map_buffer_client_pointer`), so only the path differs.
    Baseline: 12.1 fps WC3 menu (11-03), memcpy 3.1 %.
 
-## 7. Results
+## 7. Implementation (branches `clientptr`)
+
+| Repo | Commit | What |
+|---|---|---|
+| mesa (haiku-pi) | ce682c7dafe, 4b1b70b5c93, 5319e6b330f | upstream 990bc5d6493, f4c2f1083a1, c0bcffb1b0a with `-x`; one conflict: `static_data.py` (our 26.2.7 has `RenderbufferStorageMultisampleEXT` at the end of the list: both kept, ours first) |
+| mesa | b691443f2cd `v3d: implement MESA_map_buffer_client_pointer on Haiku` | `v3d_clientptr.c` (new, ~250 lines): heap, reclaim, `transfer_map/unmap_clientptr_range`, BO release; `v3d_bufmgr.c`: `v3d_bo_map_placed()` / `v3d_bo_unmap_placed()`, the release hook before the BO cache; `v3d_resource.c`: heap reference, the `PIPE_MAP_CLIENT_POINTER` branch of `transfer_map`; `v3d_screen.c`: `has_placed_map` (param), the cap |
+| haiku (origin) | 3b68c0cf0e `kernel/vm: add vm_clone_area_etc() that can replace a mapped range` | §3.3 |
+| haiku | f26a68c317 `v3d: map a BO at an address the client chooses` | `DRM_V3D_HAIKU_MMAP_BO_PLACED`, `DRM_V3D_PARAM_HAIKU_MMAP_BO_PLACED` |
+| haiku-rpi | this repository | `tools/gl-tests/clientptr.c` (the native test, §6.1), `tools/pi-tests/clientptr-ab.sh` (the Wine A/B) |
+
+Builds: Mesa with `build-gl-stack.sh` into a copy of the sysroot (GL_SYSROOT/GL_BUILD/GL_STAGE in the job's scratch,
+GL_MESA_SRC = the worktree), packaged as `mesa-26.2.7-90` (PACKAGES_OUT, never published); Haiku in its worktree's
+own `generated.arm64` (configured with the main tree's cross tools, `download/` hard-linked), `scripts/build.sh
+--generated … -sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc`: a full build from scratch took **5 min** on this
+host (12 GB), so the "driver add-on only" shortcut was not needed. No new warnings in the touched files.
+
+## 8. Results
 
 (to be filled)

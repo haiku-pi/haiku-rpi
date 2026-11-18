@@ -7,6 +7,11 @@ dep_glesv2 = dependency('glesv2')
 
 executable('gltri', 'gltri.c', dependencies : [dep_egl, dep_glesv2], install : true)
 
+# GL_MESA_map_buffer_client_pointer the way Wine's WoW64 OpenGL uses it (docs/design/gl-client-pointer.md);
+# desktop GL through EGL (libglvnd's libOpenGL)
+dep_opengl = dependency('opengl')
+executable('clientptr', 'clientptr.c', dependencies : [dep_egl, dep_opengl], install : true)
+
 # windowed: BGLView (libglvnd's HGL libGL.so) + desktop GL
 dep_gl = dependency('gl')
 dep_be = meson.get_compiler('cpp').find_library('be')
