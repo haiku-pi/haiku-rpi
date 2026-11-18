@@ -162,22 +162,31 @@ checked by readback, PASS. Regression checks PASS: glview (compatibility, now 3.
 
 | Program | before (stock) | branch | |
 |---|---|---|---|
-| **SuperTuxKart 1.5** desktop build, with the SDL2 patch | 2.1 → legacy fixed-function renderer | **3.3 core, GLSL 3.3, "GLSL supported": shader renderer** (deferred lighting, motion blur); hacienda race 60 s completed, 13–19 frames/s at 1280×720 (egl_haiku) | gained |
-| SuperTuxKart, the image's SDL2 (no patch) | 2.1, legacy renderer | compatibility 3.1 → its shader path → **crash** (NULL GL function in `SPMeshBuffer::recreateVAO`, from `uploadInstanceData`) | **regression unless SDL2 ships with it** |
+| **SuperTuxKart 1.5** desktop build, with the SDL2 patch | 2.1 → legacy fixed-function renderer | **3.3 core, GLSL 3.3, "GLSL supported": shader renderer** (deferred lighting, motion blur); hacienda race 60 s completed, 13–19 frames/s at 1280×720 (egl_haiku) — the GLES build's shader renderer ran at 16–18 (10-20), the legacy renderer at 28–38 unlit: a gain in features (lighting, shadows), not speed | gained |
+| SuperTuxKart, the image's SDL2 (no patch) | 2.1, legacy renderer | compatibility 3.1 → its shader path → **crash**: STK calls `glVertexAttribDivisor` (the 3.3 core name), which its glad loads only for GL ≥ 3.3 — on 3.1 it loads only `glVertexAttribDivisorARB`, so the pointer is NULL (STK's own bug on any 3.1 context, not something compatibility 3.1 breaks in general) | **regression unless SDL2 ships with it** |
 | **Quake II GL3** (`ref_gl3.so`, 3.2 core forward-compatible) | could not start (no 3.2) — the image defaults to gl1 | **runs: "got version 3.3", textured and lit on HDMI, 67–72 frames/s** at 1280×720 (attract demo) | gained |
 | Quake II GL1 | 2.1 | compatibility 3.1, renders | unchanged |
 | Wine d3dtest-x86 (wined3d: 4.4 core, else 3.2 core, else legacy) | legacy context (4.4 and 3.2 refused): 133.7 fps, image right | **3.2-core path (3.3 context)**: 135.0 fps, image right | path changed, same rate |
 | Wine gltest-x86 (WGL, legacy) | 2.1: 167.3 fps | compatibility 3.1: 161.7 fps | within the per-boot spread (163–194 seen) |
 | Firefox WebGL | WebGL 1 and 2 through an ES 3.1 context (patch 0003) | unchanged: a BGLView's compatibility GLSL is 1.40 < 1.50, so 0003 still takes ES | no gain needed |
 
-Not run: Warcraft III and the client-pointer A/B under the new wined3d core path, photocraft-gpu-it, mega-smoke,
-OpenTTD (wants 3.2: now available to it under Wine).
+Not run / not covered:
+- Warcraft III and the client-pointer A/B on the new wined3d core path (W3 is Direct3D 8/9: wined3d enables
+  GL_DEPTH_CLAMP only for D3D10/11 rasterizer states with DepthClipEnable = FALSE, so the emulation itself does not
+  reach it — the core path does); photocraft-gpu-it, mega-smoke; OpenTTD (wants 3.2).
+- Depth clamping with D16 and D32F depth buffers (the offset's units scaling and its float path ran only on
+  D24S8), and with points and lines.
+- `GL_EXT_depth_clamp` is now exposed in OpenGL ES contexts too (Firefox WebGL may use it).
+- No libsdl2 package was built, only the library (tested from /boot/home through LIBRARY_PATH).
+- 1986798cb22 (`st_pbo.c`: depth clipping on in the PBO rasterizer state — it was zeroed, so every PBO upload and
+  readback draw would have run the emulation for nothing) is built, not Pi-run.
 
 ## 8. Recommendation
 
 Merge all three together, after a mega image of them passes mega-smoke and a Wine W3 run:
-- mesa `v5-gl` (4 commits on rpi4: hgl compressed fallback, depth clamp emulation + seamless, polygon offset, no
-  ffma) and libglvnd `v5-gl` (BGL_CONTEXT_CORE) — one mesa package;
+- mesa `v5-gl` (5 commits on rpi4: depth clamp emulation + seamless, polygon offset, hgl compressed fallback, no
+  ffma, st_pbo) and libglvnd `v5-gl` (BGL_CONTEXT_CORE) — one mesa package. Squash 364a5ec8c79 into 4b9cd0bc85b
+  when integrating: 4b9cd0bc85b's message is stale ("from 3.1", "polygon offset is not applied");
 - **libsdl2 with `libsdl2-2.32.10-haiku-glview-core.patch` in the same image** (revision bump): without it the RGTC
   fix alone hands SDL programs that walk core versions (SuperTuxKart) a compatibility 3.1 context, and STK
   crashes in its shader path instead of using its legacy renderer;
