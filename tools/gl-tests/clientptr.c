@@ -37,8 +37,6 @@
 #define GL_BUFFER_CLIENT_POINTER_SIZE_MESA	0x9790
 #define GL_CLIENT_POINTER_RELEASE_ALL_MESA	0x00000001
 #define GL_CLIENT_POINTER_STREAM_DRAW_MESA	0x9791
-#define GL_CLIENT_POINTER_STATIC_DRAW_MESA	0x9794
-#define GL_CLIENT_POINTER_DYNAMIC_DRAW_MESA	0x9797
 typedef void (APIENTRYP PFNGLADDCLIENTPOINTERRANGEMESAPROC)(void *addr, GLsizeiptr size);
 typedef void *(APIENTRYP PFNGLRELEASECLIENTPOINTERRANGEMESAPROC)(GLbitfield flags, GLsizeiptr *size);
 #endif
@@ -54,6 +52,17 @@ typedef void *(APIENTRYP PFNGLRELEASECLIENTPOINTERRANGEMESAPROC)(GLbitfield flag
 	} while (0)
 
 static int sFailures = 0;
+
+/* A client-pointer usage the way Wine makes it (unix_wgl.c map_usage_client_pointer) and Mesa reads it back
+ * (bufferobj.c buffer_arb_usage): the GL usage's offset from GL_STREAM_DRAW added to
+ * GL_CLIENT_POINTER_STREAM_DRAW_MESA. The extension's named enums are dense (0x9791-0x9799) while the GL usages
+ * have gaps (0x88E0-2, 0x88E4-6, 0x88E8-A), so GL_CLIENT_POINTER_STATIC_DRAW_MESA (0x9794) itself is rejected
+ * as an invalid usage: only this arithmetic round-trips. */
+static GLenum
+client_usage(GLenum usage)
+{
+	return usage + GL_CLIENT_POINTER_STREAM_DRAW_MESA - GL_STREAM_DRAW;
+}
 
 #define GL_FUNCTIONS(F) \
 	F(PFNGLGENBUFFERSPROC, glGenBuffers) \
@@ -300,6 +309,22 @@ draw(GLintptr offset)
 	return (uint32_t)pixel[0] << 16 | (uint32_t)pixel[1] << 8 | pixel[2];
 }
 
+/* The vertex array keeps the buffer its attributes point into alive (and so its range), and the driver the
+ * vertex buffers of its last draw: point the attributes at no buffer and draw once before deleting one. */
+static void
+detach(void)
+{
+	GLint bound = 0;
+	glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &bound);
+	p_glBindBuffer(GL_ARRAY_BUFFER, 0);
+	static const float kZero[4];
+	p_glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, kZero);
+	p_glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, kZero);
+	glDrawArrays(GL_POINTS, 0, 1);
+	glFinish();
+	p_glBindBuffer(GL_ARRAY_BUFFER, bound);
+}
+
 /* --- the tests --- */
 
 static void
@@ -309,7 +334,7 @@ test_basic(void)
 	GLuint buffer;
 	p_glGenBuffers(1, &buffer);
 	p_glBindBuffer(GL_ARRAY_BUFFER, buffer);
-	p_glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(struct vertex), NULL, GL_CLIENT_POINTER_STATIC_DRAW_MESA);
+	p_glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(struct vertex), NULL, client_usage(GL_STATIC_DRAW));
 	CHECK(glGetError() == GL_NO_ERROR, "glBufferData with a client-pointer usage");
 
 	bool newRange;
@@ -339,6 +364,7 @@ test_basic(void)
 	pixel = draw(0);
 	CHECK(pixel == 0x00ff00, "GPU sees the second write (0x%06x)", pixel);
 
+	detach();
 	p_glDeleteBuffers(1, &buffer);
 	release_ranges(0);
 	CHECK(sCommitted == 0, "deleting the buffer gives its range back (%d out)", sCommitted);
@@ -354,7 +380,7 @@ test_initial_data(void)
 	GLuint buffer;
 	p_glGenBuffers(1, &buffer);
 	p_glBindBuffer(GL_ARRAY_BUFFER, buffer);
-	p_glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_CLIENT_POINTER_DYNAMIC_DRAW_MESA);
+	p_glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, client_usage(GL_DYNAMIC_DRAW));
 
 	bool newRange;
 	struct vertex *v = map_client_pointer(0, sizeof(data), GL_MAP_READ_BIT | GL_MAP_WRITE_BIT,
@@ -385,6 +411,7 @@ test_initial_data(void)
 	}
 	CHECK(draw(3 * sizeof(struct vertex)) == 0x00ffff, "GPU draws the flushed range");
 
+	detach();
 	p_glDeleteBuffers(1, &buffer);
 	release_ranges(0);
 	CHECK(sCommitted == 0, "ranges back after delete (%d out)", sCommitted);
@@ -401,7 +428,7 @@ test_respecify(int loops)
 	int bad = 0;
 	for (int i = 0; i < loops; i++) {
 		GLsizeiptr size = 3 * sizeof(struct vertex) + (i % 4) * 8192;
-		p_glBufferData(GL_ARRAY_BUFFER, size, NULL, GL_CLIENT_POINTER_STREAM_DRAW_MESA);
+		p_glBufferData(GL_ARRAY_BUFFER, size, NULL, client_usage(GL_STREAM_DRAW));
 		bool newRange;
 		struct vertex *v = map_client_pointer(0, size, GL_MAP_WRITE_BIT, &newRange);
 		if (v == NULL) {
@@ -440,6 +467,7 @@ test_respecify(int loops)
 	CHECK(sCommitted <= 1, "invalidating maps: %d ranges committed, %d still out", sCommits - commits,
 		sCommitted);
 
+	detach();
 	p_glDeleteBuffers(1, &buffer);
 	release_ranges(0);
 	CHECK(sCommitted == 0, "ranges back after delete (%d out)", sCommitted);
@@ -454,7 +482,7 @@ test_release_all(void)
 	struct vertex *v[2];
 	for (int i = 0; i < 2; i++) {
 		p_glBindBuffer(GL_ARRAY_BUFFER, buffers[i]);
-		p_glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(struct vertex), NULL, GL_CLIENT_POINTER_STATIC_DRAW_MESA);
+		p_glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(struct vertex), NULL, client_usage(GL_STATIC_DRAW));
 		bool newRange;
 		v[i] = map_client_pointer(0, 3 * sizeof(struct vertex), GL_MAP_WRITE_BIT, &newRange);
 		if (v[i] == NULL) {
@@ -480,6 +508,7 @@ test_release_all(void)
 
 	p_glBindBuffer(GL_ARRAY_BUFFER, buffers[1]);
 	unmap();
+	detach();
 	p_glDeleteBuffers(2, buffers);
 	release_ranges(GL_CLIENT_POINTER_RELEASE_ALL_MESA);
 	CHECK(sCommitted == 0, "all ranges back (%d out)", sCommitted);
@@ -496,7 +525,7 @@ time_maps(int loops)
 		p_glGenBuffers(1, &buffer);
 		p_glBindBuffer(GL_ARRAY_BUFFER, buffer);
 		p_glBufferData(GL_ARRAY_BUFFER, kSize, NULL,
-			clientPointer ? GL_CLIENT_POINTER_DYNAMIC_DRAW_MESA : GL_DYNAMIC_DRAW);
+			clientPointer ? client_usage(GL_DYNAMIC_DRAW) : GL_DYNAMIC_DRAW);
 		const GLbitfield access = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
 		double start = now_us();
 		int failed = 0;
@@ -521,7 +550,8 @@ time_maps(int loops)
 			clientPointer ? "client pointer" : "plain map", loops, us, failed ? " (maps failed)" : "");
 		if (failed)
 			sFailures++;
-		p_glDeleteBuffers(1, &buffer);
+		detach();
+	p_glDeleteBuffers(1, &buffer);
 		release_ranges(0);
 	}
 	free(source);

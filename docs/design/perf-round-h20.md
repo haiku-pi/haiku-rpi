@@ -274,7 +274,9 @@ Gain is what a user or the benchmark would see; "unmeasured" is stated where no 
   `WINEDEBUG=+fps`, W44 10-31 10:56). If memcpy is still > ~30 %, implement; if not, drop. These demos are not in
   `games-bench`, so a before/after needs them added to the bench image.
 - **Still unmeasured**: the post-0028 profile; whether any measurable title is copy-bound now. → C0 (§6): Warcraft III
-  menu memcpy 3.1 %: **C7 dropped**.
+  menu memcpy 3.1 %: **C7 dropped**. **Revisited 11-18** (gl-client-pointer.md): implemented anyway on branches; the menu went
+  13.6 → 22.9 fps — the gate measured the wrong thing (the cost was wined3d's map/unmap round trips per update, which
+  the extension removes by letting wined3d map persistently, not the copies).
 
 ### C8. WiFi SDIO DMA (F4)
 

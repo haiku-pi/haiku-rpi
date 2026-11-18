@@ -9,7 +9,8 @@
 #
 # DIR: the program's directory (Wine's working directory). Output lines start with "CPAB ". The program's own
 # output: /tmp/cpab-<mode>.txt; a screenshot at the end: /boot/home/cpab-<mode>.png; with PROFILE=1 the run is
-# profiled system-wide (profile -a -k -S) into /boot/home/cpab-<mode>.prof.
+# profiled system-wide (profile -a -k -S, from WARMUP to 10 s before the end) into
+# /boot/home/cpab-<mode>.prof.
 mode=$1 dir=$2 secs=$3 warmup=$4
 shift 4
 export HOME=/boot/home
@@ -25,12 +26,16 @@ esac
 out=/tmp/cpab-$mode.txt
 cd "$dir" || exit 1
 start=$(date +%s)
-if [ "${PROFILE:-0}" = 1 ]; then
-	profile -a -k -S -i 1000 -o /boot/home/cpab-$mode.prof sleep $secs > /tmp/cpab-prof.txt 2>&1 &
-fi
 wine "$@" > $out 2>&1 &
 pid=$!
-sleep $secs
+if [ "${PROFILE:-0}" = 1 ]; then
+	# the steady state only: from WARMUP to 10 s before the end
+	sleep $warmup
+	profile -a -k -S -i 1000 -o /boot/home/cpab-$mode.prof sleep $((secs - warmup - 10)) > /tmp/cpab-prof.txt 2>&1
+	sleep 10
+else
+	sleep $secs
+fi
 screenshot -s /boot/home/cpab-$mode.png > /dev/null 2>&1
 running=$(kill -0 $pid 2> /dev/null && echo running || echo exited)
 wineserver -k
