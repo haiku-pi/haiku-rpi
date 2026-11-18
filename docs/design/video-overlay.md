@@ -64,6 +64,8 @@ HEVC on rpivid: the same, with rpivid's SAND → planar conversion on the CPU in
 | cb891d5b85, 3630e9cc0e | MediaPlayer: the decoder writes into the overlay bitmaps (shared buffer group) — and its revert (§3) |
 | a9465e1c3f | ffmpeg: B_YUV420 only from 4:2:0 pictures (no chroma lost on 4:2:2/4:4:4/RGB sources); no frame rate from a hardware decoder |
 | 4683784899 | MediaPlayer: B_YUV420 also for streams without a BeOS color space (10-bit HEVC) |
+| 6cda54a399 | MediaPlayer: a frame that could not be read is B_YUV420 black, not dark green |
+| 92db783ffc | MediaPlayer: no copy into an overlay bitmap while overlays are suspended (the mode-change crash, §3.1) |
 
 This repository: `tools/haiku-tests/overlaytest.cpp` (the new B_YUV420 layout, `-x WIDTHxHEIGHT`, BT.709 from 720
 lines, ycbcr422 only on request and expected to fail), `tools/media-tests/vdecode.cpp` (`VDEC_SPACE=yuv420`),
@@ -212,6 +214,12 @@ scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/p
 - KNOWN-ISSUES: F2 loses "an overlay in the YCbCr422 format shows black" (not offered: no packed 4:2:2 on the display;
   B_YUV420 overlays work) and "MediaPlayer's video is RGB"; P2's MediaPlayer numbers become 25.8 % at 1080p30, 13.5 %
   at 720p30 (H.264), 23.6 % / 11.8 % (HEVC); "1080p60 24 fps shown" was a frame-rate bug (fixed in a9465e1c3f).
+- Verified on the Pi: everything up to 4683784899 (sessions v1a, v1b); 6cda54a399 only in QEMU-built code paths
+  (not hit on the Pi); 92db783ffc not yet run (§4).
+- One decision for the owner: a9465e1c3f makes 1080p60 H.264 play at its real rate, which MediaPlayer cannot keep
+  up with on the VideoCore (drops most frames; before: slow motion, every frame). Correct timing (and A/V sync) is
+  the reason to keep it; the frame-rate line can be reverted alone if smooth slow motion is preferred until
+  MediaPlayer decodes ahead.
 - Behaviour change for other media-kit users: none that asked for B_RGB32 or nothing (WebPositive, Firefox's FFmpeg
   path does not use the plugin); an app that asks for B_YUV420 now gets it (planar, the BBitmap layout) instead of
   B_RGB32; any renegotiation that changes only the output space or rows keeps the decoder.
