@@ -107,13 +107,31 @@ switch), the same decoder, the picture right.
 - 720p30 in the first column: 298 of 300 updates `late` — the producer's phase sat within 2 ms of the blank for the
   whole run (in the other runs 0–2); all frames shown, none dropped.
 
-## 4. Still to run (bench held by the Phoenix agent from 17:50)
+## 4. Still to run (the bench went to other agents; 2026-11-18 19:45)
 
-- The *before* column on the release image (`image-2026-11-18`, same session conditions, same clips) — the P2
-  numbers above are from 11-05.
-- The image at 4683784899: 1080p60 at 60 frames/s (the frame-rate fix), 10-bit HEVC through B_YUV420, overlaytest at
-  1920×1080 (BT.709), `h264.sh seek` / `web` (WebPositive asks for RGB32: unchanged path, but the conversion moved
-  into `Decode()`), no regression in the software path (`FFMPEG_H264_MMAL=0`).
+The image of 4683784899 is built (`sources/haiku-v1-overlay/generated.arm64/haiku-pi4-regular.img`, hrev of `rpi4`
+2753face8e + the branch; rebuild with `scripts/build.sh --generated sources/haiku-v1-overlay/generated.arm64
+-sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc` after configuring that directory as in gl-client-pointer.md §7).
+Two short sessions (~10 min each):
+
+```sh
+F="artifacts/v1-overlay/overlaytest artifacts/v1-overlay/teamstat artifacts/v1-overlay/vdecode tools/pi-tests/video-overlay.sh \
+   artifacts/media-tests/h264/play-720p30.mp4 artifacts/media-tests/h264/play-1080p30.mp4 artifacts/media-tests/h264/play-1080p60.mp4 \
+   artifacts/v1-overlay/clips/play-hevc-720p30.mp4 artifacts/v1-overlay/clips/play-hevc-1080p30.mp4 artifacts/v1-overlay/clips/play-hevc10-1080p30.mp4"
+# after: the fixes (1080p60 at 60 fps, 10-bit HEVC through B_YUV420), overlaytest at 1080p (BT.709)
+scripts/pi-session.sh start --image sources/haiku-v1-overlay/generated.arm64/haiku-pi4-regular.img --minutes 20 --label v1b
+scripts/pi-ssh.sh "mkdir -p /boot/home/h264" && scripts/pi-ssh.sh put $F /boot/home/h264/
+scripts/pi-ssh.sh "cd /boot/home/h264 && sh video-overlay.sh play after && sh video-overlay.sh ovl"   # HDMI: hdmi_snap during ovl
+scripts/pi-session.sh stop
+# before: the release image, same clips and script (overlaytest's B_YUV420 layout differs there: no ovl)
+scripts/pi-session.sh start --image artifacts/images/haiku-pi4-2026-11-18.img --minutes 15 --label v1-before
+scripts/pi-ssh.sh "mkdir -p /boot/home/h264" && scripts/pi-ssh.sh put $F /boot/home/h264/
+scripts/pi-ssh.sh "cd /boot/home/h264 && sh video-overlay.sh play before"
+scripts/pi-session.sh stop
+```
+
+Expected after: `play-1080p60` 600 updates per 10 s (it was 240), `play-hevc10-1080p30` with `video output B_YUV420
+(hevc_rpivid yuv420p10le …)` and far fewer drops; the other rows as in §3.
 
 QEMU virt (2026-11-18 18:10, the image at 4683784899 with a test bootscript; no VideoCore, no overlays): MediaPlayer
 on `play-720p30.mp4` and `play-854x480.mp4` takes `preferred color space: B_YUV420`, the gate turns it into B_RGB32

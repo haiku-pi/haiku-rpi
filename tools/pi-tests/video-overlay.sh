@@ -13,7 +13,8 @@
 #                (the overlay plane's updates in the display driver's statistics). LABEL names the run, ENV
 #                (e.g. FFMPEG_YUV420=0) goes into the player's environment
 #   hold CLIP    MediaPlayer on CLIP for 40 s (for HDMI snapshots taken from the host meanwhile)
-# MP=PATH runs another MediaPlayer binary (its file name must stay "MediaPlayer").
+# MP=PATH runs another MediaPlayer binary (its file name must stay "MediaPlayer"); CLIPS="a b" plays only those
+# (names without .mp4).
 # Lines start with "VOV "; each phase ends with "VOV <phase> result: N problems".
 phase=${1:?usage: video-overlay.sh PHASE [LABEL] [ENV]}
 label=${2:-run}
@@ -71,7 +72,7 @@ ovl)
 	[ $rc = 0 ] && fail "a B_YCbCr422 overlay was allocated"
 	;;
 play)
-	for clip in play-720p30 play-1080p30 play-1080p60 play-hevc-720p30 play-hevc-1080p30 play-hevc10-1080p30; do
+	for clip in ${CLIPS:-play-720p30 play-1080p30 play-1080p60 play-hevc-720p30 play-hevc-1080p30 play-hevc10-1080p30}; do
 		[ -f "$dir/$clip.mp4" ] || { fail "no $clip.mp4"; continue; }
 		play_one "$clip.mp4" "$clip" 20
 	done
