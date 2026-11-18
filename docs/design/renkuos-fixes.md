@@ -1,4 +1,16 @@
-# Three fixes taken from RenkuOS
+# Fixes taken from RenkuOS
+
+**2026-11-18 round** (owner 11-17 night: check RenkuOS's progress since 11-04, port what helps; analysis
+[renkuos-delta-2026-11-17.md](renkuos-delta-2026-11-17.md)): no new Pi 4 hardware work there; 11 general fixes ported
+onto `rpi4` (`8ed6c7589b`…`fbd46ca58b`, authors and trailers kept, `Ported-from:` added; rows 55–63 of
+[HAIKU-RPI4-CHANGES](../HAIKU-RPI4-CHANGES.md)). Tested on the Pi (image renku1118, netboot): `release-check.sh` 0
+problems; `tools/pi-tests/renku-1118.sh` — `swapfloat` PASS, power-saving scheduling under load and 20 mode switches
+alive throughout, PMU PPI counting, `tcpshort` 400 of 400; WiFi WPA2 join 1.9 s, 48.4/46.8 Mbit/s; H.264 play 0
+problems; gltri/vktest PASS; 0 PANIC; mega-smoke 33 of 33. Not tested end to end: WiFi auto-join of a saved network
+after boot (needs a stored network). Not taken: their Bluetooth HID series (not working end to end there), PR #472
+(expects wpa_supplicant's keystore), GICv3. Pushed 2026-11-18 02:45; ships in the next release image.
+
+## The 2026-11-04 round: three fixes
 
 2026-11-04. The owner decided (W45, 08:39) to take three fixes from RenkuOS
 ([github.com/RenkuOS/Source](https://github.com/RenkuOS/Source), a Haiku fork, MIT) into haiku-pi, and nothing else
