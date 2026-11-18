@@ -129,14 +129,22 @@ main(int argc, char** argv)
 
 	bigtime_t start = system_time();
 	int good = 0;
+	uint64 hash = 14695981039346656037ULL;
 	for (int i = 0; i < count; i++) {
 		BBitmap* bitmap = BTranslationUtils::GetBitmap(argv[optind]);
-		if (bitmap != NULL && bitmap->IsValid())
+		if (bitmap != NULL && bitmap->IsValid()) {
 			good++;
+			if (i == count - 1) {
+				// FNV-1a of the pixels: the same picture from another translator build?
+				const uint8* bits = (const uint8*)bitmap->Bits();
+				for (size_t b = 0; b < (size_t)bitmap->BitsLength(); b++)
+					hash = (hash ^ bits[b]) * 1099511628211ULL;
+			}
+		}
 		delete bitmap;
 	}
 	bigtime_t wall = system_time() - start;
-	printf("JPEG translator (GetBitmap from the file): %d of %d in %.3f s, %.2f ms each\n", good, count,
-		wall / 1e6, wall / 1e3 / count);
+	printf("JPEG translator (GetBitmap from the file): %d of %d in %.3f s, %.2f ms each, pixels %016llx\n", good,
+		count, wall / 1e6, wall / 1e3 / count, (unsigned long long)hash);
 	return 0;
 }

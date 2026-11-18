@@ -14,6 +14,8 @@
 #                      (enc-*.h264), then the 1080p encode while MediaPlayer decodes a 1080p clip (h264_mmal)
 #   ffenc              ffmpeg (with lib/'s libavcodec) encodes the raw clips with h264_mmal (ffenc-*.mp4), and
 #                      transcodes 20 s of play-1080p30.mp4 (h264_vc -> h264_mmal)
+#   venc               the media kit encodes (tools/media-tests/venc, BMediaFile as MediaConverter): H.264 (h264_mmal,
+#                      through plugins/ffmpeg - a build with the H.264 encoder entry) and MPEG-4 (software)
 #   firefox CLIP LABEL [ENV]
 #                      Firefox (with lib/ - the test libavcodec - first in LIBRARY_PATH) plays CLIP looped and muted:
 #                      the Firefox teams' CPU over 15 s from 15 s after the start, the frames decoded and dropped
@@ -45,6 +47,16 @@ jpeg)
 		run ./jpegtime -n 5 "$f"
 	done
 	ls -l jpeg/out-*.yuv | while read -r line; do say "$line"; done
+	# translators/JPEGTranslator (a test build, e.g. Haiku's v4-vc): taken before the system's one (same name, user
+	# directory first); the translator's times and pixels again
+	if [ -f translators/JPEGTranslator ]; then
+		t=/boot/home/config/non-packaged/add-ons/Translators
+		mkdir -p $t && cp translators/JPEGTranslator $t/
+		for f in jpeg/*.jpg; do
+			./jpegtime -n 5 "$f" 2>&1 | grep -a "translator" | while IFS= read -r line; do say "test translator: $line"; done
+		done
+		rm -f $t/JPEGTranslator
+	fi
 	;;
 jpegenc)
 	run ./mmal-codec jpegenc -n 5 -q 85 4032x3024 photo-4032x3024.yuv enc-4032x3024.jpg
@@ -82,6 +94,20 @@ ffenc)
 	say "transcode 1080p 20 s (h264_vc -> h264_mmal): $(( $(date +%s) - start )) s;" \
 		"$(grep -a -o 'frame= *[0-9]* fps=[0-9.]*' transcode.txt | tail -n 1)"
 	grep -a -E "mmal:|h264_mmal|Error" transcode.txt | head -n 4 | while IFS= read -r line; do say "transcode: $line"; done
+	;;
+venc)
+	# the media kit (BMediaFile, as MediaConverter): plugins/ffmpeg (a test build with the H.264 encoder entry)
+	# before the system's plugin, lib/'s libavcodec (h264_mmal); MPEG-4 (FFmpeg's software encoder) to compare
+	p=/boot/home/config/non-packaged/add-ons/media/plugins
+	[ -f plugins/ffmpeg ] && mkdir -p $p && cp plugins/ffmpeg $p/
+	for spec in "h264 1280x720" "h264 1920x1080" "mpeg4 1280x720" "mpeg4 1920x1080"; do
+		set -- $spec
+		LIBRARY_PATH="$dir/lib:$LIBRARY_PATH" timeout 300 ./venc -n 300 -s "$2" -c "$1" "venc-$1-$2.mp4" 2>&1 \
+			| grep -a -E "^VENC|mmal" | grep -v "VENC encoder" | while IFS= read -r line; do say "$line"; done
+	done
+	LIBRARY_PATH="$dir/lib:$LIBRARY_PATH" ./venc -n 1 -s 320x240 -c none venc-list.mp4 2>&1 | grep -a "VENC encoder" \
+		| while IFS= read -r line; do say "$line"; done
+	rm -f $p/ffmpeg venc-list.mp4
 	;;
 firefox)
 	clip=${2:?firefox CLIP LABEL [ENV]}

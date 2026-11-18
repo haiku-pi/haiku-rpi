@@ -73,7 +73,16 @@ and a test program that decodes as Firefox does (send one packet, receive until 
 (The first version replayed the recorded packets while still recording them — every packet went twice; found by
 this harness, fixed before any Pi run.) Harness: `tools/media-tests/h264vc-host/` (§5).
 
-### 1.4 On the Pi
+### 1.4 QEMU: Firefox takes it (no VideoCore there)
+
+QEMU virt, 2026-11-18 21:32 (release image 2026-11-18 + the test libavcodec in `/boot/home/vc/lib`, first in
+`LIBRARY_PATH`; a UserBootscript plays `play-720p30.mp4` in Firefox 157 with `MOZ_LOG=FFmpegVideo:4`; serial log
+`artifacts/qemu/20261118-213212-virt.log`): **`FFMPEG: Using preferred software codec h264_vc`** (5 decoder
+instances); without `/dev/vchiq` h264_mmal does not open and h264_vc decodes in software: the 60-s clip played to
+the end (1800 frames, 333 dropped by QEMU's slow CPU, all in the first 30 s), no debugger entry. (Firefox also
+takes `hevc_rpivid` for HEVC: the HEVC block decoder is a software decoder to FFmpeg's users, hw-video-decode.md.)
+
+### 1.5 On the Pi
 
 Pending (bench).
 
