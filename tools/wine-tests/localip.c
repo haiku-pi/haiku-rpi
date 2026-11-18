@@ -65,7 +65,9 @@ main(void)
 	printf("LOCALIP GetAdaptersInfo(size): %lu, %lu bytes\n", status, size);
 	if (status == ERROR_BUFFER_OVERFLOW) {
 		IP_ADAPTER_INFO* adapters = malloc(size);
-		if (GetAdaptersInfo(adapters, &size) == NO_ERROR) {
+		status = GetAdaptersInfo(adapters, &size);
+		printf("LOCALIP GetAdaptersInfo: %lu\n", status);
+		if (status == NO_ERROR) {
 			for (IP_ADAPTER_INFO* a = adapters; a != NULL; a = a->Next) {
 				printf("LOCALIP   adapter %lu %s: %s/%s gateway %s\n", a->Index, a->AdapterName,
 					a->IpAddressList.IpAddress.String, a->IpAddressList.IpMask.String,
@@ -80,7 +82,10 @@ main(void)
 	printf("LOCALIP GetIpForwardTable(size): %lu, %lu bytes\n", status, size);
 	if (status == ERROR_INSUFFICIENT_BUFFER) {
 		MIB_IPFORWARDTABLE* routes = malloc(size);
-		if (GetIpForwardTable(routes, &size, FALSE) == NO_ERROR) {
+		status = GetIpForwardTable(routes, &size, FALSE);
+		if (status != NO_ERROR)
+			printf("LOCALIP GetIpForwardTable: %lu\n", status);
+		if (status == NO_ERROR) {
 			for (DWORD i = 0; i < routes->dwNumEntries; i++) {
 				struct in_addr dest, mask, hop;
 				dest.s_addr = routes->table[i].dwForwardDest;

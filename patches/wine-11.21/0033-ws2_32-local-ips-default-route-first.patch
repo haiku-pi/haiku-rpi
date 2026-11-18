@@ -1,0 +1,34 @@
+ws2_32: list the default route's address first for the local host name
+
+get_local_ips() (gethostbyname() of the local host name) orders the
+addresses by default route, then by metric. An interface was marked as
+having the default route only when that route was the first of its
+routes in the table; on Haiku the host and network routes come first,
+so no interface was marked. And the metric comparison subtracted two
+unsigned values, so a loopback metric of ~0 (as on Linux) wrapped and
+sorted first. The loopback address then came first, as 127.12.34.56:
+Need for Speed: Porsche Unleashed takes the first address and offers
+UDP play only if it is not 127.x, and without it every race start
+crashed (W11). Mark the interface when any of its routes is a default
+route, and compare the metrics without wrapping.
+
+--- a/dlls/ws2_32/protocol.c
++++ b/dlls/ws2_32/protocol.c
+@@ -826,7 +826,7 @@
+         return -1;
+     if (b->default_route && !a->default_route)
+         return 1;
+-    return a->metric - b->metric;
++    return (a->metric > b->metric) - (a->metric < b->metric);
+ }
+ 
+ /* Returns the list of local IP addresses by going through the network
+@@ -885,6 +885,8 @@
+             {
+                 if (route_addrs[j].metric > ifmetric)
+                     route_addrs[j].metric = ifmetric;
++                if (ifdefault && !route_addrs[j].default_route)
++                    route_addrs[j].default_route = ifdefault;
+                 exists = TRUE;
+             }
+         }

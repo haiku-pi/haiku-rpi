@@ -14,6 +14,8 @@ every race start crashed reading through that NULL object
 Haiku hands out the routing table of a socket's domain through SIOCGRTSIZE and
 SIOCGRTTABLE (as its route command reads it): one ifreq per route, the
 interface name and a route_entry, followed by the route's addresses.
+Haiku has no route metrics: loopback routes get ~0, as on Linux, so
+that they sort after the others.
 --- a/dlls/nsiproxy.sys/ip.c
 +++ b/dlls/nsiproxy.sys/ip.c
 @@ -63,6 +63,12 @@
@@ -29,7 +31,7 @@ interface name and a route_entry, followed by the route's addresses.
  #ifdef __APPLE__
  /* For reasons unknown, Mac OS doesn't export <netinet6/ip6_var.h> to user-
   * space. We'll have to define the needed struct ourselves.
-@@ -1687,6 +1693,85 @@
+@@ -1687,6 +1693,87 @@
  
              if (num < *count)
              {
@@ -105,7 +107,9 @@ interface name and a route_entry, followed by the route's addresses.
 +            entry.next_hop.s_addr = 0;
 +            if ((route->flags & RTF_GATEWAY) && route->gateway && route->gateway->sa_family == AF_INET)
 +                entry.next_hop = ((struct sockaddr_in *)route->gateway)->sin_addr;
-+            entry.metric = 0;
++            /* no metrics on Haiku; loopback routes last, as on Linux, so that the local host's first
++             * address (gethostbyname of its own name) is not the loopback one */
++            entry.metric = (ntohl( entry.prefix.s_addr ) >> 24) == 127 ? ~0u : 0;
 +            entry.protocol = (route->flags & RTF_GATEWAY) ? MIB_IPPROTO_NETMGMT : MIB_IPPROTO_LOCAL;
 +            entry.loopback = (route->flags & RTF_LOCAL)
 +                || (entry.protocol == MIB_IPPROTO_LOCAL && entry.prefix_len == 32);

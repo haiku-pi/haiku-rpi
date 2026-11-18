@@ -224,16 +224,36 @@ KNOWN-ISSUES W11 (W44 10-31): menus, garage and car models render, every race st
   not implemented (`nsiproxy.sys` `ipv4_forward_enumerate_all`: `/proc/net/route` on Linux, the routing sysctl
   on BSD/macOS, `FIXME("not implemented")` otherwise), so the host's answer for its own name was used: loopback
   or nothing. No UDP → no race object → the crash.
-- So the game needs a non-loopback IPv4 address, as on Windows (a Windows PC without a network adapter has the same
-  problem). A Pi without any network keeps the crash; that is the game's limit, not Wine's.
+- So the game needs a non-loopback IPv4 address (a Windows PC without a network adapter likely has the same
+  problem [inferred, not checked]). A Pi without any network keeps the crash: the game's limit, not Wine's.
 
-**Fix:** `patches/wine-11.21/0031-nsiproxy-haiku-ipv4-routes.patch`: `GetIpForwardTable()` on Haiku from
-`SIOCGRTSIZE`/`SIOCGRTTABLE` (the interface name, a `route_entry`, the route's addresses; as Haiku's `route`
-reads it). Test program `tools/wine-tests/localip.c` (`localip-x86.exe`, built by build-wine.sh): the game's probe
-plus the adapter and route tables; `tools/pi-tests/localip-ab.sh` runs it with the packaged and the patched
-`nsiproxy.so`.
+**Fix: three Wine patches** (each was needed; found in that order on the Pi):
+- `0031-nsiproxy-haiku-ipv4-routes`: `GetIpForwardTable()` on Haiku from `SIOCGRTSIZE`/`SIOCGRTTABLE` (one ifreq
+  per route: the interface name, a `route_entry`, the route's addresses; as Haiku's `route` reads it); loopback
+  routes get metric ~0 as on Linux.
+- `0032-nsiproxy-haiku-find-interface-by-index`: a Haiku patch made `find_entry_from_index()` always return NULL,
+  so every `update_if_table()` appended all interfaces again; the table grew between `GetAdaptersInfo()`'s size
+  call and its data call, which then always failed with `ERROR_BUFFER_OVERFLOW`.
+- `0033-ws2_32-local-ips-default-route-first`: `get_local_ips()` marked an interface as the default-route one only
+  if that was its first route (Haiku lists host and network routes first), and compared metrics by unsigned
+  subtraction (~0 wrapped): the loopback address came first, as 127.12.34.56.
 
-**Results:** §W11 results below.
+**Results (session nfs5, 2026-11-18 22:13–22:28; release image-2026-11-18 + the Wine 11.21 test tree with Wayland
+packages added; Pi on the wired LAN, 10.42.0.12):**
+
+| | gethostbyname(own name) | GetAdaptersInfo | GetIpForwardTable | game probe | race start |
+|---|---|---|---|---|---|
+| packaged (11.21-2) | NULL (error 0xc0000005) | 111 (overflow) on the data call | not implemented | FAIL | **crash** `Porsche.exe+0x8ced6`, read of 0x264 (re-run as the control, same session) |
+| + 0031 | NULL | 111 | 5 routes | FAIL | — |
+| + 0031 + 0032 | 127.12.34.56, 10.42.0.12 | 3 adapters | 5 routes | FAIL ("127.") | — |
+| + 0031–0033 | **10.42.0.12**, 127.0.0.1 | 3 adapters | 5 routes | **PASS** | **the race runs**: quick race, Normandie, 911 Carrera, 4 opponents; the clock counts, the car drives (screenshots `artifacts/wine-games/w11/`, not in git) |
+
+Driven by `input.exe` (create player → singleplayer → quick race → RACE), screenshots over ssh. Only the
+unix-side `nsiproxy.so` and the i386 `ws2_32.dll` were swapped (built incrementally in artifacts/wine-11.21/cross);
+the packages are not rebuilt. **Not tested:** a Pi without any IPv4 address other than loopback (the game then
+still crashes, as on Windows without a network adapter: its limit); more than one race; the race on WiFi only;
+the x86-64 / arm64 builds of ws2_32 (rebuilt by the next build-wine.sh run). Trap: `scripts/disk-add-tree.sh`
+copies no symlinks (the Wine tree's `bin/wine`, `wineboot`, …: 13 links) — they were made by hand on the Pi.
 
 ## Test programs (to be chosen and license-checked at the start)
 

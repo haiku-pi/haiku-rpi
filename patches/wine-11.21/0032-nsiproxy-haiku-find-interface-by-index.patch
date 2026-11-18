@@ -1,0 +1,32 @@
+nsiproxy: find network interfaces by index on Haiku too
+
+find_entry_from_index() always returned NULL on Haiku (a Haiku patch,
+reason not recorded), so update_if_table() appended every interface
+again at each call: the interface table grew between two calls, and
+GetAdaptersInfo() never succeeded (its size from the first call was
+always too small for the second, ERROR_BUFFER_OVERFLOW forever), and
+convert_index_to_luid() never found an interface. Look the index up as
+on the other systems (Haiku's if_nameindex() indices are stable).
+Found with Need for Speed: Porsche Unleashed (W11), whose local address
+comes from gethostbyname(), which Wine builds from GetAdaptersInfo().
+
+--- a/dlls/nsiproxy.sys/ndis.c
++++ b/dlls/nsiproxy.sys/ndis.c
+@@ -107,17 +107,12 @@
+ 
+ static struct if_entry *find_entry_from_index( UINT index )
+ {
+-#ifdef __HAIKU__
+-    return NULL;
+-#else
+-
+     struct if_entry *entry;
+ 
+     LIST_FOR_EACH_ENTRY( entry, &if_list, struct if_entry, entry )
+         if (entry->if_index == index) return entry;
+ 
+     return NULL;
+-#endif
+ }
+ 
+ static struct if_entry *find_entry_from_luid( const NET_LUID *luid )

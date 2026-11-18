@@ -12,6 +12,14 @@
 np=/boot/system/non-packaged
 unix=$np/lib/wine/aarch64-unix
 [ $# -gt 0 ] || set -- orig new
+# a prefix with the x86 emulator, as tools/pi-tests/wine-games.sh makes it
+if [ ! -f "$WINEPREFIX/drive_c/windows/syswow64/kernel32.dll" ]; then
+	start=$(date +%s)
+	WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -i > /tmp/wineboot.txt 2>&1
+	timeout 900 wineserver -w
+	echo "LAB prefix: $(( $(date +%s) - start )) s, syswow64 $(ls "$WINEPREFIX/drive_c/windows/syswow64" 2> /dev/null | wc -l) files"
+fi
+ln -sfn /boot "$WINEPREFIX/dosdevices/d:"
 for which in "$@"; do
 	wineserver -k > /dev/null 2>&1
 	sleep 2
