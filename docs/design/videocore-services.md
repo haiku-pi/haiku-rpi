@@ -73,7 +73,7 @@ and a test program that decodes as Firefox does (send one packet, receive until 
 | `FFMPEG_H264_MMAL=0` | software from the start, identical |
 
 (The first version replayed the recorded packets while still recording them — every packet went twice; found by
-this harness, fixed before any Pi run.) Harness: `tools/media-tests/h264vc-host/` (§5).
+this harness, fixed before any Pi run.) Harness: `tools/media-tests/h264vc-host/` (§6).
 
 ### 1.4 QEMU: Firefox takes it (no VideoCore there)
 
@@ -135,8 +135,8 @@ component reused); CPU = `jpegtime` (libjpeg-turbo 3.1.4.1, one thread):
 
 `mmal-codec jpegenc`, quality 85, from I420: 1920×1080 **46.9 ms** (2.19 MB), 4032×3024 **198 ms** (11.1 MB);
 setup 37 / 153 ms (the buffers). The output decodes on the host (PSNR against the source 22.5 / 28.0 dB: the
-test pictures carry dense noise). libjpeg-turbo's encode of the same picture: pending (`jpegtime -e`, §6).
-Translator encode on the VideoCore not done (same reasoning as decode unless §6 shows a large gap).
+test pictures carry dense noise). libjpeg-turbo's encode of the same picture: pending (`jpegtime -e`, §5).
+Translator encode on the VideoCore not done (same reasoning as decode unless §5 shows a large gap).
 
 ## 3. (c) H.264 encoding
 
@@ -158,11 +158,11 @@ encoder on `vc.ril.video_encode`.
   the VideoCore's buffer (~10 % of the system).
 - Quality on this (noise-heavy) source: 24.9 dB Y at 720p 4 Mbit/s against x264 `veryfast` 32.4 dB at the same
   rate (host); per frame the VideoCore holds ~32.5 dB for 5 frames after each I frame, then ~24.7 until the next
-  one. A noise-free source is pending (§6) before calling it the encoder's quality.
+  one. A noise-free source is pending (§5) before calling it the encoder's quality.
 - **Not at the same time as a 1080p decode**: with MediaPlayer playing 1080p H.264 on the VideoCore (`get_mem reloc`
   2 MB free), the encoder's input port does not enable (`ENOMEM`); so `ffmpeg -c:v h264_vc -i 1080p.mp4 -c:v
   h264_mmal` (a hardware transcode) fails the same way. The 76 MB `gpu_mem` holds one or the other at 1080p; a
-  session with `gpu_mem=128` is pending (§6).
+  session with `gpu_mem=128` is pending (§5).
 - **Media kit**: Haiku `v4-vc` 6bcab9eb40 lists "H.264 video" in the ffmpeg plugin's encoder table
   (`get_next_encoder()` for MP4 then offers mpeg4, **h264**, theora, mjpeg). The first run (`venc`, BMediaFile as
   MediaConverter) stopped after 76 (720p) / 117 (1080p) frames with `B_ERROR` from `WriteFrames`; two causes found:
@@ -171,7 +171,7 @@ encoder on `vc.ril.video_encode`.
      frames);
   2. the plugin times every packet from one `WriteFrames()` call with the frame count, right only for encoders
      that give exactly one packet per frame at once; h264_mmal gives two or none at times → the same time twice →
-     the muxer refuses (non-monotonic DTS). Fixed in `v4-vc` fc81a8ccee (the packet's own pts). Re-run pending (§6).
+     the muxer refuses (non-monotonic DTS). Fixed in `v4-vc` fc81a8ccee (the packet's own pts). Re-run pending (§5).
   MPEG-4 (FFmpeg's software encoder) through the same path: 720p 25.9 fps, 1080p 11.7 fps, 100 % of one core.
 
 ## 4. (d) Camera
@@ -196,7 +196,7 @@ layout (vchiq.md §7.2 patch 5), so the legacy camera is reachable from Haiku wi
 With the standard firmware (v4a): `get_camera` → `supported=0 detected=0, libcamera interfaces=0`,
 `vc.camera_info` → 0 cameras, `vc.ril.camera` not created (`ENOMEM`). That firmware does not probe for a camera at
 all, so this says nothing about the connector; the check needs a session image with `start_x=1` (§4.3 step 1),
-pending (§6).
+pending (§5).
 
 ### 4.3 Design (firmware camera, MMAL)
 
@@ -220,7 +220,7 @@ pending (§6).
 5. Effort (**estimated**): steps 1–2 a day; 3 half a day; 4 two to three days (media node, format negotiation,
    start/stop, a camera that is absent).
 
-## 6. Still to run (bench)
+## 5. Still to run (bench)
 
 1. Firefox on the Pi (§1.5): play-720p30 / play-1080p30, h264_vc vs `FFMPEG_H264_MMAL=0`, Firefox's CPU
    (teamstat over 15 s), frames decoded/dropped, the H.264 clock lines; one run with `MOZ_LOG=FFmpegVideo:4`.
@@ -229,7 +229,7 @@ pending (§6).
 4. A session with `start_x=1`, `gpu_mem=128` (image ready: start4x.elf/fixup4x.dat from the pinned commit,
    config.txt lines appended): `get_camera`, `camera_info`; the 1080p transcode (decode + encode) with 128 MB.
 
-## 5. Files
+## 6. Files
 
 - ffmpeg6: `patches/ffmpeg6/0003-h264-vc.patch` + `files/libavcodec/h264_vcdec.c`;
   `patches/ffmpeg6/0004-h264-mmal-encoder.patch` + `files/libavcodec/mmalenc.c`.
