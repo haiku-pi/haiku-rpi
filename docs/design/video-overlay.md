@@ -86,8 +86,15 @@ blank); dropped = MediaPlayer's "VideoProducer: dropped frame".
 **Correctness** (HDMI capture, **measured**): overlaytest B_YUV420 320×240 (BT.601) shows the eight bars in order,
 75 % levels read back as 178–189 of 191 (capture and 4:2:0 rounding), the yellow window over them (keying), the
 square moving, 120 flips at 60.2/s, front-buffer census as for RGB32 (0 non-opaque pixels outside, 307 200 keyed
-inside), PASS. MediaPlayer on `play-1080p30.mp4` with `B_YUV420 (h264_mmal yuv420p, 1920x1080)`: testsrc2's colours
-and geometry right, one decoder line, no renegotiation. `play-854x480.mp4`: the consumer's bitmap rows (1344 =
+inside), PASS. MediaPlayer on `play-1080p30.mp4` with `B_YUV420 (h264_mmal yuv420p, 1920x1080)`: geometry right, one decoder
+line, no renegotiation. **Colours differ from the RGB path at HD** (same clip, same grabber, `shots/mp-h264-1080p-b.png`
+on the plane vs `shots/b-noplane.png` through swscale, bar centres): red 245,23,0 vs 243,1,0; yellow 250,237,1 vs
+244,252,2; cyan 2,228,249 vs 0,249,243; blue 0,11,243 vs 0,0,239 — green −15…−21 on yellow/cyan, +22 on red: BT.601
+values read with the BT.709 matrix. The test clips are untagged and ffmpeg encoded testsrc2's RGB with BT.601; the
+plane follows the usual convention for untagged HD (BT.709 from 720 lines, the accelerant), swscale always uses
+BT.601. For real HD video (BT.709, nearly always) the plane is the right one and the old RGB path was the one off;
+for 601-encoded HD (these clips) the plane shifts hue. The stream's own tag cannot reach the accelerant (no media-kit
+field): §5. `play-854x480.mp4`: the consumer's bitmap rows (1344 =
 1.5 × 896) differ from the decoder's (1284): one `video output now B_YUV420, 1344 bytes per row` (the output-only
 switch), the same decoder, the picture right.
 
@@ -158,6 +165,8 @@ frames copied out of the disk image with bfs_shell and compared on the host, **m
 | B_YUV420 → B_RGB32 after 10 frames (output-only switch) | frames 0–9 bit-identical; 10–19 RGB at 51 dB PSNR against the host's bgra of frames 10–19 (another swscale build): the decoder went on, no restart |
 | B_RGB32 → B_YUV420 after 10 frames | frames 0–9 RGB at 51 dB; **frames 10–19 bit-identical to ffmpeg's frames 10–19** |
 | interlaced 720×576 (yadif in the plugin), B_YUV420 and B_RGB32 | frame k bit-identical (YUV) / 51 dB (RGB) to the host's `yadif` frame k−1: the filter's one-frame delay, as before (frame 0 is the field-interleaved picture); the two spaces agree with each other at 51 dB |
+| HEVC 8-bit (`play-hevc-720p30`, hevc_rpivid's CPU path in QEMU), B_YUV420, 10 frames | 10 of 10 bit-identical to the host's framemd5 |
+| HEVC 10-bit (`play-hevc10-1080p30`), B_YUV420 through swscale yuv420p10le → yuv420p, 10 frames | identical to the host ffmpeg's `-pix_fmt yuv420p` (PSNR inf) |
 | MediaPlayer, no overlays (RGB32 through the gate) | plays `play-720p30.mp4` to the end, picture right (QEMU screenshot `artifacts/qemu/20261118-194920-virt.png`) |
 
 Also: `6cda54a399` MediaPlayer fills a frame it could not read with B_YUV420 black (Y 16, Cb/Cr 128), not zeros
@@ -203,9 +212,10 @@ scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/p
 - ffmpeg's command line (`-c:v h264_mmal`) still reports 23.98 fps for every stream: mmaldec tells the VideoCore
   24000/1001 and hands the echo back as the stream's rate; fixing it is a ffmpeg6 patch (not done; the plugin no
   longer trusts it).
-- Colour: the accelerant picks BT.709 from 720 lines on, BT.601 below, limited range (as the stream's metadata would
-  usually say); a full-range or BT.2020 stream would need the plugin to pass its colour space on (no media-kit field
-  for it).
+- Colour: the accelerant picks BT.709 from 720 lines on, BT.601 below, limited range — the usual convention, but
+  not the stream's tag: 601-tagged HD (and our untagged test clips, encoded with BT.601) shows a hue shift against
+  the old RGB path (§3); full-range or BT.2020 streams too. Passing the tag on needs a media-kit/overlay field (e.g. a
+  flag in `overlay_buffer` or the color space) — not done.
 
 ## 6. Merging (for the main session)
 
@@ -214,8 +224,8 @@ scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/p
 - KNOWN-ISSUES: F2 loses "an overlay in the YCbCr422 format shows black" (not offered: no packed 4:2:2 on the display;
   B_YUV420 overlays work) and "MediaPlayer's video is RGB"; P2's MediaPlayer numbers become 25.8 % at 1080p30, 13.5 %
   at 720p30 (H.264), 23.6 % / 11.8 % (HEVC); "1080p60 24 fps shown" was a frame-rate bug (fixed in a9465e1c3f).
-- Verified on the Pi: everything up to 4683784899 (sessions v1a, v1b); 6cda54a399 only in QEMU-built code paths
-  (not hit on the Pi); 92db783ffc not yet run (§4).
+- Verified on the Pi: everything up to 4683784899 (sessions v1a, v1b); 6cda54a399 ran in v1b's MediaPlayer, but its
+  branch (a frame that could not be read) was never taken anywhere; 92db783ffc not yet run (§4).
 - One decision for the owner: a9465e1c3f makes 1080p60 H.264 play at its real rate, which MediaPlayer cannot keep
   up with on the VideoCore (drops most frames; before: slow motion, every frame). Correct timing (and A/V sync) is
   the reason to keep it; the frame-rate line can be reverted alone if smooth slow motion is preferred until
