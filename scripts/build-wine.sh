@@ -136,6 +136,13 @@ step_build() {
 		&& [ -f "$sysroot/boot/system/develop/lib/pkgconfig/wayland-client.pc" ]; then
 		display=(--with-wayland WAYLAND_SCANNER="$root/artifacts/wayland-host/bin/wayland-scanner")
 		display+=(ac_cv_func_wl_egl_window_create=no)
+	elif [ "${WINE_NO_WAYLAND:-}" != 1 ]; then
+		# a package without winewayland.drv starts no window at all ("The graphics driver is missing"): 11.21-3
+		# was built so once, from a recreated sysroot without the Wayland packages
+		echo "build-wine: no Wayland stack (artifacts/wayland-host/bin/wayland-scanner and the sysroot's" \
+			"wayland-client.pc): run scripts/build-wayland.sh or extract its packages into the sysroot;" \
+			"WINE_NO_WAYLAND=1 builds without a window driver" >&2
+		exit 1
 	fi
 	# winehaiku.drv's Media Kit shim; hidden symbols: winehaiku.so exports only Wine's entry points
 	local shim="$out/haiku-audio"
