@@ -196,10 +196,12 @@ Risks:
 | haiku-rpi | this repository | `tools/gl-tests/clientptr.c` (the native test, §6.1), `tools/pi-tests/clientptr-ab.sh` (the Wine A/B) |
 
 Builds: Mesa with `build-gl-stack.sh` into a copy of the sysroot (GL_SYSROOT/GL_BUILD/GL_STAGE in the job's scratch,
-GL_MESA_SRC = the worktree), packaged as `mesa-26.2.7-90` (PACKAGES_OUT, never published); Haiku in its worktree's
+GL_MESA_SRC = the worktree), packaged as `mesa-26.2.7-90` (PACKAGES_OUT, never published; kept in `artifacts/clientptr/`); Haiku in its worktree's
 own `generated.arm64` (configured with the main tree's cross tools, `download/` hard-linked), `scripts/build.sh
 --generated … -sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc`: a full build from scratch took **5 min** on this
-host (12 GB), so the "driver add-on only" shortcut was not needed. No new warnings in the touched files.
+host (12 GB; the output directory was deleted after the test: `mkdir generated.arm64 && cd generated.arm64 &&
+../configure --cross-tools-prefix <rpi4 tree>/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-`, `cp -al`
+the rpi4 tree's `download/`, then the build line), so the "driver add-on only" shortcut was not needed. No new warnings in the touched files.
 
 ## 8. Results (2026-11-18, network session `clientptr1` 09:37–10:13)
 
