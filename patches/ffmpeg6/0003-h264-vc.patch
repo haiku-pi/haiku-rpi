@@ -1,0 +1,70 @@
+h264_vc: H.264 on the VideoCore with the software decoder as its fallback
+
+A third H.264 decoder, "h264_vc" (libavcodec/h264_vcdec.c, from the
+haiku-rpi repository's patches/ffmpeg6/files), for callers that choose their
+decoder by walking av_codec_iterate() and skip AV_CODEC_CAP_HARDWARE ones:
+Firefox's FFmpeg decoder module takes the first such H.264 decoder. It opens
+h264_mmal in an inner codec context and, when that does not open or fails
+later, gives the stream to h264 (from the start while h264_mmal had output no
+frame - the packets are kept - else from the next key frame). Not for
+low-delay decoding, pictures over 1920x1088, High 10/4:2:2/4:4:4, or with
+FFMPEG_H264_MMAL=0 in the environment (h264 from the start then).
+
+It is listed before "h264" in allcodecs.c, and find_codec() skips it, so
+avcodec_find_decoder(AV_CODEC_ID_H264) - FFmpeg's command line, Haiku's media
+kit plugin (which falls back by itself) - still returns h264.
+
+  configure      h264_vc_decoder needs mmal, selects h264 and h264_mmal
+  Makefile       h264_vcdec.o
+  allcodecs.c    ff_h264_vc_decoder before ff_h264_decoder; find_codec()
+                 skips it
+
+LGPL-2.1-or-later, as the files it changes.
+
+diff -ruN a/configure b/configure
+--- a/configure
++++ b/configure
+@@ -3236,6 +3236,8 @@
+ h264_mediacodec_encoder_select="h264_metadata"
+ h264_mf_encoder_deps="mediafoundation"
+ h264_mmal_decoder_deps="mmal"
++h264_vc_decoder_deps="mmal"
++h264_vc_decoder_select="h264_decoder h264_mmal_decoder"
+ h264_nvenc_encoder_deps="nvenc"
+ h264_nvenc_encoder_select="atsc_a53"
+ h264_omx_encoder_deps="omx"
+diff -ruN a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -150,6 +150,7 @@
+ extern const FFCodec ff_h263p_encoder;
+ extern const FFCodec ff_h263p_decoder;
+ extern const FFCodec ff_h263_v4l2m2m_decoder;
++extern const FFCodec ff_h264_vc_decoder;
+ extern const FFCodec ff_h264_decoder;
+ extern const FFCodec ff_h264_crystalhd_decoder;
+ extern const FFCodec ff_h264_v4l2m2m_decoder;
+@@ -957,6 +958,12 @@
+     while ((p = av_codec_iterate(&i))) {
+         if (!x(p))
+             continue;
++#if CONFIG_H264_VC_DECODER
++        /* listed first for callers that walk the list (Firefox), but not
++         * the default H.264 decoder */
++        if (p == &ff_h264_vc_decoder.p)
++            continue;
++#endif
+         if (p->id == id) {
+             if (p->capabilities & AV_CODEC_CAP_EXPERIMENTAL && !experimental) {
+                 experimental = p;
+diff -ruN a/libavcodec/Makefile b/libavcodec/Makefile
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -409,6 +409,7 @@
+ OBJS-$(CONFIG_H264_MEDIACODEC_ENCODER) += mediacodecenc.o
+ OBJS-$(CONFIG_H264_MF_ENCODER)         += mfenc.o mf_utils.o
+ OBJS-$(CONFIG_H264_MMAL_DECODER)       += mmaldec.o
++OBJS-$(CONFIG_H264_VC_DECODER)         += h264_vcdec.o
+ OBJS-$(CONFIG_H264_NVENC_ENCODER)      += nvenc_h264.o nvenc.o
+ OBJS-$(CONFIG_H264_OMX_ENCODER)        += omx.o
+ OBJS-$(CONFIG_H264_QSV_DECODER)        += qsvdec.o
