@@ -278,7 +278,9 @@ Not tested: the mega-image tooling was not used (the sessions ran the branch ima
 the Warcraft III tree copied over ssh); NFS Porsche (its data is not in this tree's cache), UT's OpenGL renderer
 (native GL without wined3d; needs its ini + registry settings of the mega image), the mega-smoke set of 33 programs;
 the kernel's refusal paths (unaligned address, a range holding a `B_KERNEL_AREA`, a wired range) — reviewed in code
-only, never run.
+only, never run. A test for them is ready, not yet run: `tools/haiku-tests/clientptr-refuse.c` (11-18; the
+B_BUSY refusal of a wired range is unreachable from userland — mlock() keeps nothing wired — so that case checks
+placing over memory imported as a BO instead).
 
 ## 9. Assessment
 
