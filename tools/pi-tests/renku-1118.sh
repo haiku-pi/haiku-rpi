@@ -1,6 +1,6 @@
 #!/bin/sh
 # renku-1118.sh — on the Pi, in a bench session (scripts/pi-ssh.sh), from the directory holding schedmode and
-# swapfloat (tools/haiku-tests/): checks for the RenkuOS fixes ported 2026-11-18 (docs/design/renkuos-fixes.md).
+# swapfloat and tcpshort (tools/haiku-tests/): checks for the RenkuOS fixes ported 2026-11-18 (docs/design/renkuos-fixes.md).
 #
 #   sh renku-1118.sh [DIR]
 #
@@ -39,12 +39,7 @@ say "ints cpus: $(sysinfo -cpu 2> /dev/null | head -1)"
 
 # tcp: short connections to the host (its ssh port answers and closes)
 host=${RNK_HOST:-10.42.0.1}
-ok=0
-for i in $(seq 1 200); do
-	if timeout 5 bash -c "exec 3<>/dev/tcp/$host/22 && head -c 7 <&3" 2> /dev/null | grep -q SSH; then
-		ok=$((ok + 1))
-	fi
-done
+ok=$(./tcpshort "$host" 22 200 | sed -n 's/TCPSHORT ok \([0-9]*\) of.*/\1/p')
 say "tcp short connections: $ok of 200"
 [ "$ok" -ge 195 ] || fail "tcp: only $ok of 200 connections"
 
