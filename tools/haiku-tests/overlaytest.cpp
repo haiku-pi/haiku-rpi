@@ -12,7 +12,12 @@
  * before the first overlay (not keyed: the probe's pixels as drawn), while it is shown (keyed: no
  * pixel outside the overlay may be other than opaque) and after it was hidden (not keyed again).
  *
- *   overlaytest [-s rgb32|ycbcr422|yuv420] [-f FLIPS] [-h SECONDS]   (default: all three spaces)
+ *   overlaytest [-s rgb32|ycbcr422|yuv420] [-f FLIPS] [-h SECONDS] [-x WIDTHxHEIGHT]
+ *       (default: rgb32 and yuv420, 320x240; from 720 lines on the accelerant takes YCbCr as BT.709)
+ *
+ * B_YUV420 is planar I420 as the accelerant defines it (docs/design/video-overlay.md): bytes_per_row
+ * is the whole picture's (3 bytes per 2 pixels), the luma rows are 2/3 of it, Cb and Cr follow the
+ * luma with rows of 1/3 of it. B_YCbCr422 (packed) is not offered any more: its bitmaps must fail.
  *
  * Build (cross):
  *   g=sources/haiku/generated.arm64
@@ -33,8 +38,8 @@
 
 #define SAY(...) do { printf("OVL " __VA_ARGS__); printf("\n"); fflush(stdout); } while (0)
 
-static const int kWidth = 320;
-static const int kHeight = 240;
+static int kWidth = 320;
+static int kHeight = 240;
 static int sFlips = 240;
 static double sHold = 5;
 static int sFailures = 0;
@@ -61,13 +66,19 @@ rgb_at(int x, int y, int frame, uint8& r, uint8& g, uint8& b)
 }
 
 
-// BT.601, limited range (the accelerant's encoding below 720 lines)
+// limited range; BT.601 below 720 lines, BT.709 from 720 on (as the accelerant encodes)
 static void
 to_ycbcr(uint8 r, uint8 g, uint8 b, uint8& y, uint8& cb, uint8& cr)
 {
-	y = (uint8)(16 + (65.738 * r + 129.057 * g + 25.064 * b) / 256);
-	cb = (uint8)(128 + (-37.945 * r - 74.494 * g + 112.439 * b) / 256);
-	cr = (uint8)(128 + (112.439 * r - 94.154 * g - 18.285 * b) / 256);
+	if (kHeight < 720) {
+		y = (uint8)(16 + (65.738 * r + 129.057 * g + 25.064 * b) / 256);
+		cb = (uint8)(128 + (-37.945 * r - 74.494 * g + 112.439 * b) / 256);
+		cr = (uint8)(128 + (112.439 * r - 94.154 * g - 18.285 * b) / 256);
+	} else {
+		y = (uint8)(16 + (46.742 * r + 157.243 * g + 15.874 * b) / 256);
+		cb = (uint8)(128 + (-25.765 * r - 86.674 * g + 112.439 * b) / 256);
+		cr = (uint8)(128 + (112.439 * r - 102.129 * g - 10.310 * b) / 256);
+	}
 }
 
 
@@ -113,18 +124,22 @@ fill(BBitmap* bitmap, int frame)
 			break;
 		case B_YUV420:
 		{
-			// planar: Y, then Cb and Cr of half the pitch and height
-			uint8* cbPlane = bits + bpr * kHeight;
-			uint8* crPlane = cbPlane + bpr / 2 * kHeight / 2;
+			// planar: Y, then Cb and Cr of half the width and height; the luma rows are 2/3
+			// of bytes_per_row (the whole picture's: 3 bytes per 2 pixels)
+			const int32 luma = bpr / 3 * 2;
+			const int32 chroma = luma / 2;
+			const int32 height = (kHeight + 1) & ~1;
+			uint8* cbPlane = bits + luma * height;
+			uint8* crPlane = cbPlane + chroma * (height / 2);
 			for (int y = 0; y < kHeight; y++) {
 				for (int x = 0; x < kWidth; x++) {
-					uint8 r, g, b, luma, cb, cr;
+					uint8 r, g, b, lumaValue, cb, cr;
 					rgb_at(x, y, frame, r, g, b);
-					to_ycbcr(r, g, b, luma, cb, cr);
-					bits[y * bpr + x] = luma;
+					to_ycbcr(r, g, b, lumaValue, cb, cr);
+					bits[y * luma + x] = lumaValue;
 					if ((x & 1) == 0 && (y & 1) == 0) {
-						cbPlane[y / 2 * (bpr / 2) + x / 2] = cb;
-						crPlane[y / 2 * (bpr / 2) + x / 2] = cr;
+						cbPlane[y / 2 * chroma + x / 2] = cb;
+						crPlane[y / 2 * chroma + x / 2] = cr;
 					}
 				}
 			}
@@ -254,7 +269,10 @@ test_space(color_space space)
 	}
 	SAY("%s filled ok", name);
 
-	BWindow* window = new BWindow(BRect(100, 100, 100 + 2 * kWidth - 1, 100 + 2 * kHeight - 1),
+	// shown at twice the size, or the buffer's size from 720 lines on (as video)
+	const int scale = kHeight < 720 ? 2 : 1;
+	BWindow* window = new BWindow(BRect(100, 100, 100 + scale * kWidth - 1,
+		100 + scale * kHeight - 1),
 		name, B_TITLED_WINDOW, B_NOT_RESIZABLE | B_NOT_ZOOMABLE);
 	BView* view = new BView(window->Bounds(), "overlay", B_FOLLOW_ALL, B_WILL_DRAW);
 	window->AddChild(view);
@@ -375,7 +393,7 @@ main(int argc, char** argv)
 {
 	color_space only = B_NO_COLOR_SPACE;
 	int opt;
-	while ((opt = getopt(argc, argv, "s:f:h:")) != -1) {
+	while ((opt = getopt(argc, argv, "s:f:h:x:")) != -1) {
 		if (opt == 's') {
 			if (strcmp(optarg, "rgb32") == 0)
 				only = B_RGB32;
@@ -387,9 +405,11 @@ main(int argc, char** argv)
 			sFlips = atoi(optarg);
 		else if (opt == 'h')
 			sHold = atof(optarg);
-		else {
-			fprintf(stderr, "usage: %s [-s rgb32|ycbcr422|yuv420] [-f flips] [-h seconds]\n",
-				argv[0]);
+		else if (opt == 'x' && sscanf(optarg, "%dx%d", &kWidth, &kHeight) == 2 && kWidth >= 64
+			&& kHeight >= 64) {
+		} else {
+			fprintf(stderr, "usage: %s [-s rgb32|ycbcr422|yuv420] [-f flips] [-h seconds] "
+				"[-x WIDTHxHEIGHT]\n", argv[0]);
 			return 2;
 		}
 	}
@@ -403,7 +423,8 @@ main(int argc, char** argv)
 			(support & B_BITMAPS_SUPPORT_OVERLAY) != 0 ? "overlays" : "no overlays");
 	}
 	for (color_space space : spaces) {
-		if (only == B_NO_COLOR_SPACE || only == space)
+		// (no packed 4:2:2 on the display: only when asked for, and it must fail)
+		if ((only == B_NO_COLOR_SPACE && space != B_YCbCr422) || only == space)
 			test_space(space);
 	}
 	SAY("end: %s (%d failure%s)", sFailures == 0 ? "PASS" : "FAIL", sFailures,

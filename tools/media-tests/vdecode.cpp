@@ -5,6 +5,9 @@
  *
  *   vdecode [-n FRAMES] FILE
  *
+ * VDEC_SPACE=yuv420 asks for B_YUV420 instead (planar; the ffmpeg plugin copies the decoder's planes,
+ * docs/design/video-overlay.md).
+ *
  * "VDEC frames <n> in <s> s = <fps> frames/s; per frame <ms> ms mean, <ms> ms max (after the first); team CPU <s> s
  * = <p> % of one CPU", and the frames that came more than 40 ms after the one before. FFMPEG_H264_MMAL=0: the
  * software decoder.
@@ -75,7 +78,9 @@ main(int argc, char** argv)
 	bigtime_t cpuStart = team_cpu();
 	format.Clear();
 	format.type = B_MEDIA_RAW_VIDEO;
-	format.u.raw_video.display.format = B_RGB32;
+	const char* space = getenv("VDEC_SPACE");
+	format.u.raw_video.display.format
+		= space != NULL && strcmp(space, "yuv420") == 0 ? B_YUV420 : B_RGB32;
 	if (track->DecodedFormat(&format) != B_OK) {
 		printf("VDEC no decoded format\n");
 		return 1;
@@ -85,8 +90,10 @@ main(int argc, char** argv)
 		printf("VDEC codec %s (%s)\n", codec.short_name, codec.pretty_name);
 	const media_raw_video_format& video = format.u.raw_video;
 	size_t size = video.display.bytes_per_row * video.display.line_count;
-	printf("VDEC %" B_PRIu32 "x%" B_PRIu32 ", %" B_PRIu32 " bytes per row, %.2f frames/s\n",
-		video.display.line_width, video.display.line_count, video.display.bytes_per_row, video.field_rate);
+	printf("VDEC %" B_PRIu32 "x%" B_PRIu32 ", %s, %" B_PRIu32 " bytes per row, %.2f frames/s\n",
+		video.display.line_width, video.display.line_count,
+		video.display.format == B_YUV420 ? "B_YUV420" : "B_RGB32", video.display.bytes_per_row,
+		video.field_rate);
 	void* buffer = malloc(size);
 
 	int64 frames = 0, slow = 0;
