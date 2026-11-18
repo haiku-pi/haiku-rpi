@@ -10,7 +10,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-11-17 23:53** (the newest entry: 2026-11-17 23:12).
+Checked against the weekly logs up to **2026-11-18 11:22** (the newest entry: 2026-11-18 10:38).
 
 ## 1. Correctness: crashes and hangs
 
@@ -60,6 +60,7 @@ Checked against the weekly logs up to **2026-11-17 23:53** (the newest entry: 20
 | W7 | **Not checked by hand**: the mouse in full-screen games (since wine 11.20-14 a real display mode), and sound through Wine by ear. | — | — | W43 "Next" item 7 |
 | W10 | **Unreal Tournament's OpenGL renderer crashes at its first frame unless its extension list is shortened — the game's own bug.** Its log writer formats each line with `_vsnwprintf(buf, 1024, …)`, which leaves a line of 1024 characters or more unterminated, then copies it to ANSI until a zero, overwriting its stack up to the return address (Box64 then translates code at 0x7f7f7f7f). The renderer's `GL_EXTENSIONS` line is the only line that long: 988+ characters crash, the full list Wine reports (231 extensions) does; real Windows does the same. With `UseDirectDraw=True` and a shortened list, wined3d finds no framebuffer-object extension and calls a null `glGenFramebuffers`. | Every start with the OpenGL renderer and the full list | Start it with `MESA_EXTENSION_MAX_YEAR=1998` (717 characters; 1999/2000 still crash) and keep `UseDirectDraw=False`: the mega image's launcher does so from the next mega build (menu ~57 fps); for the Direct3D renderer start it without the variable | W44: 10-31; W45: 11-05 ([design/wine-x86-survey.md](design/wine-x86-survey.md) "W10") |
 | W11 | **Need for Speed: Porsche Unleashed (demo) crashes when a race starts** (`Porsche.exe+0x8ced6`, a read through a game object that was never created: its global at 0x626b50 is still NULL), installed or unpacked alike; the menus, the garage and the car models render (26 fps with Wine 0028). Cause not found (the race's sound/input setup is the next suspect). | Every race | — (not in the mega image) | W44: 10-31 |
+| W13 | **Each Direct3D device of a 32-bit Windows program keeps 64 MiB of RAM locked** (from image-2026-11-18): with GL_MESA_map_buffer_client_pointer, wined3d maps one 64 MiB GPU buffer per device persistently below 4 GiB (+59–64 MiB used, measured with d3dtest and Warcraft III), in exchange for much faster buffer updates (Warcraft III menu 13.6 → 22.9 fps). Mesa's named `GL_CLIENT_POINTER_*_MESA` usage constants don't match the arithmetic Mesa and Wine use (upstream bug; Wine's path is unaffected except DYNAMIC_READ/COPY usages). | Every WoW64 OpenGL/Direct3D program | `MESA_EXTENSION_OVERRIDE=-GL_MESA_map_buffer_client_pointer` restores the copying path | W47: 11-18 ([design/gl-client-pointer.md](design/gl-client-pointer.md)) |
 
 ## 6. Debt and cleanup
 
