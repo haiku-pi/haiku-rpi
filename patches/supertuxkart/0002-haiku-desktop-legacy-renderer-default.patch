@@ -1,0 +1,27 @@
+Haiku desktop build: start with the legacy (OpenGL 2) renderer
+
+With Mesa 26.2.7-3 the Pi 4's V3D gives desktop OpenGL 3.3 core, so SuperTuxKart's desktop build
+switches to its shader renderer, which runs at 13-19 frames/s at 1280x720 there against 28-38 for the
+legacy renderer. Default force_legacy_device to true on Haiku for the desktop build only; the GLES build
+(SuperTuxKart-GLES) stays the shader renderer. A player can still set force_legacy_device="false" in
+config.xml (~/config/settings/supertuxkart/config-0.10/config.xml) for the shader renderer.
+
+--- a/src/config/user_config.hpp
++++ b/src/config/user_config.hpp
+@@ -660,8 +660,15 @@
+     PARAM_PREFIX IntUserConfigParam         m_max_fps
+             PARAM_DEFAULT(  IntUserConfigParam(120, "max_fps",
+                        &m_video_group, "Maximum fps, should be at least 60") );
++    // Haiku on the Raspberry Pi 4: the V3D runs the legacy renderer at about twice the frame rate of the
++    // shader one, so the desktop build starts with it (the GLES build is the shader renderer)
++#if defined(__HAIKU__) && !defined(USE_GLES2)
++#define STK_FORCE_LEGACY_DEVICE_DEFAULT true
++#else
++#define STK_FORCE_LEGACY_DEVICE_DEFAULT false
++#endif
+     PARAM_PREFIX BoolUserConfigParam        m_force_legacy_device
+-        PARAM_DEFAULT(BoolUserConfigParam(false, "force_legacy_device",
++        PARAM_DEFAULT(BoolUserConfigParam(STK_FORCE_LEGACY_DEVICE_DEFAULT, "force_legacy_device",
+         &m_video_group, "Force OpenGL 2 context, even if OpenGL 3 is available."));
+     PARAM_PREFIX BoolUserConfigParam        m_split_screen_horizontally
+         PARAM_DEFAULT(BoolUserConfigParam(true, "split_screen_horizontally",
