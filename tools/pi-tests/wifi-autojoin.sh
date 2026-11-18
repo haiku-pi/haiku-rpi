@@ -31,7 +31,12 @@ done
 [ -n "$dev" ] || { say "no broadcomfmac device"; exit 1; }
 up_s() { date +%T; }
 addr() { ifconfig "$dev" 2>/dev/null | grep -a -o 'inet addr: [0-9.]*' | awk '{ print $3 }'; }
-associated() { ifconfig "$dev" 2>/dev/null | grep -a -q "Network: $ssid"; }
+# associated with the network and the link up (an association without the key handshake has no link; the
+# address of an earlier lease stays on the interface)
+associated() {
+	ifconfig "$dev" 2>/dev/null | grep -a -q "Network: $ssid" \
+		&& ifconfig "$dev" 2>/dev/null | grep -a -q -E 'MTU.* link( |$)'
+}
 saved_report() {
 	if [ -f "$saved" ]; then
 		say "saved: $(grep -a -c '^network' "$saved") network block(s), names: $(grep -a -E '^\s*name' "$saved" \

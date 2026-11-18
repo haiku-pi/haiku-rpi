@@ -76,3 +76,32 @@ the remote disk stay, so the disk survives the reboot).
 Results: §5.
 
 ## 5. Results
+
+Image: the `v2-wifi` worktree build of b689ed27d7 (`@pi-mmc`, `-sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500`; jam rc 0,
+no warnings in `src/servers/net`; the worktree build printed "png.h: No such file" for three translators with rc 0
+and 11 "package … not available" lines, which do not touch networking). Bench AP: WPA2-PSK, 2.4 GHz.
+
+| Session | What | Result |
+|---|---|---|
+| waj1 (release image-2026-11-18) | entry written by hand, `shutdown -r` | associated + link 5 s after the WLAN driver started, **no DHCP** (no address for minutes; `ifconfig auto-config` by hand then got one): network-boot notifications missing (§1.3) |
+| waj2 (release image + new net_server started by hand) | `join` with a wrong passphrase | associated, no link, **not remembered** (no file) |
+| waj3 (v2-wifi) | serial log | no "notifications could not be initialized" (every earlier network boot had it) |
+| waj3 | wrong passphrase | associated, no link, not remembered |
+| waj3 | `ifconfig … join` with the passphrase, **no auto-config** | link + DHCP address **7 s** after the join (before: no DHCP without `auto-config`); syslog `remembered network`; the file holds 1 entry with the passphrase |
+| waj3 | wrong passphrase over the saved network | the saved passphrase kept (checked by comparison on the Pi) |
+| waj3 | **`shutdown -r`, no commands** | **auto-joined, link 5 s after the driver came up, DHCP address, ping to the AP 3/3** (8–208 ms) |
+
+Passphrase checks: "leak lines" 0 in every syslog, the host wrapper found it in no output, `git diff` count 0.
+
+**Found, not fixed:**
+- After a failed join (associated, no key handshake) bwfm stays associated and does not scan, so no scan-done arrives
+  and the saved network is not tried again until the interface goes down and up, or the next boot. The saved
+  passphrase is not touched. (`ifconfig … scan` did not change that, 1 try.)
+- After `ifconfig down` / `up` the auto-join was sent ("auto join network …: No error") but bwfm went `SCAN -> INIT`
+  and never associated within 100 s (1 of 1), and no further scan-done came to retry. Joins after an interface
+  restart have been unreliable before (f43d42c93b); not investigated further. Reboots: 2 of 2 joined (waj1, waj3).
+- `ping` to the AP answered (0.3 ms) while the link was down after the wrong join; the address of the earlier lease
+  stays on the interface. The test grades by the link flag and the association, not by ping.
+
+**Not tested:** the SD-card boot (inferred unaffected, §1.3); Network preferences / the Deskbar menu (§3); a
+network with a wpa_supplicant (none on arm64); the 30 s retry after a first scan that misses the AP; open networks.
