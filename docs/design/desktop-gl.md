@@ -17,20 +17,25 @@ Citation keys: **[M]** `sources/mesa` (branch `rpi4` b691443f2cd = 26.2.7 + our 
    still got the compatibility context. EGL itself was fine: egl_haiku maps a 3.2+ core request or any 3.1
    request to `API_OPENGL_CORE` [M] `src/egl/drivers/haiku/egl_haiku.cpp` `haiku_context_api()`.
 2. **The driver's versions.** Mesa computes each API's version from the driver's extensions and limits
-   ([M] `src/mesa/main/version.c` `compute_version()`). For v3d on V3D 4.2 ([M]
-   `src/gallium/drivers/v3d/v3d_screen.c` `v3d_init_screen_caps()`):
-   - compatibility profile: `glsl_feature_level_compatibility = 140`, yet the compatibility context reports
-     **2.1** (§6.1 shows which 3.0 gate fails);
-   - core profile: `glsl_feature_level = 330` (GLSL 3.30 is there), **3.1**: of the 3.2 gate only
-     `GL_ARB_depth_clamp` (`depth_clip_disable = devinfo.ver >= 71`) and `GL_ARB_seamless_cube_map` (the
-     `seamless_cube_map` cap is never set) are missing; the 3.3 gate is complete (dual-source blending,
-     RGB10_A2UI, 2_10_10_10 vertices, timer queries: the Haiku v3d driver reports the CPU queue and multisync,
-     which `query_timestamp` needs). Geometry shaders were already supported (OpenGL ES 3.2 level).
-   - Upstream Mesa main is the same: the V3D 7.1 (Pi 5) has depth clamping in hardware but still no seamless
-     cap, which is why the Pi 5 also stops at 3.1.
+   ([M] `src/mesa/main/version.c` `compute_version()`); `glinfo` prints which gate extensions a context lacks.
+   Measured on the Pi with the stock Mesa 26.2.7-2 (§6.1):
+   - **No context above 2.1 at all, in either profile**: of the 3.0 gate only `GL_ARB_texture_compression_rgtc`
+     is missing. V3D cannot sample RGTC, and Mesa offers it anyway by decompressing at upload when the frontend
+     sets `allow_compressed_fallback` — a driconf option every DRI frontend defaults to on
+     (`driinfo_gallium.h`). Haiku's hgl frontend fills no driconf options, so it stayed off. The often-quoted
+     "V3D stops at 3.1" is Linux's figure; on Haiku every 3.x request was refused.
+   - With the fallback (`MESA_EXTENSION_OVERRIDE=+GL_ARB_texture_compression_rgtc` on the stock driver):
+     **compatibility 3.1** (GLSL 1.40, `glsl_feature_level_compatibility = 140`) and **core 3.1**.
+   - The core profile's caps already have GLSL 3.30 (`glsl_feature_level = 330`) and geometry shaders; of the 3.2
+     gate only `GL_ARB_depth_clamp` (`depth_clip_disable = devinfo.ver >= 71`) and `GL_ARB_seamless_cube_map`
+     (the cap is never set) are missing, and the 3.3 gate is complete (dual-source blending, RGB10_A2UI,
+     2_10_10_10 vertices, timer queries — the Haiku v3d driver reports the CPU queue and multisync). With those
+     two overridden too: **core 3.3**, GLSL 3.30.
+   - Upstream Mesa main has the same caps: the V3D 7.1 (Pi 5) has depth clamping in hardware but still no seamless
+     cap, which is why the Pi 5 also stops at 3.1 on Linux.
 
-So the BGLView path was stuck at 2.1 even though the driver had a 3.1 core profile, and the driver's core profile
-stopped one gate short of 3.3.
+So three things stood between programs and OpenGL 3.3: a frontend option (RGTC, gates 3.0/3.1), the window system
+(BGLView/SDL asked only for compatibility contexts) and two features of the 3.2 gate.
 
 ## 2. The two missing pieces of OpenGL 3.2
 
@@ -56,7 +61,7 @@ extension anyway: Mesa's d3d12 driver (`caps->seamless_cube_map = true` on alway
 |---|---|---|---|
 | A | `MESA_GL_VERSION_OVERRIDE=3.3` | No: claims depth clamping that does nothing (GL_DEPTH_CLAMP accepted, geometry still clipped) | none |
 | B | Emulate depth clamping in the shaders, expose seamless as always-on | Yes, with two documented deviations (§5) | ~250 lines in Mesa |
-| C | Core profile through BGLView/SDL only | Yes | small, but only 3.1: SuperTuxKart's shader path qualifies, Quake II GL3 (3.2) does not |
+| C | Core profile through BGLView/SDL, and the RGTC fallback in hgl | Yes (Mesa's own decompression, as on every DRI platform) | small, but only 3.1: SuperTuxKart's shader path qualifies, Quake II GL3 (3.2) does not |
 
 Chosen: **B + C** — the window-system work is needed either way; B is what makes 3.2/3.3 real.
 
@@ -64,7 +69,8 @@ Chosen: **B + C** — the window-system work is needed either way; B is what mak
 
 | Repo | Commit | What |
 |---|---|---|
-| mesa (haiku-pi) | 4b9cd0bc85b `v3d: emulate depth clamping on V3D 4.x, expose seamless cube maps` | `v3d_nir_lower_depth_clamp.c` (new): the fragment-shader side; `v3d_nir_lower_io.c`: the last geometry stage's side; `v3d_program.c`: the keys; `v3d_screen.c`: `depth_clip_disable` on every version, `seamless_cube_map` |
+| mesa (haiku-pi) | 9fbf45c0374 `hgl: allow the compressed-format fallback, as DRI does by default` | the RGTC fallback: 3.0/3.1 for both profiles |
+| mesa | 4b9cd0bc85b `v3d: emulate depth clamping on V3D 4.x, expose seamless cube maps`, 3de858c34bf `v3d: polygon offset for emulated depth clamping`, 364a5ec8c79 (no `ffma`: V3D's backend has none) | `v3d_nir_lower_depth_clamp.c` (new): the fragment-shader side; `v3d_nir_lower_io.c`: the last geometry stage's side; `v3d_program.c`: the keys; `v3d_screen.c`: `depth_clip_disable` on every version, `seamless_cube_map` |
 | libglvnd (haiku-pi) | 83d9cc2 `HGL: BGL_CONTEXT_CORE — a core-profile OpenGL context in a BGLView` | `GLView.h` flag 4096; `Renderer::Init()` asks for 3.2 core, else 3.1 |
 | haiku-rpi | this repository | `patches/libsdl2/libsdl2-2.32.10-haiku-glview-core.patch`; `tools/gl-tests/glinfo.c`, `glcore.c`, `glview-core.cpp`; `tools/pi-tests/desktop-gl.sh` |
 
