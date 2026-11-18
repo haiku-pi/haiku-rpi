@@ -161,10 +161,32 @@ frames copied out of the disk image with bfs_shell and compared on the host, **m
 Also: `6cda54a399` MediaPlayer fills a frame it could not read with B_YUV420 black (Y 16, Cb/Cr 128), not zeros
 (dark green).
 
-## 4. Still to run
+## 4. Still to run (the bench went to other agents again at 20:55)
 
 - The release image in the same session conditions (the *before* column) and the mode change on it.
 - The mode change with 92db783ffc.
+
+Kept: `artifacts/v1-overlay/v1-overlay-4683784899.img` (the image of `v1b`; the worktree's build output was deleted),
+`artifacts/v1-overlay/new2/MediaPlayer` (92db783ffc), `artifacts/v1-overlay/bin/` (plugin, accelerant, driver of the
+image), the clips in `artifacts/v1-overlay/clips/` and `artifacts/media-tests/h264/`. About 10 minutes each:
+
+```sh
+P="artifacts/v1-overlay/teamstat tools/pi-tests/video-overlay.sh artifacts/media-tests/h264/play-720p30.mp4 \
+   artifacts/media-tests/h264/play-1080p30.mp4 artifacts/media-tests/h264/play-1080p60.mp4 \
+   artifacts/v1-overlay/clips/play-hevc-720p30.mp4 artifacts/v1-overlay/clips/play-hevc-1080p30.mp4 \
+   artifacts/v1-overlay/clips/play-hevc10-1080p30.mp4"
+# before
+scripts/pi-session.sh start --image artifacts/images/haiku-pi4-2026-11-18.img --minutes 15 --label v1-before
+scripts/pi-ssh.sh "mkdir -p /boot/home/h264" && scripts/pi-ssh.sh put $P /boot/home/h264/
+scripts/pi-ssh.sh "cd /boot/home/h264 && sh video-overlay.sh play before && sh video-overlay.sh rate && sh video-overlay.sh mode"
+scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/pi-session.sh stop
+# the mode-change fix (HDMI snapshots while it runs: does the overlay come back after the change?)
+scripts/pi-session.sh start --image artifacts/v1-overlay/v1-overlay-4683784899.img --minutes 15 --label v1c
+scripts/pi-ssh.sh "mkdir -p /boot/home/h264/new" && scripts/pi-ssh.sh put $P /boot/home/h264/ \
+  && scripts/pi-ssh.sh put artifacts/v1-overlay/new2/MediaPlayer /boot/home/h264/new/
+scripts/pi-ssh.sh "cd /boot/home/h264 && MP=/boot/home/h264/new/MediaPlayer sh video-overlay.sh mode"
+scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/pi-session.sh stop
+```
 
 ## 5. Open
 
