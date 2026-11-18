@@ -47,6 +47,17 @@ check(bool ok, const char *name, const char *format, ...)
 		SAY("check %s: ok", name);
 }
 
+/* a GL error left by a section: named, so that the failing call can be found */
+static void
+errors(const char *where)
+{
+	GLenum error;
+	while ((error = glGetError()) != GL_NO_ERROR) {
+		SAY("note GL error 0x%x after %s", error, where);
+		sFailures++;
+	}
+}
+
 static GLuint
 compile(GLenum type, const char *source)
 {
@@ -347,6 +358,7 @@ test_depth_clamp(void)
 		n, worst);
 	free_fbo(&ff);
 	glBindFramebuffer(GL_FRAMEBUFFER, f.fb);
+	errors("depth clamp, depth range, FragDepth, GS, FragCoord.z");
 
 	/* crossing the near plane: not clipped with clamping, clamped to 0 where in front */
 	const float cross[12] = {
@@ -389,6 +401,7 @@ test_depth_clamp(void)
 	}
 	check(finite && covered() >= behindOff, "clamp-behind-eye", "%d pixels (unclamped %d), depths in 0..1: %d",
 		covered(), behindOff, finite);
+	errors("near plane, behind the eye");
 
 	/* polygon offset while clamping: the same depths as the hardware's offset without clamping (units, and
 	 * factor on a sloped triangle), and the offset triangle wins the LESS test over its unoffset twin */
@@ -435,11 +448,14 @@ test_depth_clamp(void)
 		}
 		char name[64];
 		snprintf(name, sizeof(name), "clamp-polygon-offset-%s", kOffsets[k].name);
-		check(redWins[0] == redWins[1] && pixels > 100 && worst < 2e-6f, name,
-			"red wins %d/%d, %d pixels, largest difference %.2e (depth centre %.7f)", redWins[0], redWins[1],
-			pixels, worst, depth_at(cx, cy));
+		/* the slope term is the implementation's estimate (GL: "may be approximated"): the shader's
+		 * derivatives and the hardware's agree within 2e-5 of depth here (the factor terms are ~1e-2) */
+		check(redWins[0] == redWins[1] && pixels > 100 && worst < (kOffsets[k].factor != 0 ? 2e-5f : 2e-6f),
+			name, "red wins %d/%d, %d pixels, largest difference %.2e (depth centre %.7f)", redWins[0],
+			redWins[1], pixels, worst, depth_at(cx, cy));
 	}
 	glDepthFunc(GL_ALWAYS);
+	errors("polygon offset");
 
 	/* transform feedback sees the program's gl_Position, not the hardware's */
 	GLuint tf = program(kVsPos, NULL, kFsRed, "gl_Position");
@@ -448,32 +464,50 @@ test_depth_clamp(void)
 	glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, tfBuffer);
 	glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, 12 * sizeof(float), NULL, GL_STREAM_READ);
 	flat_triangle(v, 1.5f, 1.0f);
+	/* set up first: the program may not change while transform feedback is active */
 	glUseProgram(tf);
+	glBindBuffer(GL_ARRAY_BUFFER, sVbo);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(v), v, GL_STREAM_DRAW);
+	glVertexAttribPointer(glGetAttribLocation(tf, "pos"), 4, GL_FLOAT, GL_FALSE, 0, 0);
+	glEnableVertexAttribArray(glGetAttribLocation(tf, "pos"));
 	glBeginTransformFeedback(GL_TRIANGLES);
-	draw(tf, v, 3);
+	glDrawArrays(GL_TRIANGLES, 0, 3);
 	glEndTransformFeedback();
 	float captured[12] = { 0 };
 	glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, sizeof(captured), captured);
 	check(captured[2] == 1.5f && captured[6] == 1.5f, "clamp-xfb-position", "z %.3f %.3f %.3f (1.5)",
 		captured[2], captured[6], captured[10]);
 	glDeleteBuffers(1, &tfBuffer);
+	errors("transform feedback");
 
 	free_fbo(&f);
 
 	/* multisampled */
 	struct fbo ms = make_fbo(GL_RGBA8, 4);
 	struct fbo resolved = make_fbo(GL_RGBA8, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, ms.fb);
-	flat_triangle(v, 1.5f, 1.0f);
-	clear();
-	draw(red, v, 3);
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, ms.fb);
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolved.fb);
-	glBlitFramebuffer(0, 0, SIZE, SIZE, 0, 0, SIZE, SIZE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-	glBindFramebuffer(GL_FRAMEBUFFER, resolved.fb);
-	read_back(false);
-	check(is_red(cx, cy) && abs(covered() - fullCoverage) <= SIZE / 2, "clamp-msaa", "red %d, %d pixels (%d)",
-		is_red(cx, cy), covered(), fullCoverage);
+	int msCovered[2];
+	for (int pass = 0; pass < 2; pass++) {
+		/* the reference: inside the planes, unclamped; then beyond the far plane, clamped */
+		if (pass == 0)
+			glDisable(GL_DEPTH_CLAMP);
+		else
+			glEnable(GL_DEPTH_CLAMP);
+		glBindFramebuffer(GL_FRAMEBUFFER, ms.fb);
+		flat_triangle(v, pass == 0 ? 0.5f : 1.5f, 1.0f);
+		clear();
+		draw(red, v, 3);
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, ms.fb);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolved.fb);
+		glBlitFramebuffer(0, 0, SIZE, SIZE, 0, 0, SIZE, SIZE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		glBindFramebuffer(GL_FRAMEBUFFER, resolved.fb);
+		glFinish();
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, SIZE, SIZE, GL_RGBA, GL_UNSIGNED_BYTE, sColor);
+		msCovered[pass] = covered();
+	}
+	check(is_red(cx, cy) && msCovered[1] == msCovered[0], "clamp-msaa", "red %d, %d pixels (unclamped inside: %d)",
+		is_red(cx, cy), msCovered[1], msCovered[0]);
+	errors("msaa");
 	free_fbo(&ms);
 	free_fbo(&resolved);
 	glDisable(GL_DEPTH_CLAMP);

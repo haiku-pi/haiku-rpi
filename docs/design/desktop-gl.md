@@ -1,7 +1,9 @@
 # Desktop OpenGL above 2.1 on the Pi 4 (V3D 4.2)
 
-Status (2026-11-18): **implemented on branches `v5-gl`** (mesa haiku-pi, libglvnd haiku-pi) plus an SDL2 patch
-(`patches/libsdl2/libsdl2-2.32.10-haiku-glview-core.patch`); results in §6. Not merged; recommendation in §8.
+Status (2026-11-18 23:30): **implemented on branches `v5-gl`** (mesa haiku-pi 364a5ec8c79, libglvnd haiku-pi 83d9cc2)
+plus an SDL2 patch (`patches/libsdl2/libsdl2-2.32.10-haiku-glview-core.patch`), Pi-tested (§6): **OpenGL 3.3 core
+(GLSL 3.30) and compatibility 3.1 (GLSL 1.40)**, was 2.1 and no core profile at all. SuperTuxKart's shader renderer
+and Quake II's GL3 renderer run. Not merged; recommendation in §8.
 Owner (11-18): "raise desktop OpenGL above 2.1" — KNOWN-ISSUES P1.
 
 Citation keys: **[M]** `sources/mesa` (branch `rpi4` b691443f2cd = 26.2.7 + our work; upstream `origin/main`
@@ -115,12 +117,82 @@ not available"), as SDL does on other platforms — programs that walk down a li
    components in use, are clipped instead of clamped.
 4. Per-pixel, not per-sample, depth while clamping with MSAA (as any shader that writes `gl_FragDepth`).
 
-## 6. Results
+## 6. Results (Pi sessions v5gl1 19:35 and v5gl2 23:12, games-bench image of image-2026-11-18 + test files)
 
-(filled in from the Pi sessions below)
+Serial logs `artifacts/uart/*-session-v5gl1.log`, `*-session-v5gl2.log` (0 PANIC); screenshots `artifacts/desktop-gl/`
+(not in git). Branch Mesa installed with pkgman over the image's 26.2.7-2 as `mesa{,_devel}-26.2.7-91` (test
+revision, version string `git-364a5ec8c7`).
+
+### 6.1 Versions (`glinfo`; EGL contexts of each kind)
+
+| | stock 26.2.7-2 | stock + override RGTC | stock + override RGTC, depth clamp, seamless | **branch** |
+|---|---|---|---|---|
+| no attributes (what a BGLView got) | 2.1, GLSL 1.20 | 3.1, GLSL 1.40 | 3.1 | **3.1 (compatibility), GLSL 1.40** |
+| core 3.1 / 3.2 / 3.3 request | refused | 3.1 / refused / refused | 3.3 / 3.3 / 3.3 | **3.3 (Core Profile), GLSL 3.30** |
+| core 4.0 | refused | refused | refused | refused |
+| OpenGL ES | 3.1 | 3.1 | 3.1 | 3.1 (unchanged) |
+
+Gates on the branch: every extension of 3.0–3.3 advertised; what stops 4.0 is everything of the 4.0 list V3D 4.2
+lacks (tessellation, fp64, gpu_shader5...). The core 3.1 context lists `GL_ARB_color_buffer_float`,
+`GL_NV_primitive_restart`, `GL_NV_texture_rectangle` as absent: core contexts do not advertise those (their
+features are core), as the glinfo header says.
+
+### 6.2 Rendering (`glcore`, core 3.3 context; `glview-core`, BGLView)
+
+`glcore` **PASS** (every check) on the branch:
+- depth clamping: beyond far/near (depth exactly 1 / 0), depth range 0.25–0.75 (0.75 / 0.25), `gl_FragDepth = 2.0`
+  (0.75 with clamping, 1.0 without), a geometry shader as last stage, same depths as unclamped inside the planes
+  (1352 pixels, largest difference 6e-8 = one D24 step), `gl_FragCoord.z` (6e-8), a triangle crossing the near plane
+  (1352 pixels clamped vs 902 clipped, corner depth 0), a vertex behind the eye (only what is in front, depths
+  in 0..1), transform feedback keeps the program's z, 4× MSAA coverage equal to the unclamped reference;
+- polygon offset while clamping vs the hardware's without: units 6e-8, factor/both ≤ 8.8e-6 (the slope terms are
+  ~1e-2: the shader's quad derivatives and the hardware's slope agree to <0.1 %);
+- 3.2/3.3 features: geometry shader, base vertex, provoking vertex, BGRA and 2_10_10_10 vertices, dual-source
+  blending, fences, timer queries, RGB10_A2UI render target, multisample texture fetch, seamless enable;
+- `note cube-edge seamless off/on: 128/0/128` both — the documented deviation (always seamless).
+
+Bugs the Pi found in the first run, fixed: the pass emitted `ffma` (V3D has none: compile abort), and glcore's
+own transform-feedback section changed programs while capturing.
+
+`glview-core` (BGLView + BGL_CONTEXT_CORE): **3.3 (Core Profile), profile mask core, GLSL 3.30**, shader triangle
+checked by readback, PASS. Regression checks PASS: glview (compatibility, now 3.1), glview-es (ES 3.1), gltri
+(its desktop context now 3.1), vktest.
 
 ## 7. Programs
 
+| Program | before (stock) | branch | |
+|---|---|---|---|
+| **SuperTuxKart 1.5** desktop build, with the SDL2 patch | 2.1 → legacy fixed-function renderer | **3.3 core, GLSL 3.3, "GLSL supported": shader renderer** (deferred lighting, motion blur); hacienda race 60 s completed, 13–19 frames/s at 1280×720 (egl_haiku) | gained |
+| SuperTuxKart, the image's SDL2 (no patch) | 2.1, legacy renderer | compatibility 3.1 → its shader path → **crash** (NULL GL function in `SPMeshBuffer::recreateVAO`, from `uploadInstanceData`) | **regression unless SDL2 ships with it** |
+| **Quake II GL3** (`ref_gl3.so`, 3.2 core forward-compatible) | could not start (no 3.2) — the image defaults to gl1 | **runs: "got version 3.3", textured and lit on HDMI, 67–72 frames/s** at 1280×720 (attract demo) | gained |
+| Quake II GL1 | 2.1 | compatibility 3.1, renders | unchanged |
+| Wine d3dtest-x86 (wined3d: 4.4 core, else 3.2 core, else legacy) | legacy context (4.4 and 3.2 refused): 133.7 fps, image right | **3.2-core path (3.3 context)**: 135.0 fps, image right | path changed, same rate |
+| Wine gltest-x86 (WGL, legacy) | 2.1: 167.3 fps | compatibility 3.1: 161.7 fps | within the per-boot spread (163–194 seen) |
+| Firefox WebGL | WebGL 1 and 2 through an ES 3.1 context (patch 0003) | unchanged: a BGLView's compatibility GLSL is 1.40 < 1.50, so 0003 still takes ES | no gain needed |
+
+Not run: Warcraft III and the client-pointer A/B under the new wined3d core path, photocraft-gpu-it, mega-smoke,
+OpenTTD (wants 3.2: now available to it under Wine).
+
 ## 8. Recommendation
 
-## 9. KNOWN-ISSUES P1 text
+Merge all three together, after a mega image of them passes mega-smoke and a Wine W3 run:
+- mesa `v5-gl` (4 commits on rpi4: hgl compressed fallback, depth clamp emulation + seamless, polygon offset, no
+  ffma) and libglvnd `v5-gl` (BGL_CONTEXT_CORE) — one mesa package;
+- **libsdl2 with `libsdl2-2.32.10-haiku-glview-core.patch` in the same image** (revision bump): without it the RGTC
+  fix alone hands SDL programs that walk core versions (SuperTuxKart) a compatibility 3.1 context, and STK
+  crashes in its shader path instead of using its legacy renderer;
+- `build-stk.sh`/the STK package description ("OpenGL 2.1 (the legacy renderer)") and `patches/yquake2`
+  (default gl1 "because Haiku's OpenGL is 2.1") can then change: gl3 works.
+- Blast radius to watch: every desktop context moves 2.1 → 3.1 (compatibility) and core requests now succeed;
+  wined3d switches to its core-profile path (d3dtest fine; W3/WoW64 GL games untested on it); S3TC/RGTC/LATC
+  textures are now decompressed by Mesa where they used to be refused.
+
+## 9. KNOWN-ISSUES P1 text (proposal)
+
+> **Desktop OpenGL is 3.3 core / 3.1 compatibility.** OpenGL ES is 3.1. The V3D 4.2 has no tessellation or
+> double precision, so OpenGL 4 is out of reach. Two deviations from the specification: cube maps are always
+> filtered seamlessly (disabling GL_TEXTURE_CUBE_MAP_SEAMLESS has no effect), and depth clamping is done in the
+> shaders (correct depths, but early depth tests are off while GL_DEPTH_CLAMP is on). A BGLView gives a
+> compatibility context unless the program asks for `BGL_CONTEXT_CORE` (SDL: the core profile).
+
+(P1 can then move to "fixed" with the release that ships it.)
