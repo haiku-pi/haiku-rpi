@@ -204,6 +204,37 @@ across protection changes and never makes a file's cache copy-on-write. Reproduc
 3. Runtime checks: FEX on a Cortex-A72 without LSE/LRCPC (no public report found), its TSO emulation cost, and
    the code cache.
 
+## W11: Need for Speed: Porsche Unleashed (demo) crashed at every race start (2026-11-18)
+
+KNOWN-ISSUES W11 (W44 10-31): menus, garage and car models render, every race start faults at
+`Porsche.exe+0x8ced6`, `movl 0x264(%eax),%eax` with `%eax` = the global at 0x626b50, still NULL.
+
+**Cause (static, from the demo's `Porsche.exe`):**
+- The only store of a non-NULL value to 0x626b50 is in the constructor at 0x48f9c1 (`movl %ebp, 0x626b50`). It
+  first asks for two network transports by name, `"IPX"` (0x55f0c0) and `"UDP"` (0x55ee00), then for entry 0 of a
+  modem list (0x55d1a0, filled by 0x55cb00, `modemBuf`). With none of the three it destroys the object and
+  returns: the global stays NULL. The race code checks it (`testl %eax,%eax; je 0x48ced6`) and jumps straight to
+  the dereference: the game assumes the object exists.
+- **UDP** (0x582030): `WSAStartup(1.1)`; the local address from RAS (`rasapi32` `RasEnumConnectionsA`, a dial-up
+  connection) or else `gethostname()` → `gethostbyname()` → `inet_ntoa()` of the first address; UDP is offered only
+  if that string starts with neither `"127."` nor `"0."` and `socket(AF_INET, SOCK_DGRAM)` opens. **IPX**:
+  `socket()` for IPX through a table of function pointers (Wine has no IPX). The modem list is empty.
+- Wine's `gethostbyname()` of the local host name builds the list from `GetIpForwardTable()` and
+  `GetAdaptersInfo()` (`get_local_ips()` in ws2_32), else it asks the host's resolver. On Haiku the route table was
+  not implemented (`nsiproxy.sys` `ipv4_forward_enumerate_all`: `/proc/net/route` on Linux, the routing sysctl
+  on BSD/macOS, `FIXME("not implemented")` otherwise), so the host's answer for its own name was used: loopback
+  or nothing. No UDP → no race object → the crash.
+- So the game needs a non-loopback IPv4 address, as on Windows (a Windows PC without a network adapter has the same
+  problem). A Pi without any network keeps the crash; that is the game's limit, not Wine's.
+
+**Fix:** `patches/wine-11.21/0031-nsiproxy-haiku-ipv4-routes.patch`: `GetIpForwardTable()` on Haiku from
+`SIOCGRTSIZE`/`SIOCGRTTABLE` (the interface name, a `route_entry`, the route's addresses; as Haiku's `route`
+reads it). Test program `tools/wine-tests/localip.c` (`localip-x86.exe`, built by build-wine.sh): the game's probe
+plus the adapter and route tables; `tools/pi-tests/localip-ab.sh` runs it with the packaged and the patched
+`nsiproxy.so`.
+
+**Results:** §W11 results below.
+
 ## Test programs (to be chosen and license-checked at the start)
 
 The owner's guidance (2026-10-21 00:13): test with older, very popular Windows games that are known to run under
