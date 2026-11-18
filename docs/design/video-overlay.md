@@ -115,6 +115,12 @@ switch), the same decoder, the picture right.
   1920×1080 (BT.709), `h264.sh seek` / `web` (WebPositive asks for RGB32: unchanged path, but the conversion moved
   into `Decode()`), no regression in the software path (`FFMPEG_H264_MMAL=0`).
 
+QEMU virt (2026-11-18 18:10, the image at 4683784899 with a test bootscript; no VideoCore, no overlays): MediaPlayer
+on `play-720p30.mp4` and `play-854x480.mp4` takes `preferred color space: B_YUV420`, the gate turns it into B_RGB32
+(no YUV output line, no renegotiation), `h264_mmal failed (does not open): h264 continues from the start`, 0 dropped,
+0 PANIC; `vdecode` (software h264): B_YUV420 98.7 frames/s at 330 % CPU vs B_RGB32 53.7 frames/s at 264 % (QEMU's
+emulated CPU: only the ratio means anything).
+
 ## 5. Open
 
 - **One copy is left before the consumer's**: mmaldec copies the VideoCore's buffer into an AVFrame (3 MB at 1080p);
@@ -128,3 +134,14 @@ switch), the same decoder, the picture right.
 - Colour: the accelerant picks BT.709 from 720 lines on, BT.601 below, limited range (as the stream's metadata would
   usually say); a full-range or BT.2020 stream would need the plugin to pass its colour space on (no media-kit field
   for it).
+
+## 6. Merging (for the main session)
+
+- `v1-overlay` fast-forwards `rpi4` (2753face8e); touched: the display driver and accelerant, the ffmpeg media
+  plugin, MediaPlayer. No package, kernel or Mesa change. Apart from the revert pair, every commit stands alone.
+- KNOWN-ISSUES: F2 loses "an overlay in the YCbCr422 format shows black" (not offered: no packed 4:2:2 on the display;
+  B_YUV420 overlays work) and "MediaPlayer's video is RGB"; P2's MediaPlayer numbers become 25.8 % at 1080p30, 13.5 %
+  at 720p30 (H.264), 23.6 % / 11.8 % (HEVC); "1080p60 24 fps shown" was a frame-rate bug (fixed in a9465e1c3f).
+- Behaviour change for other media-kit users: none that asked for B_RGB32 or nothing (WebPositive, Firefox's FFmpeg
+  path does not use the plugin); an app that asks for B_YUV420 now gets it (planar, the BBitmap layout) instead of
+  B_RGB32; any renegotiation that changes only the output space or rows keeps the decoder.
