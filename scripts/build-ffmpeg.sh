@@ -5,7 +5,9 @@
 # "hevc_rpivid", HEVC on the Raspberry Pi 4's decoder block (docs/design/hw-video-decode.md), and FFmpeg's
 # "h264_mmal", H.264 on the VideoCore through MMAL (docs/design/vchiq.md, step 3: libavcodec then needs
 # raspberrypi_userland, scripts/build-mmal.sh --package, whose headers it is built with).
-# Revision 2 = with patches/ffmpeg6; 3 = the pipelined hwaccel (rpivid driver interface 2); 4 = h264_mmal.
+# Revision 2 = with patches/ffmpeg6; 3 = the pipelined hwaccel (rpivid driver interface 2); 4 = h264_mmal;
+# 5 = h264_vc (H.264 on the VideoCore for Firefox, with fallback) and the h264_mmal encoder
+# (docs/design/videocore-services.md).
 # Called by scripts/build-packages.sh; runs on its own too.
 #
 #   scripts/build-ffmpeg.sh [--publish]
@@ -16,7 +18,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 recipe="$root/sources/haikuports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
-revision=4
+revision=5
 unpublished=true
 [ "${1:-}" = --publish ] && unpublished=false
 mmal="/boot/system/develop/headers/raspberrypi_userland"
@@ -32,10 +34,12 @@ mmal="/boot/system/develop/headers/raspberrypi_userland"
 	--extra-ldflags="-L$SYSROOT/boot/system/non-packaged/lib"
 grep -q "^#define CONFIG_HEVC_RPIVID_DECODER 1$" config_components.h
 grep -q "^#define CONFIG_H264_MMAL_DECODER 1$" config_components.h
+grep -q "^#define CONFIG_H264_VC_DECODER 1$" config_components.h
+grep -q "^#define CONFIG_H264_MMAL_ENCODER 1$" config_components.h
 make -j"$(nproc)"
 make install DESTDIR="${DEST%/boot/system/non-packaged}"'
 work="$root/artifacts/cross-ports/ffmpeg6-6.1.6"
-if grep -E "(rpivid[a-z_]*|mmaldec)\.c:[0-9]+:[0-9]+: warning" "$work/build.log"; then
+if grep -E "(rpivid[a-z_]*|mmaldec|mmalenc|h264_vcdec)\.c:[0-9]+:[0-9]+: warning" "$work/build.log"; then
 	echo "build-ffmpeg: warnings in the rpivid or MMAL sources (above)" >&2
 fi
 "$root/scripts/package-port.py" "$recipe" --revision $revision
