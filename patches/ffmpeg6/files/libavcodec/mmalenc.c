@@ -62,6 +62,7 @@ typedef struct MMALEncodeContext {
 
     int width, height;          /* aligned: the input buffers' layout */
     int eos_sent;
+    int starved;                /* the caller had no frame for a free input buffer */
     int stalls;
     int64_t frames_in, packets_out;
 
@@ -276,12 +277,14 @@ static int ffmmal_send_frames(AVCodecContext *avctx)
     MMAL_BUFFER_HEADER_T *buffer;
     int ret;
 
+    ctx->starved = 0;
     while (!ctx->eos_sent && (buffer = mmal_queue_get(ctx->pool_in->queue))) {
         AVFrame *frame = ctx->frame;
 
         ret = ff_encode_get_frame(avctx, frame);
         if (ret == AVERROR(EAGAIN)) {
             mmal_buffer_header_release(buffer);
+            ctx->starved = 1;
             return 0;
         }
         if (ret < 0 && ret != AVERROR_EOF) {
@@ -355,13 +358,17 @@ static int ffmmal_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
         if ((ret = ffmmal_send_frames(avctx)) < 0)
             return ret;
 
-        /* wait for output only when no more input can go in */
-        wait = ctx->eos_sent || mmal_queue_length(ctx->pool_in->queue) == 0;
+        /* EAGAIN only when the caller's frames are all taken (it must send
+         * one before it asks again); else wait for output or for an input
+         * buffer to come back */
+        wait = ctx->eos_sent || !ctx->starved;
         buffer = wait ? mmal_queue_timedwait(ctx->queue_out, 100)
                       : mmal_queue_get(ctx->queue_out);
         if (!buffer) {
             if (!wait)
                 return AVERROR(EAGAIN);
+            if (!ctx->eos_sent && mmal_queue_length(ctx->pool_in->queue))
+                continue; /* an input buffer is back: take the next frame */
             if (++ctx->stalls >= MAX_STALLS) {
                 av_log(avctx, AV_LOG_ERROR, "No output from the VideoCore's encoder\n");
                 atomic_store(&ctx->error, MMAL_EIO);

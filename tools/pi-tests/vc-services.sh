@@ -31,6 +31,16 @@ say() { echo "VCS $*"; }
 fail() { say "FAIL: $*"; problems=$((problems + 1)); }
 gcmd() { [ -x ./vchiq-gcmd ] && timeout 20 ./vchiq-gcmd "$1" 2>&1 | grep -a "dequeue" | sed "s/^VCHIQTEST dequeue /VCS gencmd $1: /"; }
 run() { "$@" 2>&1 | while IFS= read -r line; do say "$line"; done; }
+# lib/ (the test libavcodec) before the default library path (an ssh shell has no LIBRARY_PATH: setting one replaces
+# the default)
+LP="$dir/lib:%A/lib:/boot/home/config/non-packaged/lib:/boot/home/config/lib:/boot/system/non-packaged/lib:/boot/system/lib"
+# the media server loads the plugins once: restart it to take a test plugin (or to drop it again)
+media_restart() {
+	for t in media_addon_server media_server; do kill $(ps | awk -v n="$t" '$1 ~ n"$" { print $(NF-3) }') 2> /dev/null; done
+	sleep 3
+	/boot/system/servers/media_server > /dev/null 2>&1 &
+	sleep 6
+}
 
 case "$phase" in
 probe)
@@ -82,14 +92,14 @@ ffenc)
 	for spec in "1280x720 4M" "1920x1080 8M"; do
 		set -- $spec
 		start=$(date +%s)
-		LIBRARY_PATH="$dir/lib:$LIBRARY_PATH" timeout 300 ffmpeg -nostdin -y -hide_banner -loglevel info \
+		LIBRARY_PATH="$LP" timeout 300 ffmpeg -nostdin -y -hide_banner -loglevel info \
 			-f rawvideo -pix_fmt yuv420p -s "$1" -r 30 -stream_loop 9 -i "src-$1.yuv" -frames:v 300 \
 			-c:v h264_mmal -b:v "$2" "ffenc-$1.mp4" > "ffenc-$1.txt" 2>&1 || fail "ffmpeg h264_mmal $1"
 		say "ffenc $1: $(( $(date +%s) - start )) s; $(grep -a -o 'frame= *[0-9]* fps=[0-9.]*' "ffenc-$1.txt" | tail -n 1)"
 		grep -a -E "mmal:|Error|error" "ffenc-$1.txt" | head -n 4 | while IFS= read -r line; do say "ffenc $1: $line"; done
 	done
 	start=$(date +%s)
-	LIBRARY_PATH="$dir/lib:$LIBRARY_PATH" timeout 300 ffmpeg -nostdin -y -hide_banner -c:v h264_vc -i play-1080p30.mp4 \
+	LIBRARY_PATH="$LP" timeout 300 ffmpeg -nostdin -y -hide_banner -c:v h264_vc -i play-1080p30.mp4 \
 		-t 20 -c:v h264_mmal -b:v 6M -an transcode-1080p.mp4 > transcode.txt 2>&1 || fail "transcode"
 	say "transcode 1080p 20 s (h264_vc -> h264_mmal): $(( $(date +%s) - start )) s;" \
 		"$(grep -a -o 'frame= *[0-9]* fps=[0-9.]*' transcode.txt | tail -n 1)"
@@ -99,15 +109,17 @@ venc)
 	# the media kit (BMediaFile, as MediaConverter): plugins/ffmpeg (a test build with the H.264 encoder entry)
 	# before the system's plugin, lib/'s libavcodec (h264_mmal); MPEG-4 (FFmpeg's software encoder) to compare
 	p=/boot/home/config/non-packaged/add-ons/media/plugins
-	[ -f plugins/ffmpeg ] && mkdir -p $p && cp plugins/ffmpeg $p/
+	[ -f plugins/ffmpeg ] && mkdir -p $p && cp plugins/ffmpeg $p/ && media_restart
 	for spec in "h264 1280x720" "h264 1920x1080" "mpeg4 1280x720" "mpeg4 1920x1080"; do
 		set -- $spec
-		LIBRARY_PATH="$dir/lib:$LIBRARY_PATH" timeout 300 ./venc -n 300 -s "$2" -c "$1" "venc-$1-$2.mp4" 2>&1 \
-			| grep -a -E "^VENC|mmal" | grep -v "VENC encoder" | while IFS= read -r line; do say "$line"; done
+		LIBRARY_PATH="$LP" timeout 300 ./venc -n 300 -s "$2" -c "$1" "venc-$1-$2.mp4" > "venc-$1-$2.txt" 2>&1
+		grep -a -v "VENC encoder" "venc-$1-$2.txt" | sort | uniq -c | sort -rn | head -n 8 \
+			| while IFS= read -r line; do say "venc $1 $2: $line"; done
 	done
-	LIBRARY_PATH="$dir/lib:$LIBRARY_PATH" ./venc -n 1 -s 320x240 -c none venc-list.mp4 2>&1 | grep -a "VENC encoder" \
+	LIBRARY_PATH="$LP" ./venc -n 1 -s 320x240 -c none venc-list.mp4 2>&1 | grep -a "VENC encoder" \
 		| while IFS= read -r line; do say "$line"; done
 	rm -f $p/ffmpeg venc-list.mp4
+	media_restart
 	;;
 firefox)
 	clip=${2:?firefox CLIP LABEL [ENV]}
@@ -139,7 +151,7 @@ EOF
 	syslogStart=$(wc -l < /var/log/syslog)
 	logs=
 	case "$label" in *-log) logs="FFmpegVideo:4,PlatformDecoderModule:4" ;; esac
-	env ${4:-VCS_NONE=1} LIBRARY_PATH="$dir/lib:$LIBRARY_PATH" MOZ_LOG="$logs" MOZ_CRASHREPORTER_DISABLE=1 \
+	env ${4:-VCS_NONE=1} LIBRARY_PATH="$LP" MOZ_LOG="$logs" MOZ_CRASHREPORTER_DISABLE=1 \
 		$ffx --no-remote --profile "$profile" "file://$dir/ffv.html" > "$log" 2>&1 &
 	sleep 15
 	teams=$(ps | awk '$1 ~ /Firefox$/ { print $(NF-3) }')
