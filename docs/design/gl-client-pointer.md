@@ -1,8 +1,9 @@
 # GL_MESA_map_buffer_client_pointer for WoW64 OpenGL (v3d)
 
-Status (2026-11-18 10:14): **implemented on branches `clientptr`** (mesa haiku-pi, haiku origin), Pi-tested in a
+Status (2026-11-18 10:40): **implemented on branches `clientptr`** (mesa haiku-pi, haiku origin), Pi-tested in a
 network session: native test PASS, no GL/Vulkan regressions, **Warcraft III demo menu 13.6 → 22.9 fps (+67 %)**
 under WoW64 — not from fewer copies but because the extension lets wined3d use persistent buffer mapping (§8).
+Cost: one wired 64 MiB BO per wined3d device (+60–64 MiB used memory, 64 MiB of 32-bit address space).
 Not merged; recommendation in §9. Owner (11-18): "try the GL_MESA_map_buffer_client_pointer path, assess how
 complex it is and approach an implementation in Haiku". H20 C7 (perf-round-h20.md) had dropped the item (memcpy
 3.1 % after Wine 0028); the assessment below (§1–6) was written before any code.
@@ -158,13 +159,13 @@ anonymous memory, which is exactly what Wine committed there. Then the range goe
 
 Risks:
 - **Address-space churn in Wine**: every first map of a buffer costs one NtAllocateVirtualMemory + one placed
-  map ioctl, every buffer death one mmap + one NtFreeVirtualMemory. wined3d (no ARB_buffer_storage on v3d) maps
-  whole buffers WRITE | FLUSH_EXPLICIT | UNSYNCHRONIZED without DISCARD ([W] `wined3d/context_gl.c`:2835,
-  `resource.c`:394) and renames by its own allocation, so per-frame cost should be ~zero once buffers are placed;
-  a game that orphans buffers (BufferData every frame) would pay syscalls per frame where 0028 paid a memcpy.
-  Measured in §7, not assumed.
-- **Many small areas**: each placed buffer is an area in Wine's low memory (Haiku areas cost a VMArea +
-  translation-map pages); hundreds of buffers are fine, tens of thousands would not be.
+  map ioctl, every buffer death one mmap + one NtFreeVirtualMemory. (Written assuming wined3d keeps mapping whole
+  buffers per update without ARB_buffer_storage — wrong: v3d does expose ARB_buffer_storage, Wine hides it on WoW64
+  only without this extension, and with it wined3d maps persistent 64 MiB chunks once, §8.) A game that orphans
+  buffers (BufferData every frame) would pay syscalls per frame where 0028 paid a memcpy; not seen in what was run.
+- **Many small areas** (as assessed): each placed buffer is an area in Wine's low memory. What happens instead is
+  the opposite: wined3d's buffers live in a few big chunks — one placed 64 MiB + 4 KiB BO per chunk, wired RAM and
+  32-bit address space both (measured in §8).
 - **Unplacing a BO while another thread's internal map uses `bo->map`**: only with a release-all from one
   thread while a shared context maps on another; noted, not handled beyond the per-heap lock.
 - **Write-combining**: the placed clone must get WC like today's clone (same code path), else the GPU reads stale
@@ -193,7 +194,7 @@ Risks:
 | mesa | b691443f2cd `v3d: implement MESA_map_buffer_client_pointer on Haiku` | `v3d_clientptr.c` (new, ~250 lines): heap, reclaim, `transfer_map/unmap_clientptr_range`, BO release; `v3d_bufmgr.c`: `v3d_bo_map_placed()` / `v3d_bo_unmap_placed()`, the release hook before the BO cache; `v3d_resource.c`: heap reference, the `PIPE_MAP_CLIENT_POINTER` branch of `transfer_map`; `v3d_screen.c`: `has_placed_map` (param), the cap |
 | haiku (origin) | 3b68c0cf0e `kernel/vm: add vm_clone_area_etc() that can replace a mapped range` | §3.3 |
 | haiku | f26a68c317 `v3d: map a BO at an address the client chooses` | `DRM_V3D_HAIKU_MMAP_BO_PLACED`, `DRM_V3D_PARAM_HAIKU_MMAP_BO_PLACED` |
-| haiku-rpi | this repository | `tools/gl-tests/clientptr.c` (the native test, §6.1), `tools/pi-tests/clientptr-ab.sh` (the Wine A/B) |
+| haiku-rpi | this repository | `tools/gl-tests/clientptr.c` (the native test, §6.1), `tools/pi-tests/clientptr-ab.sh` (the Wine A/B), `tools/pi-tests/clientptr-mem.sh` (the memory cost) |
 
 Builds: Mesa with `build-gl-stack.sh` into a copy of the sysroot (GL_SYSROOT/GL_BUILD/GL_STAGE in the job's scratch,
 GL_MESA_SRC = the worktree), packaged as `mesa-26.2.7-90` (PACKAGES_OUT, never published; kept in `artifacts/clientptr/`); Haiku in its worktree's
@@ -203,11 +204,13 @@ host (12 GB; the output directory was deleted after the test: `mkdir generated.a
 ../configure --cross-tools-prefix <rpi4 tree>/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-`, `cp -al`
 the rpi4 tree's `download/`, then the build line), so the "driver add-on only" shortcut was not needed. No new warnings in the touched files.
 
-## 8. Results (2026-11-18, network session `clientptr1` 09:37–10:13)
+## 8. Results (2026-11-18, network sessions `clientptr1` 09:37–10:13 and `clientptr2` 10:23–10:36)
 
 Image: the worktree build above (hrev60337+447, kernel + v3d driver of `clientptr`), Wine 11.21-2 packages (with
 0028) and their Wayland/xkb dependencies added to `system/packages`, `mesa-26.2.7-90` (the branch) installed with
-pkgman over the image's 26.2.7-1. Serial log `artifacts/uart/20261118-093725-session-clientptr1.log`: 0 PANIC;
+pkgman over the image's 26.2.7-1 (that package reports `git-5319e6b330` in its version string, the commit before the
+v3d one: meson's version file was made before that commit; the v3d change is in it). Serial logs
+`artifacts/uart/20261118-093725-session-clientptr1.log`, `…-102348-session-clientptr2.log`: 0 PANIC;
 syslog: no VM or v3d complaints. Profiles and screenshots: `artifacts/clientptr/` (not in git).
 
 **Native test** (`clientptr`, §6.1): with the image's stock Mesa 26.2.7-1 the extension is absent (the test says
@@ -218,6 +221,9 @@ glBufferData's initial data is visible, offset maps and wined3d's WRITE | FLUSH_
 work, 50 re-specifications and 50 invalidating maps each give every range back (≤ 1 out while the buffer lives,
 0 after delete), release-all takes only the unmapped buffer's range and the re-placed buffer keeps its contents,
 every returned range is zeroed plain memory, and no BO mapping is left in the reserved range. 105 ranges per run.
+Session 2 added wined3d's real case (2 of 2 PASS): a 64 KiB `glBufferStorage(PERSISTENT | COHERENT | CLIENT_POINTER)`
+buffer mapped once, 100 draws from new triangles written while it stays mapped, release-all while mapped keeps its
+range, deleting it while mapped gives the range back.
 Map + 64 KiB write + flush + unmap: 21.0 µs plain, 22.3 µs with client pointers (native arm64 never copied; the
 extra is the Release loop and the error checks the protocol needs).
 
@@ -233,10 +239,20 @@ one range of 64 MiB + 4 KiB for the whole d3dtest run, no copies):
 | Warcraft III demo menu, mean fps 40–76 s (`clientptr-ab.sh`, `WINEDEBUG=+fps`) | 13.63, 13.73, 13.26 (profiled) | 22.91, 22.85, 21.30 (profiled) | **+67 %** (+61 % profiled) |
 | Warcraft III, 300 s soak (on) | — | 21.8 → 23.9 → 23.4 fps at 60/180/300 s; BO mappings 86 → 87, no errors | stable |
 | d3dtest-x86 (D3D9 dynamic VB, windowed 640×480) | 139.8, 138.7 fps | 139.8, 139.2 fps | none (present-bound) |
+| d3dtest-x86, memory after 12 s (`clientptr-mem.sh`): system used vs before; BO mappings in the team | +180 MiB; 30, 2.9 MiB, none below 4 GiB | +246 MiB; 31, 66.9 MiB, 1 below 4 GiB = **64.0 MiB** | **+64 MiB** |
+| Warcraft III menu, memory after 70 s, same | +319 MiB; 91, 11.3 MiB | +378 MiB; 86, 72.9 MiB, 1 below 4 GiB = 64.0 MiB | **+59–64 MiB** |
+| teardown: Mesa's "never released" warnings (d3dtest exiting on its own; W3 ended by `wineserver -k`) | 0 | 0 | — |
 
 Same scene both ways (the menu, screenshots identical). 11-03's 12.1 fps (C0) agrees with *off*.
 
-**Why +67 % when C0 measured memcpy at 3.1 %**: the copies were never the cost. With the extension, Wine stops
+**Memory**: the gain costs one wined3d allocator chunk per device: a wired 64 MiB + 4 KiB BO (v3d BOs are wired,
+cleared kernel memory) mapped at a 64 MiB range of Wine's 32-bit address space, where *off* used per-buffer BOs of
+a few KiB to MiB. On a 4 GB Pi that is affordable for one game; a program with several devices (or chunks) pays it
+each time, and the 32-bit address space of a large 32-bit game shrinks by the same amount.
+
+**Why +67 % when C0 measured memcpy at 3.1 %** (verified: the extension unhides ARB_buffer_storage and wined3d maps
+persistently; the per-update cost being the thunk round trips is the most likely explanation, not counted per
+frame for Warcraft III): the copies were never the cost. With the extension, Wine stops
 hiding `GL_ARB_buffer_storage` on WoW64 (`init_client_context`: "Disabling has_GL_ARB_buffer_storage extension on
 wow64" appears only *off*; *on* the trace lists `++ GL_ARB_buffer_storage`), so wined3d switches to its
 persistent, coherent allocator chunks: it maps each 64 MiB chunk once and writes into it for the rest of the run,
@@ -244,8 +260,11 @@ instead of a glMapBufferRange + glFlushMappedBufferRange + glUnmapBuffer round t
 call from Box64-translated x86 code through the WoW64 thunk and Wine's unix call into Mesa. The system profile shows
 the shift, not a memcpy saving: CPUs ~48 % idle both ways (one latency-bound thread chain); non-idle ticks per
 frame **~94 on vs ~155 off**; `wow64_glMapBufferRange` 531 ticks off, absent on; memcpy per frame the same
-(~430–475 ticks/frame: app_server's and the GDI present's copies). So C7's gate was the wrong measure: the
-expensive part was the number of GL calls per update, which only the persistent path removes.
+(~430–475 ticks/frame: app_server's and the GDI present's copies); `wow64_glMapBufferRange` itself is only 0.19 % of
+*off*'s ticks, so the saving is spread over the whole call chain (Box64's translated code, the thunks, Wine's unix
+calls: 25–27 % of ticks are "unknown", i.e. translated code), not one hot function. So C7's gate was the wrong
+measure: most likely the expensive part was the number of GL calls per update, which only the persistent path
+removes (d3dtest *off*: 1096 map copies in 5 s; *on*: one map in the whole run).
 
 **Upstream issue found** (not ours to fix in a fork-only tree, recorded): the extension's named usage enums are
 dense (`GL_CLIENT_POINTER_STREAM_DRAW_MESA` 0x9791 … `_DYNAMIC_COPY_MESA` 0x9799) while Mesa and Wine both convert
@@ -255,17 +274,21 @@ rejected (`GL_INVALID_ENUM`: it maps to 0x88E3), and Wine's DYNAMIC_READ/DYNAMIC
 Mesa rejects as invalid usages (a WoW64 game using those usages would get GL errors). The native test uses Wine's
 arithmetic.
 
-Not tested: NFS Porsche (its data is not in this tree's cache), UT's OpenGL renderer (native GL without wined3d;
-needs its ini + registry settings of the mega image), the mega-smoke set of 33 programs, the kernel's refusal paths
-(unaligned address, a range holding a `B_KERNEL_AREA`, a wired range) — code-reviewed only.
+Not tested: the mega-image tooling was not used (the sessions ran the branch image with the Wine packages added and
+the Warcraft III tree copied over ssh); NFS Porsche (its data is not in this tree's cache), UT's OpenGL renderer
+(native GL without wined3d; needs its ini + registry settings of the mega image), the mega-smoke set of 33 programs;
+the kernel's refusal paths (unaligned address, a range holding a `B_KERNEL_AREA`, a wired range) — reviewed in code
+only, never run.
 
 ## 9. Assessment
 
-- **Effort**: ~2 h of work against the 10–12 h estimate: the frontend is upstream's unchanged, the v3d side is
+- **Effort**: ~1.7 h of work (09:00–10:40, two bench sessions) against the 10–12 h estimate: the frontend is upstream's unchanged, the v3d side is
   small because Haiku can map a BO many times (no zink-style staging), and a full worktree build takes 5 min.
 - **Wine 0028** becomes dead code wherever the extension is present; it stays the path for a Mesa without it
   (softpipe via `LIBGL_ALWAYS_SOFTWARE=1`, or an older package), so keep it.
 - **Recommendation: merge** both branches (kernel VM + v3d driver into haiku `rpi4`, Mesa into mesa `rpi4`, a
   mesa package revision) after a mega image of the branches passes `mega-smoke` (33 programs, several WoW64 GL
-  games) — every WoW64 GL buffer becomes a client-pointer buffer, and only Warcraft III and d3dtest were run.
+  games) — every WoW64 GL buffer becomes a client-pointer buffer, and only Warcraft III and d3dtest were run —
+  and with the memory cost (+64 MiB wired per wined3d device, §8) stated in KNOWN-ISSUES/the release notes; plus a
+  small kernel test of the refusal paths before the VM change ships.
   Mesa 26.3 brings the three frontend commits anyway; then only our v3d commit remains to carry.

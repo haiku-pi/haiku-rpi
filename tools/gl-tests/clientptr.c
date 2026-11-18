@@ -7,7 +7,8 @@
  * written through it reaches the GPU (drawn and read back) and glGetBufferSubData, a second map needs no
  * new range and returns the same pointer, initial data is visible, the wined3d map pattern (whole buffer,
  * WRITE | FLUSH_EXPLICIT | UNSYNCHRONIZED), re-specification, invalidation and deletion give their ranges
- * back, release-all takes ranges of unmapped buffers only and a re-placed buffer keeps its contents, and
+ * back, release-all takes ranges of unmapped buffers only and a re-placed buffer keeps its contents, a
+ * persistent coherent map (glBufferStorage, wined3d's chunks) is drawn from while mapped and survives release-all, and
  * no BO mapping is left in the reserved range at the end. Then a timing loop: map + write + unmap of a 64 KiB
  * buffer with and without client pointers.
  *
@@ -69,6 +70,7 @@ client_usage(GLenum usage)
 	F(PFNGLDELETEBUFFERSPROC, glDeleteBuffers) \
 	F(PFNGLBINDBUFFERPROC, glBindBuffer) \
 	F(PFNGLBUFFERDATAPROC, glBufferData) \
+	F(PFNGLBUFFERSTORAGEPROC, glBufferStorage) \
 	F(PFNGLMAPBUFFERRANGEPROC, glMapBufferRange) \
 	F(PFNGLFLUSHMAPPEDBUFFERRANGEPROC, glFlushMappedBufferRange) \
 	F(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
@@ -514,6 +516,47 @@ test_release_all(void)
 	CHECK(sCommitted == 0, "all ranges back (%d out)", sCommitted);
 }
 
+/* What wined3d does once Wine sees the extension (it then exposes GL_ARB_buffer_storage on WoW64): a buffer
+ * created with glBufferStorage, mapped once persistently and coherently, drawn from while it stays mapped. */
+static void
+test_persistent(int loops)
+{
+	SAY("-- persistent coherent map (wined3d's allocator chunks), %d draws", loops);
+	enum { kSize = 64 * 1024 };
+	const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+	GLuint buffer;
+	p_glGenBuffers(1, &buffer);
+	p_glBindBuffer(GL_ARRAY_BUFFER, buffer);
+	glGetError();
+	p_glBufferStorage(GL_ARRAY_BUFFER, kSize, NULL, flags | GL_MAP_CLIENT_POINTER_BIT_MESA);
+	CHECK(glGetError() == GL_NO_ERROR, "glBufferStorage with the client-pointer bit");
+	bool newRange;
+	struct vertex *v = map_client_pointer(0, kSize, flags | GL_MAP_UNSYNCHRONIZED_BIT, &newRange);
+	CHECK(v != NULL && newRange && in_last_range(v, kSize), "persistent map in a new range (%p)", (void *)v);
+	if (v == NULL)
+		return;
+	int bad = 0;
+	for (int i = 0; i < loops; i++) {
+		/* a new triangle at a new place in the buffer each time, the buffer still mapped */
+		struct vertex *t = v + 3 * (i % 64);
+		fill_triangle(t, i & 1, (i >> 1) & 1, 1);
+		uint32_t want = ((i & 1) ? 0xff0000u : 0) | (((i >> 1) & 1) ? 0x00ff00u : 0) | 0x0000ffu;
+		if (draw((GLintptr)((uint8_t *)t - (uint8_t *)v)) != want)
+			bad++;
+	}
+	CHECK(bad == 0, "draws from the mapped buffer (%d bad)", bad);
+	int before = sCommitted;
+	release_ranges(GL_CLIENT_POINTER_RELEASE_ALL_MESA);
+	CHECK(sCommitted == before, "release-all keeps the mapped buffer's range (%d out)", sCommitted);
+	fill_triangle(v, 1, 1, 1);
+	CHECK(draw(0) == 0xffffff, "still mapped and drawn after release-all");
+	/* deleted while mapped: GL unmaps it */
+	detach();
+	p_glDeleteBuffers(1, &buffer);
+	release_ranges(0);
+	CHECK(sCommitted == 0, "deleting the mapped buffer gives its range back (%d out)", sCommitted);
+}
+
 static void
 time_maps(int loops)
 {
@@ -619,6 +662,7 @@ main(int argc, char **argv)
 	test_initial_data();
 	test_respecify(loops / 4 > 8 ? loops / 4 : 8);
 	test_release_all();
+	test_persistent(loops / 2 > 16 ? loops / 2 : 16);
 	CHECK(sBadReleases == 0, "every range came back as zeroed memory (%d not)", sBadReleases);
 	int32 placed = count_placed_areas();
 	CHECK(placed == 0, "no BO mapping left in the reserved range (%d)", placed);
