@@ -95,7 +95,47 @@ Pending (bench): `mmal-codec h264enc` (the component alone) and `ffmpeg -c:v h26
 
 ## 4. (d) Camera
 
-Pending (bench): whether a camera is attached (`get_camera`, `vc.camera_info`).
+### 4.1 Two camera stacks on the Pi 4
+
+| | Firmware ("legacy") camera | libcamera |
+|---|---|---|
+| Who drives the sensor | the VideoCore firmware: sensor over its own I2C, CSI-2 receiver (Unicam), ISP, AWB/AE/AGC, all inside the firmware | the ARM: Unicam CSI-2 driver, a sensor driver per sensor, the ISP through VCHIQ (`bcm2835-isp`), control algorithms (libcamera's IPA) in userland |
+| ARM side for us | MMAL `vc.ril.camera` over our VCHIQ + libmmal — **what exists already** | a CSI-2 receiver driver, I2C sensor drivers, an ISP client, libcamera itself (C++, Linux media-controller APIs): weeks |
+| Sensors | OV5647 (Camera Module 1), IMX219 (v2), IMX477 (HQ) — the firmware's tuning | also IMX708 (Camera Module 3), IMX296 (Global Shutter), third-party |
+| Firmware | **`start_x=1`**: `start4x.elf`/`fixup4x.dat` instead of `start4.elf` (the camera code is not in the standard firmware), **`gpu_mem` ≥ 128** (we run 76 MB) | standard firmware |
+| Licences | firmware blob + Broadcom's BSD-3 MMAL | libcamera LGPL-2.1/BSD; Linux's Unicam/sensor drivers GPL (behaviour reference only, H21's rule) |
+
+Raspberry Pi OS dropped the legacy stack in 2021 (Bullseye) and on 64-bit userland altogether (its MMAL is
+32-bit only) — the firmware side still ships in `start4x.elf` (pinned commit `6c87074…`: 355 camera/sensor strings,
+e.g. the tuning for ov5647/imx219/imx477). Our 64-bit libmmal already speaks the VideoCore's 32-bit message
+layout (vchiq.md §7.2 patch 5), so the legacy camera is reachable from Haiku with no new driver.
+
+### 4.2 Is a camera attached?
+
+Pending (bench). The standard firmware does not probe for a camera (`get_camera` answers `supported=0 detected=0`
+whatever is plugged in); the check needs a session image with `start_x=1` (§4.3 step 1).
+
+### 4.3 Design (firmware camera, MMAL)
+
+1. **Boot files, opt-in**: `start4x.elf` + `fixup4x.dat` (same pinned commit as the rest,
+   `scripts/fetch-pi-firmware.sh`) on the FAT partition and `start_x=1` + `gpu_mem=128` in `config.txt`, only on
+   request (a `mkimage-pi4.sh --camera` switch): it takes 52 MB more from the ARM, and the camera firmware is
+   larger and boots ~0.1 s slower (**estimated**). Check: `get_camera` → `supported=1 detected=1`,
+   `mmal-codec probe` → `camera_info: 1 cameras, <sensor>, <max size>`.
+2. **Capture test** (`mmal-codec camera`, to write): `vc.ril.camera` (camera number from camera_info), output 1
+   (video) I420 1280×720 at 30 fps, frames by bulk transfer as with the decoder (1.4 MB per 720p frame: ~40 MB/s,
+   ~1 % of the system's CPU at the measured copy cost of vchiq.md §7.4); one frame written for a look on the
+   host; port 2 (still) JPEG through the VideoCore's encoder (`vc.ril.camera` → `vc.ril.image_encode` tunnel,
+   `mmal_connection`) for photos without ARM work.
+3. **Recording without the ARM**: `vc.ril.camera` → `vc.ril.video_encode` tunnelled inside the VideoCore
+   (`mmal_connection_create` with `MMAL_CONNECTION_FLAG_TUNNELLING`): only the H.264 stream crosses VCHIQ
+   (~1 MB/s at 8 Mbit/s).
+4. **Media kit**: a video producer add-on (`src/add-ons/media/media-add-ons/vc_camera`, the shape of the
+   `usb_webcam` add-on's producer) that outputs **B_YUV420** buffers — which MediaPlayer's consumer and
+   CodyCam-style apps can now show on the YUV overlay plane (video-overlay.md) — and B_RGB32 through the
+   plugin's conversion otherwise.
+5. Effort (**estimated**): steps 1–2 a day; 3 half a day; 4 two to three days (media node, format negotiation,
+   start/stop, a camera that is absent).
 
 ## 5. Files
 

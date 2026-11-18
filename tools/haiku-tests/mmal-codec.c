@@ -15,6 +15,9 @@
  *   mmal-codec h264enc [-n FRAMES] [-b KBIT/S] [-r FPS] [-g GOP] [-p PROFILE] WxH FILE.yuv OUT.h264
  *       encode the I420 frames of FILE.yuv (W x H, tightly packed, looped up to FRAMES; default: the file's)
  *       to an H.264 Annex-B stream (inline SPS/PPS); PROFILE: baseline, main, high (default)
+ *   mmal-codec camera [-n FRAMES] [-d FILE] WxH
+ *       FRAMES (default 60) I420 frames from vc.ril.camera's video port at 30 fps (needs start_x=1 firmware and
+ *       a camera); the middle one's buffer to FILE
  *
  * Every encode/decode line starts with "MMAL "; the last line "MMAL result: PASS|FAIL". CPU: this team's
  * and the system's busy time (all CPUs: the VCHIQ driver's threads that copy the buffers are not this team's).
@@ -822,13 +825,144 @@ out:
 }
 
 
+/* camera [-n FRAMES] [-d FILE] WxH: vc.ril.camera's video port (1), I420, 30 fps; frame N/2 written to FILE */
+static int
+camera(int argc, char** argv)
+{
+	int count = 60, opt, frames = 0;
+	const char* dumpFile = NULL;
+	uint32_t width, height;
+	MMAL_COMPONENT_T* camera = NULL;
+	MMAL_POOL_T* pool = NULL;
+	MMAL_PORT_T* port = NULL;
+	MMAL_STATUS_T status = MMAL_EINVAL;
+	bigtime_t start = 0, first = 0, teamStart, busyStart;
+
+	while ((opt = getopt(argc, argv, "n:d:")) != -1) {
+		switch (opt) {
+			case 'n': count = atoi(optarg); break;
+			case 'd': dumpFile = optarg; break;
+			default: return 2;
+		}
+	}
+	if (optind != argc - 1 || !parse_size(argv[optind], &width, &height))
+		return 2;
+
+	status = mmal_component_create(MMAL_COMPONENT_DEFAULT_CAMERA, &camera);
+	if (status != MMAL_SUCCESS) {
+		fprintf(stderr, "MMAL FAIL: create %s: %s\n", MMAL_COMPONENT_DEFAULT_CAMERA, mmal_status_to_string(status));
+		goto out;
+	}
+	printf("MMAL camera: %u outputs\n", camera->output_num);
+	camera->control->userdata = (void*)&sContext;
+	if ((status = mmal_port_enable(camera->control, control_callback)) != MMAL_SUCCESS)
+		goto out;
+	{
+		MMAL_PARAMETER_CAMERA_CONFIG_T config;
+		memset(&config, 0, sizeof(config));
+		config.hdr.id = MMAL_PARAMETER_CAMERA_CONFIG;
+		config.hdr.size = sizeof(config);
+		config.max_stills_w = width;
+		config.max_stills_h = height;
+		config.one_shot_stills = 1;
+		config.max_preview_video_w = width;
+		config.max_preview_video_h = height;
+		config.num_preview_video_frames = 3;
+		config.use_stc_timestamp = MMAL_PARAM_TIMESTAMP_MODE_RESET_STC;
+		status = mmal_port_parameter_set(camera->control, &config.hdr);
+		if (status != MMAL_SUCCESS)
+			printf("MMAL camera config: %s\n", mmal_status_to_string(status));
+	}
+	port = camera->output[1];
+	port->format->encoding = port->format->encoding_variant = MMAL_ENCODING_I420;
+	port->format->es->video.width = ALIGN_UP(width, 32);
+	port->format->es->video.height = ALIGN_UP(height, 16);
+	port->format->es->video.crop.x = port->format->es->video.crop.y = 0;
+	port->format->es->video.crop.width = width;
+	port->format->es->video.crop.height = height;
+	port->format->es->video.frame_rate.num = 30;
+	port->format->es->video.frame_rate.den = 1;
+	if ((status = mmal_port_format_commit(port)) != MMAL_SUCCESS) {
+		fprintf(stderr, "MMAL FAIL: video port format: %s\n", mmal_status_to_string(status));
+		goto out;
+	}
+	port->buffer_num = port->buffer_num_recommended > 3 ? port->buffer_num_recommended : 3;
+	port->buffer_size = port->buffer_size_recommended;
+	pool = mmal_port_pool_create(port, port->buffer_num, port->buffer_size);
+	if (pool == NULL) {
+		status = MMAL_ENOMEM;
+		goto out;
+	}
+	port->userdata = (void*)&sContext;
+	if ((status = mmal_port_enable(port, output_callback)) != MMAL_SUCCESS
+		|| (status = mmal_component_enable(camera)) != MMAL_SUCCESS)
+		goto out;
+	{
+		MMAL_BUFFER_HEADER_T* buffer;
+		while ((buffer = mmal_queue_get(pool->queue)) != NULL)
+			mmal_port_send_buffer(port, buffer);
+	}
+	if ((status = mmal_port_parameter_set_boolean(port, MMAL_PARAMETER_CAPTURE, 1)) != MMAL_SUCCESS) {
+		fprintf(stderr, "MMAL FAIL: start capture: %s\n", mmal_status_to_string(status));
+		goto out;
+	}
+	teamStart = team_cpu_time();
+	busyStart = system_busy_time();
+	start = system_time();
+	while (frames < count) {
+		MMAL_BUFFER_HEADER_T* buffer;
+		if (vcos_semaphore_wait_timeout(&sContext.semaphore, 5000) != VCOS_SUCCESS) {
+			fprintf(stderr, "MMAL FAIL: no frame for 5 s (%d frames)\n", frames);
+			status = MMAL_EAGAIN;
+			goto out;
+		}
+		if (sContext.status != MMAL_SUCCESS) {
+			status = sContext.status;
+			fprintf(stderr, "MMAL FAIL: error event %s\n", mmal_status_to_string(status));
+			goto out;
+		}
+		while ((buffer = mmal_queue_get(sContext.queue)) != NULL) {
+			if (buffer->cmd == 0 && buffer->length > 0) {
+				if (frames == 0)
+					first = system_time();
+				if (frames == count / 2 && dumpFile != NULL)
+					write_file(dumpFile, buffer->data + buffer->offset, buffer->length);
+				frames++;
+			}
+			mmal_buffer_header_release(buffer);
+		}
+		while ((buffer = mmal_queue_get(pool->queue)) != NULL)
+			mmal_port_send_buffer(port, buffer);
+	}
+	printf("MMAL camera: first frame after %.1f ms, buffer %u bytes (%ux%u aligned)\n", (first - start) / 1e3,
+		port->buffer_size, port->format->es->video.width, port->format->es->video.height);
+	print_times("camera frames", frames, system_time() - first, team_cpu_time() - teamStart,
+		system_busy_time() - busyStart);
+	mmal_port_parameter_set_boolean(port, MMAL_PARAMETER_CAPTURE, 0);
+	status = MMAL_SUCCESS;
+
+out:
+	if (camera != NULL) {
+		if (port != NULL)
+			mmal_port_disable(port);
+		mmal_component_disable(camera);
+		if (pool != NULL)
+			mmal_port_pool_destroy(port, pool);
+		mmal_component_destroy(camera);
+	}
+	printf("MMAL result: %s\n", status == MMAL_SUCCESS ? "PASS" : "FAIL");
+	return status == MMAL_SUCCESS ? 0 : 1;
+}
+
+
 int
 main(int argc, char** argv)
 {
 	int result;
 	const char* usage = "usage: mmal-codec probe | jpegdec [-n N] [-f FOURCC] [-d FILE] FILE.jpg\n"
 		"  | jpegenc [-n N] [-q Q] WxH FILE.yuv OUT.jpg\n"
-		"  | h264enc [-n FRAMES] [-b KBIT/S] [-r FPS] [-g GOP] [-p baseline|main|high] WxH FILE.yuv OUT.h264\n";
+		"  | h264enc [-n FRAMES] [-b KBIT/S] [-r FPS] [-g GOP] [-p baseline|main|high] WxH FILE.yuv OUT.h264\n"
+		"  | camera [-n FRAMES] [-d FILE] WxH\n";
 
 	if (argc < 2) {
 		fputs(usage, stderr);
@@ -845,6 +979,8 @@ main(int argc, char** argv)
 		result = encode(argc, argv, 0);
 	else if (!strcmp(argv[1], "h264enc"))
 		result = encode(argc, argv, 1);
+	else if (!strcmp(argv[1], "camera"))
+		result = camera(argc, argv);
 	else
 		result = 2;
 	if (result == 2)

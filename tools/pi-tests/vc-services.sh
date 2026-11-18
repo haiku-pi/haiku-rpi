@@ -124,7 +124,7 @@ EOF
 	hey Firefox quit > /dev/null 2>&1
 	sleep 8
 	for t in $(ps | awk '$1 ~ /Firefox$/ { print $(NF-3) }'); do kill -9 "$t" 2> /dev/null; done
-	grep -a "VIDEO" "$log" | sed 's/^.*VIDEO/VIDEO/' | tail -n 3 | while IFS= read -r line; do say "$label $line"; done
+	grep -a "VIDEO" "$log" | sed 's/^.*VIDEO/VIDEO/' | head -n 12 | while IFS= read -r line; do say "$label $line"; done
 	grep -a -E "software codec|h264_vc|h264_mmal|mmal:|VideoCore" "$log" | sed -e 's/^\[[^]]*\]: //' \
 		| cut -c1-160 | sort | uniq -c | sort -rn | head -n 8 | while IFS= read -r line; do say "$label log: $line"; done
 	tail -n +$((syslogStart + 1)) /var/log/syslog | grep -a -E "vchiq|mmal" | cut -c1-160 | tail -n 6 \
