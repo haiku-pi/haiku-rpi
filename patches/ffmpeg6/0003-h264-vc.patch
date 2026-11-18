@@ -4,8 +4,9 @@ A third H.264 decoder, "h264_vc" (libavcodec/h264_vcdec.c, from the
 haiku-rpi repository's patches/ffmpeg6/files), for callers that choose their
 decoder by walking av_codec_iterate() and skip AV_CODEC_CAP_HARDWARE ones:
 Firefox's FFmpeg decoder module takes the first such H.264 decoder. It opens
-h264_mmal in an inner codec context and, when that does not open or fails
-later, gives the stream to h264 (from the start while h264_mmal had output no
+h264_mmal in an inner codec context (with the first packet: callers open
+decoders that never decode, and the VideoCore's memory holds one 1080p
+decoder) and, when that does not open or fails later, gives the stream to h264 (from the start while h264_mmal had output no
 frame - the packets are kept - else from the next key frame). Not for
 low-delay decoding, pictures over 1920x1088, High 10/4:2:2/4:4:4, or with
 FFMPEG_H264_MMAL=0 in the environment (h264 from the start then).

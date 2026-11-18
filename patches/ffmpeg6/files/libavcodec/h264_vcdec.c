@@ -34,7 +34,8 @@
  * skips it (allcodecs.c): FFmpeg's other users keep the software decoder unless
  * they ask for this one by name.
  *
- * The VideoCore is not used (the software decoder from the start) when
+ * h264_mmal is opened with the first packet, not by avcodec_open2(). The
+ * VideoCore is not used (the software decoder from the start) when
  * FFMPEG_H264_MMAL=0 is in the environment, for low-delay decoding
  * (AV_CODEC_FLAG_LOW_DELAY: h264_mmal holds 8 packets), for pictures larger
  * than 1920x1088 and for profiles the VideoCore does not decode (High 10,
@@ -71,7 +72,8 @@ typedef struct PacketInfo {
 } PacketInfo;
 
 typedef struct H264VCContext {
-    AVCodecContext *dec;        /* the inner decoder */
+    AVCodecContext *dec;        /* the inner decoder (none before the first packet) */
+    int use_vc;                 /* h264_mmal is to be tried first */
     int on_vc;                  /* it is h264_mmal */
     int vc_frames;              /* frames from h264_mmal */
     AVCodecParameters *par;     /* the stream, for a new inner decoder */
@@ -210,6 +212,26 @@ static int fall_back(AVCodecContext *avctx, const char *reason, int error)
     return ret;
 }
 
+/* The first inner decoder: h264_mmal if wanted and it opens, else h264. */
+static int open_first(AVCodecContext *avctx)
+{
+    H264VCContext *s = avctx->priv_data;
+    int ret;
+
+    if (s->use_vc) {
+        ret = open_inner(avctx, &ff_h264_mmal_decoder);
+        if (ret >= 0) {
+            s->recording = 1;
+            av_log(avctx, AV_LOG_VERBOSE, "h264_mmal decodes\n");
+            return 0;
+        }
+        s->use_vc = 0;
+        av_log(avctx, AV_LOG_WARNING,
+               "h264_mmal does not open (%s): h264 decodes\n", av_err2str(ret));
+    }
+    return open_inner(avctx, &ff_h264_decoder);
+}
+
 static av_cold int h264_vc_init(AVCodecContext *avctx)
 {
     H264VCContext *s = avctx->priv_data;
@@ -224,19 +246,15 @@ static av_cold int h264_vc_init(AVCodecContext *avctx)
         return ret;
 
     why_not = why_not_vc(avctx);
-    if (!why_not) {
-        ret = open_inner(avctx, &ff_h264_mmal_decoder);
-        if (ret >= 0) {
-            s->recording = 1;
-            av_log(avctx, AV_LOG_VERBOSE, "h264_mmal decodes\n");
-            return 0;
-        }
-        av_log(avctx, AV_LOG_WARNING,
-               "h264_mmal does not open (%s): h264 decodes\n", av_err2str(ret));
-    } else {
+    if (why_not) {
         av_log(avctx, AV_LOG_VERBOSE, "h264 decodes (%s)\n", why_not);
+        return open_inner(avctx, &ff_h264_decoder);
     }
-    return open_inner(avctx, &ff_h264_decoder);
+    /* The VideoCore's decoder is opened with the first packet: callers
+     * (Firefox) open decoders that never decode, and the VideoCore's memory
+     * holds one 1080p decoder. */
+    s->use_vc = 1;
+    return 0;
 }
 
 static av_cold int h264_vc_close(AVCodecContext *avctx)
@@ -378,8 +396,8 @@ static int h264_vc_receive_frame(AVCodecContext *avctx, AVFrame *frame)
     H264VCContext *s = avctx->priv_data;
     int ret;
 
-    if (!s->dec)
-        return AVERROR_EXTERNAL;
+    if (!s->dec && (ret = open_first(avctx)) < 0)
+        return ret;
 
     for (;;) {
         ret = avcodec_receive_frame(s->dec, frame);
