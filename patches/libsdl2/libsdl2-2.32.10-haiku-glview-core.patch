@@ -1,0 +1,62 @@
+Haiku: a core-profile OpenGL context when SDL_GL_CONTEXT_PROFILE_CORE is asked for
+
+The GL kit (libglvnd's BGLView) makes core-profile contexts with BGL_CONTEXT_CORE:
+the newest core version the driver has. A program that asks for a newer version
+than that gets NULL from SDL_GL_CreateContext(), as on other platforms, so that it
+can try the next version it supports (SuperTuxKart: 4.3, 3.3, 3.1).
+
+--- a/src/video/haiku/SDL_bopengl.cc	2026-11-18 17:32:54.511165407 +0100
++++ b/src/video/haiku/SDL_bopengl.cc	2026-11-18 17:33:07.032220165 +0100
+@@ -102,6 +102,21 @@
+ }
+ 
+ 
++#ifdef BGL_CONTEXT_CORE
++/* Whether the current context's OpenGL version is at least major.minor */
++static SDL_bool HAIKU_GL_VersionAtLeast(_THIS, int major, int minor) {
++    typedef const GLubyte *(APIENTRY *GetStringFunc)(GLenum);
++    GetStringFunc getString = (GetStringFunc)HAIKU_GL_GetProcAddress(_this, "glGetString");
++    const char *version = getString != NULL ? (const char *)getString(GL_VERSION) : NULL;
++    int haveMajor = 0, haveMinor = 0;
++    if (version == NULL || SDL_sscanf(version, "%d.%d", &haveMajor, &haveMinor) != 2) {
++        return SDL_FALSE;
++    }
++    return (haveMajor > major || (haveMajor == major && haveMinor >= minor))
++        ? SDL_TRUE : SDL_FALSE;
++}
++#endif
++
+ SDL_GLContext HAIKU_GL_CreateContext(_THIS, SDL_Window * window) {
+     /* FIXME: Not sure what flags should be included here; may want to have
+        most of them */
+@@ -143,8 +158,30 @@
+         gl_flags |= BGL_CONTEXT_ES;
+     }
+ #endif
++#ifdef BGL_CONTEXT_CORE
++    // a core-profile context (the GL kit picks the newest core version it has)
++    const SDL_bool core = (_this->gl_config.profile_mask == SDL_GL_CONTEXT_PROFILE_CORE)
++        ? SDL_TRUE : SDL_FALSE;
++    if (core) {
++        gl_flags |= BGL_CONTEXT_CORE;
++    }
++#endif
+     bwin->CreateGLView(gl_flags);
+     _GetBeLooper()->SetCurrentContext(bwin->GetGLView());
++#ifdef BGL_CONTEXT_CORE
++    if (core && !HAIKU_GL_VersionAtLeast(_this, _this->gl_config.major_version,
++            _this->gl_config.minor_version)) {
++        // as other platforms do, fail instead of handing out an older version
++        // (programs try the next version they can use)
++        BGLView *glView = bwin->GetGLView();
++        _GetBeLooper()->SetCurrentContext(NULL);
++        bwin->RemoveGLView();
++        delete glView;
++        SDL_SetError("OpenGL %d.%d core profile not available",
++            _this->gl_config.major_version, _this->gl_config.minor_version);
++        return NULL;
++    }
++#endif
+     return (SDL_GLContext)(bwin->GetGLView());
+ }
+ 

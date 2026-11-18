@@ -43,3 +43,11 @@ executable('vktest', 'vktest.c', dependencies : [dep_vulkan], install : true)
 
 # windowed Vulkan: a BWindow's view as the surface (Mesa's <vulkan/vk_haiku_surface.h>)
 executable('vkcube', 'vkcube.cpp', dependencies : [dep_vulkan, dep_be], install : true)
+
+# which OpenGL versions/profiles each context kind gets, and the version gates' missing extensions
+# (docs/design/desktop-gl.md); EGL only, GL entry points through eglGetProcAddress
+executable('glinfo', 'glinfo.c', dependencies : [dep_egl], install : true)
+# OpenGL 3.2/3.3 core features rendered and read back, emulated depth clamping above all (docs/design/desktop-gl.md)
+executable('glcore', 'glcore.c', dependencies : [dep_egl, dep_opengl], install : true)
+# windowed core-profile desktop GL: BGLView with BGL_CONTEXT_CORE (docs/design/desktop-gl.md)
+executable('glview-core', 'glview-core.cpp', dependencies : [dep_gl, dep_be], install : true)
