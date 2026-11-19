@@ -1,0 +1,24 @@
+SUMMARY="3D creation suite: modeling, animation, rendering (Cycles), compositing"
+DESCRIPTION="Blender is the free and open source 3D creation suite. It supports the entirety of the 3D \
+pipeline: modeling, rigging, animation, simulation, rendering, compositing and motion tracking, video \
+editing. Blender 3.6 LTS is the newest Blender with an OpenGL 3.3 renderer."
+HOMEPAGE="https://www.blender.org/"
+COPYRIGHT="1998-2023 Blender Foundation and contributors"
+LICENSE="GNU GPL v2"
+REVISION="1"
+SOURCE_URI="https://download.blender.org/source/blender-$portVersion.tar.xz"
+SOURCE_DIR="blender-$portVersion"
+
+ARCHITECTURES="!all arm64"
+
+# Cross-built and packaged by scripts/build-blender.sh (haiku-pi; docs/design/blender.md): the minimal option
+# set of tools/cmake/blender-minimal.cmake + OpenColorIO + OpenSubdiv, GHOST through SDL2 (libsdl2 2.32.10-8:
+# per-thread GL contexts), Python 3.10, Cycles on the CPU. HaikuPorts' blender3 recipe (3.3.21) is x86_64
+# only; of its patchset only the libmv include is still needed (patches/blender/0003).
+PROVIDES="
+	blender = $portVersion
+	app:Blender = $portVersion
+	"
+REQUIRES="
+	haiku
+	"

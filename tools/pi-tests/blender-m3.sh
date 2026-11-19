@@ -9,8 +9,11 @@
 # pkgman first. Output lines start with "BM3 "; each run's log is /tmp/bm3-LABEL-*.txt. Grade by the
 # positive markers: "version: PASS", "bpy: PASS", "render: PASS <time>", "png: PASS" and "factory: PASS <time>".
 # The PNGs: /boot/home/bm3-LABEL/cube_0001.png (960x540, 32 samples) and factory_0001.png (the factory scene).
+# BLENDER=PATH in the environment: that blender instead of DIR/Blender/blender (the packaged one:
+# /boot/system/apps/Blender/Blender, with the blender package among DIR/packages)
 dir=$1 label=${2:-run}
-[ -x "$dir/Blender/blender" ] || { echo "usage: $0 DIR [LABEL]" >&2; exit 2; }
+bl="${BLENDER:-$dir/Blender/blender}"
+[ -d "$dir/packages" ] || { echo "usage: $0 DIR [LABEL]" >&2; exit 2; }
 out=/boot/home/bm3-$label
 mkdir -p "$out"
 # a crash is logged, not shown as an alert that waits for a click (as blender-probe.sh)
@@ -29,7 +32,7 @@ if [ -n "$new" ]; then
 else
 	echo "BM3 $label pkgman: all installed"
 fi
-bl="$dir/Blender/blender"
+[ -x "$bl" ] || { echo "BM3 $label blender: FAIL no $bl"; exit 1; }
 # every library the executable needs is found (the runtime loader names a missing one and stops)
 run() {
 	name=$1
@@ -50,6 +53,13 @@ run bpy "$bl" -b --factory-startup --python-expr \
 	"import sys, bpy; print('BM3PY', sys.version.split()[0], bpy.app.version_string, len(bpy.data.objects))"
 grep -q '^BM3PY 3.10.22 3.6.23' /tmp/bm3-$label-bpy.txt && echo "BM3 $label bpy: PASS $(grep '^BM3PY' /tmp/bm3-$label-bpy.txt)" \
 	|| { echo "BM3 $label bpy: FAIL"; tail -n 20 /tmp/bm3-$label-bpy.txt; }
+
+# OpenSubdiv: the cube with a level-2 Subdivision Surface, evaluated (8 vertices -> 98; a build without
+# OpenSubdiv leaves it at 8: "Disabled, built without OpenSubdiv")
+run subsurf "$bl" -b --factory-startup --python-expr \
+	"import bpy; o = bpy.data.objects['Cube']; m = o.modifiers.new('s', 'SUBSURF'); m.levels = 2; dg = bpy.context.evaluated_depsgraph_get(); print('BM3SUB', len(o.evaluated_get(dg).data.vertices))"
+grep -q '^BM3SUB 98$' /tmp/bm3-$label-subsurf.txt && echo "BM3 $label subsurf: PASS 98 vertices" \
+	|| { echo "BM3 $label subsurf: FAIL"; grep -E 'BM3SUB|OpenSubdiv' /tmp/bm3-$label-subsurf.txt; }
 
 # system memory in use, sampled every second while the render runs (sysinfo -mem's "used"): the peak minus the
 # idle value before it is Blender's
@@ -73,15 +83,18 @@ grep -q "Saved: .*cube_0001.png" /tmp/bm3-$label-render.txt && echo "BM3 $label 
 [ -s "$out/cube_0001.png" ] && echo "BM3 $label png: PASS $(ls -l "$out/cube_0001.png" | awk '{print $5}') bytes" \
 	|| echo "BM3 $label png: FAIL"
 
-# the factory scene as it is (1920x1080, up to 4096 samples with adaptive sampling), denoising off
+# the factory scene exactly as it is (1920x1080, up to 4096 samples with adaptive sampling, final-render
+# denoising on: without OpenImageDenoise, patches/blender/0006 renders without it instead of stopping)
 rm -f /tmp/bm3-$label-done
 ( peak=$idle; while [ ! -f /tmp/bm3-$label-done ]; do u=$(used); [ "$u" -gt "$peak" ] && peak=$u; echo $peak > /tmp/bm3-$label-peak; sleep 1; done ) &
-run factory "$bl" -b --factory-startup -t 4 -E CYCLES -o "$out/factory_####" -F PNG \
-	--python-expr "import bpy; bpy.context.scene.cycles.use_denoising = False" -f 1
+run factory "$bl" -b --factory-startup -t 4 -E CYCLES -o "$out/factory_####" -F PNG -f 1
 touch /tmp/bm3-$label-done
 sleep 2
 echo "BM3 $label factory memory: peak $(( ($(cat /tmp/bm3-$label-peak) - idle) / 1048576 )) MB above idle"
 t=$(sed -n 's/.*Time: \([0-9:.]*\).*/\1/p' /tmp/bm3-$label-factory.txt | tail -n 1)
 grep -q "Saved: .*factory_0001.png" /tmp/bm3-$label-factory.txt && echo "BM3 $label factory: PASS $t" \
 	|| { echo "BM3 $label factory: FAIL"; tail -n 30 /tmp/bm3-$label-factory.txt; }
+# colour management: Blender's OCIO config with Filmic (a build without OpenColorIO falls back to "Standard")
+grep -q 'Filmic" not found' /tmp/bm3-$label-factory.txt && echo "BM3 $label filmic: FAIL (no OpenColorIO)" \
+	|| echo "BM3 $label filmic: PASS"
 echo "BM3 $label cpu: $(sysinfo -cpu | head -n 1)"

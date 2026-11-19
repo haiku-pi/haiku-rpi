@@ -57,7 +57,7 @@ done
 short="${version%.*}"			# 3.14
 case "$short" in
 3.14) revision=2 ;;
-3.10) revision=1 ;;
+3.10) revision=2 ;;
 *) echo "build-python: no build settings for Python $version" >&2; exit 2 ;;
 esac
 pkgdir="${out:-$root/artifacts/packages}"
@@ -245,12 +245,17 @@ for m in $modules; do
 done
 
 # 5. the packages (libffi and ncurses from the bootstrap packages are in the sysroot's system lib/,
-# where package-port.py does not look for requirements: named here)
+# where package-port.py does not look for requirements: named here; for 3.10 also the libraries its modules
+# link that are in the sysroot as extracted packages, not as non-packaged ports: openssl, sqlite, bzip2,
+# expat, libedit)
+moreRequires=()
+[ "$short" = 3.14 ] || moreRequires=(--requires lib:libssl --requires lib:libcrypto --requires lib:libsqlite3
+	--requires lib:libbz2 --requires lib:libexpat --requires lib:libedit)
 "$root/scripts/package-port.py" "$recipe" --revision "$revision" ${out:+--out "$out"} --system-prefix \
 	--lib-tree "python$short" \
 	--global-writable "non-packaged/lib/python$short/site-packages" \
 	--devel-bin "python$short-config" $([ "$short" = 3.14 ] && echo --devel-bin python3-config) --requires lib:libffi \
-	--requires lib:libncursesw --requires lib:libpanelw
+	--requires lib:libncursesw --requires lib:libpanelw "${moreRequires[@]}"
 
 # 6. the test trees (the default python only)
 if [ "$short" != 3.14 ]; then

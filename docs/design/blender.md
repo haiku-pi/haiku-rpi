@@ -4,7 +4,10 @@ Status (2026-11-19): **M1 (SDL2 per-thread GL context) done, §7.2; M2 done: `bl
 arm64 (cross-built, minimal option set), §7.3; M3 done: Cycles renders the default cube headless on the Pi
 (1920×1080 factory scene in 1 min 37 s), §7.4; M4 mostly done: the UI runs through GHOST_SDL on the desktop —
 solid viewport, edit mode, save/reload, preferences window, F12 Cycles render into the image editor — after two
-GPU patches; injected keyboard and mouse input acts (Tab, middle-drag and numpad orbit, F12), §7.5–7.6.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+GPU patches; injected keyboard and mouse input acts (Tab, middle-drag and numpad orbit, F12), §7.5–7.6; M6
+done as test packages (unpublished): blender-3.6.23-1 + 15 library packages with OpenColorIO (Filmic) and
+OpenSubdiv, installed with pkgman and started from the Deskbar entry; the factory scene renders as it is, §7.7.
+Open: EEVEE (M5, incl. an F12 crash with the EEVEE engine).** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -664,6 +667,63 @@ view rotation. Frames: `artifacts/blender-tests/m4/input/`.
 
 Next: M6 (packaging; OpenSubdiv, OCIO, denoising off without OIDN), then M5 (EEVEE on 4 targets — patch 0005
 is the frame-buffer half of it — and the F12 crash).
+
+### 7.7 M6 result (2026-11-19 08:08–09:25; session bl6 09:16–09:25, release image-2026-11-19)
+
+- **New dependencies** (each `cross-port.sh` + `package-port.py --out artifacts/packages-test/blender`):
+  yaml-cpp 0.8.0, pystring 1.1.4, minizip-ng 4.0.7 (zlib only), **OpenColorIO 2.3.2** (HaikuPorts patchset;
+  expat given by path — the bootstrap expat's CMake config names /boot/system/include; Blender 3.6 already
+  handles OCIO 2.3's API), **OpenSubdiv 3.5.0** (CPU + GL backend; no TBB evaluator: 3.5 needs
+  `tbb/task_scheduler_init.h`, gone in oneTBB). All built in minutes; no new blocker. Options file: OCIO and
+  OpenSubdiv on (the strict-options configure would stop if either went missing).
+- **Denoising:** `patches/blender/0006` — a final render whose denoiser is not available (no OIDN port)
+  runs without denoising instead of stopping with "Build without OpenImageDenoiser"; the Cycles add-on then
+  registers no "Noisy Image" pass. (A first version changed only sync.cpp: the factory render then came out
+  **black** — "Noisy Image" and "Combined" became the same noisy pass. Caught by viewing the PNG.)
+- **Packages:** `blender-3.6.23-1-arm64.hpkg` (48 MB: `apps/Blender/Blender` + `3.6/`, Deskbar entry
+  `data/deskbar/menu/Applications/Blender`; requires `libsdl2 >= 2.32.10-8`, `python3.10`, every library it
+  links), python3.10 **revision 2** (now requires openssl, sqlite, bzip2, expat, libedit — before, its modules'
+  libraries were only in the sysroot as extracted packages and became no requires), and the 15 library
+  packages; 90 MB in `artifacts/packages-test/blender/`, not published.
+- **On the Pi** (`BLENDER=/boot/system/apps/Blender/Blender blender-m3.sh`): `pkgman install` of the staged
+  set resolves (17 packages), version/bpy PASS, **Subdivision Surface: 98 evaluated vertices** (OpenSubdiv),
+  960×540 render 9.9 s, the **factory scene as it is** (denoising on in the file) **1 min 36.9 s**, Filmic
+  view transform (no "Filmic not found"), PNGs `artifacts/blender-tests/m6/factory_0001.png` and
+  `cube_0001.png` (viewed). Started with no arguments, as the Deskbar entry does, the UI comes up in a window
+  of nearly the full screen (`m6/gui-package.png`); the splash closes with Esc. 0 PANIC, 0 debug_server.
+- **To do before publishing:** a release decision (owner); the 4 colour-target EEVEE problem and the F12
+  crash with EEVEE (M5); an app icon/resources (none yet); libsdl2 -8 published first (the package requires
+  it); the sysroot holds all these unpublished libraries (risk for other ports' configures, noted 11-19).
+
+### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
+
+**USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
+
+> Blender 3.6 LTS runs on the Pi 4 with the desktop OpenGL 3.3 driver. Install it with
+> `pkgman install blender` (it brings Python 3.10, OpenImageIO, OpenColorIO, OpenSubdiv, TBB and the SDL2 it
+> needs) and start it from Deskbar ▸ Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`.
+> - **Works:** the whole UI, the solid (Workbench) viewport, edit mode, modifiers including Subdivision
+>   Surface, save/load, the Preferences window, Cycles rendering on the CPU (F12 into the image editor, or
+>   headless: `Blender -b scene.blend -E CYCLES -f 1`), Python scripting, Filmic colour management.
+> - **Render with Cycles, not EEVEE:** in Properties ▸ Render, set Render Engine to *Cycles* before F12. The
+>   default scene uses EEVEE, which needs 6 colour outputs; the Pi 4's GPU has 4 (see Known issues).
+> - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores); the viewport redraws
+>   at about 4–5 frames per second at 1600×900 — use a smaller window for smoother navigation.
+> - **Memory:** a simple scene needs about 300–400 MB; large scenes and big textures may not fit in 4 GB.
+> - **Input:** click into the Blender window once before typing — keys go to the active window, and to the
+>   area under the mouse pointer.
+
+**KNOWN-ISSUES — Blender**
+
+> - **EEVEE does not work** (Material Preview, Rendered view and F12 with the EEVEE engine): its material
+>   shaders need 6 colour attachments, the V3D 4.2 GPU has 4; F12 with EEVEE currently crashes. Use Cycles
+>   or Workbench. (Fix planned: docs/design/blender.md M5.)
+> - **No denoising:** OpenImageDenoise is not ported; renders are noisier at low sample counts (the
+>   Denoise checkbox is ignored instead of stopping the render).
+> - **No video, audio, Alembic/USD/OpenVDB import, fluid simulation** in this first package (built without
+>   FFmpeg, audaspace, Alembic, USD, OpenVDB, Mantaflow).
+> - GPU subdivision is off (no compute shaders); subdivision runs on the CPU.
+> - Text input is ASCII only (Blender's SDL backend); no tablet pressure, no input methods.
 
 ## 8. Files
 

@@ -21,6 +21,7 @@
 #                -DBLENDER_HOST_TOOLS); fails unless its WITH_* options equal the host configure's
 #   build        ninja blender, under scripts/heavy-build.sh (≤ 12 GB)
 #   stage        the install tree + runtime packages for the Pi test, artifacts/blender-tests/
+#   blender_package  blender-3.6.23-1-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender
 #
 # Work directories: artifacts/cross-ports/<port>-<version>/ for the libraries,
 # artifacts/cross-ports/blender-3.6.23/{src,deps,host-build,host-tools,build}/ for Blender.
@@ -261,6 +262,69 @@ pugixml() {
 	need non-packaged/lib/libpugixml.so.1 develop/headers/pugixml.hpp
 }
 
+# OpenColorIO 2.3.2 and what it needs (M6: Filmic and the other view transforms; Blender 3.6 handles OCIO
+# 2.3's API): yaml-cpp 0.8, pystring 1.1.4, minizip-ng 4.0.7 (zlib only), the recipes' shared builds; expat
+# and Imath are in the sysroot already (expat given by path: the bootstrap package's CMake config names
+# /boot/system/include)
+yaml_cpp() {
+	local recipe="$ports/dev-cpp/yaml_cpp/yaml_cpp0.8-0.8.0.recipe"
+	"$cross" "$recipe" cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DYAML_BUILD_SHARED_LIBS=ON -DYAML_CPP_BUILD_TOOLS=OFF \
+		-DYAML_CPP_BUILD_TESTS=OFF -DYAML_CPP_BUILD_CONTRIB=OFF
+	cmake_relative yaml-cpp
+	package "$recipe"
+	need non-packaged/lib/libyaml-cpp.so.0.8 develop/headers/yaml-cpp/yaml.h
+}
+
+pystring() {
+	local recipe="$ports/dev-cpp/pystring/pystring-1.1.4.recipe"
+	"$cross" "$recipe" cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON
+	package "$recipe"
+	need non-packaged/lib/libpystring.so.1.1.4 develop/headers/pystring.h
+}
+
+minizip_ng() {
+	local recipe="$ports/sys-libs/minizip-ng/minizip_ng-4.0.7.recipe"
+	"$cross" "$recipe" cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DMZ_LIB_SUFFIX=-ng -DBUILD_SHARED_LIBS=ON -DMZ_ZLIB=ON -DMZ_BZIP2=OFF \
+		-DMZ_LZMA=OFF -DMZ_ZSTD=OFF -DMZ_OPENSSL=OFF -DMZ_LIBBSD=OFF -DMZ_ICONV=OFF -DMZ_FETCH_LIBS=OFF \
+		-DMZ_PKCRYPT=OFF -DMZ_WZAES=OFF
+	cmake_relative minizip-ng
+	package "$recipe"
+	need non-packaged/lib/libminizip-ng.so.1 develop/headers/minizip-ng/mz.h
+}
+
+opencolorio() {
+	local recipe="$ports/media-libs/opencolorio/opencolorio2.3-2.3.2.recipe" lib
+	lib="$root/artifacts/cross-ports/opencolorio2.3-2.3.2/install/boot/system/non-packaged/lib/libOpenColorIO.so.2.3"
+	"$cross" "$recipe" cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DOCIO_BUILD_APPS=OFF -DOCIO_BUILD_GPU_TESTS=OFF \
+		-DOCIO_BUILD_PYTHON=OFF -DOCIO_BUILD_TESTS=OFF -DOCIO_BUILD_DOCS=OFF -DOCIO_BUILD_OPENFX=OFF \
+		-DOCIO_INSTALL_EXT_PACKAGES=NONE -DOCIO_USE_SIMD=OFF -DOCIO_USE_SSE=OFF \
+		-Dminizip-ng_INCLUDE_DIR="$np/include/minizip-ng" -Dminizip-ng_LIBRARY="$np/lib/libminizip-ng.so" \
+		-Dexpat_ROOT="$sysroot/boot/system/develop" -Dexpat_INCLUDE_DIR="$sysroot/boot/system/develop/headers" \
+		-Dexpat_LIBRARY="$sysroot/boot/system/develop/lib/libexpat.so" -Wno-dev
+	cmake_relative OpenColorIO
+	for n in libyaml-cpp libpystring libminizip-ng libexpat libImath; do
+		"$tools-readelf" -d "$lib" | grep -q "NEEDED.*\[$n" || { echo "build-blender: OCIO does not link $n" >&2; exit 1; }
+	done
+	package "$recipe"
+	need non-packaged/lib/libOpenColorIO.so.2.3 develop/headers/OpenColorIO/OpenColorIO.h
+}
+
+# OpenSubdiv 3.5.0 (M6: the Subdivision Surface and Multires modifiers, "Disabled, built without
+# OpenSubdiv" without it; Blender's pin): CPU and the GL backend Blender links (osdGPU; its GPU
+# evaluation needs compute shaders, which V3D's desktop GL lacks, so Blender uses the CPU one). No TBB
+# evaluator: 3.5 uses tbb/task_scheduler_init.h, which oneTBB removed (Blender does its own threading)
+opensubdiv() {
+	local recipe
+	recipe="$(recipe_with "$ports/media-libs/opensubdiv/opensubdiv3.5-3.5.0.recipe" '${portVersion//\./_}' 3_5_0)"
+	"$cross" "$recipe" cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DNO_EXAMPLES=ON -DNO_TUTORIALS=ON -DNO_REGRESSION=ON -DNO_TESTS=ON \
+		-DNO_GLTESTS=ON -DNO_DOC=ON -DNO_PTEX=ON -DNO_CUDA=ON -DNO_OPENCL=ON -DNO_CLEW=ON -DNO_DX=ON \
+		-DNO_METAL=ON -DNO_OMP=ON -DNO_GLFW=ON -DNO_GLFW_X11=ON -DNO_TBB=ON -DNO_OPENGL=OFF \
+		-DCMAKE_SKIP_RPATH=ON -Wno-dev
+	package "$recipe"
+	need non-packaged/lib/libosdCPU.so.3.5.0 non-packaged/lib/libosdGPU.so.3.5.0 \
+		develop/headers/opensubdiv/far/topologyRefiner.h
+}
+
 # sse2neon 1.6.0 (Blender's pin): the one header, for Cycles' SSE code on NEON (blender.md §5); only a
 # sse2neon_devel package (package-port.py makes no runtime package without files)
 sse2neon() {
@@ -336,6 +400,7 @@ hosttools() {
 		-DPYTHON_INCLUDE_DIR="$pyHost/include/python3.10" -DPYTHON_INCLUDE_CONFIG_DIR="$pyHost/include/python3.10" \
 		-DPYTHON_LIBRARY="$pyHost/lib/libpython3.10.a" -DPYTHON_LIBPATH="$pyHost/lib" \
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DPUGIXML_ROOT_DIR="$np" \
+		-DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" \
 		-DWEBP_INCLUDE_DIR="$sysroot/boot/system/develop/headers" -DWEBP_WEBP_LIBRARY="$dl/libwebp.so" \
 		-DWEBP_WEBPMUX_LIBRARY="$dl/libwebpmux.so" -DWEBP_WEBPDEMUX_LIBRARY="$dl/libwebpdemux.so" \
 		> "$bl/host-configure.log" 2>&1 || { tail -n 40 "$bl/host-configure.log" >&2; exit 1; }
@@ -365,7 +430,7 @@ configure() {
 		-DPYTHON_LIBRARY="$sysroot/boot/system/develop/lib/libpython3.10.so" \
 		-DPYTHON_LIBPATH="$sysroot/boot/system/develop/lib" \
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DSSE2NEON_ROOT_DIR="$np" \
-		-DPUGIXML_ROOT_DIR="$np" \
+		-DPUGIXML_ROOT_DIR="$np" -DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" \
 		-DFREETYPE_INCLUDE_DIR_ft2build="$blDeps/include/freetype2" \
 		-DFREETYPE_INCLUDE_DIR_freetype2="$blDeps/include/freetype2" \
 		-DFREETYPE_LIBRARY="$blDeps/lib/libfreetype.a;brotlidec;brotlicommon;png16;z" \
@@ -388,7 +453,8 @@ configure() {
 		exit 1
 	fi
 	# what the minimal build is for, still on after configure
-	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP WITH_PUGIXML; do
+	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP WITH_PUGIXML \
+			WITH_OPENCOLORIO WITH_OPENSUBDIV; do
 		grep -q "^$o:BOOL=ON" "$bl/build/CMakeCache.txt" || { echo "build-blender: $o is off" >&2; exit 1; }
 	done
 	grep -q '^SSE2NEON_INCLUDE_DIR:PATH=/' "$bl/build/CMakeCache.txt" \
@@ -405,6 +471,30 @@ build() {
 	echo "build-blender: compiler warnings: $(grep -c 'warning:' "$bl/build.log" || true)"
 	"$tools-readelf" -h -d "$bl/build/bin/blender" | grep -E 'Machine|NEEDED' | sed 's/^/build-blender: /'
 	ls -l "$bl/build/bin/blender"
+}
+
+# the package (M6): blender + its 3.6/ tree in apps/Blender (Blender's portable layout; the program is
+# "Blender" there) and a Deskbar entry. package-port.py turns the NEEDED libraries of our ports
+# (non-packaged/ in the sysroot) into requires; the ones from packages extracted into the sysroot's lib/
+# (python3.10, zstd, brotli, webp, libpng, libjpeg) are named, and SDL2 at least 2.32.10-8 (per-thread GL
+# contexts, docs/design/blender.md §3.2: render jobs and shader compiles make contexts current on other threads)
+blender_package() {
+	local recipe="$root/tools/recipes/media-gfx/blender/blender-3.6.23.recipe" sys="$bl/install/boot/system" r
+	rm -rf "$bl/install"
+	cmake --install "$bl/build" --prefix "$sys/apps/Blender" > "$bl/install.log" 2>&1 \
+		|| { tail -n 20 "$bl/install.log" >&2; exit 1; }
+	mv "$sys/apps/Blender/blender" "$sys/apps/Blender/Blender"
+	rm -f "$sys/apps/Blender"/blender.desktop "$sys/apps/Blender"/*.svg
+	mkdir -p "$sys/data/deskbar/menu/Applications"
+	ln -s ../../../../apps/Blender/Blender "$sys/data/deskbar/menu/Applications/Blender"
+	r=()
+	for lib in libpython3.10 libzstd libbrotlidec libbrotlicommon libwebp libwebpmux libwebpdemux libpng16 \
+			libjpeg libexpat; do
+		r+=(--requires "lib:$lib")
+	done
+	package "$recipe" --system-prefix --no-devel --provides app:Blender --requires "libsdl2 >= 2.32.10-8" \
+		--requires python3.10 "${r[@]}"
+	"$pkgtool" list -i "$out/blender-3.6.23-1-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its
@@ -433,8 +523,9 @@ stage() {
 	echo "build-blender: $t: $(du -sh "$t/Blender" | cut -f1) Blender, $(ls "$t/packages" | wc -l) packages"
 }
 
-steps=(sysroot python libdeflate imath openexr tiff epoxy boost tbb oiio pugixml sse2neon freetype blender_source
-	hosttools configure build stage)
+steps=(sysroot python libdeflate imath openexr tiff epoxy boost tbb oiio pugixml yaml_cpp pystring
+	minizip_ng opencolorio opensubdiv sse2neon freetype blender_source
+	hosttools configure build stage blender_package)
 start="${1:-${steps[0]}}" last="${2:-}"
 started=0
 for s in "${steps[@]}"; do

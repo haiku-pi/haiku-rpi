@@ -69,9 +69,11 @@ blender_option(WITH_IMAGE_CINEON ON)
 blender_option(WITH_IMAGE_OPENJPEG OFF)
 blender_option(WITH_SYSTEM_FREETYPE OFF)
 
+# M6: OpenColorIO (Filmic and the other view transforms) and OpenSubdiv (Subdivision Surface, Multires)
+blender_option(WITH_OPENCOLORIO ON)
+blender_option(WITH_OPENSUBDIV ON)
+
 # off in the minimal build (blender.md §4, M6 adds most of them back)
-blender_option(WITH_OPENCOLORIO OFF)
-blender_option(WITH_OPENSUBDIV OFF)
 blender_option(WITH_OPENVDB OFF)
 blender_option(WITH_USD OFF)
 blender_option(WITH_ALEMBIC OFF)
