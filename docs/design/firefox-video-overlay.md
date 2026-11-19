@@ -529,12 +529,20 @@ Two traps cost the first session (`ffa1`) its numbers. Neither is in the table b
 | 1080p30: app_server window thread | 1 532, 1 986 | 2 358, 2 391, 2 161 | 0, 0 |
 | 1080p30: all Firefox teams / idle | 22.3 s / 12.7 s | 20.7 s / 13.1 s | 16.6 s / 20.5 s |
 | 1080p30: dropped | 1, 0 of 300 | 6, 2, 4 | 1, 0 |
+| dropped from the start to 38 s (of ~1 100), 720p / 1080p | 18, 27 / 91, 90 | 9, 14, 13 / **140, 117, 75** | 9, 10 / 23, 33 |
+
+Which builds: Q720a/b and Q1080a/b, and both A1b columns, ran on the packages before the settle rule (§ scroll
+below). That rule only acts after the plane was left, so a steady video is not affected. Q720c and Q1080c ran on the
+final -8. No clean `measure` run was made on the final -9.
 
 - **On the plane:** the HVO counters show one plane frame per video frame: 299–305 per 10 s, plus 0–8 composites
   with an unchanged picture. The display driver's statistics agree: plane 1 at 289–301 updates per 600 vblanks.
 - **Colours** match option 0's software path within ±3 per channel on the bars (720p and 1080p). Both use BT.709
   for these untagged HD clips (video-overlay.md §3).
 - **The step-3 criterion (≥ 0.25 core less at 720p) is met: −0.53 core.** At 1080p it is −0.32 core.
+- **A regression at 1080p, A1 only:** more frames dropped in the first 38 s (75–140 against 90–91), and 2–6 per 10 s
+  afterwards against 0–1. `Renderer` now does the 3.1 MB plane copy on top of the window work, and its frames take
+  longer. With A1b the start-up drops fall to 23–33. Not investigated further.
 - **What A1 leaves (§2.3):**
   - the key fill, the back→front `memcpy` and `DrawBitmap` on `Renderer`;
   - app_server's two copies, which rise by 0.04–0.06 core because keyed front writes are a read-OR-write rather than
@@ -551,17 +559,18 @@ Two traps cost the first session (`ffa1`) its numbers. Neither is in the table b
 
 | Case | Run | Result |
 |---|---|---|
-| Scroll (640×360 video, 1.5 px per 50 ms for 2 s, then still for 6 s) | S1, S3 | Software while it moves, plane when still (`unstable` 279 frames in 60 s). The first version flipped 2–3 times per scroll burst; with the 15-frame settle rule (S3) it flips once per burst (8 shows in 60 s). No key visible in 5 frames taken while scrolling |
+| Scroll (640×360 video, 1.5 px per 50 ms for 2 s, then still for 6 s) | S1, S3 | Software while it moves, plane when still (`unstable` 279 frames in 60 s). The first version flipped 2–3 times per scroll burst; with the 15-frame settle rule (S3) it flips once per burst (9 shows in 60 s). No key visible in 5 frames taken while scrolling |
 | Half above the window's top for 12 s, then moved in | H1 | `not-whole` 328 frames, then on the plane |
 | Two videos (960×540 and 480×270) | T1 | The larger on the plane, the smaller in software. The second video's frames recomposite the window: 312 "same picture" offers, no copies |
 | All six planes held by `overlaytest` for 25 s | N1 | `no-plane` 417 frames (retried each second), on the plane once they ended |
-| Mode change to 1280×720 and back | M1 | `suspended` 1, leaves the plane; back on it after 27 retries (~1 s); again after the change back. 0 debugger entries |
+| Mode change to 1280×720 and back | M1 | `suspended` 1, leaves the plane; 27 frames declined in the 1-s back-off, then back on it; again after the change back. 0 debugger entries |
 | 10-bit video | V10 | Software (`format`) |
 | Controls and content over the video (`<video controls>`, an opaque caption, a 50 % white box; mouse moved over it by `uiinject`) | C1 | The opaque caption, the controls bar and other windows (a crash alert) cover the plane correctly. **Known limitations, both as designed (§2.4):** the translucent box blends with the key green, not the video. A Firefox tooltip window over the video has a dark green fringe: its translucent edge is blended with the key in app_server's back buffer, the same class as any window over a keyed overlay (gpu-stage6 §3.4) |
 | No video: haiku-os.org | smoke (A1, A1b) | Renders (HDMI `smoke-a1b-haiku-os.png`); quit in 5–6 s, 0 debugger entries |
 
 - **Unhovered video:** 0 key-coloured pixels in all the frames above, except the tooltip fringe.
-- **Quit:** every run's `hey Firefox quit` ended all teams in 1–2 s.
+- **Quit:** `hey Firefox quit` ended the teams in 1–2 s, and in 5–6 s for the haiku-os.org smoke runs. The `quit:` line
+  does not see a team stopped in the debugger: the runs with an RDD abort also report "0 teams left".
 
 **Debugger entries: 3 in about 55 Firefox runs, none in our code.** All three are the RDD process aborting
 (`mozalloc_abort`) in `mmal_port_disable` → `mmal_port_buffer_header_callback` → libmmal_vc_client while the
@@ -571,7 +580,8 @@ VideoCore H.264 decoder shuts down at quit.
   open, the VideoCore reports errors faster than mmal hands out event buffers. **This is a decoder bug from before
   A1**, to be fixed in the mmal path (not done here).
 - One came from a single 720p video with the A1 package in session `ffa1`, while the screen saver was hiding the
-  window. It has not recurred in ~25 single-video runs of A1 and A1b since.
+  window. It is **not attributed**: not reproduced with option 0, not recurred in ~25 single-video runs of A1 and A1b
+  since. The same stack points to the decoder's shutdown, but A1 is not ruled out.
 - **Strictly, "0 debugger entries" is not met.** Two of the three are reproduced with option 0.
 
 ### 9.5 A1b: no window drawing while only the video changes (same sessions; **measured**)
@@ -612,6 +622,21 @@ Test package firefox-157.0.1-**9** in `artifacts/packages-test/firefox-a1b/` (un
   - Static translucent content over a playing video stays blended with the key green, the A1 limitation. A1b only
     covers changing content.
   - The VideoCore two-decoder abort (§9.4).
+- **Not tested:**
+  - A realistic layout. Every page was a bare `<video>` at integer coordinates in a local file, so `cropped` and
+    `colour-space` never fired. Whether the plane engages on a real page (centred or %-sized video, fractional
+    offsets, rounded corners, a video site) is unknown; the HVO reasons tell, and that is the next run.
+  - Plane release on a tab switch and on minimising (§7).
+  - A/V sync on a clip with sound (`play-*-aac.mp4`).
+  - Fullscreen, and two videos under A1b.
+- **Build state left behind:**
+  - `sources/firefox/firefox-157.0.1` has 0006 and 0007 applied, and they are in its patch stamp.
+  - The objdir and `artifacts/firefox/non-packaged` hold the last build, which is A1 (-8): 0007's three Rust files were
+    swapped out for that build and restored afterwards.
+  - So the next `build` rebuilds A1b (-9); §9.3's "objdir in the option-0 state" no longer holds.
+  - Back to option 0: `patch -R -p1` with 0007 and then 0006 in the tree, drop their two stamp lines, then
+    `FIREFOX_SWGL_CLANG=1 build-firefox.sh build`.
+  - jam's download directory and `artifacts/packages` still hold only -6.
 - **Whether these patches go into a release package is the release gate's decision.** The `source` step applies every
   `patches/firefox/*.patch`, so a rebuild from scratch now includes 0006 and 0007. The option-0 candidate 157.0.1-7
   (`artifacts/packages-test/firefox-swglclang/`) was built before them and does not change.
