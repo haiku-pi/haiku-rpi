@@ -16,8 +16,7 @@
 #             (NoPlane) first, the plane after
 #   mode      the screen to 1280x720 at 20 s and back at 30 s (overlays suspended): software meanwhile, the plane
 #             after
-# Lines "FFA <label> ..."; "FFA <label> SNAP <name>" lines are the moments for an HDMI frame (scripts/pi-snap-on.sh
-# ... /tmp/ffa-ack: the script holds still until the frame is taken).
+# Lines "FFA <label> ...", and "FFA <label> SNAP <name>" at the moments meant for an HDMI frame.
 # Run over ssh in a bench session (scripts/pi-session.sh, scripts/pi-ssh.sh).
 mode=${1:?usage: ffv-a1.sh MODE CLIP LABEL}
 clip=${2:?usage: ffv-a1.sh MODE CLIP LABEL}
@@ -29,14 +28,9 @@ ffx=${FFX:-/boot/system/apps/Firefox/Firefox}
 profile=$dir/ffa-profile-$label
 log=$dir/ffa-$label.log
 say() { echo "FFA $label $*"; }
-# snapshot NAME: a "SNAP" line, then hold still until the host took the frame (scripts/pi-snap-on.sh with the ACK
-# prefix /tmp/ffa-ack: it creates /tmp/ffa-ack-NAME) or 20 s passed
-snapshot() {
-	rm -f "/tmp/ffa-ack-$1"
-	say "SNAP $1"
-	i=0
-	while [ $i -lt 20 ] && [ ! -f "/tmp/ffa-ack-$1" ]; do sleep 1; i=$((i + 1)); done
-}
+# snapshot NAME: a "SNAP" line, the moment the test means for an HDMI frame (the host takes frames on a schedule:
+# polling the log over ssh costs the Pi CPU during the measurement)
+snapshot() { say "SNAP $1"; }
 [ -f "$dir/$clip" ] || { say "no $dir/$clip"; exit 1; }
 rm -rf "$profile"
 mkdir -p "$profile"

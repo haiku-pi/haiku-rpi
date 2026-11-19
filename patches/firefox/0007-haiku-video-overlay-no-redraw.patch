@@ -1,0 +1,206 @@
+Firefox video on the overlay plane: no window drawing while only the video changes (A1b)
+
+On top of 0006 (docs/design/firefox-video-overlay.md §2.3 point 4, §6 step 4).
+WebRender marks a compositor surface's whole rect dirty on every frame. While
+SwCompositor has the surface on the overlay plane, its new pictures change
+nothing in the window, so the renderer (calculate_dirty_rects) leaves it out of
+the dirty rects: a frame in which only the video changed has an empty dirty
+rect, SwCompositor composites nothing, RenderCompositorSWGL draws nothing into
+the widget, and app_server copies nothing; the plane is still flipped
+(Compositor::plane_rect, new; default None).
+
+When other content over the video's rect changes (the controls fading in, a
+caption), the renderer keeps the video dirty and tells the compositor
+(Compositor::plane_covered): the video is composited in software until the
+content over it has been still for 0.5 s, so translucent content blends with
+the picture rather than with the key. A frame the plane declines after being
+left out keeps the plane's previous picture for that frame (the window still
+holds the key); the next frame is dirty again and goes in software.
+
+An empty dirty rect now clips every surface out in SwCompositor (before, it
+composited the whole window into a dummy framebuffer); it only happens here.
+
+--- a/gfx/wr/webrender/src/composite.rs
++++ b/gfx/wr/webrender/src/composite.rs
+@@ -1638,6 +1638,20 @@
+     fn get_capabilities(&self) -> CompositorCapabilities;
+ 
+     fn get_window_visibility(&self) -> WindowVisibility;
++
++    /// The device rect of the external surface this compositor last offered to a hardware
++    /// overlay plane (SwCompositor, MappableCompositor::present_on_plane: Haiku), and whether it
++    /// was shown there. While such a surface keeps its rect and nothing else changes over it, a
++    /// new picture of it changes nothing in the framebuffer: the renderer leaves it out of the
++    /// dirty rects.
++    fn plane_rect(&self) -> Option<(DeviceIntRect, bool)> {
++        None
++    }
++
++    /// Other content changed over the plane_rect() this frame: the compositor composites the
++    /// surface in software for a while (translucent content over it blends with it, not with the
++    /// plane's key), and the renderer keeps it in the dirty rects.
++    fn plane_covered(&mut self) {}
+ }
+ 
+ // Describes the configuration for an input layer that the compositor
+--- a/gfx/wr/webrender/src/compositor/sw_compositor.rs
++++ b/gfx/wr/webrender/src/compositor/sw_compositor.rs
+@@ -10,6 +10,7 @@
+ use std::sync::atomic::{AtomicBool, AtomicI8, AtomicPtr, AtomicU32, AtomicU8, Ordering};
+ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+ use std::thread;
++use std::time::{Duration, Instant};
+ use crate::NativeSurfaceHandle;
+ use crate::{
+     api::units::*, api::ColorDepth, api::ColorF, api::ExternalImageId, api::ImageRendering, api::YuvRangedColorSpace,
+@@ -1197,6 +1198,10 @@
+     /// the row's storage (the texture's buffer).
+     key_texture: Option<u32>,
+     key_row: Vec<u32>,
++    /// The rect of the surface last offered to the plane and whether it went there
++    /// (Compositor::plane_rect), and until when content over it changed (plane_covered).
++    plane_offer: Option<(DeviceIntRect, bool)>,
++    covered_until: Option<Instant>,
+ }
+ 
+ impl SwCompositor {
+@@ -1241,6 +1246,8 @@
+             plane_surface: None,
+             key_texture: None,
+             key_row: Vec::new(),
++            plane_offer: None,
++            covered_until: None,
+         }
+     }
+ 
+@@ -1279,10 +1286,17 @@
+                 best = Some((id, external_image, src_rect, dst_rect, whole));
+             }
+         }
++        self.plane_offer = None;
+         let (id, external_image, src_rect, dst_rect, whole) = match best {
+             Some(best) => best,
+             None => return,
+         };
++        // Content over the surface changed lately (the renderer kept it dirty): software, so that
++        // translucent content over it (a video's controls) blends with the picture.
++        self.plane_offer = Some((dst_rect, false));
++        if self.covered_until.map_or(false, |until| Instant::now() < until) {
++            return;
++        }
+         let info = match self.composite_surfaces.get(&external_image) {
+             Some(info) => info,
+             None => return,
+@@ -1313,6 +1327,7 @@
+         if let Some(surface) = self.surfaces.get_mut(&id) {
+             surface.on_plane = true;
+             self.plane_surface = Some(id);
++            self.plane_offer = Some((dst_rect, true));
+         }
+     }
+ 
+@@ -2036,12 +2051,12 @@
+             self.offer_plane_surface();
+         }
+ 
+-        if let Some(dirty_rect) = dirty_rects
+-            .iter()
+-            .fold(DeviceIntRect::zero(), |acc, dirty_rect| acc.union(dirty_rect))
+-            .to_non_empty()
+-        {
+-            // Factor dirty rect into surface clip rects
++        if !dirty_rects.is_empty() {
++            // Factor dirty rect into surface clip rects. An empty one (only a surface on the
++            // overlay plane changed: nothing to draw) clips everything out.
++            let dirty_rect = dirty_rects
++                .iter()
++                .fold(DeviceIntRect::zero(), |acc, dirty_rect| acc.union(dirty_rect));
+             for &mut (_, _, ref mut clip_rect, _) in &mut self.frame_surfaces {
+                 *clip_rect = clip_rect.intersection(&dirty_rect).unwrap_or_default();
+             }
+@@ -2137,4 +2152,14 @@
+     fn get_window_visibility(&self) -> WindowVisibility {
+         self.compositor.get_window_visibility()
+     }
++
++    fn plane_rect(&self) -> Option<(DeviceIntRect, bool)> {
++        self.plane_offer
++    }
++
++    fn plane_covered(&mut self) {
++        // Half a second of software after the last change over the surface: an animation over it
++        // (controls fading) does not flip it between plane and software every few frames.
++        self.covered_until = Some(Instant::now() + Duration::from_millis(500));
++    }
+ }
+--- a/gfx/wr/webrender/src/renderer/composite.rs
++++ b/gfx/wr/webrender/src/renderer/composite.rs
+@@ -1368,12 +1368,39 @@
+                 let mut combined_dirty_rect = DeviceRect::zero();
+                 let fb_rect = DeviceRect::from_size(draw_target_dimensions.to_f32());
+ 
++                // An external surface the native compositor shows on an overlay plane (Haiku): its
++                // new pictures change nothing in the framebuffer, so its rect is left out of the
++                // dirty rects while nothing else changes over it. Otherwise (other content changed
++                // over it) the compositor composites it in software for a while.
++                let plane = match self.current_compositor_kind {
++                    CompositorKind::Native { .. } =>
++                        self.compositor_config.compositor().and_then(|compositor| compositor.plane_rect()),
++                    _ => None,
++                };
++                let mut plane_dirty = None;
++                let mut plane_covered = false;
++
+                 // Work out how many dirty rects WR produced, and if that's more than
+                 // what the device supports.
+                 for tile in &composite_state.tiles {
+                     let dirty_rect = composite_state
+                         .get_device_rect(&tile.local_dirty_rect, tile.transform_index);
+ 
++                    if let Some((plane_rect, _)) = plane {
++                        if let CompositeTileSurface::ExternalSurface { .. } = tile.surface {
++                            let device_rect = composite_state
++                                .get_device_rect(&tile.local_rect, tile.transform_index)
++                                .round_out();
++                            if plane_dirty.is_none() && device_rect.to_i32() == plane_rect {
++                                plane_dirty = Some(dirty_rect);
++                                continue;
++                            }
++                        }
++                        if !dirty_rect.is_empty() && dirty_rect.intersects(&plane_rect.to_f32()) {
++                            plane_covered = true;
++                        }
++                    }
++
+                     // In pathological cases where a tile is extremely zoomed, it
+                     // may end up with device coords outside the range of an i32,
+                     // so clamp it to the frame buffer rect here, before it gets
+@@ -1383,11 +1410,27 @@
+                     }
+                 }
+ 
++                let mut plane_left_out = false;
++                if let (Some((_, on_plane)), Some(dirty_rect)) = (plane, plane_dirty) {
++                    if on_plane && !plane_covered {
++                        plane_left_out = true;
++                    } else if let Some(dirty_rect) = dirty_rect.intersection(&fb_rect) {
++                        combined_dirty_rect = combined_dirty_rect.union(&dirty_rect);
++                    }
++                    if plane_covered {
++                        if let Some(compositor) = self.compositor_config.compositor() {
++                            compositor.plane_covered();
++                        }
++                    }
++                }
++
+                 let combined_dirty_rect = combined_dirty_rect.round();
+                 let combined_dirty_rect_i32 = combined_dirty_rect.to_i32();
+                 // Return this frame's dirty region. If nothing has changed, don't return any dirty
+                 // rects at all (the client can use this as a signal to skip present completely).
+-                if !combined_dirty_rect.is_empty() {
++                // A surface left out for its overlay plane still needs a composite (the
++                // compositor flips the plane), with an empty dirty rect: nothing is drawn.
++                if !combined_dirty_rect.is_empty() || plane_left_out {
+                     results.dirty_rects.push(combined_dirty_rect_i32);
+                 }
+ 

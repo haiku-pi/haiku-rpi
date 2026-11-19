@@ -1,9 +1,14 @@
 # Firefox `<video>` on the YUV overlay plane (KNOWN-ISSUES G2)
 
-Status: **design (2026-11-19); de-risking steps done**, nothing implemented beyond option 0:
+Status: **A1 and A1b implemented and Pi-tested (2026-11-19), unpublished test packages**:
 - Step 0 (§9.1): the video *is* a promoted compositor surface, and its software composite costs ≈1.1 cores.
 - GCC 16.2 baseline rebuild (§9.2): it works.
 - Option 0, SWGL with clang (§9.3): −14 % composite CPU at 720p, −25 % at 1080p, and 1080p drops from ~33 % to 5 %.
+- **A1** (§9.4, `patches/firefox/0006`): the video on the overlay plane; `Renderer` + `SwComposite` 8.0 → 2.7 s per
+  10 s at 720p, 7.9 → 4.6 s at 1080p, against option 0. Every fallback exercised.
+- **A1b** (§9.5, `patches/firefox/0007`): no window drawing while only the video changes; 0.7 s (720p) and 1.9 s
+  (1080p) per 10 s, app_server 0. Open: the plane copy at 1080p, and a VideoCore decoder abort at quit with two
+  videos that option 0 has too.
 
 One host-side compile probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
 [video-overlay.md](video-overlay.md) (B_YUV420 overlays, MediaPlayer), [gpu-stage6.md](gpu-stage6.md) (planes,
@@ -459,3 +464,154 @@ Measured on the Pi, both builds extracted to `/boot/home` and run from there (`F
 and the bench test path works (`ffv0.sh`, `ffv-smoke.sh`, extracted packages). The objdir is now in the
 option-0 state (SWGL by clang). A1 replaces the composite whose cost option 0 reduced, so the two do not add up.
 Option 0 is worth shipping on its own regardless.
+
+### 9.4 A1: the video on the overlay plane (2026-11-19 20:10–22:08; Pi sessions `ffa1`, `ffa2`; **measured**)
+
+`patches/firefox/0006-haiku-video-overlay.patch` (on top of option 0; ~660 added lines: ~140 Rust, ~520 C++, the estimate was ~600):
+
+- **WebRender** (`composite.rs`, `sw_compositor.rs`): `MappableCompositor::present_on_plane()`, `false` by
+  default. At the start of compositing, before the dirty rect and occlusion shrink the clip rects, `SwCompositor`
+  offers the largest external 3-plane YUV surface. It also tells whether the surface is wholly visible, unflipped
+  and has no rounded clip. On `true` the surface's composite job takes a one-row texture of key pixels as its source
+  (opaque, nearest): `Composite()`'s same-width path, one row copy per line, instead of `composite_yuv`.
+- **Bindings**: `wr_compositor_present_on_plane` → `RenderCompositor::PresentOnPlane()` (virtual, `false`). Haiku's
+  `RenderCompositorSWGL` accepts only these frames:
+  - 8-bit 4:2:0 `YUV420` of an even size, the whole picture, inside the window;
+  - the colour space the display assumes: BT.709 limited range from 720 lines up, BT.601 below. That is the same rule
+    as Firefox's default for untagged video, so untagged clips match.
+
+  It takes the mapped planes from the locked `RenderTextureHostSWGL`, which gets two accessors.
+- **Widget**: new `widget/haiku/HaikuVideoOverlay.{h,cpp}`, owned by `nsWindow`, which hands it out through
+  `GetNativeData(NS_NATIVE_HAIKU_VIDEO_OVERLAY)`. Headless and popup widgets return `nullptr`.
+  - Three B_YUV420 overlay bitmaps; the first one reserves the channel.
+  - The planes are copied under `LockBits()`. `SetViewOverlay()` runs under the window lock, inside the hook:
+    the first call configures the plane before any key pixel reaches the window, later calls transfer the channel.
+  - The plane is left with `ClearViewOverlay()`, and its bitmaps are freed, only after a software-composited frame
+    has been drawn over its rectangle. Doing it earlier would show the key as green.
+  - The overlay is cleared in `nsWindow::Destroy()` before the window quits.
+  - `MOZ_HAIKU_VIDEO_OVERLAY=0` turns it off. `MOZ_HAIKU_VIDEO_OVERLAY_LOG=1` prints `HVO show/hide/stats` lines:
+    frames on the plane, composites that drew into the window, and software frames by reason.
+- **Software for that frame** (reason in the log):
+  - the rectangle changed: back on the plane after 2 still frames, or after 15 within a second of leaving it, so a
+    slow scroll does not flip it every few frames;
+  - partly visible (`not-whole`), cropped, other formats (`format`) or colour spaces;
+  - no plane or memory (`no-plane`, retried after 1 s);
+  - `LockBits()` failing during a mode change (`suspended`).
+- **Trap found in the build**: forward-declaring `class BBitmap;` in a Gecko header gives Be API classes Gecko's hidden
+  visibility in every file that sees the declaration first. libxul then failed to link with "hidden symbol
+  `BBitmap::LockBits` isn't defined". The forward declaration is wrapped in `#pragma GCC visibility push(default)`.
+
+Build: incremental on the kept objdir, `FIREFOX_SWGL_CLANG=1`. The first build after the cbindgen header changed
+recompiled ~18 min of C++; later ones took 2 min. The check step passes, and the SWGL object is still clang 21.1.8.
+The test package is firefox-157.0.1-**8** in `artifacts/packages-test/firefox-a1/` (unpublished).
+
+**How it was measured.** Harness `tools/pi-tests/ffv-a1.sh` (modes `measure`, `scroll`, `half`, `two`, `caption`,
+`noplane`, `mode`). It runs from the host through `tools/pi-tests/ffv-a1-run.sh`, which takes HDMI frames on a schedule,
+and `ffv-a1-sum.sh` sums the runs. Same page and window as §9.1, image-2026-11-19b, network boot. Packages were
+extracted to `/boot/home/ffa/{o0,a1,a1b}` and alternated: option 0 (P), A1 (Q), A1b (R). CPU in ms per 10 s at 45 s;
+4 CPUs = 40 000.
+
+Two traps cost the first session (`ffa1`) its numbers. Neither is in the table below:
+- **The screen saver.** The release image's default one hides windows, as found for the Haiku bench before. Every
+  HDMI frame showed the bare desktop while the CPU numbers kept coming. `ffa2` booted with the bench's
+  `ScreenSaver_settings` (`pi-session.sh --add`).
+- **Background downloads.** A fresh profile downloads ~100 MB (remote settings, Safe Browsing, CRLite) in its first
+  minutes, which put 1–3 s of `Socket Thread`/main-thread CPU into random runs. The harness profile now sends all
+  http(s) to a refusing proxy.
+
+| per 10 s | option 0 (P, 2 runs) | **A1** (Q, 3 runs) | A1b (R, 2 runs, §9.5) |
+|---|---|---|---|
+| 720p30: `Renderer` + `SwComposite` | 8 099, 7 972 (mean 8 036) | 2 512, 3 038, 2 710 (**2 753, −0.53 core**) | 537, 899 (718) |
+| 720p30: app_server window thread | 1 089, 1 112 | 1 488, 1 721, 1 375 | 0, 0 |
+| 720p30: all Firefox teams / idle | 15.7 s / 22.0 s | 10.5 s / 26.5 s | 5.4 s / 33.9 s |
+| 720p30: dropped | 0, 0 of 300 | 0, 0, 0 | 0, 0 |
+| 1080p30 (in 1280×720): `Renderer` + `SwComposite` | 8 048, 7 665 (7 857) | 5 353, 4 260, 4 232 (**4 615, −0.32 core**) | 2 315, 1 511 (1 913) |
+| 1080p30: app_server window thread | 1 532, 1 986 | 2 358, 2 391, 2 161 | 0, 0 |
+| 1080p30: all Firefox teams / idle | 22.3 s / 12.7 s | 20.7 s / 13.1 s | 16.6 s / 20.5 s |
+| 1080p30: dropped | 1, 0 of 300 | 6, 2, 4 | 1, 0 |
+
+- **On the plane:** the HVO counters show one plane frame per video frame: 299–305 per 10 s, plus 0–8 composites
+  with an unchanged picture. The display driver's statistics agree: plane 1 at 289–301 updates per 600 vblanks.
+- **Colours** match option 0's software path within ±3 per channel on the bars (720p and 1080p). Both use BT.709
+  for these untagged HD clips (video-overlay.md §3).
+- **The step-3 criterion (≥ 0.25 core less at 720p) is met: −0.53 core.** At 1080p it is −0.32 core.
+- **What A1 leaves (§2.3):**
+  - the key fill, the back→front `memcpy` and `DrawBitmap` on `Renderer`;
+  - app_server's two copies, which rise by 0.04–0.06 core because keyed front writes are a read-OR-write rather than
+    a `memcpy` (gpu-stage6 §3.3);
+  - the plane copy (next point).
+- **The plane copy is slow at 1080p.** A profile of `Renderer` with A1b (where nothing else is left) shows 82 % in
+  `memcpy`: 4.65 ms per 3.1 MB frame, ~670 MB/s, into the overlay buffer.
+- **Other inputs:**
+  - AV1 8-bit 640×360 (dav1d, BT.601): on the plane, 1 326 ms against 7 826 ms for the 10-bit clip;
+  - H.264 854×480: on the plane, 3 704 ms;
+  - AV1 10-bit 640×360: software, `format` for every frame (the fallback; Firefox here has no HEVC decoder).
+
+**Fallbacks**, each run once with A1 (HVO log, HDMI frames `artifacts/ffa1/<run>-*.png`, not in git):
+
+| Case | Run | Result |
+|---|---|---|
+| Scroll (640×360 video, 1.5 px per 50 ms for 2 s, then still for 6 s) | S1, S3 | Software while it moves, plane when still (`unstable` 279 frames in 60 s). The first version flipped 2–3 times per scroll burst; with the 15-frame settle rule (S3) it flips once per burst (8 shows in 60 s). No key visible in 5 frames taken while scrolling |
+| Half above the window's top for 12 s, then moved in | H1 | `not-whole` 328 frames, then on the plane |
+| Two videos (960×540 and 480×270) | T1 | The larger on the plane, the smaller in software. The second video's frames recomposite the window: 312 "same picture" offers, no copies |
+| All six planes held by `overlaytest` for 25 s | N1 | `no-plane` 417 frames (retried each second), on the plane once they ended |
+| Mode change to 1280×720 and back | M1 | `suspended` 1, leaves the plane; back on it after 27 retries (~1 s); again after the change back. 0 debugger entries |
+| 10-bit video | V10 | Software (`format`) |
+| Controls and content over the video (`<video controls>`, an opaque caption, a 50 % white box; mouse moved over it by `uiinject`) | C1 | The opaque caption, the controls bar and other windows (a crash alert) cover the plane correctly. **Known limitations, both as designed (§2.4):** the translucent box blends with the key green, not the video. A Firefox tooltip window over the video has a dark green fringe: its translucent edge is blended with the key in app_server's back buffer, the same class as any window over a keyed overlay (gpu-stage6 §3.4) |
+| No video: haiku-os.org | smoke (A1, A1b) | Renders (HDMI `smoke-a1b-haiku-os.png`); quit in 5–6 s, 0 debugger entries |
+
+- **Unhovered video:** 0 key-coloured pixels in all the frames above, except the tooltip fringe.
+- **Quit:** every run's `hey Firefox quit` ended all teams in 1–2 s.
+
+**Debugger entries: 3 in about 55 Firefox runs, none in our code.** All three are the RDD process aborting
+(`mozalloc_abort`) in `mmal_port_disable` → `mmal_port_buffer_header_callback` → libmmal_vc_client while the
+VideoCore H.264 decoder shuts down at quit.
+- Two came from the two-video page. Option 0 crashes there in the same way (T2: the same stack). Before the abort,
+  the log has ~1 260 lines of `vc.ril.video_decode ... no event buffer left for ERRO`: with two `h264_vc` decoders
+  open, the VideoCore reports errors faster than mmal hands out event buffers. **This is a decoder bug from before
+  A1**, to be fixed in the mmal path (not done here).
+- One came from a single 720p video with the A1 package in session `ffa1`, while the screen saver was hiding the
+  window. It has not recurred in ~25 single-video runs of A1 and A1b since.
+- **Strictly, "0 debugger entries" is not met.** Two of the three are reproduced with option 0.
+
+### 9.5 A1b: no window drawing while only the video changes (same sessions; **measured**)
+
+`patches/firefox/0007-haiku-video-overlay-no-redraw.patch` (on top of 0006; ~90 changed lines of Rust, the estimate was 100–150).
+
+- `Compositor::plane_rect()` (new, default `None`) is implemented by `SwCompositor`. It returns the rect of the surface
+  last offered to the plane and whether it went there.
+- `calculate_dirty_rects` in `renderer/composite.rs` finds that surface's tile and leaves its dirty rect out, unless
+  another tile's dirty rect intersects it. In that case it keeps the video dirty and calls
+  `Compositor::plane_covered()`, and `SwCompositor` then composites the video in software until the content over it
+  has been still for 0.5 s. That makes translucent content correct while it changes: the controls fading in, a
+  caption.
+- A frame in which only the video changed now has an empty dirty rect:
+  - the renderer still returns it, so the compositor runs and flips the plane;
+  - `SwCompositor` clips every surface out (before, an empty union composited the whole window into a dummy
+    framebuffer; this case arises only here);
+  - `RenderCompositorSWGL` never calls the widget.
+- If the plane declines a frame that was left out, it keeps its previous picture for that frame. The next frame is
+  dirty and goes in software, and `HaikuVideoOverlay::EndFrame` leaves the plane only once a frame has drawn over its
+  rectangle.
+
+Test package firefox-157.0.1-**9** in `artifacts/packages-test/firefox-a1b/` (unpublished; 0006 + 0007).
+
+| Step-4 criterion (§6) | Result |
+|---|---|
+| Static page + playing video: no `DrawBitmap` per frame | Composites that drew into the window in the 10 s window: **0** of ~300 (HVO `window frames` vs `clean`); app_server's window thread 0 ms |
+| Parent CPU for the video ≤ 0.3 core at 720p, ≤ 0.5 at 1080p | `Renderer` + `SwComposite` + app_server window: **0.07 core** (720p), **0.19 core** (1080p; the plane copy) |
+| 1080p30 dropped < 5 % after the warm-up | 1 and 0 of 300 |
+| Hovering shows correct controls (software while they change) | C2: plane → software when the mouse moves in (`hides` +1), the translucent controls bar and box show the video through them (HDMI `C2-hovered.png`), back on the plane after they are still |
+
+- **The other fallbacks with A1b** (S2 scroll, H2 half, M2 mode change, haiku-os.org smoke) behave as with A1, with 0
+  debugger entries. While scrolling, the composites alternate between window frames (moving) and clean frames (still).
+- **Still open:**
+  - The plane copy at 1080p (~4.7 ms per frame, ~0.14 core): write-combining or uncached overlay memory, copied by
+    `memcpy` row by row. Candidates: wider stores, or have the decoder write into the overlay bitmap, which
+    video-overlay.md §3 measured as a loss for MediaPlayer.
+  - Static translucent content over a playing video stays blended with the key green, the A1 limitation. A1b only
+    covers changing content.
+  - The VideoCore two-decoder abort (§9.4).
+- **Whether these patches go into a release package is the release gate's decision.** The `source` step applies every
+  `patches/firefox/*.patch`, so a rebuild from scratch now includes 0006 and 0007. The option-0 candidate 157.0.1-7
+  (`artifacts/packages-test/firefox-swglclang/`) was built before them and does not change.

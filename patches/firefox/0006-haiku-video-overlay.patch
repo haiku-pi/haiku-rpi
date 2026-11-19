@@ -12,7 +12,9 @@ converting the picture (composite_yuv). app_server shows the plane through the
 key; anything drawn over the video covers it.
 
 Software as before, for that frame, while the rectangle moves (the plane must
-not lag the window by a frame), for a partly visible, cropped, flipped or
+not lag the window by a frame; back on the plane after 2 still frames, 15
+within a second of leaving it, so a slow scroll does not flip it every few
+frames), for a partly visible, cropped, flipped or
 rounded-clipped video, a second smaller video, other formats and colour spaces,
 no free plane (retried after 1 s), suspended overlays (mode change). The plane
 is left once a software frame has been drawn over its rectangle.
@@ -511,7 +513,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
      size_t bytes = 0;
 --- a/widget/haiku/HaikuVideoOverlay.h
 +++ b/widget/haiku/HaikuVideoOverlay.h
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,122 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -618,6 +620,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +  int mStableFrames = 0;
 +  uint32_t mKey = 0xff005000;  // {0, 80, 0}, app_server's key; updated
 +  int64_t mRetryAt = 0;  // after a failed allocation or LockBits()
++  int64_t mLeftAt = 0;   // when the plane was last left
 +
 +  // counters for the log
 +  uint32_t mPlaneFrames = 0;
@@ -635,7 +638,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +#endif  // mozilla_widget_HaikuVideoOverlay_h
 --- a/widget/haiku/HaikuVideoOverlay.cpp
 +++ b/widget/haiku/HaikuVideoOverlay.cpp
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,280 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -665,6 +668,12 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +static const bigtime_t kLockTimeout = 100000;
 +// after a failed allocation or LockBits(): software for this long
 +static const bigtime_t kRetryDelay = 1000000;
++// the rectangle unchanged for this many frames before the plane is used; for
++// more within a second after the plane was left for a move (a scroll in small
++// steps would otherwise show and hide it every few frames)
++static const int kStableFrames = 2;
++static const int kSettleFrames = 15;
++static const bigtime_t kSettleDelay = 1000000;
 +
 +HaikuVideoOverlay::HaikuVideoOverlay(nsWindow* aWindow)
 +    : mWindow(aWindow), mLock("HaikuVideoOverlay::mLock") {
@@ -735,6 +744,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +  }
 +  if (mShown) {
 +    mHides++;
++    mLeftAt = system_time();
 +  }
 +  mShown = false;
 +  mShownImage = 0;
@@ -773,10 +783,13 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +    mStableFrames = 0;
 +  }
 +  mStableFrames++;
-+  if (!(mShown && aDst.IsEqualEdges(mShownRect)) && mStableFrames < 2) {
++  const bigtime_t now = system_time();
++  const int stableNeeded =
++      now - mLeftAt < kSettleDelay ? kSettleFrames : kStableFrames;
++  if (!(mShown && aDst.IsEqualEdges(mShownRect)) &&
++      mStableFrames < stableNeeded) {
 +    return decline(Reason::Unstable);
 +  }
-+  const bigtime_t now = system_time();
 +  if (now < mRetryAt) {
 +    return decline(Reason::NoPlane);
 +  }
