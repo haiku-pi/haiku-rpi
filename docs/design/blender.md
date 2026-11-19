@@ -749,6 +749,32 @@ driver's `v3d_stats` (kernel setting, read at boot: `pi-session.sh --add`).
   invalidated, Blender never invalidates; or fewer passes (overlay sub-passes, region framebuffers). Both
   are real work in Mesa or the draw manager; the user doc gets the settings tip.
 
+### 7.11 Framebuffer load/store actions on V3D: measured, not worth it (2026-11-19 12:45–12:52, session blfb)
+
+Question: Blender 3.6's GL backend ignores the GPU module's load/store actions
+(`GLFrameBuffer::attachment_set_loadstore_op` is empty; only Metal/Vulkan use them) and no draw-manager or
+overlay framebuffer declares any, while v3d skips a tile load for cleared or invalidated buffers and a store for
+invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer`). Would a
+`patches/blender/0009` (invalidate on `LOADACTION_DONT_CARE` / `STOREACTION_DONT_CARE`) + declarations give
+≥ 10%?
+- **Trace of one orbit frame** (temporary diagnostic in gl_framebuffer.cc, removed): ~35 framebuffer binds —
+  clears of `default`/`in_front`/`id_clear` (several run as clear-only jobs), Workbench `opaque_fb` (3 colors +
+  depth), anti-aliasing/SMAA, then the overlay engine ping-ponging between its line and color framebuffers
+  (`overlay_line`/`overlay_color` 3×, outlines, in-front), and the window composite (12 region blits into the
+  back buffer). Most passes start with a clear already (no load).
+- **Upper bounds** (diagnostic modes, images wrong on purpose; orbit at 1322×762, v3d_stats):
+  - every attachment's color discarded on bind (no color loads): 203 ms (baseline 198) — nothing;
+  - color + depth discarded on bind (no loads at all): **190 ms, −4%**;
+  - everything discarded when leaving a framebuffer (no stores at all): **177 ms, −11%**, render 5.2 ms/job.
+- A correct, conservative subset can only drop the loads and stores that are truly unused (clear-only jobs,
+  depth after the overlays) — a fraction of those bounds, well under the 10% acceptance. Even with neither
+  loads nor stores a pass costs ~5.2 ms: the cost is the tile processing per pass (RGBA16F at 1322×762, ~1000
+  tiles), so the lever is **fewer passes** (the overlay engine's line/color ping-pong, separate clear-only
+  jobs), i.e. draw-manager work, or a smaller viewport. **0009 not written** (dropped per the acceptance rule);
+  blender -4 stays as it is.
+- One debug_server entry in the session: the first trace build dereferenced the context before `init()`
+  (diagnostic code only, fixed and removed).
+
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
 **USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
