@@ -167,7 +167,7 @@ cp -a "$stk" "$d/apps/"
 deskbar "$d" SuperTuxKart SuperTuxKart
 splitData supertuxkart 1.5 "$d" apps/SuperTuxKart/data '"GNU GPL v3"' '"SuperTuxKart Development Team"'
 packageInfo supertuxkart 1.5 "A free 3D kart racing game" \
-	"SuperTuxKart: kart racing with Tux and friends, single races, grand prix and battles on 3D tracks. SuperTuxKart uses its legacy renderer, the faster one on the Pi (set force_legacy_device to false in its config.xml for the desktop OpenGL 3.3 shader renderer); SuperTuxKart-GLES the OpenGL ES 3 shader renderer. The code is GPL v3; the artwork is under its authors' licenses, mostly CC-BY-SA (data/CREDITS)." \
+	"SuperTuxKart: kart racing with Tux and friends, single races, grand prix and battles on 3D tracks. SuperTuxKart uses its legacy renderer, the faster one on the Pi; SuperTuxKart-GLES the OpenGL ES 3 shader renderer. The code is GPL v3; the artwork is under its authors' licenses, mostly CC-BY-SA (data/CREDITS)." \
 	'"GNU GPL v3"' '"SuperTuxKart Development Team"' \
 "	haiku
 	lib:libSDL2_2.0

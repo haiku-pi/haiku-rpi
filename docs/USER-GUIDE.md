@@ -181,7 +181,7 @@ The Pi 4's GPU, the **V3D 4.2**, is driven by this port's kernel driver and **Me
 
 | API | Version | Notes |
 |---|---|---|
-| **OpenGL** (desktop) | **2.1** | what a Haiku GL window (`BGLView`) gets by default: a compatibility context. Programs that need desktop OpenGL 3.2 or newer do not run (for example Yamagi Quake II's GL3 renderer). |
+| **OpenGL** (desktop) | **3.3 core / 3.1 compatibility** (from image-2026-11-19; before: 2.1) | a Haiku GL window (`BGLView`) gets a 3.1 compatibility context by default; with `BGL_CONTEXT_CORE` (SDL2: `SDL_GL_CONTEXT_PROFILE_CORE`) a 3.3 core context. No OpenGL 4 (the V3D 4.2 has no tessellation or doubles); at most 4 colour attachments per framebuffer; cube maps are always seamless; depth clamping is done in the shaders. |
 | **OpenGL ES** | **3.1** (GLSL ES 3.10) | for programs that ask for it: SDL2 programs with an ES profile, Firefox's WebGL, SuperTuxKart-GLES. Since 2026-10-20. |
 | **Vulkan** | **1.3** (Mesa's V3DV, 90 extensions) | in Haiku windows and SDL2's Vulkan windows. Since 2026-10-20. |
 
@@ -247,9 +247,9 @@ for uncapped frame rates; `HAIKU_EGL_SWAP_INTERVAL=0` forces it off for one prog
 | Game | Engine / API | Where |
 |---|---|---|
 | **OpenArena 0.8.8** | ioquake3 (the Quake III engine), SDL2 + OpenGL 2.1 | image with the games: Applications → OpenArena (`/boot/system/apps/OpenArena`) |
-| **SuperTuxKart 1.5** | SDL2; `SuperTuxKart` = OpenGL 2.1 (legacy renderer), `SuperTuxKart-GLES` = OpenGL ES 3.1 (shader renderer) | image with the games: Applications → SuperTuxKart (`/boot/system/apps/SuperTuxKart`) |
+| **SuperTuxKart 1.5** | SDL2; `SuperTuxKart` = legacy renderer (the faster one here), `SuperTuxKart-GLES` = OpenGL ES 3.1 (shader renderer) | image with the games: Applications → SuperTuxKart (`/boot/system/apps/SuperTuxKart`) |
 | **QuakeSpasm 0.96.3** | SDL2 + OpenGL | test tree, `/boot/system/non-packaged/apps/QuakeSpasm` (shareware data) |
-| **Yamagi Quake II 8.60** | SDL2 + OpenGL (GL1 renderer) | test tree, `/boot/system/non-packaged/apps/quake2` (demo data) |
+| **Yamagi Quake II 8.60** | SDL2 + OpenGL (GL1 renderer; GL3 works from image-2026-11-19: `+set vid_renderer gl3`) | test tree, `/boot/system/non-packaged/apps/quake2` (demo data) |
 | **vkQuake 1.35.0** | SDL2 + **Vulkan** | test tree, `/boot/system/non-packaged/apps/vkQuake` (shareware data) |
 | **Quake III Arena** | ioquake3 | test tree, only with your own Quake III data (`QUAKE3_DATA` when building) |
 
@@ -269,7 +269,7 @@ screen saver off, the GCC 16.2 build before display planes; image-2026-11-03c's 
 | vkQuake, timedemo demo1 | 1280×720 / 1920×1080 window | 54.9 / 33.1 | 2026-11-03 |
 | Quake III Arena, its demo with bots | 1280×720 window | 89.0 | 2026-11-03 |
 | OpenArena, timedemo `demo088-test1` | 1280×720 window / 1920×1080 full screen | 53.3 / 28.1 | 2026-11-03 |
-| SuperTuxKart (legacy GL 2.1), a 60 s race | 1280×720 window | 37.6 (35.1–41.2) | 2026-11-03 |
+| SuperTuxKart (legacy renderer), a 60 s race | 1280×720 window | 37.6 (35.1–41.2); 35–50 with mesa 26.2.7-3 | 2026-11-03, 11-19 |
 | Under Wine: Half-Life Uplink (software renderer) | window | 90.7 | 2026-11-03 |
 
 Older measurements of things the bench does not repeat:
@@ -312,8 +312,10 @@ cd /boot/system/apps/SuperTuxKart
   `--profile-time=60 --track=hacienda --numkarts=4 --kart=tux --difficulty=0`; its benchmark is
   `--benchmark`. The test runs pass `--disable-texture-compression`, which keeps the texture
   compression off the CPU at load time.
-- SuperTuxKart's shader renderer needs OpenGL ES 3: the plain `SuperTuxKart` says "OpenGL version is
-  too old" for it and uses the legacy renderer, which is faster on the V3D but less lit.
+- The plain `SuperTuxKart` starts with its legacy renderer (supertuxkart 1.5-3: `force_legacy_device` defaults to
+  true); for the shader renderer (lighting, shadows) use `SuperTuxKart-GLES`. Setting `force_legacy_device` to false
+  in `~/config/settings/SuperTuxKart/config-0.10/config.xml` is **not** a way to it yet: the desktop build then gets
+  a 3.1 compatibility context and crashes (STK's own bug on 3.1; checked 2026-11-19).
 - OpenArena's game code runs in ioquake3's QVM **interpreter**: there is no arm64 QVM compiler.
 
 **The Quakes** (test trees), in Terminal:
@@ -324,7 +326,7 @@ cd /boot/system/non-packaged/apps/quake2 && ./Quake2 +set vid_renderer gl1
 cd /boot/system/non-packaged/apps/vkQuake && ./vkquake -basedir . -window -width 1280 -height 720
 ```
 
-- Quake II: use the **GL1** renderer. Its GL3 renderer needs desktop OpenGL 3.2 (§5.1).
+- Quake II: the **GL1** renderer is the default; its GL3 renderer runs from image-2026-11-19 (67–72 fps at 720p).
 - vkQuake's image ships `id1/autoexec.cfg` with `r_oit 0` and `r_gpulightmapupdate 0` (no extra
   transparency passes, lightmaps updated on the CPU): with them it runs at 52 frames/s instead of 29
   at 1280×720 (2026-10-20). Keep them if you write your own config.
@@ -400,13 +402,13 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
   content coding are not supported by the block.
 - **H.264 is decoded by the VideoCore** in MediaPlayer and WebPositive (from image-2026-11-05c): the
   media kit's ffmpeg plugin uses `h264_mmal` and falls back to the CPU when the hardware decoder
-  cannot open (a second 1080p player, for one) or fails. 1080p30 in MediaPlayer takes 88 % of a core with
-  every frame on time (159 % and mostly late on the CPU). `FFMPEG_H264_MMAL=0` forces the CPU decoder.
+  cannot open (a second 1080p player, for one) or fails. 1080p30 in MediaPlayer takes 25 % of a core with
+  every frame on time from image-2026-11-19 (88 % before; 159 % and mostly late on the CPU). `FFMPEG_H264_MMAL=0` forces the CPU decoder.
   Firefox decodes H.264 on the CPU (KNOWN-ISSUES P2).
-- MediaPlayer converts every decoded frame to RGB on the CPU before showing it (the ffmpeg plugin delivers
-  B_RGB32). From image-2026-11-03c the RGB frames are shown on a display plane (scaled by the display hardware,
-  no copy by app_server); YCbCr frames and showing the decoder's output without a copy are future work
-  ([design/gpu-stage6.md](design/gpu-stage6.md) §4–5).
+- From image-2026-11-19 MediaPlayer shows decoded video as planar YUV (B_YUV420) on a display plane: the display
+  hardware converts and scales it, no CPU colour conversion (`FFMPEG_YUV420=0` brings back RGB). 720p30 H.264
+  13 % of a core, 1080p30 25 %, HEVC 1080p30 24 %; 10-bit HEVC 1080p plays. Left: one copy of each frame out of
+  the VideoCore, and rpivid's SAND→planar conversion ([design/video-overlay.md](design/video-overlay.md) §5).
 
 ### 7.3 Audio: HDMI and the 3.5 mm jack
 
@@ -535,7 +537,9 @@ ifconfig /dev/net/broadcomfmac/0          # after a few seconds: the DHCP addres
   WPA2 handshake itself; `net_server` joins as WPA2-PSK. Open networks, WPA3, enterprise (802.1X)
   networks and 5 GHz networks are untested.
 - **Preferences → Network** takes the same path, but joining from it has not been tried by hand.
-- Whether a joined network is remembered across reboots is untested.
+- From image-2026-11-19 a network joined once (Preferences → Network, the Deskbar menu or `ifconfig … join`) is
+  remembered when the join succeeds and joined again after a reboot (3 of 3 reboots on the bench); a wrong
+  passphrase is not saved and does not replace a saved one.
 - The firmware files come from linux-firmware (Cypress 43455, with the Pi 4's NVRAM file) and sit in
   `/boot/system/non-packaged/data/firmware/broadcomfmac/`.
 

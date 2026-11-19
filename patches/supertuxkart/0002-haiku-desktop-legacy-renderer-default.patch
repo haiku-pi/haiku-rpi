@@ -3,8 +3,9 @@ Haiku desktop build: start with the legacy (OpenGL 2) renderer
 With Mesa 26.2.7-3 the Pi 4's V3D gives desktop OpenGL 3.3 core, so SuperTuxKart's desktop build
 switches to its shader renderer, which runs at 13-19 frames/s at 1280x720 there against 28-38 for the
 legacy renderer. Default force_legacy_device to true on Haiku for the desktop build only; the GLES build
-(SuperTuxKart-GLES) stays the shader renderer. A player can still set force_legacy_device="false" in
-config.xml (~/config/settings/supertuxkart/config-0.10/config.xml) for the shader renderer.
+(SuperTuxKart-GLES) stays the shader renderer. (force_legacy_device="false" in
+~/config/settings/SuperTuxKart/config-0.10/config.xml is no way to the desktop shader renderer yet: with the
+packaged SDL2 the desktop build then gets a 3.1 compatibility context and crashes, STK's own 3.1 bug.)
 
 --- a/src/config/user_config.hpp
 +++ b/src/config/user_config.hpp

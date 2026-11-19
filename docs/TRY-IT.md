@@ -5,10 +5,10 @@ media kit, plus this port's drivers and the ported libraries. Everything below w
 bench Pi (4 GB) on 2026-10-19/20 unless it says otherwise (last update: 2026-11-04).
 
 **Download:** a ready-to-flash image is on the
-[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-18)
-(`haiku-pi4-2026-11-18.img.xz`, 335 MB; 8 GB card or larger; written with
-`xz -dc haiku-pi4-2026-11-18.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
-Imager's "Use custom"). It is this page's regular image (4.4 GiB instead of 1.1 GB), built 2026-11-18 with GCC
+[releases page](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-19)
+(`haiku-pi4-2026-11-19.img.xz`, 335 MB; 8 GB card or larger; written with
+`xz -dc haiku-pi4-2026-11-19.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress` or Raspberry Pi
+Imager's "Use custom"). It is this page's regular image (4.4 GiB instead of 1.1 GB), built 2026-11-19 with GCC
 16.2, release-checked over a network boot and booted from a card before publishing.
 Wine (`pkgman install wine wine_x86 wine_x86_64`) needs this image or a newer one.
 
@@ -22,7 +22,7 @@ This page is the short version. The full documents: [TUTORIAL.md](../TUTORIAL.md
 |---|---|
 | Boot | SD card → U-Boot → Haiku loader → desktop: 5.4–5.6 s from the Haiku loader, 6.4–6.6 s from U-Boot (2026-11-03, four boots of the release cards); about 64 s from power-on on the bench Pi, whose firmware tries the network first (with the factory boot order that wait does not happen; not timed). 10 of 10 cold boots of image-2026-11-03 after 30 minutes off (11-03). Or **from the network**, the boot volume served by the build host (below) |
 | Display | HDMI at the monitor's native mode (1920×1080 here); lower modes in Screen preferences or from a fullscreen game (SDL), scaled to the monitor by the firmware; hardware cursor; 60 Hz retrace |
-| GPU | V3D 4.2 through Mesa: OpenGL 2.1 (desktop) / OpenGL ES 3.1, and **Vulkan 1.3** (V3DV, presenting into Haiku windows; SDL2's Vulkan windows). GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
+| GPU | V3D 4.2 through Mesa: OpenGL 3.3 core / 3.1 compatibility (desktop; from image-2026-11-19, was 2.1) / OpenGL ES 3.1, and **Vulkan 1.3** (V3DV, presenting into Haiku windows; SDL2's Vulkan windows). GLTeapot, GLInfo and the GL screen savers (Flurry, GLife, Gravity) are in the image |
 | Games (OpenArena + SuperTuxKart: packages, `-sHAIKU_PI_GAMES=1`; the Quakes: test images) | Timedemos in a window (2026-11-03, `tools/pi-tests/games-bench.sh`, 3 boots, screen saver off): QuakeSpasm demo1 **202 fps at 640×480, 80 at 1280×720, 41 at 1920×1080** (a played demo stays on QuakeSpasm's 72 fps cap). Yamagi Quake II, GL1 renderer: **207 / 102 / 53 fps** at 640×480 / 1280×720 / 1920×1080. **vkQuake** (Vulkan): 55 fps at 1280×720, 33 at 1920×1080. **OpenArena** (Quake III engine, ioquake3): **53 fps at 1280×720**, 28 at 1920×1080 full screen; the Quake III demo with bots 89 fps at 1280×720. **SuperTuxKart 1.5**: 38 fps at 1280×720 in a race (35–41; its OpenGL 2.1 renderer). Under Wine: Direct3D 9 (d3dtest, 32-bit x86) 126 fps windowed, 143 full screen; Half-Life Uplink (software renderer) 91 fps in a window. Image-2026-11-03c's display planes change these by −3…+3 % (Quake II at 1080p +3 %; [design/gpu-stage6.md](design/gpu-stage6.md) §9). A fullscreen game at 1280×720 switches the display mode (OpenArena: 46.8 fps, against 26 at 1920×1080; 10-20) |
 | Audio | HDMI (from image-2026-10-24e: "Raspberry Pi HDMI", 48 kHz stereo, recorded back on the bench) and the 3.5 mm headphone jack ("Raspberry Pi headphones", 44.1 kHz stereo); measured, **not yet listened to** |
 | Media | ffmpeg 6.1 codecs for the media kit: MediaPlayer, Ogg/Vorbis, MP3, AAC, H.264, VP8/9, ...; **H.264 decoded by the VideoCore in MediaPlayer and WebPositive** (from image-2026-11-05c; one 1080p stream at a time, Firefox on the CPU); **HEVC decoded by the SoC's decoder block** (bit-exact; 1080p at ~115 fps on under half a core, 4K at ~38 fps), the rest in software |
