@@ -1,0 +1,20 @@
+SUMMARY="A translator from Intel SSE intrinsics to Arm NEON"
+DESCRIPTION="sse2neon is a single header that implements the Intel SSE intrinsics (up to SSE4.2) \
+with Arm NEON, so that SIMD code written for x86 builds on arm64. Blender's Cycles uses it on \
+arm64 (Blender 3.6 pins v1.6.0)."
+HOMEPAGE="https://github.com/DLTcollab/sse2neon"
+COPYRIGHT="2015-2023 SSE2NEON Contributors"
+LICENSE="MIT"
+REVISION="1"
+SOURCE_URI="https://github.com/DLTcollab/sse2neon/archive/v$portVersion.tar.gz"
+CHECKSUM_SHA256="06f4693219deccb91b457135d836fc514a1c0a57e9fa66b143982901d2d19677"
+SOURCE_FILENAME="sse2neon-$portVersion.tar.gz"
+SOURCE_DIR="sse2neon-$portVersion"
+
+ARCHITECTURES="arm64"
+
+# Cross-packaged by scripts/build-blender.sh (haiku-pi): header only (develop/headers/sse2neon.h).
+PROVIDES="
+	sse2neon = $portVersion
+	devel:sse2neon = $portVersion
+	"

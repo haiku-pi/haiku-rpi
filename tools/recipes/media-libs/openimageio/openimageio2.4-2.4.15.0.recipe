@@ -1,0 +1,30 @@
+SUMMARY="A library for reading and writing images"
+DESCRIPTION="OpenImageIO is a library for reading and writing images, and a bunch of related \
+classes, utilities, and applications. It is the image library of Blender (required) and of other \
+VFX software."
+HOMEPAGE="https://openimageio.org/"
+COPYRIGHT="2008-2023 Contributors to the OpenImageIO project"
+LICENSE="Apache v2"
+REVISION="1"
+SOURCE_URI="https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/refs/tags/v$portVersion.tar.gz"
+CHECKSUM_SHA256="67f28a1599eb942a075f23cc35c938f7de0b901a40583da6798cf9a418c56e07"
+SOURCE_FILENAME="OpenImageIO-$portVersion.tar.gz"
+SOURCE_DIR="OpenImageIO-$portVersion"
+# HaikuPorts' openimageio-2.5.12.0.patchset (farmhash bswap, -lnetwork, sysutil, xxhash, strutil's
+# strcasecmp_l), which applies to 2.4.15.0 unchanged
+PATCHES="openimageio2.4-$portVersion.patchset"
+
+ARCHITECTURES="all !x86_gcc2"
+
+# Cross-built by scripts/build-blender.sh (haiku-pi) for Blender 3.6, which pins 2.4.15.0; HaikuPorts
+# has openimageio2.3 and openimageio2.5 recipes only. fmt 9.1.0 and robin-map 0.6.2 (Blender's pins)
+# are given to its configure (it would git-clone them otherwise); fmt is internalized into the
+# headers.
+PROVIDES="
+	openimageio2.4 = $portVersion
+	lib:libOpenImageIO = 2.4.15 compat >= 2.4
+	lib:libOpenImageIO_Util = 2.4.15 compat >= 2.4
+	"
+REQUIRES="
+	haiku
+	"

@@ -2,7 +2,15 @@
 # build-python.sh — cross-build CPython 3.14 (HaikuPorts' python3.14 recipe, the default python3 of
 # HaikuPorts) for Haiku arm64 and package it as python3.14 + python3.14_devel.
 #
-#   scripts/build-python.sh [--no-host]   (--no-host: reuse artifacts/python-host as it is)
+#   scripts/build-python.sh [--no-host] [--version V] [--out DIR]
+#     --no-host     reuse the build python as it is
+#     --version V   another HaikuPorts python recipe: 3.10.22 (python3.10, the version Blender 3.6
+#                   pins; docs/design/blender.md §4.1). Its build python is artifacts/python-host-3.10,
+#                   its own patches patches/python3.10/; no test trees (step 6) are made for it
+#     --out DIR     where the packages go (package-port.py --out; default artifacts/packages)
+#
+# 3.10 differs from 3.14 in the build: no --with-build-python (configure finds python3.10 on PATH),
+# and setup.py builds the extension modules, finding liblzma through CPPFLAGS/LDFLAGS.
 #
 # Steps:
 #   1. the build python: the same Python-3.14.8 tarball built for this host into artifacts/python-host
@@ -36,13 +44,24 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 buildHost=1
-revision=2
+version=3.14.8
+out=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--no-host) buildHost=0; shift ;;
+	--version) version="$2"; shift 2 ;;
+	--out) out="$(realpath -m "$2")"; shift 2 ;;
 	*) echo "build-python: unknown option $1" >&2; exit 2 ;;
 	esac
 done
+short="${version%.*}"			# 3.14
+case "$short" in
+3.14) revision=2 ;;
+3.10) revision=1 ;;
+*) echo "build-python: no build settings for Python $version" >&2; exit 2 ;;
+esac
+pkgdir="${out:-$root/artifacts/packages}"
+
 gen="$root/sources/haiku/generated.arm64"
 sysroot="$root/artifacts/sysroot-arm64"
 tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
@@ -51,15 +70,15 @@ heavy="$root/scripts/heavy-build.sh"
 ports="$root/sources/haikuports"
 [ -d "$sysroot/boot/system/develop" ] || { echo "build-python: run scripts/haiku-sysroot.sh first" >&2; exit 1; }
 [ -x "$tools-gcc" ] || { echo "build-python: no cross compiler at $tools-gcc" >&2; exit 1; }
-for lib in libssl.so.3 libsqlite3.so.0 libbz2.so.1.0 libzstd.so.1 libedit.so.0; do
-	[ -e "$sysroot/boot/system/non-packaged/lib/$lib" ] \
+# (in non-packaged/ from scripts/build-packages.sh, or extracted from their packages into lib/)
+for lib in libssl.so.3 libsqlite3.so.0 libbz2.so.1.0 libzstd.so.1 libedit.so.0 libexpat.so.1; do
+	[ -e "$sysroot/boot/system/non-packaged/lib/$lib" ] || [ -e "$sysroot/boot/system/lib/$lib" ] \
 		|| { echo "build-python: $lib missing from the sysroot: run scripts/build-packages.sh" >&2; exit 1; }
 done
 
-recipe="$ports/dev-lang/python/python3.14-3.14.8.recipe"
+recipe="$ports/dev-lang/python/python$short-$version.recipe"
+[ -f "$recipe" ] || { echo "build-python: no recipe $recipe" >&2; exit 1; }
 name="$(basename "$recipe" .recipe)"	# python3.14-3.14.8
-version="${name##*-}"
-short="${version%.*}"			# 3.14
 xzRecipe="$ports/app-arch/xz_utils/xz_utils-5.8.4.recipe"
 fetch() {	# the archive scripts/haikuports-fetch.sh got (or found) for a recipe
 	"$root/scripts/haikuports-fetch.sh" "$1" \
@@ -71,6 +90,7 @@ xzArchive="$(fetch "$xzRecipe")"
 
 # 1. the build python
 host="$root/artifacts/python-host"
+[ "$short" = 3.14 ] || host="$root/artifacts/python-host-$short"
 hostPython="$host/bin/python$short"
 if [ "$buildHost" = 1 ] && ! "$hostPython" -c "import sys; sys.exit(sys.version.split()[0] != '$version')" 2>/dev/null; then
 	echo "build-python: building the build python $version into $host"
@@ -99,7 +119,10 @@ for p in libffi libffi_devel; do
 	[ -f "$hpkg" ] || { echo "build-python: $hpkg missing (scripts/fetch-build-packages.sh)" >&2; exit 1; }
 	"$pkgtool" extract -C "$sysroot/boot/system" "$hpkg"
 done
-rm -f "$sysroot/boot/system/develop/lib/libffi.la"
+rm -f "$sysroot/boot/system/develop/lib/libffi.la" "$sysroot/boot/system/.PackageInfo"
+# the bootstrap package's libffi.pc names its package directory (/packages/<name>/.self): with the
+# sysroot in front, 3.10's setup.py finds no ffi.h there and links _ctypes without libffi
+sed -i 's|/packages/[^/]*/\.self|/boot/system|g' "$sysroot/boot/system/develop/lib/pkgconfig/libffi.pc"
 
 # 3. liblzma: static, PIC
 xz="$work/deps/xz"
@@ -119,7 +142,9 @@ rmdir "$work/unpack"
 recipePatches="$(dirname "$recipe")/patches"
 echo "build-python: applying python$short-$version.patchset"
 patch -s -p1 -d "$work/src" < "$recipePatches/python$short-$version.patchset"
-for p in "$root"/patches/python3/*.patch; do
+ourPatches="$root/patches/python3"
+[ "$short" = 3.14 ] || ourPatches="$root/patches/python$short"
+for p in "$ourPatches"/*.patch; do
 	echo "build-python: applying $(basename "$p")"
 	patch -s -p1 -d "$work/src" < "$p"
 done
@@ -134,22 +159,34 @@ ac_cv_buggy_getaddrinfo=no
 EOF
 tzpath=/boot/home/config/non-packaged/data/zoneinfo:/boot/home/config/data/zoneinfo
 tzpath=$tzpath:/boot/system/non-packaged/data/zoneinfo:/boot/system/data/zoneinfo
+# 3.14: the build python by name, liblzma through LIBLZMA_*. 3.10: configure finds python3.10 on PATH (also
+# what setup.py runs under), and setup.py looks for headers and libraries only in the -I/-L directories it
+# is given (and the sysroot's /usr, which Haiku does not have); its _decimal takes any
+# "--with-system-libmpdec" in the configure arguments, even "=no", for the system libmpdec
+versionArgs=() versionEnv=()
+ldflags="-L$sysroot/boot/system/non-packaged/lib"
+if [ "$short" = 3.14 ]; then
+	versionArgs=(--with-build-python="$hostPython" --with-system-libmpdec=no)
+	versionEnv=(LIBLZMA_CFLAGS="-I$xz/src/src/liblzma/api" LIBLZMA_LIBS="$xz/build/liblzma.a")
+else
+	export PATH="$host/bin:$PATH"
+	versionEnv=(CPPFLAGS="-I$sysroot/boot/system/develop/headers -I$sysroot/boot/system/non-packaged/include -I$xz/src/src/liblzma/api")
+	ldflags="$ldflags -L$sysroot/boot/system/develop/lib -L$sysroot/boot/system/lib -L$xz/build"
+fi
 # in the source tree, as the recipe builds (out of tree, getpath.c gets the source directory as VPATH)
-(cd "$work/src" && CONFIG_SITE="$work/config.site" \
+(cd "$work/src" && env "${versionEnv[@]}" CONFIG_SITE="$work/config.site" \
 	PKG_CONFIG_LIBDIR="$sysroot/boot/system/non-packaged/lib/pkgconfig:$sysroot/boot/system/develop/lib/pkgconfig" \
 	PKG_CONFIG_SYSROOT_DIR="$sysroot" \
 	BASECFLAGS="-pipe -D_BSD_SOURCE" OPT="-Wall -O3" \
 	CFLAGS_NODIST="-ffile-prefix-map=$work/src=/sources/Python-$version" \
-	LIBLZMA_CFLAGS="-I$xz/src/src/liblzma/api" LIBLZMA_LIBS="$xz/build/liblzma.a" \
-	./configure --host=aarch64-unknown-haiku --build="$(gcc -dumpmachine)" \
-	--with-build-python="$hostPython" \
+	./configure --host=aarch64-unknown-haiku --build="$(gcc -dumpmachine)" "${versionArgs[@]}" \
 	--prefix=/boot/system --bindir=/boot/system/bin --includedir=/boot/system/develop/headers \
 	--datarootdir=/boot/system/data --mandir=/boot/system/documentation/man \
 	--enable-shared --without-static-libpython --with-ensurepip=no --with-readline=editline \
-	--with-system-expat --with-system-libmpdec=no --with-openssl-rpath=no --with-tzpath="$tzpath" \
+	--with-system-expat --with-openssl-rpath=no --with-tzpath="$tzpath" \
 	CC="$tools-gcc --sysroot=$sysroot" CXX="$tools-g++ --sysroot=$sysroot" AR="$tools-ar" \
 	RANLIB="$tools-ranlib" READELF="$tools-readelf" STRIP="$tools-strip" \
-	LDFLAGS="-L$sysroot/boot/system/non-packaged/lib") > "$work/configure.log" 2>&1 \
+	LDFLAGS="$ldflags") > "$work/configure.log" 2>&1 \
 	|| { tail -n 30 "$work/configure.log" >&2; exit 1; }
 "$heavy" --mem-per-job 1 -- make -C "$work/src" -j '{JOBS}' > "$work/build.log" 2>&1 \
 	|| { tail -n 40 "$work/build.log" >&2; exit 1; }
@@ -157,7 +194,11 @@ echo "build-python: compiler warnings: $(grep -c 'warning:' "$work/build.log" ||
 # the build's module summary (make checksharedmods): what is missing, disabled or failed
 sed -n '/^The necessary bits to build these optional modules were not found:/,/^$/p;/^Following modules built successfully but were removed/,/^$/p;/^The following modules are \*disabled\*/,/^$/p;/^Failed to build these modules:/,/^$/p' \
 	"$work/build.log" | sed 's/^/build-python: /'
-make -C "$work/src" install DESTDIR="$work/install" > "$work/install.log" 2>&1 \
+# (another version than the default: altinstall, as the recipe without installAsDefaultPython — no
+# python3, python3-config, python3.pc, idle3, pydoc3 that would clash with python3.14's)
+installTarget=install
+[ "$short" = 3.14 ] || installTarget=altinstall
+make -C "$work/src" "$installTarget" DESTDIR="$work/install" > "$work/install.log" 2>&1 \
 	|| { tail -n 30 "$work/install.log" >&2; exit 1; }
 
 # the recipe's INSTALL()
@@ -174,6 +215,8 @@ rm -rf "$sys/lib/python$short/idlelib/idle_test" "$sys/lib/python$short/test"
 # (gcc; the sources as HaikuPorts' chroot has them), then the _sysconfigdata bytecode again
 grep -rlI -F "$root" "$sys" | while read -r f; do
 	sed -i -e "s|$tools-||g; s| --sysroot=$sysroot||g; s|-L$sysroot/boot/system/non-packaged/lib||g" \
+		-e "s| -I$xz/src/src/liblzma/api||g; s| -L$xz/build||g; s| -I$sysroot/boot/system/[a-z/-]*||g" \
+		-e "s| -L$sysroot/boot/system/[a-z/-]*||g" \
 		-e "s|$sysroot/packages/libffi_bootstrap-3.4.6-1/.self|/boot/system|g; s|$sysroot||g" \
 		-e "s|$work/src|/sources/Python-$version|g" \
 		-e "s|$xz/src|/sources/xz-5.8.4|g; s|$xz/build|/sources/xz-5.8.4|g; s|$hostPython|python$short|g" "$f"
@@ -187,21 +230,33 @@ leaks="$(grep -rlI -F "$root" "$sys"; grep -rl -F "$work" "$sys" || true)"
 # (data/: the man pages, which package-port.py does not package)
 # the extension modules this port is for (the build only warns when one is missing), with the
 # libraries they link
-for m in _ssl _hashlib _sqlite3 _ctypes zlib _bz2 _lzma _zstd _socket select _decimal _json \
-		_posixsubprocess pyexpat readline _curses _curses_panel; do
+modules="_ssl _hashlib _sqlite3 _ctypes zlib _bz2 _lzma _socket select _decimal _json _posixsubprocess pyexpat"
+modules="$modules readline _curses _curses_panel"
+[ "$short" = 3.14 ] && modules="$modules _zstd"
+for m in $modules; do
 	f="$(ls "$sys/lib/python$short/lib-dynload/$m".cpython-*.so 2>/dev/null | head -n 1 || true)"
 	[ -n "$f" ] || { echo "build-python: module $m was not built" >&2; exit 1; }
-	echo "build-python: module $m: $("$tools-readelf" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
+	needed="$("$tools-readelf" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
+	echo "build-python: module $m: $needed"
+	case "$m:$needed" in
+	_ctypes:*libffi.so*) ;;
+	_ctypes:*) echo "build-python: _ctypes is not linked with libffi" >&2; exit 1 ;;
+	esac
 done
 
 # 5. the packages (libffi and ncurses from the bootstrap packages are in the sysroot's system lib/,
 # where package-port.py does not look for requirements: named here)
-"$root/scripts/package-port.py" "$recipe" --revision "$revision" --system-prefix --lib-tree "python$short" \
+"$root/scripts/package-port.py" "$recipe" --revision "$revision" ${out:+--out "$out"} --system-prefix \
+	--lib-tree "python$short" \
 	--global-writable "non-packaged/lib/python$short/site-packages" \
-	--devel-bin "python$short-config" --devel-bin python3-config --requires lib:libffi \
+	--devel-bin "python$short-config" $([ "$short" = 3.14 ] && echo --devel-bin python3-config) --requires lib:libffi \
 	--requires lib:libncursesw --requires lib:libpanelw
 
-# 6. the test trees
+# 6. the test trees (the default python only)
+if [ "$short" != 3.14 ]; then
+	ls -l "$pkgdir"/python$short*-"$version"-"$revision"-arm64.hpkg
+	exit 0
+fi
 rm -rf "$root/artifacts/python-tests"
 mkdir -p "$root/artifacts/python-tests/packages/data/python-packages"
 cp "$root/artifacts/packages/python$short-$version-$revision-arm64.hpkg" "$gen/download/libffi-3.4.6_bootstrap-1-arm64.hpkg" \

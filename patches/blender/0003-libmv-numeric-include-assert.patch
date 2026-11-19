@@ -1,0 +1,22 @@
+From 20da60d95a797a5b6a7cdab5a61a56de82bfbd29 Mon Sep 17 00:00:00 2001
+From: PulkoMandy <pulkomandy@pulkomandy.tk>
+Date: Tue, 28 Jul 2026 21:20:14 +0200
+Subject: missing include.
+
+
+diff --git a/intern/libmv/libmv/numeric/numeric.h b/intern/libmv/libmv/numeric/numeric.h
+index c9c0bb1..0a8f937 100644
+--- a/intern/libmv/libmv/numeric/numeric.h
++++ b/intern/libmv/libmv/numeric/numeric.h
+@@ -25,6 +25,8 @@
+ #ifndef LIBMV_NUMERIC_NUMERIC_H
+ #define LIBMV_NUMERIC_NUMERIC_H
+ 
++#include <assert.h>
++
+ #include <Eigen/Cholesky>
+ #include <Eigen/Core>
+ #include <Eigen/Eigenvalues>
+-- 
+2.54.0
+

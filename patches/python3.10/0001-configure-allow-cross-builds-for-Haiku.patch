@@ -1,0 +1,35 @@
+configure.ac, setup.py: allow cross builds for Haiku
+
+configure refuses a cross build for a host it does not name in its _host_cpu cases (the
+_PYTHON_HOST_PLATFORM suffix): HaikuPorts' patchset adds Haiku to the MACHDEP list but not to this
+one. With it, _PYTHON_HOST_PLATFORM is haiku-aarch64, and setup.py (which 3.10 still uses for the
+extension modules) has to match "haiku" as a prefix, not the whole platform name, to take its
+Haiku paths and skip nis.
+
+HaikuPorts builds natively and never takes this path. Applied after HaikuPorts'
+python3.10-3.10.22.patchset by scripts/build-python.sh --version 3.10.22, which regenerates
+configure with autoconf.
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -456,6 +456,9 @@
+ 	*-*-vxworks*)
+ 		_host_cpu=$host_cpu
+ 		;;
++	*-*-haiku*)
++		_host_cpu=$host_cpu
++		;;
+ 	*)
+ 		# for now, limit cross builds to known configurations
+ 		MACHDEP="unknown"
+--- a/setup.py
++++ b/setup.py
+@@ -86,7 +86,7 @@
+ MACOS = (HOST_PLATFORM == 'darwin')
+ AIX = (HOST_PLATFORM.startswith('aix'))
+ VXWORKS = ('vxworks' in HOST_PLATFORM)
+-HAIKU = (HOST_PLATFORM == 'haiku')
++HAIKU = HOST_PLATFORM.startswith('haiku')
+ CC = os.environ.get("CC")
+ if not CC:
+     CC = sysconfig.get_config_var("CC")

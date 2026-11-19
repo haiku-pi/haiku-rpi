@@ -23,6 +23,8 @@
 # build/, install/), recreated each run.
 # A trial build that must not replace those (environment): CROSS_PORT_WORK=DIR (the build directory)
 # and CROSS_PORT_SYSROOT=DIR (a copy of the sysroot to build against and install into).
+# CROSS_PORT_JOBS=N: the build's parallelism (default: make -j$(nproc), ninja's own), e.g. the
+# {JOBS} of scripts/heavy-build.sh for a C++ port whose compile jobs take a GB each.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 ourPatches=""
@@ -139,9 +141,11 @@ autotools)
 *) echo "cross-port: unknown build system $system" >&2; exit 2 ;;
 esac
 if [ "$system" = autotools ]; then
-	make -C "$work/build" -j"$(nproc)" > "$work/build.log" 2>&1 || { tail -n 30 "$work/build.log" >&2; exit 1; }
+	make -C "$work/build" -j"${CROSS_PORT_JOBS:-$(nproc)}" > "$work/build.log" 2>&1 \
+		|| { tail -n 30 "$work/build.log" >&2; exit 1; }
 else
-	ninja -C "$work/build" > "$work/build.log" || { tail -n 30 "$work/build.log" >&2; exit 1; }
+	ninja -C "$work/build" ${CROSS_PORT_JOBS:+-j "$CROSS_PORT_JOBS"} > "$work/build.log" \
+		|| { tail -n 30 "$work/build.log" >&2; exit 1; }
 fi
 echo "cross-port: compiler warnings: $(grep -c 'warning:' "$work/build.log" || true)"
 if [ "$system" = autotools ]; then

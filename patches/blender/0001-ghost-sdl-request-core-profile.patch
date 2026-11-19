@@ -1,0 +1,35 @@
+GHOST_SDL: ask for an OpenGL 3.3 core profile context
+
+GHOST_SDL asks SDL for OpenGL 3.3 with profile mask 0 (no profile), for windows and for offscreen
+contexts. Haiku's SDL2 (with the haiku-pi glview-core patch) creates a core profile context only for
+SDL_GL_CONTEXT_PROFILE_CORE; a request without a profile gets the compatibility context, which on
+V3D 4.2 is OpenGL 3.1, and Blender 3.6 then stops with "Platform Unsupported" (it needs 3.3).
+Blender's GPU module uses only core-profile functionality, as GHOST's other backends request
+(GHOST_ContextGLX/EGL/WGL/CGL ask for core 3.3). docs/design/blender.md §3.3.
+
+diff --git a/intern/ghost/intern/GHOST_SystemSDL.cc b/intern/ghost/intern/GHOST_SystemSDL.cc
+index 52c222c..6b784c7 100644
+--- a/intern/ghost/intern/GHOST_SystemSDL.cc
++++ b/intern/ghost/intern/GHOST_SystemSDL.cc
+@@ -129,7 +129,7 @@ GHOST_IContext *GHOST_SystemSDL::createOffscreenContext(GHOST_GLSettings /*glSet
+ {
+   GHOST_Context *context = new GHOST_ContextSDL(false,
+                                                 nullptr,
+-                                                0, /* Profile bit. */
++                                                SDL_GL_CONTEXT_PROFILE_CORE,
+                                                 3,
+                                                 3,
+                                                 GHOST_OPENGL_SDL_CONTEXT_FLAGS,
+diff --git a/intern/ghost/intern/GHOST_WindowSDL.cc b/intern/ghost/intern/GHOST_WindowSDL.cc
+index 5783c80..ea7f2ab 100644
+--- a/intern/ghost/intern/GHOST_WindowSDL.cc
++++ b/intern/ghost/intern/GHOST_WindowSDL.cc
+@@ -66,7 +66,7 @@ GHOST_Context *GHOST_WindowSDL::newDrawingContext(GHOST_TDrawingContextType type
+   if (type == GHOST_kDrawingContextTypeOpenGL) {
+     GHOST_Context *context = new GHOST_ContextSDL(m_wantStereoVisual,
+                                                   m_sdl_win,
+-                                                  0,  // profile bit
++                                                  SDL_GL_CONTEXT_PROFILE_CORE,
+                                                   3,
+                                                   3,
+                                                   GHOST_OPENGL_SDL_CONTEXT_FLAGS,

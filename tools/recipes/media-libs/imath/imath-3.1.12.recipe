@@ -1,0 +1,26 @@
+SUMMARY="A C++ and Python library of 2D and 3D vector, matrix, and math operations"
+DESCRIPTION="Imath is a basic, light-weight, and efficient C++ representation of 2D and 3D \
+vectors and matrices and other simple but useful mathematical objects, functions, and data types \
+common in computer graphics applications, including the \"half\" 16-bit floating-point type. \
+OpenEXR and OpenImageIO use it."
+HOMEPAGE="https://github.com/AcademySoftwareFoundation/Imath"
+COPYRIGHT="Contributors to the OpenEXR Project"
+LICENSE="BSD (3-clause)"
+REVISION="1"
+SOURCE_URI="https://github.com/AcademySoftwareFoundation/Imath/archive/v$portVersion.tar.gz"
+CHECKSUM_SHA256="8a1bc258f3149b5729c2f4f8ffd337c0e57f09096e4ba9784329f40c4a9035da"
+SOURCE_FILENAME="imath-$portVersion.tar.gz"
+SOURCE_DIR="Imath-$portVersion"
+
+ARCHITECTURES="all !x86_gcc2"
+
+# Cross-built by scripts/build-blender.sh (haiku-pi): HaikuPorts has no Imath recipe (its openexr3.2
+# builds Imath inside OpenEXR). Blender 3.6 pins Imath 3.1.7; 3.1.12 is the last 3.1 release.
+PROVIDES="
+	imath = $portVersion
+	lib:libImath_3_1 = 29.11.0 compat >= 29
+	"
+REQUIRES="
+	haiku
+	lib:libstdc++
+	"

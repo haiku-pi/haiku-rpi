@@ -1,0 +1,160 @@
+CMake: import the build-time generators from a host build when cross compiling
+
+Blender builds makesdna, makesrna, datatoc, datatoc_icon, smaa_areatex and msgfmt and runs them during
+its own build. In a cross build they are target executables the build machine cannot run, and Blender
+3.6 has no CMAKE_CROSSCOMPILING path. New: -DBLENDER_HOST_TOOLS=DIR imports each of them from DIR
+(an IMPORTED GLOBAL executable) instead of building it. DIR holds the same generators built for the
+build machine from the same source and WITH_* options (scripts/build-blender.sh builds them and
+checks that the two configurations agree). The struct layouts makesdna computes on the host are
+checked against the target compiler by dna_verify.c. docs/design/blender.md §4.2 (risk R12).
+
+diff --git a/build_files/cmake/macros.cmake b/build_files/cmake/macros.cmake
+index f7793bb..f5171c6 100644
+--- a/build_files/cmake/macros.cmake
++++ b/build_files/cmake/macros.cmake
+@@ -944,6 +944,20 @@ function(delayed_do_install
+ endfunction()
+ 
+ 
++# Cross compiling: the build-time generators (makesdna, makesrna, datatoc, datatoc_icon,
++# smaa_areatex, msgfmt) are programs the build runs, so built for the target they cannot run on the
++# build machine. With BLENDER_HOST_TOOLS set to a directory that holds the same generators built for
++# the build machine (from the same sources and WITH_* options), each one is imported from there
++# instead of built. The DNA layout check (dna_verify.c, compiled for the target) still catches a
++# struct layout that differs between the two.
++function(blender_import_host_tool name)
++  if(NOT EXISTS ${BLENDER_HOST_TOOLS}/${name})
++    message(FATAL_ERROR "BLENDER_HOST_TOOLS: ${BLENDER_HOST_TOOLS}/${name} not found")
++  endif()
++  add_executable(${name} IMPORTED GLOBAL)
++  set_target_properties(${name} PROPERTIES IMPORTED_LOCATION ${BLENDER_HOST_TOOLS}/${name})
++endfunction()
++
+ function(data_to_c
+   file_from file_to
+   list_to_add
+diff --git a/extern/smaa_areatex/CMakeLists.txt b/extern/smaa_areatex/CMakeLists.txt
+index f919228..1ab48ae 100644
+--- a/extern/smaa_areatex/CMakeLists.txt
++++ b/extern/smaa_areatex/CMakeLists.txt
+@@ -3,4 +3,8 @@
+ # The Original Code is: all of this file.
+ # Contributor(s): IRIE Shinsuke.
+ 
+-add_executable(smaa_areatex smaa_areatex.cpp)
++if(BLENDER_HOST_TOOLS)
++  blender_import_host_tool(smaa_areatex)
++else()
++  add_executable(smaa_areatex smaa_areatex.cpp)
++endif()
+diff --git a/source/blender/blentranslation/msgfmt/CMakeLists.txt b/source/blender/blentranslation/msgfmt/CMakeLists.txt
+index 27b363a..1c15ad2 100644
+--- a/source/blender/blentranslation/msgfmt/CMakeLists.txt
++++ b/source/blender/blentranslation/msgfmt/CMakeLists.txt
+@@ -1,6 +1,11 @@
+ # SPDX-License-Identifier: GPL-2.0-or-later
+ # Copyright 2017 Blender Foundation
+ 
++if(BLENDER_HOST_TOOLS)
++  blender_import_host_tool(msgfmt)
++  return()
++endif()
++
+ # -----------------------------------------------------------------------------
+ # Build msgfmt executable
+ 
+diff --git a/source/blender/datatoc/CMakeLists.txt b/source/blender/datatoc/CMakeLists.txt
+index 5b75928..e9b1207 100644
+--- a/source/blender/datatoc/CMakeLists.txt
++++ b/source/blender/datatoc/CMakeLists.txt
+@@ -1,6 +1,14 @@
+ # SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ 
++if(BLENDER_HOST_TOOLS)
++  blender_import_host_tool(datatoc)
++  if(NOT WITH_HEADLESS)
++    blender_import_host_tool(datatoc_icon)
++  endif()
++  return()
++endif()
++
+ # -----------------------------------------------------------------------------
+ # Build datatoc executable
+ set(SRC
+diff --git a/source/blender/makesdna/intern/CMakeLists.txt b/source/blender/makesdna/intern/CMakeLists.txt
+index 3d9eef3..6158dc6 100644
+--- a/source/blender/makesdna/intern/CMakeLists.txt
++++ b/source/blender/makesdna/intern/CMakeLists.txt
+@@ -73,16 +73,20 @@ endif()
+ 
+ # SRC_DNA_INC is defined in the parent dir
+ 
+-add_cc_flags_custom_test(makesdna)
+-
+-add_executable(makesdna ${SRC} ${SRC_DNA_INC})
+-setup_platform_linker_flags(makesdna)
+-blender_target_include_dirs(makesdna ${INC})
+-blender_target_include_dirs_sys(makesdna ${INC_SYS})
+-
+-if(WIN32 AND NOT UNIX)
+-  if(DEFINED PTHREADS_LIBRARIES)
+-    target_link_libraries(makesdna ${PTHREADS_LIBRARIES})
++if(BLENDER_HOST_TOOLS)
++  blender_import_host_tool(makesdna)
++else()
++  add_cc_flags_custom_test(makesdna)
++
++  add_executable(makesdna ${SRC} ${SRC_DNA_INC})
++  setup_platform_linker_flags(makesdna)
++  blender_target_include_dirs(makesdna ${INC})
++  blender_target_include_dirs_sys(makesdna ${INC_SYS})
++
++  if(WIN32 AND NOT UNIX)
++    if(DEFINED PTHREADS_LIBRARIES)
++      target_link_libraries(makesdna ${PTHREADS_LIBRARIES})
++    endif()
+   endif()
+ endif()
+ 
+diff --git a/source/blender/makesrna/intern/CMakeLists.txt b/source/blender/makesrna/intern/CMakeLists.txt
+index 04b3b13..7a6d8d8 100644
+--- a/source/blender/makesrna/intern/CMakeLists.txt
++++ b/source/blender/makesrna/intern/CMakeLists.txt
+@@ -382,19 +382,23 @@ if(WITH_GMP)
+ endif()
+ 
+ # Build makesrna executable
+-add_cc_flags_custom_test(makesrna)
+-
+-add_executable(makesrna ${SRC} ${SRC_RNA_INC} ${SRC_DNA_INC})
+-setup_platform_linker_flags(makesrna)
+-blender_target_include_dirs(makesrna ${INC})
+-blender_target_include_dirs_sys(makesrna ${INC_SYS})
+-
+-target_link_libraries(makesrna bf_dna)
+-target_link_libraries(makesrna bf_dna_blenlib)
+-
+-if(WIN32 AND NOT UNIX)
+-  if(DEFINED PTHREADS_LIBRARIES)
+-    target_link_libraries(makesrna ${PTHREADS_LIBRARIES})
++if(BLENDER_HOST_TOOLS)
++  blender_import_host_tool(makesrna)
++else()
++  add_cc_flags_custom_test(makesrna)
++
++  add_executable(makesrna ${SRC} ${SRC_RNA_INC} ${SRC_DNA_INC})
++  setup_platform_linker_flags(makesrna)
++  blender_target_include_dirs(makesrna ${INC})
++  blender_target_include_dirs_sys(makesrna ${INC_SYS})
++
++  target_link_libraries(makesrna bf_dna)
++  target_link_libraries(makesrna bf_dna_blenlib)
++
++  if(WIN32 AND NOT UNIX)
++    if(DEFINED PTHREADS_LIBRARIES)
++      target_link_libraries(makesrna ${PTHREADS_LIBRARIES})
++    endif()
+   endif()
+ endif()
+ 
