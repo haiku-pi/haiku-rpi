@@ -16,6 +16,19 @@
 #             (NoPlane) first, the plane after
 #   mode      the screen to 1280x720 at 20 s and back at 30 s (overlays suspended): software meanwhile, the plane
 #             after
+#   real      a styled article: text around a 960x540 video at a fractional position (scaled 0.9, centred column,
+#             half-pixel padding), a translucent caption over it, the page scrolled by 200 px at 15 s and back at 25 s
+#   tab       a second tab opened in front at 15 s (window.open) and closed at 30 s; an overlaytest (yuv420) runs
+#             while the video's tab is hidden: the plane must be free for it, and back for the video afterwards
+#   minimize  the window minimised at 15 s and restored at 27 s (scripting), an overlaytest meanwhile
+#   fullscreen  <video controls>: fullscreen by script at 12 s, out at 24 s; by a double-click on the video
+#             (uiinject) at 32 s, out with Esc at 42 s; CPU over 5 s in the first fullscreen period
+#   cycle     CYCLES (default 10) times: Firefox started on PAGE (single: a 1280x720 video; two: the two-video
+#             page), PLAY s (default 12) of playing, `hey Firefox quit`; per cycle the debugger entries in the syslog
+#             and the Firefox teams left after 20 s (killed then). LIBS=DIR: DIR first in LIBRARY_PATH (test builds of
+#             libavcodec / libmmal*)
+#   avsync    the clip unmuted (a beep with a white flash once a second: tools/media-tests/gen-avsync-clip.sh) for
+#             SECS (default 40) s; the host records HDMI video + audio (tools/pi-tests/avsync-measure.sh)
 # Lines "FFA <label> ...", and "FFA <label> SNAP <name>" at the moments meant for an HDMI frame.
 # Run over ssh in a bench session (scripts/pi-session.sh, scripts/pi-ssh.sh).
 mode=${1:?usage: ffv-a1.sh MODE CLIP LABEL}
@@ -62,6 +75,11 @@ user_pref("toolkit.telemetry.enabled", false);
 user_pref("network.connectivity-service.enabled", false);
 user_pref("network.captive-portal-service.enabled", false);
 user_pref("extensions.update.enabled", false);
+// window.open() without a click (tab mode), fullscreen without one (fullscreen mode), no fullscreen notice
+user_pref("dom.disable_open_during_load", false);
+user_pref("full-screen-api.allow-trusted-requests-only", false);
+user_pref("full-screen-api.warning.timeout", 0);
+user_pref("media.autoplay.blocking_policy", 0);
 PREFS
 
 # the page: QUALITY logs the first video's frame counts every 2 s
@@ -71,6 +89,39 @@ setInterval(() => { const v = document.querySelector("video"), q = v.getVideoPla
     + " frames " + q.totalVideoFrames + " dropped " + q.droppedVideoFrames + " presented " + v.mozPresentedFrames); }, 2000);'
 video="muted loop autoplay src=\"file://$dir/$clip\""
 case "$mode" in
+real)
+	para='<p>Haiku is an open-source operating system that specifically targets personal computing. Inspired by the
+BeOS, Haiku is fast, simple to use, easy to learn and yet very powerful. This paragraph is here so that text
+flows around the video the way it does on a news site or a blog, with a few lines above and below.</p>'
+	body="<body style=\"margin:0;font:19px/1.5 serif;background:#f4f1e8;color:#222\">
+<header style=\"height:64px;background:#24384f;color:#fff;font:28px sans-serif;padding:14px 30px\">The Daily Haiku</header>
+<main style=\"width:1000px;margin:0 auto;padding:10px 30.5px\"><h1 style=\"font:34px sans-serif\">An article with a video</h1>
+$para $para
+<figure style=\"position:relative;margin:0 0 0 7.5px;width:864px;height:486px\">
+<video style=\"transform:scale(0.9);transform-origin:0 0\" width=\"960\" height=\"540\" $video></video>
+<figcaption style=\"position:absolute;left:16px;bottom:18px;padding:4px 10px;background:rgba(0,0,0,0.55);color:#fff;font:18px sans-serif\">A translucent caption over the video</figcaption></figure>
+$para $para $para $para $para $para</main>
+<script>function glide(dy) { let n = 0; const t = setInterval(() => { window.scrollBy(0, dy / 40); if (++n == 40) clearInterval(t); }, 50); }
+setTimeout(() => glide(200), 15000); setTimeout(() => glide(-200), 25000);</script>" ;;
+tab|minimize)
+	body="<body style=\"margin:0;background:#000\"><video width=\"1280\" height=\"720\" $video></video>"
+	[ "$mode" = tab ] && body="$body
+<script>let w; setTimeout(() => { w = window.open(\"about:blank\"); console.log(\"FFA tab opened \" + !!w); }, 15000);
+setTimeout(() => { if (w) w.close(); console.log(\"FFA tab closed\"); }, 30000);</script>" ;;
+fullscreen)
+	body="<body style=\"margin:0;background:#000\"><video controls width=\"1280\" height=\"720\" $video></video>
+<script>const fv = document.querySelector(\"video\");
+setTimeout(() => fv.requestFullscreen().then(() => console.log(\"FFA fullscreen on\"), e => console.log(\"FFA fullscreen failed \" + e)), 12000);
+setTimeout(() => document.exitFullscreen().then(() => console.log(\"FFA fullscreen off\")), 24000);
+document.addEventListener(\"fullscreenchange\", () => console.log(\"FFA fullscreenchange \" + !!document.fullscreenElement));</script>" ;;
+avsync)
+	body="<body style=\"margin:0;background:#000\"><video width=\"1280\" height=\"720\" loop autoplay src=\"file://$dir/$clip\"></video>" ;;
+cycle)
+	if [ "${PAGE:-single}" = two ]; then
+		body="<body style=\"margin:0;background:#000\"><video width=\"960\" height=\"540\" $video></video><video width=\"480\" height=\"270\" $video></video>"
+	else
+		body="<body style=\"margin:0;background:#000\"><video width=\"1280\" height=\"720\" $video></video>"
+	fi ;;
 measure|noplane|mode)
 	body="<body style=\"margin:0;background:#000\"><video width=\"1280\" height=\"720\" $video></video>" ;;
 scroll)
@@ -110,6 +161,33 @@ ffteam() { ps | awk -v f="$ffx" '$1 == f { print $(NF-3); exit }'; }
 
 dbg0=$(grep -a -c "entered the debugger" /var/log/syslog)
 sys0=$(wc -l < /var/log/syslog)
+if [ "$mode" = cycle ]; then
+	# (an ssh shell has no LIBRARY_PATH: then the runtime_loader's default, which a set one replaces)
+	[ -n "$LIBS" ] && export LIBRARY_PATH="$LIBS:${LIBRARY_PATH:-%A/lib:/boot/home/config/non-packaged/lib:/boot/home/config/lib:/boot/system/non-packaged/lib:/boot/system/lib}"
+	total=0 i=1
+	while [ $i -le "${CYCLES:-10}" ]; do
+		d0=$(grep -a -c "entered the debugger" /var/log/syslog)
+		MOZ_CRASHREPORTER_DISABLE=1 MOZ_LOG=FFmpegVideo:3,FFmpegLib:${AVLOG:-3} $ffx --no-remote --profile "$profile" \
+			"file://$dir/ffa-$label.html" > "$log.$i" 2>&1 &
+		sleep "${PLAY:-12}"
+		frames=$(tr -d '\r' < "$log.$i" | grep -a FFAQ | tail -n 1 | sed 's/.*frames \([0-9]*\).*/\1/')
+		hey Firefox quit > /dev/null 2>&1
+		n=0
+		while [ $n -lt 20 ] && [ -n "$(ffteam)" ]; do sleep 1; n=$((n + 1)); done
+		left=$(ps | awk -v f="$ffx" '$1 == f' | wc -l)
+		for t in $(ps | awk '$1 ~ /Firefox$/ { print $(NF-3) }'); do kill -9 "$t" 2> /dev/null; done
+		sleep 2
+		d=$(( $(grep -a -c "entered the debugger" /var/log/syslog) - d0 ))
+		total=$((total + d))
+		dec=$(grep -a -o "Using preferred [a-z]* codec [a-z0-9_]*\|h264_mmal [a-z ]*: h264 continues[a-z ]*" "$log.$i" | sort | uniq -c | tr -s ' ' | tr '\n' ';')
+		mm=$(grep -a -c "no event buffer left\|not sent back by the VideoCore\|no reply to message" "$log.$i")
+		say "cycle $i: frames ${frames:-?} quit ${n} s left $left debugger $d mmal-errors $mm decoders:$dec"
+		i=$((i + 1))
+	done
+	say "cycles ${CYCLES:-10} debugger entries $total"
+	say end
+	exit 0
+fi
 if [ "$mode" = noplane ]; then
 	ovl=""
 	for i in 1 2 3 4 5 6; do
@@ -190,6 +268,67 @@ noplane)
 	snapshot "$label-plane"
 	sleep 5
 	;;
+real)
+	sleep 12
+	snapshot "$label-still"
+	sleep 5
+	snapshot "$label-scrolling"
+	sleep 5
+	snapshot "$label-scrolled"
+	sleep 12
+	snapshot "$label-back"
+	sleep 4
+	;;
+tab|minimize)
+	sleep 12
+	snapshot "$label-playing"
+	sleep 3
+	if [ "$mode" = minimize ]; then
+		hey Firefox set Minimize of Window 0 to true > /dev/null 2>&1
+		say "minimised"
+	fi
+	sleep 4
+	snapshot "$label-away"
+	"$dir/overlaytest" -s yuv420 -f 30 -h 2 > "$dir/ffa-ovl-$label.log" 2>&1
+	say "overlaytest while away: exit $? ($(grep -a -c 'BAD' "$dir/ffa-ovl-$label.log") BAD lines)"
+	if [ "$mode" = minimize ]; then
+		sleep 4
+		hey Firefox set Minimize of Window 0 to false > /dev/null 2>&1
+		say "restored"
+		sleep 8
+	else
+		sleep 12
+	fi
+	snapshot "$label-back"
+	sleep 4
+	;;
+fullscreen)
+	sleep 15
+	snap > /tmp/ffa-a.txt
+	sleep 5
+	snap > /tmp/ffa-b.txt
+	snapshot "$label-fs1"
+	awk 'NR == FNR { s[$1] = $4 + $5; next } ($1 in s) && ($3 == "Renderer" || $3 == "SwComposite" || $3 ~ /^w:/) {
+		d = $4 + $5 - s[$1]; if (d > 0) printf "%6d ms %s %s\n", d, $2, $3 }' /tmp/ffa-a.txt /tmp/ffa-b.txt \
+		| while IFS= read -r l; do say "fullscreen cpu (5 s) $l"; done
+	sleep 6
+	snapshot "$label-out1"
+	sleep 5
+	t=$(ffteam)
+	"$dir/uiinject" "$t" ffa activate move 640 400 wait 200 dblclick 1 640 400 > /dev/null 2>&1
+	say "double-click sent"
+	sleep 5
+	snapshot "$label-fs2"
+	sleep 4
+	"$dir/uiinject" "$(ffteam)" ffa key esc > /dev/null 2>&1
+	say "esc sent"
+	sleep 5
+	snapshot "$label-out2"
+	sleep 3
+	;;
+avsync)
+	sleep "${SECS:-40}"
+	;;
 mode)
 	sleep 20
 	snapshot "$label-before"
@@ -214,6 +353,7 @@ say "quit: $left Firefox teams left after ${n} s"
 for t in $(ps | awk '$1 ~ /Firefox$/ { print $(NF-3) }'); do kill -9 "$t" 2> /dev/null; done
 grep -a -E "^HVO (show|hide)" "$log" | head -n 20 | while IFS= read -r l; do say "log $l"; done
 grep -a "^HVO stats" "$log" | tail -n 1 | while IFS= read -r l; do say "log last $l"; done
+tr -d '\r' < "$log" | grep -a "FFA tab\|FFA fullscreen" | while IFS= read -r l; do say "page $l"; done
 tr -d '\r' < "$log" | grep -a "FFAQ\|FFA moved" | tail -n 2 | while IFS= read -r l; do say "page $l"; done
 tail -n +$((sys0 + 1)) /var/log/syslog | grep -a -o "plane [0-9]: [0-9]* updates in [0-9]* vblanks, [0-9]* late.*" \
 	| tail -n 6 | while IFS= read -r l; do say "driver $l"; done

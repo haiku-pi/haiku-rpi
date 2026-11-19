@@ -47,13 +47,15 @@ pi_power() {	# on|off — the Pi's power switch ($PI_PLUG; retried, since a call
 	return 1
 }
 
-# hdmi_snap <out.png>: one frame from the capture card (BT.709 limited range, 1080p).
+# hdmi_snap <out.png>: one frame from the capture card (BT.709 limited range, 1080p). The first frames after the
+# device is opened can be stale ones left from the previous capture (seen 2026-11-19: each frame of a series showed
+# the screen of the one before), so the 6th frame is kept.
 hdmi_snap() {
 	[ -n "$HDMI_GRABBER" ] && [ -e "$HDMI_GRABBER" ] || return 1
-	timeout --foreground 5 ffmpeg -y -loglevel error -f v4l2 -input_format yuyv422 \
-		-video_size 1920x1080 -i "$HDMI_GRABBER" -vf 'scale=in_color_matrix=bt709:in_range=tv' \
+	timeout --foreground 6 ffmpeg -y -loglevel error -f v4l2 -input_format yuyv422 \
+		-video_size 1920x1080 -i "$HDMI_GRABBER" -vf 'select=gte(n\,5),scale=in_color_matrix=bt709:in_range=tv' \
 		-frames:v 1 "$1" </dev/null >/dev/null 2>&1 && return 0
-	timeout --foreground 5 ffmpeg -y -loglevel error -f v4l2 -i "$HDMI_GRABBER" \
+	timeout --foreground 6 ffmpeg -y -loglevel error -f v4l2 -i "$HDMI_GRABBER" -vf 'select=gte(n\,5)' \
 		-frames:v 1 "$1" </dev/null >/dev/null 2>&1
 }
 

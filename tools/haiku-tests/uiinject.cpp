@@ -10,6 +10,7 @@
  *     move X Y                  B_MOUSE_MOVED to X,Y (window coordinates)
  *     down B | up B             press / release mouse button B (1 left, 2 right, 3 middle)
  *     click B X Y               move, down, up
+ *     dblclick B X Y            move, down, up, down, up (the second press with clicks 2: a double-click)
  *     drag B X1 Y1 X2 Y2 N MS   move to X1,Y1, press B, N moves to X2,Y2 (MS between moves), release
  *     key NAME                  press and release a key: a-z 0-9 space tab esc return f1-f12
  *                               kp0-kp9 (numeric keypad), up down left right
@@ -122,6 +123,9 @@ post_key(uint32 what, int32 key, char byte)
 }
 
 
+static int32 sClicks = 1;
+
+
 static void
 post_mouse(uint32 what)
 {
@@ -134,7 +138,7 @@ post_mouse(uint32 what)
 	if (what == B_MOUSE_MOVED)
 		message.AddInt32("be:transit", B_INSIDE_VIEW);
 	if (what == B_MOUSE_DOWN)
-		message.AddInt32("clicks", 1);
+		message.AddInt32("clicks", sClicks);
 	sWindow.SendMessage(&message);
 }
 
@@ -213,6 +217,21 @@ main(int argc, char** argv)
 			snooze(80000);
 			sButtons &= ~mask;
 			post_mouse(B_MOUSE_UP);
+		} else if (strcmp(c, "dblclick") == 0 && a + 3 < argc) {
+			int32 mask = button_mask(atoi(argv[a + 1]));
+			sWhere = BPoint(atof(argv[a + 2]), atof(argv[a + 3]));
+			a += 3;
+			post_mouse(B_MOUSE_MOVED);
+			snooze(50000);
+			for (sClicks = 1; sClicks <= 2; sClicks++) {
+				sButtons |= mask;
+				post_mouse(B_MOUSE_DOWN);
+				snooze(60000);
+				sButtons &= ~mask;
+				post_mouse(B_MOUSE_UP);
+				snooze(80000);
+			}
+			sClicks = 1;
 		} else if (strcmp(c, "drag") == 0 && a + 7 < argc) {
 			int32 mask = button_mask(atoi(argv[a + 1]));
 			BPoint from(atof(argv[a + 2]), atof(argv[a + 3])), to(atof(argv[a + 4]), atof(argv[a + 5]));
