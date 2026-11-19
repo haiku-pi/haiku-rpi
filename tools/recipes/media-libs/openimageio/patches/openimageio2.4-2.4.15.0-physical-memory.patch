@@ -1,0 +1,30 @@
+From: haiku-pi <build@haiku-pi.invalid>
+Subject: Sysutil::physical_memory() for Haiku
+
+Without it OIIO prints "Assertion '0 && "Need to implement Sysutil::physical_memory on this
+platform"' failed" (with the build's source path) on every start of a program that uses it, e.g.
+Blender, and reports 0 bytes. get_system_info()'s max_pages is the usable physical memory.
+
+--- a/src/libutil/sysutil.cpp
++++ b/src/libutil/sysutil.cpp
+@@ -61,6 +61,7 @@
+ #endif
+ 
+ #if defined (__HAIKU__)
++# include <OS.h>
+ # include <sys/types.h>
+ # include <sys/resource.h>
+ # include <unistd.h>
+@@ -220,6 +221,12 @@
+     sysctl(mib, 2, &physical_memory, &length, NULL, 0);
+     return physical_memory;
+ 
++#elif defined(__HAIKU__)
++    system_info info;
++    if (get_system_info(&info) != B_OK)
++        return 0;
++    return size_t(info.max_pages) * B_PAGE_SIZE;
++
+ #else
+     // No idea what platform this is
+     OIIO_ASSERT(

@@ -7,7 +7,8 @@
 # DIR is artifacts/blender-tests from scripts/build-blender.sh's stage step: Blender/ (the install tree) and
 # packages/ (python3.10, the libraries, SDL2 -8; test packages, not in the repository), installed here with
 # pkgman first. Output lines start with "BM3 "; each run's log is /tmp/bm3-LABEL-*.txt. Grade by the
-# positive markers: "version: PASS", "bpy: PASS", "render: PASS ... ms" and "png: PASS".
+# positive markers: "version: PASS", "bpy: PASS", "render: PASS <time>", "png: PASS" and "factory: PASS <time>".
+# The PNGs: /boot/home/bm3-LABEL/cube_0001.png (960x540, 32 samples) and factory_0001.png (the factory scene).
 dir=$1 label=${2:-run}
 [ -x "$dir/Blender/blender" ] || { echo "usage: $0 DIR [LABEL]" >&2; exit 2; }
 out=/boot/home/bm3-$label
@@ -16,8 +17,18 @@ mkdir -p "$out"
 mkdir -p /boot/home/config/settings/system/debug_server 2> /dev/null
 echo "default_action log" 2> /dev/null > /boot/home/config/settings/system/debug_server/settings || true
 
-pkgman install -y "$dir"/packages/*.hpkg > /tmp/bm3-$label-pkgman.txt 2>&1
-echo "BM3 $label pkgman: status $?"
+# only the packages the image does not have in this very version: "upgrading" a package to the same file
+# fails the whole transaction ("Failed to change the package activation in packagefs: Name in use")
+new=""
+for f in "$dir"/packages/*.hpkg; do
+	[ -e "/boot/system/packages/$(basename "$f")" ] || new="$new $f"
+done
+if [ -n "$new" ]; then
+	pkgman install -y $new > /tmp/bm3-$label-pkgman.txt 2>&1
+	echo "BM3 $label pkgman: status $?, $(echo $new | wc -w) packages"
+else
+	echo "BM3 $label pkgman: all installed"
+fi
 bl="$dir/Blender/blender"
 # every library the executable needs is found (the runtime loader names a missing one and stops)
 run() {
@@ -40,14 +51,37 @@ run bpy "$bl" -b --factory-startup --python-expr \
 grep -q '^BM3PY 3.10.22 3.6.23' /tmp/bm3-$label-bpy.txt && echo "BM3 $label bpy: PASS $(grep '^BM3PY' /tmp/bm3-$label-bpy.txt)" \
 	|| { echo "BM3 $label bpy: FAIL"; tail -n 20 /tmp/bm3-$label-bpy.txt; }
 
-# Cycles, CPU: the default cube, frame 1, at 960x540 and 32 samples first (minutes, not hours, if it is slow)
-run render "$bl" -b --factory-startup -E CYCLES -o "$out/cube_####" -F PNG \
-	--python-expr "import bpy; s = bpy.context.scene; s.render.resolution_x = 960; s.render.resolution_y = 540; s.render.resolution_percentage = 100; s.cycles.samples = 32; s.cycles.device = 'CPU'" \
+# system memory in use, sampled every second while the render runs (sysinfo -mem's "used"): the peak minus the
+# idle value before it is Blender's
+used() { sysinfo -mem | sed -n 's/.*used\/max *\([0-9]*\) .*/\1/p'; }
+idle=$(used)
+( peak=$idle; while [ ! -f /tmp/bm3-$label-done ]; do u=$(used); [ "$u" -gt "$peak" ] && peak=$u; echo $peak > /tmp/bm3-$label-peak; sleep 1; done ) &
+rm -f /tmp/bm3-$label-done
+# Cycles, CPU, 4 threads: the default cube, frame 1, at 960x540 and 32 samples first (minutes, not hours, if
+# it is slow). Denoising off: the factory scene has it on, and this build has no OpenImageDenoise ("Error:
+# Build without OpenImageDenoiser", Blender quits)
+run render "$bl" -b --factory-startup -t 4 -E CYCLES -o "$out/cube_####" -F PNG \
+	--python-expr "import bpy; s = bpy.context.scene; s.render.resolution_x = 960; s.render.resolution_y = 540; s.render.resolution_percentage = 100; s.cycles.samples = 32; s.cycles.device = 'CPU'; s.cycles.use_denoising = False" \
 	-f 1
+touch /tmp/bm3-$label-done
+sleep 2
+echo "BM3 $label memory: peak $(( ($(cat /tmp/bm3-$label-peak) - idle) / 1048576 )) MB above idle ($(( idle / 1048576 )) MB)"
 grep -E 'Saved:|Time:|Fra:1 .*Sample' /tmp/bm3-$label-render.txt | tail -n 3
 t=$(sed -n 's/.*Time: \([0-9:.]*\).*/\1/p' /tmp/bm3-$label-render.txt | tail -n 1)
 grep -q "Saved: .*cube_0001.png" /tmp/bm3-$label-render.txt && echo "BM3 $label render: PASS $t" \
 	|| { echo "BM3 $label render: FAIL"; tail -n 30 /tmp/bm3-$label-render.txt; }
 [ -s "$out/cube_0001.png" ] && echo "BM3 $label png: PASS $(ls -l "$out/cube_0001.png" | awk '{print $5}') bytes" \
 	|| echo "BM3 $label png: FAIL"
-echo "BM3 $label threads: $(sysinfo -cpu 2> /dev/null | grep -c 'CPU #')"
+
+# the factory scene as it is (1920x1080, up to 4096 samples with adaptive sampling), denoising off
+rm -f /tmp/bm3-$label-done
+( peak=$idle; while [ ! -f /tmp/bm3-$label-done ]; do u=$(used); [ "$u" -gt "$peak" ] && peak=$u; echo $peak > /tmp/bm3-$label-peak; sleep 1; done ) &
+run factory "$bl" -b --factory-startup -t 4 -E CYCLES -o "$out/factory_####" -F PNG \
+	--python-expr "import bpy; bpy.context.scene.cycles.use_denoising = False" -f 1
+touch /tmp/bm3-$label-done
+sleep 2
+echo "BM3 $label factory memory: peak $(( ($(cat /tmp/bm3-$label-peak) - idle) / 1048576 )) MB above idle"
+t=$(sed -n 's/.*Time: \([0-9:.]*\).*/\1/p' /tmp/bm3-$label-factory.txt | tail -n 1)
+grep -q "Saved: .*factory_0001.png" /tmp/bm3-$label-factory.txt && echo "BM3 $label factory: PASS $t" \
+	|| { echo "BM3 $label factory: FAIL"; tail -n 30 /tmp/bm3-$label-factory.txt; }
+echo "BM3 $label cpu: $(sysinfo -cpu | head -n 1)"

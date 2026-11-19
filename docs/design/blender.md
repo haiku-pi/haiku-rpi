@@ -1,7 +1,8 @@
 # Blender on the Pi 4 (Haiku arm64): feasibility and plan
 
 Status (2026-11-19): **M1 (SDL2 per-thread GL context) done, §7.2; M2 done: `blender` 3.6.23 links for Haiku
-arm64 (cross-built, minimal option set), §7.3. Nothing ran on the Pi yet.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+arm64 (cross-built, minimal option set), §7.3; M3 done: Cycles renders the default cube headless on the Pi
+(1920×1080 factory scene in 1 min 37 s), §7.4. Next: M4, the UI through GHOST_SDL.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -562,7 +563,40 @@ Python 3.10, TBB (Cycles), SDL2 (GHOST_SDL), OIIO, OpenEXR, WebP, pugixml, epoxy
   Likely first failures, in order: a package conflict or missing run-time library at `pkgman` time; Python
   not finding its standard library (no bundled `3.6/python`; it should take libpython's prefix
   `/boot/system`); TBB's thread start-up on Haiku; Cycles' NEON (sse2neon) kernels — then a slow render.
-  Estimated remaining to M3: **0.5–1 agent-day**, mostly the Pi session and whatever the first run shows.
+  Estimated remaining to M3 then: 0.5–1 agent-day; it took one hour (§7.4).
+- A clean `BLENDER_CLEAN=1 scripts/build-blender.sh libdeflate stage` passes end to end: 16 min (05:49–06:05),
+  the cross compilers' peak **5.8 GB** together, one process 1.26 GB (cc1plus; the `blender` link stayed below).
+- The shared sysroot now also holds these unpublished libraries (non-packaged/ and boot/system/): another port
+  whose configure auto-detects one of them would depend on a package that is not in the repository.
+
+### 7.4 M3 result (2026-11-19 07:14–07:26, sessions bl3 and bl3e, release image-2026-11-19, network boot)
+
+`tools/pi-tests/blender-m3.sh` on `artifacts/blender-tests` (the stage step's tree + 22 packages):
+- `blender --version`: 3.6.23 (1 s). bpy: `Python 3.10.22`, `bpy.app.version_string` 3.6.23, 3 objects in the
+  factory scene — Python finds its standard library from the python3.10 package (no bundled `3.6/python`).
+- **Cycles CPU, 4 threads** (`-b --factory-startup -t 4 -E CYCLES -f 1`):
+  - 960×540, 32 samples: **8.8 s**, 109–112 MB above idle;
+  - the factory scene as it is (1920×1080, up to 4096 samples, adaptive 0.01): **1 min 36.7 s**, peak
+    **251 MB** above an idle 304 MB (`sysinfo -mem` used, sampled every second; Blender's own counter: 191 MB).
+  - PNGs in `artifacts/blender-tests/m3/` (cube_0001.png, factory_0001.png), checked by eye: the default cube,
+    correct shading. "Filmic" falls back to "Standard" (no OpenColorIO: expected, M6).
+- 0 PANIC (UART logs 20261119-071410/072217), 0 debug_server entries in syslog.
+- What broke, in order:
+  1. `pkgman install` of all staged packages failed the whole transaction ("Failed to change the package
+     activation in packagefs: Name in use"): 11 of them were already on the image in the very same file
+     version. The test installs only the packages the image does not have.
+  2. The factory scene has render denoising on, and without OpenImageDenoise Blender quits ("Error: Build
+     without OpenImageDenoiser"). The test turns `cycles.use_denoising` off; M6 adds OIDN or patches the
+     default.
+  3. OIIO printed `Assertion '0 && "Need to implement Sysutil::physical_memory on this platform"'` on every
+     start (and reported 0 bytes): `openimageio2.4-2.4.15.0-physical-memory.patch` (get_system_info()
+     max_pages), package revision 2, `-ffile-prefix-map` for its source paths.
+- Speed: the Pi 400 report (§2.4) said about 2× a laptop; 1 min 37 s for the factory cube fits that.
+
+Next, M4 (the UI): the same tree on the desktop of a session with HDMI capture — `blender` windowed through
+GHOST_SDL with SDL2 -8 (per-thread contexts), expecting a 3.3 core context (patch 0001); then the Workbench
+viewport, edit mode, save/load and an F12 render into the image editor. Known gaps before it: no OCIO (no
+Filmic), no OIDN, ASCII-only text input (§3.1).
 
 ## 8. Files
 

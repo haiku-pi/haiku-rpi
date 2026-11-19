@@ -232,7 +232,8 @@ oiio() {
 		-DUSE_BZIP2=OFF -DUSE_JPEGTURBO=ON -DUSE_PNG=ON -DUSE_WEBP=ON -DUSE_OPENEXR=ON -DUSE_TIFF=ON \
 		-DBUILD_MISSING_FMT=OFF -DBUILD_MISSING_ROBINMAP=OFF -DBUILD_MISSING_DEPS=OFF -DINTERNALIZE_FMT=ON \
 		-DFMT_INCLUDE_DIR="$ext/fmt-9.1.0/include" -DROBINMAP_INCLUDE_DIR="$ext/robin-map-0.6.2/include" \
-		-DOIIO_DOWNLOAD_MISSING_TESTDATA=OFF -DEMBEDPLUGINS=ON -Wno-dev
+		-DOIIO_DOWNLOAD_MISSING_TESTDATA=OFF -DEMBEDPLUGINS=ON -Wno-dev \
+		-DCMAKE_CXX_FLAGS="-ffile-prefix-map=$w/src=/sources/OpenImageIO-2.4.15.0"
 	cmake_relative OpenImageIO
 	# the libraries it was meant to link, and no others
 	lib="$w/install/boot/system/non-packaged/lib/libOpenImageIO.so.2.4"
@@ -243,7 +244,7 @@ oiio() {
 	done
 	! "$tools-readelf" -d "$lib" | grep -E "NEEDED.*\[(libav|libfreetype|libGL|libOpenColorIO|libraw|libheif|libgif)" \
 		|| { echo "build-blender: OIIO links an optional library it should not" >&2; exit 1; }
-	package "$recipe"
+	package "$recipe" --revision 2
 	need non-packaged/lib/libOpenImageIO.so.2.4 develop/headers/OpenImageIO/imageio.h \
 		develop/headers/OpenImageIO/detail/fmt/format.h
 }
@@ -411,7 +412,8 @@ build() {
 # python3.10 package), the test packages beside it in artifacts/blender-tests/packages/
 stage() {
 	local t="$root/artifacts/blender-tests" p
-	rm -rf "$t"
+	# (only what this step makes: m3/ and other results of Pi runs stay)
+	rm -rf "$t/Blender" "$t/packages"
 	cmake --install "$bl/build" --prefix "$t/Blender" --strip > "$bl/install.log" 2>&1 \
 		|| { tail -n 20 "$bl/install.log" >&2; exit 1; }
 	rm -f "$t/Blender"/blender.desktop "$t/Blender"/*.svg
