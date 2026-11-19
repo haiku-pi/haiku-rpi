@@ -482,18 +482,19 @@ So M1 can start as planned; no Mesa work is needed for M1–M4.
 
 ### 7.2 M1 result (2026-11-19, session sdlm1 on the mega image; artifacts/blender-probe/m1/)
 
-`patches/libsdl2/libsdl2-2.32.10-haiku-gl-thread-context.patch` (SDL_BApp.h, +17/−6 lines): `SDL_BHandler` keeps
+`patches/libsdl2/libsdl2-2.32.10-haiku-gl-thread-context.patch` (SDL_BApp.h, +15/−8 lines): `SDL_BHandler` keeps
 the current BGLView in an SDL TLS slot instead of one member, so `SetCurrentContext()` unlocks only the view the
 calling thread locked. libsdl2 **2.32.10-8** = the six earlier patches + this one
 (`artifacts/packages-test/libsdl2-8/`, not published).
 - `blender-probe.sh` with -8 in the probe directory: **`sdlthread: PASS no cross-thread BGLView unlocks`**, the
-  three `sdl thread:` checks PASS; the other probe results as in §7.1.
+  three `sdl thread:` checks PASS (only the sdlthread part of that run was kept).
 - Same session, `blender-glprobe -t` per library: -7 → 2 "wrong thread" lines, 3 PASS; -8 → 0, 3 PASS; a traced
   -8 build shows the job thread locking and unlocking only its own view (`t-diag.txt`).
-- Unchanged, -7 vs -8 (each loaded through LIBRARY_PATH): SuperTuxKart legacy 3.1, 37.7 vs 42.1 egl frames/s;
-  SuperTuxKart `force_legacy_device="false"` **3.3 core, shader renderer, race completes**, 16.1 vs 16.8;
+- Unchanged, -7 vs -8 (each loaded through LIBRARY_PATH; single runs): SuperTuxKart
+  `force_legacy_device="false"` **3.3 core, shader renderer, race completes**, 16.1 vs 16.8;
   Quake II GL3 "got version 3.3", 58.5 vs 58.6 fps (timedemo, 1280×720); GL1 60.0 vs 60.0; `desktop-gl.sh`
-  (its programs do not link SDL2) 0 failures.
+  (its programs do not link SDL2) 0 failures. SuperTuxKart legacy (the default) with -8: 3.1, 42.1 egl frames/s
+  (the image's own SDL2 copy, desktop-gl.md §7.1: 37.7; the gate's range 35–50).
 - Not covered: deleting a context that is current on *another* thread (that thread's slot then points at a
   deleted view; a program error on every platform), and making one view current on two threads at once (the
   second `LockGL()` now waits for the first thread to release it, where EGL returns `EGL_BAD_ACCESS`).
