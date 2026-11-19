@@ -2,7 +2,9 @@
 
 Status (2026-11-19): **M1 (SDL2 per-thread GL context) done, §7.2; M2 done: `blender` 3.6.23 links for Haiku
 arm64 (cross-built, minimal option set), §7.3; M3 done: Cycles renders the default cube headless on the Pi
-(1920×1080 factory scene in 1 min 37 s), §7.4. Next: M4, the UI through GHOST_SDL.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+(1920×1080 factory scene in 1 min 37 s), §7.4; M4 mostly done: the UI runs through GHOST_SDL on the desktop —
+solid viewport, edit mode, save/reload, preferences window, F12 Cycles render into the image editor — after two
+GPU patches; keyboard/mouse input not verified yet, §7.5.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -597,6 +599,51 @@ Next, M4 (the UI): the same tree on the desktop of a session with HDMI capture �
 GHOST_SDL with SDL2 -8 (per-thread contexts), expecting a 3.3 core context (patch 0001); then the Workbench
 viewport, edit mode, save/load and an F12 render into the image editor. Known gaps before it: no OCIO (no
 Filmic), no OIDN, ASCII-only text input (§3.1).
+
+### 7.5 M4 result (2026-11-19 07:28–07:56, session bl4, release image-2026-11-19, HDMI capture)
+
+`tools/pi-tests/blender-m4.sh` starts `blender` windowed (1600×900) with `blender-m4.py`, which drives the
+scenario from inside Blender (operators on timers; no input device needed) and waits at each "BM4 SNAP" until
+the host has taken an HDMI frame (`scripts/pi-snap-on.sh … /tmp/bm4-ack`, new, with `scripts/hdmi-snap.sh`).
+Frames: `artifacts/blender-tests/m4/{1-start,2-viewport,3-edit,4-reloaded,4b-100k,5-preferences,6-render,7-key}.png`
+(run bl4d; all viewed).
+- **Context:** `3.3 (Core Profile) Mesa 26.2.7`, renderer V3D 4.2.14.0, GLSL 3.30 — patch 0001 works, no
+  "Platform Unsupported".
+- **Works:** the main window and all editors; Workbench solid shading (studio light) of cube and sphere; edit
+  mode (header, tool shelf); save (906 968 bytes) and reload of a .blend; the Preferences window (a second SDL
+  window, drawn correctly); **F12**: Cycles renders progressively into the "Blender Render" image-editor
+  window (16 samples, 960×540: 9.8 s) — the render job's GL context on its own thread, i.e. M1 in real use.
+- **Frame rate** (`wm.redraw_timer DRAW_WIN_SWAP`: the whole 1600×900 window, every region, drawn and swapped;
+  a worst case — orbiting redraws only the viewport): default scene **5.1 fps**, edit mode **5.4 fps**, a
+  ~102k-triangle scene (UV sphere 320×160 + cube) **6.5 fps**. Not yet measured: the viewport region alone (the
+  region-only `DRAW` type does not redraw an untagged region) and fps while orbiting with a real mouse.
+- **Fixed (Blender patches, artifacts rebuilt incrementally):**
+  1. **Every object drew black.** `--debug-gpu` showed, for every region, `glFramebufferTexture(invalid color
+     attachment GL_COLOR_ATTACHMENT4..7)` and `glDrawBuffers(n > maximum number of draw buffers)`:
+     GLFrameBuffer always handles 8 color attachments, V3D 4.2 has 4 (§2.2, now found outside EEVEE too), so
+     draw buffers were never set. `0005-gpu-gl-fewer-color-attachments.patch` uses
+     min(GL_MAX_COLOR_ATTACHMENTS, GL_MAX_DRAW_BUFFERS, 8). After it: no GL errors, grey studio-lit objects.
+  2. `0004-gpu-classify-v3d.patch`: an unknown vendor left the device at GPU_DEVICE_ANY, which every vendor
+     check matches (Intel's viewport-clear workaround, NVIDIA's texture-gather off;
+     `gpu.platform.device_type_get()` said "APPLE"). V3D is now UNKNOWN/open-source. No measurable fps change
+     (5.3 → 5.1, noise).
+- **Not a bug (test artefact):** the Preferences and render windows first opened at (-17482, 18044), off
+  screen: they open at the mouse position of the invoking event, and an operator called from a timer before
+  any mouse event has none. With `window.cursor_warp()` first they open at 470,190 and 305,150.
+- **Open:**
+  - **Input not verified.** keyinject's B_KEY_DOWN messages ("^[n": Escape, then N for the sidebar) reached
+    the window ("typed 3 characters") but Blender did not react — most likely SDL routes keys only to the
+    window with keyboard focus, and a window started over ssh was never activated (unconfirmed). Needs a
+    real input path (input_server device add-on or a mouse-click injector) or a hands-on check.
+  - The splash screen stays open (closing it needs a click), so it covers the viewport in frames 2–3.
+  - **Subdivision Surface is disabled** in this build ("Disabled, built without OpenSubdiv"): OpenSubdiv
+    (CPU) should come early in M6, it is one of the most used modifiers.
+  - GHOST_SDL's `getCursorPosition` returns `y = yi + x_win` (upstream typo; harmless while x_win = 0).
+- 0 PANIC, 0 debug_server entries; "<!> event has no window" lines from GHOST_SDL are harmless.
+
+Next: finish M4 with real input (a mouse/keyboard injector through input_server, or the owner's hands-on
+check: orbit, select, Tab, F12) and viewport fps while orbiting; then M5 (EEVEE on 4 targets — patch 0005 is
+the frame-buffer half of it) or M6 (packaging + OpenSubdiv, OCIO, OIDN-free defaults).
 
 ## 8. Files
 

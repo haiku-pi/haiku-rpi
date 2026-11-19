@@ -1,0 +1,26 @@
+GPU: classify Mesa's V3D (Raspberry Pi) as a known open-source driver
+
+An OpenGL vendor/renderer GLBackend::platform_init() does not know leaves the device and driver at
+GPU_DEVICE_ANY / GPU_DRIVER_ANY, and GPU_type_matches() then matches every vendor: on a Raspberry Pi
+4 (vendor "Broadcom", renderer "V3D 4.2.14.0") Blender enabled Intel's clear_viewport_workaround and
+turned GL_ARB_texture_gather off as for old NVIDIA GPUs, and gpu.platform.device_type_get() said
+"APPLE". V3D is now GPU_DEVICE_UNKNOWN with GPU_DRIVER_OPENSOURCE: no vendor's workarounds.
+
+diff --git a/source/blender/gpu/opengl/gl_backend.cc b/source/blender/gpu/opengl/gl_backend.cc
+index fde5416..bd9959a 100644
+--- a/source/blender/gpu/opengl/gl_backend.cc
++++ b/source/blender/gpu/opengl/gl_backend.cc
+@@ -113,6 +113,13 @@ void GLBackend::platform_init()
+     device = GPU_DEVICE_SOFTWARE;
+     driver = GPU_DRIVER_SOFTWARE;
+   }
++  else if (strstr(vendor, "Broadcom") && strstr(renderer, "V3D")) {
++    /* Raspberry Pi 4/5, Mesa's v3d driver. Without a match the device stays GPU_DEVICE_ANY, which
++     * every vendor check matches, so other vendors' workarounds (Intel's viewport clears, older
++     * NVIDIA's texture gather) would apply to it. */
++    device = GPU_DEVICE_UNKNOWN;
++    driver = GPU_DRIVER_OPENSOURCE;
++  }
+   else {
+     printf("Warning: Could not find a matching GPU name. Things may not behave as expected.\n");
+     printf("Detected OpenGL configuration:\n");

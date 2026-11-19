@@ -1,0 +1,112 @@
+GPU: OpenGL frame-buffers with fewer than 8 color attachments
+
+GLFrameBuffer handled all GPU_FB_MAX_COLOR_ATTACHMENT (8) slots on every update: it detached slots
+4-7 with glFramebufferTexture() and set 8 draw buffers. OpenGL 3.0 requires 8, but V3D 4.2 (Raspberry
+Pi 4, Mesa v3d) has GL_MAX_COLOR_ATTACHMENTS = GL_MAX_DRAW_BUFFERS = 4 (docs/design/blender.md §2.2):
+each update then raised GL_INVALID_OPERATION four times and glDrawBuffers() failed with
+GL_INVALID_VALUE ("n > maximum number of draw buffers"), so the frame-buffer kept whatever draw
+buffers it had before — the solid viewport drew every object black. The number of slots is now
+min(GL_MAX_COLOR_ATTACHMENTS, GL_MAX_DRAW_BUFFERS, 8), queried at start; a texture attached beyond
+it is reported instead of passed to GL.
+
+diff --git a/source/blender/gpu/opengl/gl_backend.cc b/source/blender/gpu/opengl/gl_backend.cc
+index bd9959a..018d848 100644
+--- a/source/blender/gpu/opengl/gl_backend.cc
++++ b/source/blender/gpu/opengl/gl_backend.cc
+@@ -5,6 +5,8 @@
+  * \ingroup gpu
+  */
+ 
++#include <algorithm>
++
+ #include "BKE_global.h"
+ 
+ #include "gpu_capabilities_private.hh"
+@@ -477,6 +479,7 @@ GLint GLContext::max_cubemap_size = 0;
+ GLint GLContext::max_ubo_binds = 0;
+ GLint GLContext::max_ubo_size = 0;
+ GLint GLContext::max_ssbo_binds = 0;
++GLint GLContext::max_color_attachments = GPU_FB_MAX_COLOR_ATTACHMENT;
+ GLint GLContext::max_ssbo_size = 0;
+ 
+ /** Extensions. */
+@@ -513,6 +516,13 @@ void GLBackend::capabilities_init()
+   BLI_assert(epoxy_gl_version() >= 33);
+   /* Common Capabilities. */
+   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &GCaps.max_texture_size);
++  {
++    GLint max_color_attachments = 0, max_draw_buffers = 0;
++    glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &max_color_attachments);
++    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &max_draw_buffers);
++    GLContext::max_color_attachments = std::max<GLint>(
++        1, std::min({max_color_attachments, max_draw_buffers, GLint(GPU_FB_MAX_COLOR_ATTACHMENT)}));
++  }
+   glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &GCaps.max_texture_layers);
+   glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &GCaps.max_textures_frag);
+   glGetIntegerv(GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, &GCaps.max_textures_vert);
+diff --git a/source/blender/gpu/opengl/gl_context.hh b/source/blender/gpu/opengl/gl_context.hh
+index 76f2f85..55c4d9f 100644
+--- a/source/blender/gpu/opengl/gl_context.hh
++++ b/source/blender/gpu/opengl/gl_context.hh
+@@ -44,6 +44,10 @@ class GLContext : public Context {
+   static GLint max_ubo_binds;
+   static GLint max_ssbo_size;
+   static GLint max_ssbo_binds;
++  /** Color attachments a frame-buffer can have and draw to: the smaller of GL_MAX_COLOR_ATTACHMENTS
++   * and GL_MAX_DRAW_BUFFERS, at most GPU_FB_MAX_COLOR_ATTACHMENT (8). OpenGL 3.0 requires 8, but
++   * some hardware has fewer (V3D 4.2: 4). */
++  static GLint max_color_attachments;
+ 
+   /** Extensions. */
+ 
+diff --git a/source/blender/gpu/opengl/gl_framebuffer.cc b/source/blender/gpu/opengl/gl_framebuffer.cc
+index 4a1005f..4231d32 100644
+--- a/source/blender/gpu/opengl/gl_framebuffer.cc
++++ b/source/blender/gpu/opengl/gl_framebuffer.cc
+@@ -148,6 +148,19 @@ void GLFrameBuffer::update_attachments()
+     GPUAttachment &attach = attachments_[type];
+     GLenum gl_attachment = to_gl(type);
+ 
++    if (type >= GPU_FB_COLOR_ATTACHMENT0 + GLContext::max_color_attachments) {
++      /* A slot the hardware does not have: GL rejects any call naming it (GL_INVALID_OPERATION),
++       * and the frame-buffer stays as it was. */
++      gl_attachments_[type - GPU_FB_COLOR_ATTACHMENT0] = GL_NONE;
++      if (attach.tex != nullptr) {
++        fprintf(stderr,
++                "GPUFrameBuffer %s: color attachment %d not supported (%d available)\n",
++                name_,
++                int(type - GPU_FB_COLOR_ATTACHMENT0),
++                int(GLContext::max_color_attachments));
++      }
++      continue;
++    }
+     if (type >= GPU_FB_COLOR_ATTACHMENT0) {
+       gl_attachments_[type - GPU_FB_COLOR_ATTACHMENT0] = (attach.tex) ? gl_attachment : GL_NONE;
+       first_attachment = (attach.tex) ? type : first_attachment;
+@@ -187,7 +200,7 @@ void GLFrameBuffer::update_attachments()
+     /* Fill normally un-occupied slots to avoid rendering artifacts on some hardware. */
+     GLuint gl_tex = 0;
+     /* NOTE: Inverse iteration to get the first color texture. */
+-    for (int i = ARRAY_SIZE(gl_attachments_) - 1; i >= 0; --i) {
++    for (int i = GLContext::max_color_attachments - 1; i >= 0; --i) {
+       GPUAttachmentType type = GPU_FB_COLOR_ATTACHMENT0 + i;
+       GPUAttachment &attach = attachments_[type];
+       if (attach.tex != nullptr) {
+@@ -216,7 +229,7 @@ void GLFrameBuffer::update_attachments()
+ 
+   dirty_attachments_ = false;
+ 
+-  glDrawBuffers(ARRAY_SIZE(gl_attachments_), gl_attachments_);
++  glDrawBuffers(GLContext::max_color_attachments, gl_attachments_);
+ 
+   if (G.debug & G_DEBUG_GPU) {
+     BLI_assert(this->check(nullptr));
+@@ -480,7 +493,7 @@ void GLFrameBuffer::blit_to(
+ 
+   if (!dst->immutable_) {
+     /* Restore the draw buffers. */
+-    glDrawBuffers(ARRAY_SIZE(dst->gl_attachments_), dst->gl_attachments_);
++    glDrawBuffers(GLContext::max_color_attachments, dst->gl_attachments_);
+   }
+   /* Ensure previous buffer is restored. */
+   context_->active_fb = dst;
