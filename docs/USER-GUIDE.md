@@ -313,9 +313,11 @@ cd /boot/system/apps/SuperTuxKart
   `--benchmark`. The test runs pass `--disable-texture-compression`, which keeps the texture
   compression off the CPU at load time.
 - The plain `SuperTuxKart` starts with its legacy renderer (supertuxkart 1.5-3: `force_legacy_device` defaults to
-  true); for the shader renderer (lighting, shadows) use `SuperTuxKart-GLES`. Setting `force_legacy_device` to false
-  in `~/config/settings/SuperTuxKart/config-0.10/config.xml` is **not** a way to it yet: the desktop build then gets
-  a 3.1 compatibility context and crashes (STK's own bug on 3.1; checked 2026-11-19).
+  true), the faster one here. For its shader renderer (lighting, shadows) use `SuperTuxKart-GLES`, or set
+  `force_legacy_device` to `"false"` in `~/config/settings/SuperTuxKart/config-0.10/config.xml`: with the libsdl2
+  package (2.32.10-7 or newer) the desktop build then gets OpenGL 3.3 core and runs its shader renderer at ~16 fps
+  at 720p. (A libSDL2 copy in `/boot/system/non-packaged/lib` older than 2.32.10-7 gives it 3.1 instead, and STK
+  crashes there — remove such a copy.)
 - OpenArena's game code runs in ioquake3's QVM **interpreter**: there is no arm64 QVM compiler.
 
 **The Quakes** (test trees), in Terminal:

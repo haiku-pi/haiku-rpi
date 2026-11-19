@@ -188,7 +188,7 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
 | Yamagi Quake II | 8.60 | GL1 renderer; timedemo 206.8 / 102.3 / 53.1 fps at 640×480 / 1280×720 / 1920×1080 (11-03); test images only |
 | vkQuake | 1.35.0 | Vulkan; timedemo 54.9 fps at 1280×720, 33.1 at 1920×1080, with V3D-friendly defaults (11-03); test images only |
 | OpenArena on ioquake3 | 0.8.8 (-4) | timedemo 53.3 fps in a 1280×720 window, 28.1 at 1920×1080 full screen (11-03); game code in ioq3's QVM interpreter; published, its data in 5 parts (each under GitHub's file limit) |
-| SuperTuxKart | 1.5 (-3) | legacy renderer (the default) 37.6 fps at 1280×720 in a 60 s race (runs 35.1–41.2; 11-03; 35–50 with mesa 26.2.7-3, 11-19); desktop GL 3.3 shader renderer 13–19 fps in a test build (11-18; the package's force_legacy_device=false gets 3.1 and crashes, 11-19); GLES 3.1 shader renderer 16–18 fps (10-20); published, data in 3 parts |
+| SuperTuxKart | 1.5 (-3) | legacy renderer (the default) 37.6 fps at 1280×720 in a 60 s race (runs 35.1–41.2; 11-03; 35–50 with mesa 26.2.7-3, 11-19); desktop GL 3.3 shader renderer (force_legacy_device=false) 16.1–16.8 fps, 60 s race completed with the libsdl2 package (11-19; 13–19 in the 11-18 test build); GLES 3.1 shader renderer 16–18 fps (10-20); published, data in 3 parts |
 | llama2.c | — | stories15M 45.7 tok/s on 4 cores (10-20); test images only |
 | Native build tools (dev image) | gcc 16.2 (since haiku b59f1c957f; 13.3 bootstrap before), binutils 2.46.1, make 4.4.1, python3.10, haikuporter (Haiku's arm64 build packages); patch 2.8, tar 1.35, gzip 1.13, xz 5.6.4, bzip2 1.0.8, diffutils 3.10 (ours) | haikuporter built a first port (hoedown 3.0.7) natively in QEMU (10-19) |
 
