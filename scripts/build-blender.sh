@@ -492,9 +492,10 @@ blender_package() {
 			libjpeg libexpat; do
 		r+=(--requires "lib:$lib")
 	done
-	package "$recipe" --system-prefix --no-devel --provides app:Blender --requires "libsdl2 >= 2.32.10-8" \
-		--requires python3.10 "${r[@]}"
-	"$pkgtool" list -i "$out/blender-3.6.23-1-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+	# revision 2: EEVEE on 4 color attachments (patches/blender/0007)
+	package "$recipe" --revision 2 --system-prefix --no-devel --provides app:Blender \
+		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 "${r[@]}"
+	"$pkgtool" list -i "$out/blender-3.6.23-2-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its

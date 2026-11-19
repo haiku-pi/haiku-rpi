@@ -1,0 +1,248 @@
+EEVEE: render on GPUs with 4 color attachments (no SSS), and never draw with a failed material
+
+EEVEE Legacy's opaque material shader writes 6 color outputs (radiance, 2 for screen-space
+reflections, 3 for Subsurface Scattering). V3D 4.2 (Raspberry Pi 4, Mesa v3d) has 4 color attachments,
+so every lit material failed to link ("invalid explicit location 4 specified for 'sssRadius'") — the
+default material and EEVEE's own pink error material too, as they use the same shader. EEVEE_material_get()
+then returned the failed error material and the draw code made a shading group from its NULL shader:
+F12 with EEVEE crashed (a segment violation; the BLI_assert that would catch it is off in release
+builds).
+
+- GPU_max_color_attachments() (GL: min(GL_MAX_COLOR_ATTACHMENTS, GL_MAX_DRAW_BUFFERS, 8)).
+- eevee_legacy_material_surface_frag_opaque_no_sss: the opaque shader with 3 outputs, used when fewer
+  than 6 attachments exist; the subsurface light is added to the radiance as for refraction.
+- EFFECT_SSS stays off there, with a one-time message: subsurface materials render as diffuse.
+- When not even the error material's shader compiles, EEVEE_material_get() returns NULL and the
+  material is not drawn (depth and shadows only), instead of crashing.
+
+docs/design/blender.md §2.2 (milestone M5).
+
+diff --git a/source/blender/draw/engines/eevee/eevee_materials.c b/source/blender/draw/engines/eevee/eevee_materials.c
+index 81283a5..74fe39e 100644
+--- a/source/blender/draw/engines/eevee/eevee_materials.c
++++ b/source/blender/draw/engines/eevee/eevee_materials.c
+@@ -24,6 +24,7 @@
+ #include "DNA_view3d_types.h"
+ #include "DNA_world_types.h"
+ 
++#include "GPU_capabilities.h"
+ #include "GPU_material.h"
+ 
+ #include "DEG_depsgraph_query.h"
+@@ -500,6 +501,11 @@ BLI_INLINE void material_shadow(EEVEE_Data *vedata,
+     GPUMaterial *gpumat = (use_shadow_shader) ?
+                               EEVEE_material_get(vedata, scene, ma, NULL, mat_options) :
+                               EEVEE_material_default_get(scene, ma, mat_options);
++    if (gpumat == NULL) {
++      emc->shadow_grp = NULL;
++      emc->shadow_grp_p = NULL;
++      return;
++    }
+ 
+     /* Avoid possible confusion with depth pre-pass options. */
+     int option = KEY_SHADOW;
+@@ -612,6 +618,13 @@ static EeveeMaterialCache material_opaque(EEVEE_Data *vedata,
+     SET_FLAG_FROM_TEST(mat_options, use_ssrefract, VAR_MAT_REFRACT);
+     SET_FLAG_FROM_TEST(mat_options, is_hair, VAR_MAT_HAIR);
+     GPUMaterial *gpumat = EEVEE_material_get(vedata, scene, ma, NULL, mat_options);
++    if (gpumat == NULL) {
++      /* No shader for this material on this GPU: depth and shadows only. */
++      emc->shading_grp = NULL;
++      emc->shading_grp_p = NULL;
++      emc->shading_gpumat = NULL;
++      return *emc;
++    }
+     const bool use_sss = GPU_material_flag_get(gpumat, GPU_MATFLAG_SUBSURFACE);
+ 
+     int ssr_id = (((effects->enabled_effects & EFFECT_SSR) != 0) && !use_ssrefract) ? 1 : 0;
+@@ -697,6 +710,9 @@ static EeveeMaterialCache material_transparent(EEVEE_Data *vedata,
+     /* Depth prepass */
+     int mat_options = VAR_MAT_MESH | VAR_MAT_DEPTH;
+     GPUMaterial *gpumat = EEVEE_material_get(vedata, scene, ma, NULL, mat_options);
++    if (gpumat == NULL) {
++      return emc;
++    }
+     struct GPUShader *sh = GPU_material_get_shader(gpumat);
+ 
+     DRWShadingGroup *grp = DRW_shgroup_create(sh, psl->transparent_pass);
+@@ -718,6 +734,9 @@ static EeveeMaterialCache material_transparent(EEVEE_Data *vedata,
+     int mat_options = VAR_MAT_MESH | VAR_MAT_BLEND;
+     SET_FLAG_FROM_TEST(mat_options, use_ssrefract, VAR_MAT_REFRACT);
+     GPUMaterial *gpumat = EEVEE_material_get(vedata, scene, ma, NULL, mat_options);
++    if (gpumat == NULL) {
++      return emc;
++    }
+ 
+     DRWShadingGroup *grp = DRW_shgroup_create(GPU_material_get_shader(gpumat),
+                                               psl->transparent_pass);
+@@ -881,7 +900,7 @@ void EEVEE_materials_cache_populate(EEVEE_Data *vedata,
+               oedata->test_data = &sldata->probes->vis_data;
+             }
+ 
+-            ADD_SHGROUP_CALL(matcache[i].shading_grp, ob, mat_geom[i], oedata);
++            ADD_SHGROUP_CALL_SAFE(matcache[i].shading_grp, ob, mat_geom[i], oedata);
+             ADD_SHGROUP_CALL_SAFE(matcache[i].depth_grp, ob, mat_geom[i], oedata);
+             ADD_SHGROUP_CALL_SAFE(matcache[i].shadow_grp, ob, mat_geom[i], oedata);
+             *cast_shadow = *cast_shadow || (matcache[i].shadow_grp != NULL);
+@@ -983,7 +1002,21 @@ void EEVEE_materials_cache_finish(EEVEE_ViewLayerData *UNUSED(sldata), EEVEE_Dat
+   BLI_ghash_free(pd->material_hash, NULL, NULL);
+   pd->material_hash = NULL;
+ 
+-  SET_FLAG_FROM_TEST(effects->enabled_effects, effects->sss_surface_count > 0, EFFECT_SSS);
++  /* Subsurface Scattering writes 6 color attachments; with fewer (V3D 4.2: 4) the materials use a
++   * shader without the SSS outputs (eevee_shaders.cc) and their subsurface light is diffuse. */
++  const bool sss_supported = GPU_max_color_attachments() >= 6;
++  if (effects->sss_surface_count > 0 && !sss_supported) {
++    static bool warned = false;
++    if (!warned) {
++      fprintf(stderr,
++              "EEVEE: Subsurface Scattering is not available on this GPU (%d color attachments, 6 "
++              "needed); subsurface materials render as diffuse\n",
++              GPU_max_color_attachments());
++      warned = true;
++    }
++  }
++  SET_FLAG_FROM_TEST(
++      effects->enabled_effects, effects->sss_surface_count > 0 && sss_supported, EFFECT_SSS);
+ }
+ 
+ void EEVEE_materials_free(void)
+diff --git a/source/blender/draw/engines/eevee/eevee_shaders.cc b/source/blender/draw/engines/eevee/eevee_shaders.cc
+index 00b1803..b29f4a9 100644
+--- a/source/blender/draw/engines/eevee/eevee_shaders.cc
++++ b/source/blender/draw/engines/eevee/eevee_shaders.cc
+@@ -1293,6 +1293,9 @@ static const char *eevee_get_frag_info(int options, char **r_src)
+     if (is_alpha_blend) {
+       info_name = "eevee_legacy_material_surface_frag_alpha_blend";
+     }
++    else if (GPU_max_color_attachments() < 6) {
++      info_name = "eevee_legacy_material_surface_frag_opaque_no_sss";
++    }
+     else {
+       info_name = "eevee_legacy_material_surface_frag_opaque";
+     }
+@@ -1439,6 +1442,16 @@ struct GPUMaterial *EEVEE_material_get(
+     default:
+       ma = EEVEE_material_default_error_get();
+       mat = eevee_material_get_ex(scene, ma, nullptr, options, false);
++      if (GPU_material_status(mat) != GPU_MAT_SUCCESS) {
++        /* Not even the error material's shader compiles: the caller draws nothing with this
++         * material instead of drawing with a material that has no shader. */
++        static bool reported = false;
++        if (!reported) {
++          fprintf(stderr, "EEVEE: a material shader and its error shader failed to compile\n");
++          reported = true;
++        }
++        return nullptr;
++      }
+       break;
+   }
+   /* Returned material should be ready to be drawn. */
+diff --git a/source/blender/draw/engines/eevee/shaders/infos/eevee_legacy_material_info.hh b/source/blender/draw/engines/eevee/shaders/infos/eevee_legacy_material_info.hh
+index 5cd18ea..49c0921 100644
+--- a/source/blender/draw/engines/eevee/shaders/infos/eevee_legacy_material_info.hh
++++ b/source/blender/draw/engines/eevee/shaders/infos/eevee_legacy_material_info.hh
+@@ -199,6 +199,15 @@ GPU_SHADER_CREATE_INFO(eevee_legacy_material_surface_frag_opaque)
+     .fragment_out(4, Type::FLOAT, "sssRadius")
+     .fragment_out(5, Type::VEC3, "sssAlbedo");
+ 
++/* For GPUs with fewer than 6 color attachments (V3D 4.2: 4): no Subsurface Scattering outputs, the
++ * subsurface light is added to the radiance (EFFECT_SSS is off there, see eevee_materials.c). */
++GPU_SHADER_CREATE_INFO(eevee_legacy_material_surface_frag_opaque_no_sss)
++    .define("NO_SSS_OUTPUTS")
++    .additional_info("eevee_legacy_material_surface_frag_common")
++    .fragment_out(0, Type::VEC4, "outRadiance")
++    .fragment_out(1, Type::VEC2, "ssrNormals")
++    .fragment_out(2, Type::VEC4, "ssrData");
++
+ GPU_SHADER_CREATE_INFO(eevee_legacy_material_surface_frag_alpha_blend)
+     .define("USE_ALPHA_BLEND")
+     .additional_info("eevee_legacy_material_surface_frag_common")
+diff --git a/source/blender/draw/engines/eevee/shaders/surface_frag.glsl b/source/blender/draw/engines/eevee/shaders/surface_frag.glsl
+index e5fb19c..6880aa7 100644
+--- a/source/blender/draw/engines/eevee/shaders/surface_frag.glsl
++++ b/source/blender/draw/engines/eevee/shaders/surface_frag.glsl
+@@ -102,15 +102,18 @@ void main()
+   outRadiance = vec4(cl.radiance, holdout);
+   ssrNormals = normal_encode(normalize(mat3(ViewMatrix) * out_ssr_N), vec3(0.0));
+   ssrData = vec4(out_ssr_color, out_ssr_roughness);
++#  ifndef NO_SSS_OUTPUTS
+   sssIrradiance = out_sss_radiance;
+   sssRadius = out_sss_radius;
+   sssAlbedo = out_sss_color;
++#  endif
+ #endif
+ 
+-#ifdef USE_REFRACTION
++#if defined(USE_REFRACTION) || defined(NO_SSS_OUTPUTS)
+   /* SSRefraction pass is done after the SSS pass.
+    * In order to not lose the diffuse light totally we
+-   * need to merge the SSS radiance to the main radiance. */
++   * need to merge the SSS radiance to the main radiance.
++   * Without the SSS outputs it is merged too. */
+   const bool use_refraction = true;
+ #else
+   const bool use_refraction = false;
+@@ -124,7 +127,9 @@ void main()
+   float alpha_div = safe_rcp(alpha);
+   outRadiance.rgb *= alpha_div;
+   ssrData.rgb *= alpha_div;
++#  ifndef NO_SSS_OUTPUTS
+   sssAlbedo.rgb *= alpha_div;
++#  endif
+ 
+   if (renderPassAOV) {
+     if (aov_is_valid) {
+diff --git a/source/blender/gpu/GPU_capabilities.h b/source/blender/gpu/GPU_capabilities.h
+index 09eb917..0d86027 100644
+--- a/source/blender/gpu/GPU_capabilities.h
++++ b/source/blender/gpu/GPU_capabilities.h
+@@ -16,6 +16,8 @@ extern "C" {
+ #endif
+ 
+ int GPU_max_texture_size(void);
++/** Color attachments a frame-buffer can have and draw to (OpenGL: 8; V3D 4.2, Raspberry Pi 4: 4). */
++int GPU_max_color_attachments(void);
+ int GPU_max_texture_3d_size(void);
+ int GPU_max_texture_layers(void);
+ int GPU_max_textures(void);
+diff --git a/source/blender/gpu/intern/gpu_capabilities.cc b/source/blender/gpu/intern/gpu_capabilities.cc
+index fbc17d9..6cbd7bc 100644
+--- a/source/blender/gpu/intern/gpu_capabilities.cc
++++ b/source/blender/gpu/intern/gpu_capabilities.cc
+@@ -33,6 +33,11 @@ int GPU_max_texture_size()
+   return GCaps.max_texture_size;
+ }
+ 
++int GPU_max_color_attachments()
++{
++  return GCaps.max_color_attachments;
++}
++
+ int GPU_max_texture_3d_size(void)
+ {
+   return GCaps.max_texture_3d_size;
+diff --git a/source/blender/gpu/intern/gpu_capabilities_private.hh b/source/blender/gpu/intern/gpu_capabilities_private.hh
+index 0bbdc45..f233a2c 100644
+--- a/source/blender/gpu/intern/gpu_capabilities_private.hh
++++ b/source/blender/gpu/intern/gpu_capabilities_private.hh
+@@ -20,6 +20,7 @@ namespace blender::gpu {
+  */
+ struct GPUCapabilities {
+   int max_texture_size = 0;
++  int max_color_attachments = 8;
+   int max_texture_3d_size = 0;
+   int max_texture_layers = 0;
+   int max_textures = 0;
+diff --git a/source/blender/gpu/opengl/gl_backend.cc b/source/blender/gpu/opengl/gl_backend.cc
+index 018d848..567254b 100644
+--- a/source/blender/gpu/opengl/gl_backend.cc
++++ b/source/blender/gpu/opengl/gl_backend.cc
+@@ -522,6 +522,7 @@ void GLBackend::capabilities_init()
+     glGetIntegerv(GL_MAX_DRAW_BUFFERS, &max_draw_buffers);
+     GLContext::max_color_attachments = std::max<GLint>(
+         1, std::min({max_color_attachments, max_draw_buffers, GLint(GPU_FB_MAX_COLOR_ATTACHMENT)}));
++    GCaps.max_color_attachments = GLContext::max_color_attachments;
+   }
+   glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &GCaps.max_texture_layers);
+   glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &GCaps.max_textures_frag);

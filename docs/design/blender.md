@@ -6,8 +6,8 @@ arm64 (cross-built, minimal option set), §7.3; M3 done: Cycles renders the defa
 solid viewport, edit mode, save/reload, preferences window, F12 Cycles render into the image editor — after two
 GPU patches; injected keyboard and mouse input acts (Tab, middle-drag and numpad orbit, F12), §7.5–7.6; M6
 done as test packages (unpublished): blender-3.6.23-1 + 15 library packages with OpenColorIO (Filmic) and
-OpenSubdiv, installed with pkgman and started from the Deskbar entry; the factory scene renders as it is, §7.7.
-Open: EEVEE (M5, incl. an F12 crash with the EEVEE engine).** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+OpenSubdiv, installed with pkgman and started from the Deskbar entry; the factory scene renders as it is, §7.7;
+M5 done: EEVEE Legacy renders on V3D's 4 color attachments (SSS off) — Material Preview and F12, no crash, §7.9.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -695,6 +695,30 @@ is the frame-buffer half of it — and the F12 crash).
   crash with EEVEE (M5); an app icon/resources (none yet); libsdl2 -8 published first (the package requires
   it); the sysroot holds all these unpublished libraries (risk for other ports' configures, noted 11-19).
 
+### 7.9 M5 result (2026-11-19 09:27–09:40, session bl5, release image-2026-11-19)
+
+- **Crash root cause** (from the source; the fix removed it, no symbolized stack was needed): every lit
+  EEVEE material uses `eevee_legacy_material_surface_frag_opaque`, 6 outputs, which does not link on 4 color
+  attachments — and so does EEVEE's pink *error* material, which uses the same shader. `EEVEE_material_get()`
+  falls back to the error material and returns it although it failed too (only a release-disabled
+  `BLI_assert` checks); the draw code then made a shading group from its NULL shader → segment violation
+  (debug_server's one-frame trace pointed into .rela.dyn: a call through garbage).
+- **Fix, `patches/blender/0007-eevee-four-color-attachments.patch`:** `GPU_max_color_attachments()`;
+  `eevee_legacy_material_surface_frag_opaque_no_sss` (radiance + 2 SSR outputs; the subsurface light is
+  added to the radiance) chosen below 6 attachments; `EFFECT_SSS` off there with a one-time message
+  ("EEVEE: Subsurface Scattering is not available on this GPU (4 color attachments, 6 needed); subsurface
+  materials render as diffuse"); and a safety net — when not even the error material compiles,
+  `EEVEE_material_get()` returns NULL and the material is not drawn (depth/shadows only) instead of
+  crashing. The safety net is not exercised on the Pi now (every material links); it is reviewed code.
+- **On the Pi** (`tools/pi-tests/blender-m5.sh`, `blender-m5-scene.py`; package blender **-2**):
+  factory scene with EEVEE **35 s** (1920×1080), a lit 5-material scene 960×540 EEVEE **57 s** (Cycles 32
+  samples: 69 s), 0 shader errors, SSS message once, 0 debugger entries, 0 PANIC. GUI: **Material Preview**
+  in the viewport and **F12 with EEVEE** (16.8 s into the Render window) — the path that crashed in §7.6.
+  PNGs and frames in `artifacts/blender-tests/m5/` (factory_0001, scene_0001, cycles_0001,
+  material-preview, f12-eevee; viewed): reflections (SSR), soft shadows and AO match the Cycles reference;
+  the transmission monkey is dark in EEVEE as everywhere without screen-space refraction enabled on the material.
+- No x86-64 reference render (not cheap here); Cycles of the same scene is the comparison.
+
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
 **USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
@@ -705,8 +729,8 @@ is the frame-buffer half of it — and the F12 crash).
 > - **Works:** the whole UI, the solid (Workbench) viewport, edit mode, modifiers including Subdivision
 >   Surface, save/load, the Preferences window, Cycles rendering on the CPU (F12 into the image editor, or
 >   headless: `Blender -b scene.blend -E CYCLES -f 1`), Python scripting, Filmic colour management.
-> - **Render with Cycles, not EEVEE:** in Properties ▸ Render, set Render Engine to *Cycles* before F12. The
->   default scene uses EEVEE, which needs 6 colour outputs; the Pi 4's GPU has 4 (see Known issues).
+> - **EEVEE and Cycles both render** (F12, Material Preview, Rendered view). EEVEE is the faster one; on the
+>   Pi 4's GPU it renders without Subsurface Scattering (see Known issues).
 > - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores); the viewport redraws
 >   at about 4–5 frames per second at 1600×900 — use a smaller window for smoother navigation.
 > - **Memory:** a simple scene needs about 300–400 MB; large scenes and big textures may not fit in 4 GB.
@@ -715,9 +739,9 @@ is the frame-buffer half of it — and the F12 crash).
 
 **KNOWN-ISSUES — Blender**
 
-> - **EEVEE does not work** (Material Preview, Rendered view and F12 with the EEVEE engine): its material
->   shaders need 6 colour attachments, the V3D 4.2 GPU has 4; F12 with EEVEE currently crashes. Use Cycles
->   or Workbench. (Fix planned: docs/design/blender.md M5.)
+> - **EEVEE without Subsurface Scattering:** the Pi 4's GPU (V3D 4.2) has 4 colour attachments, EEVEE's
+>   SSS needs 6; subsurface materials render as diffuse (a message in the terminal says so once). Use
+>   Cycles for skin, wax and similar materials.
 > - **No denoising:** OpenImageDenoise is not ported; renders are noisier at low sample counts (the
 >   Denoise checkbox is ignored instead of stopping the render).
 > - **No video, audio, Alembic/USD/OpenVDB import, fluid simulation** in this first package (built without
