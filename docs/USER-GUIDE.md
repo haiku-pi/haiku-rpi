@@ -863,8 +863,9 @@ Blender's renders need).
   Material Preview, Rendered view), Filmic colour management, Python scripting; headless renders:
   `Blender -b scene.blend -E CYCLES -f 1` (or `-E BLENDER_EEVEE`; EEVEE needs the desktop running).
 - **Speed (measured on the Pi 4, 4 cores):** the factory scene at 1920×1080 renders in about 35 s with EEVEE and
-  1 min 37 s with Cycles; the viewport redraws at about 4–6 frames per second at 1600×900 — a smaller window
-  is smoother. A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
+  1 min 37 s with Cycles. The viewport is GPU-bound: orbiting at 1322×762 runs at about 5 frames per second
+  (blender 3.6.23-4; -2: 4); a 1024×600 window gives about 12, and with viewport anti-aliasing and Smooth Wires
+  off (Preferences ▸ Viewport) about 15. A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
 - **Input:** click into the Blender window once before typing — keys go to the active window, and to the area
   under the mouse pointer.
 - Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, no denoiser, no video/audio, no
