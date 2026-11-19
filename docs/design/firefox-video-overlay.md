@@ -19,18 +19,20 @@ as `scripts/build-firefox.sh source` leaves it); **[H]** `sources/haiku` (`rpi4`
    software compositor converts and draws the video itself, and nothing hands a video surface to the Haiku
    widget. The pieces it needs on our side already work for MediaPlayer: B_YUV420 overlay bitmaps,
    `SetViewOverlay(..., B_OVERLAY_TRANSFER_CHANNEL)` and alpha keying.
-2. **Today (§1):** Haiku gets *software WebRender* (SWGL) only. The video is promoted to a compositor surface,
-   and the `SwComposite` thread converts it from YUV with `composite_yuv`, straight from the shared-memory planes into the
-   window's B_RGBA32 back bitmap. Then the `Renderer` thread copies the dirty rectangle into a second bitmap and
-   `DrawBitmap()`s it, and app_server copies it twice more. **Measured** (perf-round-h20 C6): `Renderer` +
-   `SwComposite` take ≈1 CPU per 720p stream. **Found here:** SWGL is compiled by GCC, so its NEON paths are
+2. **Today (§1):** Haiku gets *software WebRender* (SWGL) only. Read from the code, not yet confirmed on the Pi:
+   the video is promoted to an external compositor surface, and the `SwComposite` thread converts it from YUV with
+   `composite_yuv`, straight from the shared-memory planes into the window's B_RGBA32 back bitmap. Then the
+   `Renderer` thread copies the dirty rectangle into a second bitmap and `DrawBitmap()`s it, and app_server copies
+   it twice more. WebRender marks the video's whole rectangle dirty on every frame. **Measured** (perf-round-h20 C6):
+   `Renderer` + `SwComposite` take ≈1 CPU per 720p stream. The `Renderer` half (≈0.5 core) is not explained by
+   this path; step 0 splits it. **Found here:** SWGL is compiled by GCC, so its NEON paths are
    compiled out (they exist for clang only).
 3. **Recommendation: option A1**, an overlay hook inside the existing software path (§2.3). When the compositor
    reaches a promoted 8-bit 4:2:0 video surface, the widget copies its planes into a B_YUV420 overlay bitmap and
    flips it, and SWGL fills the surface's rectangle with the overlay key instead of converting it. A second step
    stops a new video frame from dirtying the window. After that, a playing video on a static page costs one
-   1.4 MB (720p) or 3.1 MB (1080p) copy per frame, with no SWGL and no app_server work. **Estimated:** ~600 lines (C++ +
-   ~150 lines of Rust in WebRender's `SwCompositor`); 4–8 agent-days including 4–6 rebuilds.
+   1.4 MB (720p) or 3.1 MB (1080p) copy per frame, with no SWGL and no app_server work. **Estimated:** ~700 lines (~450 C++ +
+   ~250 Rust in WebRender's `SwCompositor` and `composite.rs`); 5–8 agent-days including 4–6 rebuilds.
 4. **A full "native layer" backend (A2)** is the upstream shape that macOS (CoreAnimation) and Wayland
    (subsurfaces) use: every WebRender tile becomes a layer that our code composites. **Estimated:** 1.5–2.5 kLoC,
    8–15 agent-days, and the risk spreads to all page drawing. Not first.
@@ -82,8 +84,16 @@ the lock succeeds and there is no temporary surface.
 | 7 | `EndRemoteDrawingInRegion`: `memcpy` of the dirty bounding box back→front bitmap, then window lock, `DrawBitmap(front)`, `Sync()` (on the `Renderer` thread) | [F] `widget/haiku/HaikuWindowBuffer.cpp:96-170` | 3.7 MB |
 | 8 | app_server: bitmap → back buffer, then back buffer → frame buffer (keyed write while an overlay is shown) | gpu-present.md §1 steps 9–10 | 2 × 3.7 MB |
 
-That is five rectangle-sized passes per frame for the video alone (3.7 MB each at 720p, 8.3 MB at 1080p full
-screen), one of them with colour maths. The *picture* is not drawn by the CPU as RGB anywhere else: the decode
+Steps 4–6 are read from the code and not yet confirmed on the Pi (§1.3). That is four rectangle-sized passes per
+frame for the video alone (steps 6, 7, 8 ×2: 3.7 MB each at 720p, 8.3 MB at 1080p full screen), one of them with
+colour maths.
+
+**The video's rectangle is dirty on every composite**, whatever changed. `push_compositor_surface()` adds each
+compositor surface as a composite tile whose dirty rectangle is the whole surface ([F]
+`gfx/wr/webrender/src/composite.rs:882-992`, "the entire area of external surfaces are treated as dirty", `:1157-1159`).
+For a native-kind compositor (which `SwCompositor` is) the renderer unions every tile's dirty rectangle into **one**
+rectangle (`gfx/wr/webrender/src/renderer/composite.rs:1317-1395`, `max_partial_present_rects` 1), and that rectangle
+is what `RenderCompositorSWGL` asks the widget for (`RenderCompositorSWGL.cpp:163-198`). The *picture* is not drawn by the CPU as RGB anywhere else: the decode
 side already saves what it can (videocore-services §1.5).
 
 ### 1.3 Where the CPU goes (measured) and what is not known yet
@@ -95,10 +105,11 @@ side already saves what it can (videocore-services §1.5).
 - **Measured** (videocore-services §1.5, 11-19): with the VideoCore decoding, the main process still takes about 2
   cores at 720p and 1080p, and 1080p drops ~40 % of its frames either way. The decoder is not the bottleneck; the
   drawing is.
-- **Not known:** how `Renderer`'s half-core splits between WebRender frame work, step 7's `memcpy` and its
-  `DrawBitmap` + `Sync()` waits; and whether the video is promoted at all on Haiku (step 4). If it is not, SWGL
-  converts YUV with the `brush_yuv_image` shader on `Renderer` instead, which is slower and is the same CPU class.
-  Plan step 0 measures both without a rebuild (§6).
+- **Not known:** whether the video is promoted at all on Haiku (step 4). If it is not, SWGL converts the YUV with
+  the `brush_yuv_image` shader on `Renderer` instead, which would explain `Renderer`'s half-core; then `SwComposite`
+  only copies tiles. If it is promoted, `Renderer`'s ≈0.5 core is *not* explained by the path above. Step 7's
+  3.7 MB `memcpy` is ~1–2 ms (**estimated**), and the rest would be WebRender frame work or the `DrawBitmap` +
+  `Sync()` round trip. Plan step 0 settles both without a rebuild (§6).
 
 ### 1.4 SWGL is compiled without its NEON paths (found here)
 
@@ -107,8 +118,23 @@ under clang** ([F] `gfx/wr/swgl/src/vector_type.h:5-14`). `-ffast-math` is likew
 HaikuPorts builds Firefox with clang; `build-firefox.sh` uses the Haiku cross GCC (see `build-spidermonkey.sh` for
 why), so on our build SWGL runs its generic `vector_size` code.
 
-Host probe (2026-11-19, `/home/houp/.claude/jobs/62a3561e/tmp/swglprobe/probe.cc`: includes `vector_type.h`, `#error`
-without `USE_NEON`, calls `vqaddq_s16`):
+Host probe (2026-11-19), `probe.cc`:
+
+```cpp
+#include <cstdint>
+#include <cstring>
+#include <algorithm>
+#define SI static inline
+#include "vector_type.h"      // gfx/wr/swgl/src
+#ifndef USE_NEON
+#error "no NEON"
+#endif
+using namespace glsl;
+int16x8_t sat(int16x8_t a, int16x8_t b) { return vqaddq_s16(a, b); }
+```
+
+`-std=c++17 -O2 -c`, `-I gfx/wr/swgl/src`; clang also gets `-isystem` for the sysroot's `develop/headers/c++` and
+`c++/aarch64-unknown-haiku`:
 - `clang++` 21.1.8 `--target=aarch64-unknown-haiku --sysroot=artifacts/sysroot-arm64` with the sysroot's libstdc++
   headers compiles it.
 - `aarch64-unknown-haiku-g++` (GCC 16.2.0) stops at the `#error`.
@@ -170,16 +196,27 @@ and `SwComposite`. One promoted surface per window goes to the plane:
    window buffer already takes on the `Renderer` thread (`HaikuWindowBuffer.cpp:152`). It also handles
    `ClearViewOverlay` when the video leaves, and reaches the compositor through `InProcessCompositorWidget::RealWidget()`.
    **Estimated** ~300 lines.
-4. **Step A1b, no window work while only the video changes.** WebRender's dirty rect for a frame includes the
-   video surface's rectangle whenever its image changes (to confirm in step 0). With the plane hosting it and its
-   rectangle, clip and key unchanged since the last frame, nothing in the window framebuffer changes. A1b removes that
-   rectangle from the dirty region, so `SwComposite`, step 7's `memcpy` and `DrawBitmap`, and app_server's two copies
-   all go away for a static page. **Estimated** ~100 lines of Rust in `SwCompositor` / the renderer's dirty-rect
-   assembly (`renderer/mod.rs:3762-3808` hands `results.dirty_rects` to `composite_native`).
+4. **Step A1b, no window work while only the video changes.** WebRender marks the surface's whole rectangle dirty
+   on *every* frame (§1.2). With the plane hosting the surface and its rectangle, clip and key unchanged since the
+   last frame, nothing in the window framebuffer changes. A1b stops `push_compositor_surface()` from marking such a
+   surface dirty (`composite.rs:882-992`), keyed on "hosted on the plane last frame" as the compositor reported it.
+   Then a frame where only the video changed has an empty dirty rectangle: `RenderCompositorSWGL` already installs a
+   2×2 dummy framebuffer and never calls the widget (`RenderCompositorSWGL.cpp:187-197`). So `SwComposite`,
+   step 7's `memcpy` and `DrawBitmap`, and app_server's two copies all go away for a static page.
+   - **It cannot be done in C++ alone.** The renderer hands the compositor a single union rectangle, so
+     `RenderCompositorSWGL` cannot tell "the video changed" from "a control over the video changed".
+   - A move or shrink of the surface already invalidates the dirty rects (`update_dirty_rect_validity`,
+     `composite.rs:1143-1169`).
+   - A frame the compositor declines after being treated as clean shows the plane's previous picture for one frame,
+     and is marked dirty again on the next one.
 
-Copies per 720p frame: today 5 rectangle-sized passes (§1.2); A1 3 passes (key fill, memcpy, app_server ×2,
-no colour maths) + 1.4 MB into the overlay; **A1b: 1.4 MB into the overlay only**. Expected parent CPU for the video
-with A1b: close to MediaPlayer's consumer copy, **estimated** 0.1–0.2 core at 720p, against ≈1 measured today.
+   **Estimated** ~100–150 lines of Rust in `composite.rs` / `sw_compositor.rs`.
+
+Copies per 720p frame:
+- Today: 4 rectangle-sized passes (§1.2), one with colour maths.
+- A1: still 4 passes (a key fill instead of `composite_yuv`, then memcpy and app_server ×2), now without the colour
+  maths, plus 1.4 MB into the overlay. A1 removes maths, not passes.
+- **A1b: 1.4 MB into the overlay only.** Expected parent CPU for the video with A1b: close to MediaPlayer's consumer copy, **estimated** 0.1–0.2 core at 720p, against ≈1 measured today.
 
 **A2: a native layer backend (`NativeLayerRootHaiku`).**
 - New code: `gfx/layers/NativeLayerHaiku.{h,cpp}` (tile layers in CPU buffers, external layers on overlay
@@ -248,8 +285,8 @@ needs the same window context, so it shares the main blocker.
 | | What | Gain for a 720p video (**estimated** unless noted) | Effort (**estimated**) | Risk |
 |---|---|---|---|---|
 | 0 | SWGL compiled with clang (NEON paths in) | 10–40 % of SWGL's time; all pages, not only video | ~20 lines in `gfx/wr/swgl/build.rs` (clang for `aarch64-unknown-haiku`), 0.5–1 day, 1 build | Mixed compilers in `gkrust` (same Itanium ABI and libstdc++; check step must still pass: no `tpidr_el0` reads, no TLSDESC) |
-| A1 | Overlay hook, key fill instead of `composite_yuv` | Removes the YUV maths (most of `SwComposite`'s ≈0.4 core, measured total ≈1 core) | ~600 lines (~150 Rust), 3–5 days, 3–5 builds | Low–medium: falls back to today's path in every unusual case (§2.4) |
-| A1b | + no window dirtying while only the video changes | Removes the remaining window copies: ≈0.1–0.2 core left | +~100 lines Rust, 1–3 days, 1–2 builds | Medium: dirty-rect logic in WebRender; stale-pixel bugs if wrong |
+| A1 | Overlay hook, key fill instead of `composite_yuv` | Removes the YUV maths, not the passes (if promoted: most of `SwComposite`'s ≈0.4 core; measured total ≈1 core) | ~600 lines (~150 Rust), 3–5 days, 3–5 builds | Low–medium: falls back to today's path in every unusual case (§2.4) |
+| A1b | + no window dirtying while only the video changes | Removes the remaining window copies: ≈0.1–0.2 core left | +~100–150 lines Rust (`composite.rs`; not possible in C++ alone, §2.3), 2–3 days, 1–2 builds | Medium: dirty-rect logic in WebRender; stale-pixel bugs if wrong |
 | A2 | Native layer backend | Like A1b, by design | 1.5–2.5 kLoC, 8–15 days | High: all page compositing becomes ours |
 | B | Hardware WebRender on V3D | Video maths on the GPU; window present costs GPU blit + 2 app_server copies; all pages faster if it works | 3–5 days to a first frame, then open-ended (1–3 weeks) | High: untested driver/WebRender pairing, parent-process crashes, shader start-up |
 
@@ -280,7 +317,7 @@ Every step ends with a log entry with the numbers. A Pi step uses the shared ben
 
 | Step | What | Pass criteria |
 |---|---|---|
-| 0 | **Measure, no rebuild** (release image, ~1 session). Per-thread CPU of the parent (`Renderer`, `SwComposite`, main) at 720p/1080p in a 1280×720 element and fullscreen. WebRender's profiler HUD (`gfx.webrender.debug.profiler-ui` with the "Compositor surface underlays/overlays/blits" counters, `gfx/wr/webrender/src/profiler.rs:106, 548`; availability in a release build to confirm) shows whether the video is promoted. `about:support` confirms "WebRender (Software)" | Recorded: promotion yes/no and which kind; the `Renderer`/`SwComposite` split; app_server's CPU. If **not promoted**, find which `SurfacePromotionFailure` (WebRender logs it with `gfx.webrender.debug.*`) before A1 |
+| 0 | **Measure, no rebuild** (release image, ~1 session). Per-thread CPU of the parent (`Renderer`, `SwComposite`, main) at 720p/1080p in a 1280×720 element and fullscreen. WebRender's profiler HUD (`gfx.webrender.debug.profiler` true and `gfx.webrender.debug.profiler-ui` naming the "Compositor surface underlays/overlays/blits" counters; prefs in [F] `modules/libpref/init/all.js:406, 421`, counters in `gfx/wr/webrender/src/profiler.rs:106, 548`) shows whether the video is promoted, on an HDMI capture. `about:support` confirms "WebRender (Software)" | Recorded: promotion yes/no and which kind; the `Renderer`/`SwComposite` split; app_server's CPU. If **not promoted**, find which `SurfacePromotionFailure` before A1. `gfx.webrender.debug.surface-promotion-logging` (`StaticPrefList.yaml:8367`) turns on the `warn!` in `tile_cache/mod.rs:2180-2192`; the release build keeps `info` and above (`toolkit/library/rust/shared/Cargo.toml:41`); where Gecko routes the Rust log on Haiku (stderr / `MOZ_LOG`) is to be confirmed in the session |
 | 1 | **Baseline rebuild** with GCC 16.2: `build-firefox.sh deps`, then `config`…`package` unchanged | `check` passes; Firefox starts on the Pi, plays both clips; dropped frames and per-thread CPU within the noise of step 0; 0 debugger entries over 5 runs |
 | 2 | **Option 0**: SWGL with clang (`patches/firefox/0005`) | Same functional checks; `SwComposite` CPU at 720p measured against step 1 (any gain kept, none = revert) |
 | 3 | **A1** (`patches/firefox/0006`, WebRender hook + `RenderCompositorSWGL` + `HaikuVideoOverlay`) | HDMI capture: the video on the plane (colour bars right, the key never visible on an unhovered video, controls drawn over it). The driver's plane statistics count one flip per video frame. `SwComposite` CPU at 720p down by ≥ 0.25 core against step 2. Fallbacks each exercised once: scroll, half-visible, two videos, 10-bit HEVC, six planes taken (`overlaytest` ×6), a mode change during playback. No regression on a page without video |
