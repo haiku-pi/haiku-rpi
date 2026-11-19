@@ -8,6 +8,8 @@ Quake (QuakeSpasm, OpenGL)|quakespasm|cd $NP/apps/QuakeSpasm && exec ./quakespas
 Quake (vkQuake, Vulkan)|vkquake|cd $NP/apps/vkQuake && exec ./vkquake
 Quake II (demo)|quake2|cd $NP/apps/quake2 && exec ./Quake2
 Quake III Arena (demo)|quake3|cd $NP/apps/Quake3 && exec ./Quake3
+# 3D (Blender 3.6: starts in ~20 s; the window opens over most of the screen)
+Blender 3.6|blender|exec /boot/system/apps/Blender/Blender
 # GPU tests
 glmark2 (window)|glmark2|exec /boot/system/apps/Terminal -t glmark2 glmark2-es2
 glmark2 (full screen)|glmark2-full|exec /boot/system/apps/Terminal -t glmark2 glmark2-es2 --fullscreen

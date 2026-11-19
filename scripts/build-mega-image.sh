@@ -20,7 +20,9 @@
 #   packages     artifacts/packages/*.hpkg or the download folder of the Haiku build, else our published
 #                repository (https://haiku-pi.github.io/packages/arm64): wine wine_data wine_directx
 #                wine_x86 wine_x86_64 wine_mono wayland wayland_server libxkbcommon xkeyboard_config
-#                glmark2 photocraft
+#                glmark2 photocraft, blender and its libraries (python3.10 imath openexr3.2 libdeflate tiff
+#                boost1.83 tbb openimageio2.4 pugixml opencolorio2.3 yaml_cpp0.8 pystring minizip_ng
+#                opensubdiv3.5 libepoxy)
 #   the Quakes   artifacts/games/non-packaged (scripts/build-games.sh; its data: tools/mega/assets.txt)
 #   GL tools     artifacts/gl-stack/non-packaged/bin (scripts/build-gl-stack.sh): vkcube, glview
 #   Windows      artifacts/wine-apps/tree, artifacts/wine-games/tree/data/wine-games, else made from the
@@ -86,8 +88,12 @@ find_pkg() {	# NAME → path of its newest .hpkg
 	fi
 	echo "$f"
 }
+# (Blender: the package and the libraries it brings that the jam image does not have; packages placed in
+# /boot/system/packages are not resolved, so each is listed; libsdl2 >= 2.32.10-8 comes with the image)
 for name in wine wine_data wine_directx wine_x86 wine_x86_64 wine_mono wayland wayland_server libxkbcommon \
-		xkeyboard_config glmark2 photocraft; do
+		xkeyboard_config glmark2 photocraft \
+		blender python3.10 imath openexr3.2 libdeflate tiff boost1.83 tbb openimageio2.4 pugixml opencolorio2.3 \
+		yaml_cpp0.8 pystring minizip_ng opensubdiv3.5 libepoxy; do
 	f=$(find_pkg "$name") || exit 1
 	pkg_files+=("$f:/boot/system/packages/$(basename "$f")")
 	say "package $(basename "$f")"

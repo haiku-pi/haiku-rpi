@@ -34,6 +34,7 @@ gen="$root/sources/haiku/generated.arm64"
 sysroot="$root/artifacts/sysroot-arm64"
 np="$sysroot/boot/system/non-packaged"
 pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
+hostTools="$gen/objects/linux/x86_64/release/tools"
 tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
 out="$root/artifacts/packages-test/blender"
 package() { "$root/scripts/package-port.py" "$@" --out "$out"; }
@@ -484,6 +485,13 @@ blender_package() {
 	cmake --install "$bl/build" --prefix "$sys/apps/Blender" > "$bl/install.log" 2>&1 \
 		|| { tail -n 20 "$bl/install.log" >&2; exit 1; }
 	mv "$sys/apps/Blender/blender" "$sys/apps/Blender/Blender"
+	# the app's resources (HaikuPorts' blender3 rdef: vector icon, signature application/x-vnd.blender,
+	# version): stripped first, as package-port.py does not strip a program with resources (strip would drop them)
+	"$tools-strip" "$sys/apps/Blender/Blender"
+	sed -e 's/@MAJOR@/3/; s/@MIDDLE@/6/; s/@MINOR@/23/' \
+		"$root/tools/recipes/media-gfx/blender/additional-files/blender.rdef.in" > "$bl/blender.rdef"
+	LD_LIBRARY_PATH="$gen/objects/linux/lib" "$hostTools/rc/rc" -o "$bl/blender.rsrc" "$bl/blender.rdef"
+	LD_LIBRARY_PATH="$gen/objects/linux/lib" "$hostTools/xres" -o "$sys/apps/Blender/Blender" "$bl/blender.rsrc"
 	rm -f "$sys/apps/Blender"/blender.desktop "$sys/apps/Blender"/*.svg
 	mkdir -p "$sys/data/deskbar/menu/Applications"
 	ln -s ../../../../apps/Blender/Blender "$sys/data/deskbar/menu/Applications/Blender"
@@ -492,10 +500,10 @@ blender_package() {
 			libjpeg libexpat; do
 		r+=(--requires "lib:$lib")
 	done
-	# revision 2: EEVEE on 4 color attachments (patches/blender/0007)
-	package "$recipe" --revision 2 --system-prefix --no-devel --provides app:Blender \
+	# revision 2: EEVEE on 4 color attachments (patches/blender/0007); 3: the app icon
+	package "$recipe" --revision 3 --system-prefix --no-devel --provides app:Blender \
 		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 "${r[@]}"
-	"$pkgtool" list -i "$out/blender-3.6.23-2-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+	"$pkgtool" list -i "$out/blender-3.6.23-3-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its
