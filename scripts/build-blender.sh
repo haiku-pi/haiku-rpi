@@ -11,7 +11,7 @@
 #   sysroot      the packages the build needs extracted into artifacts/sysroot-arm64 (it was recreated
 #                11-03 without many of them; a library configure does not find silently drops a feature)
 #   python       CPython 3.10.22 (scripts/build-python.sh --version 3.10.22): python3.10 + _devel
-#   libdeflate imath openexr tiff epoxy boost tbb oiio sse2neon
+#   libdeflate imath openexr tiff epoxy boost tbb oiio pugixml sse2neon
 #                the libraries (packages <port> + <port>_devel; Imath, OIIO 2.4.15 and sse2neon from our
 #                recipes in tools/recipes/, the others from HaikuPorts' recipes and patchsets)
 #   freetype     FreeType with Brotli, static, into Blender's own deps/ (not packaged)
@@ -20,6 +20,7 @@
 #   configure    the cross configure (tools/cmake/haiku-arm64.cmake + tools/cmake/blender-minimal.cmake,
 #                -DBLENDER_HOST_TOOLS); fails unless its WITH_* options equal the host configure's
 #   build        ninja blender, under scripts/heavy-build.sh (≤ 12 GB)
+#   stage        the install tree + runtime packages for the Pi test, artifacts/blender-tests/
 #
 # Work directories: artifacts/cross-ports/<port>-<version>/ for the libraries,
 # artifacts/cross-ports/blender-3.6.23/{src,deps,host-build,host-tools,build}/ for Blender.
@@ -245,6 +246,18 @@ oiio() {
 		develop/headers/OpenImageIO/detail/fmt/format.h
 }
 
+# pugixml 1.15 (Cycles' XML reader; Blender's grease-pencil SVG export): the recipe's shared build.
+# Blender 3.6 looks for OIIO's internal copy as OpenImageIO/pugixml.hpp, where OIIO 2.4 no longer puts it
+# (detail/pugixml/, in the OIIO namespace), so Cycles needs a pugixml of its own (as Blender's own
+# library builds have)
+pugixml() {
+	local recipe="$ports/dev-libs/pugixml/pugixml-1.15.recipe"
+	"$cross" "$recipe" cmake -DBUILD_SHARED_LIBS=ON -DPUGIXML_BUILD_TESTS=OFF
+	cmake_relative pugixml
+	package "$recipe"
+	need non-packaged/lib/libpugixml.so.1 develop/headers/pugixml.hpp
+}
+
 # sse2neon 1.6.0 (Blender's pin): the one header, for Cycles' SSE code on NEON (blender.md §5); only a
 # sse2neon_devel package (package-port.py makes no runtime package without files)
 sse2neon() {
@@ -312,7 +325,7 @@ hosttools() {
 		-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
 		-DPYTHON_INCLUDE_DIR="$pyHost/include/python3.10" -DPYTHON_INCLUDE_CONFIG_DIR="$pyHost/include/python3.10" \
 		-DPYTHON_LIBRARY="$pyHost/lib/libpython3.10.a" -DPYTHON_LIBPATH="$pyHost/lib" \
-		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" \
+		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DPUGIXML_ROOT_DIR="$np" \
 		-DWEBP_INCLUDE_DIR="$sysroot/boot/system/develop/headers" -DWEBP_WEBP_LIBRARY="$dl/libwebp.so" \
 		-DWEBP_WEBPMUX_LIBRARY="$dl/libwebpmux.so" -DWEBP_WEBPDEMUX_LIBRARY="$dl/libwebpdemux.so" \
 		> "$bl/host-configure.log" 2>&1 || { tail -n 40 "$bl/host-configure.log" >&2; exit 1; }
@@ -328,7 +341,9 @@ hosttools() {
 # the cross configure: the toolchain file, the options file, the generators from hosttools
 configure() {
 	local diff
-	rm -rf "$bl/build"
+	# (BLENDER_CLEAN=1: from an empty build directory; otherwise CMake reconfigures the one there and
+	# ninja rebuilds only what changed)
+	[ "${BLENDER_CLEAN:-0}" = 1 ] && rm -rf "$bl/build"
 	# -lgcc_s: the cross g++ links programs with the static libgcc only, and then C++ exceptions end in
 	# terminate() (build-stk.sh). FreeType is static: its users link what it needs.
 	cmake -S "$bl/src" -B "$bl/build" -G Ninja -C "$options" -DCMAKE_TOOLCHAIN_FILE="$root/tools/cmake/haiku-arm64.cmake" \
@@ -340,6 +355,7 @@ configure() {
 		-DPYTHON_LIBRARY="$sysroot/boot/system/develop/lib/libpython3.10.so" \
 		-DPYTHON_LIBPATH="$sysroot/boot/system/develop/lib" \
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DSSE2NEON_ROOT_DIR="$np" \
+		-DPUGIXML_ROOT_DIR="$np" \
 		-DFREETYPE_INCLUDE_DIR_ft2build="$blDeps/include/freetype2" \
 		-DFREETYPE_INCLUDE_DIR_freetype2="$blDeps/include/freetype2" \
 		-DFREETYPE_LIBRARY="$blDeps/lib/libfreetype.a;brotlidec;brotlicommon;png16;z" \
@@ -352,7 +368,7 @@ configure() {
 		exit 1
 	fi
 	# what the minimal build is for, still on after configure
-	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP; do
+	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP WITH_PUGIXML; do
 		grep -q "^$o:BOOL=ON" "$bl/build/CMakeCache.txt" || { echo "build-blender: $o is off" >&2; exit 1; }
 	done
 	grep -q '^SSE2NEON_INCLUDE_DIR:PATH=/' "$bl/build/CMakeCache.txt" \
@@ -370,8 +386,30 @@ build() {
 	ls -l "$bl/build/bin/blender"
 }
 
-steps=(sysroot python libdeflate imath openexr tiff epoxy boost tbb oiio sse2neon freetype blender_source
-	hosttools configure build)
+# the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its
+# 3.6/{scripts,datafiles}, WITH_INSTALL_PORTABLE's layout; Python's standard library comes from the
+# python3.10 package), the test packages beside it in artifacts/blender-tests/packages/
+stage() {
+	local t="$root/artifacts/blender-tests" p
+	rm -rf "$t"
+	cmake --install "$bl/build" --prefix "$t/Blender" --strip > "$bl/install.log" 2>&1 \
+		|| { tail -n 20 "$bl/install.log" >&2; exit 1; }
+	rm -f "$t/Blender"/blender.desktop "$t/Blender"/*.svg
+	[ -x "$t/Blender/blender" ] && [ -d "$t/Blender/3.6/scripts" ] && [ -d "$t/Blender/3.6/datafiles" ] \
+		|| { echo "build-blender: incomplete install tree $t/Blender" >&2; exit 1; }
+	mkdir -p "$t/packages"
+	cp "$out"/*.hpkg "$root"/artifacts/packages-test/libsdl2-8/libsdl2-2.32.10-8-arm64.hpkg "$t/packages/"
+	# and the run-time libraries of ours an image may not have yet (pkgman skips those it has)
+	for p in zstd brotli libwebp libjpeg_turbo libpng16; do
+		cp "$(newest "$root/artifacts/packages" "$p")" "$t/packages/"
+	done
+	cp "$gen/download/libffi-3.4.6_bootstrap-1-arm64.hpkg" "$t/packages/"
+	rm -f "$t/packages"/*_devel-*.hpkg
+	echo "build-blender: $t: $(du -sh "$t/Blender" | cut -f1) Blender, $(ls "$t/packages" | wc -l) packages"
+}
+
+steps=(sysroot python libdeflate imath openexr tiff epoxy boost tbb oiio pugixml sse2neon freetype blender_source
+	hosttools configure build stage)
 start="${1:-${steps[0]}}" last="${2:-}"
 started=0
 for s in "${steps[@]}"; do

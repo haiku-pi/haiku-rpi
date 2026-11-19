@@ -1,6 +1,7 @@
 # Blender on the Pi 4 (Haiku arm64): feasibility and plan
 
-Status (2026-11-19): **analysis, no Blender build yet; M1 (SDL2 per-thread GL context) done, §7.2.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+Status (2026-11-19): **M1 (SDL2 per-thread GL context) done, §7.2; M2 done: `blender` 3.6.23 links for Haiku
+arm64 (cross-built, minimal option set), §7.3. Nothing ran on the Pi yet.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -498,6 +499,66 @@ calling thread locked. libsdl2 **2.32.10-8** = the six earlier patches + this on
 - Not covered: deleting a context that is current on *another* thread (that thread's slot then points at a
   deleted view; a program error on every platform), and making one view current on two threads at once (the
   second `LockGL()` now waits for the first thread to release it, where EGL returns `EGL_BAD_ACCESS`).
+
+### 7.3 M2 result (2026-11-19, host only; `scripts/build-blender.sh`, commits e7af9d7 + the M2 follow-up)
+
+**`blender` links**: `artifacts/cross-ports/blender-3.6.23/build/bin/blender`, AArch64, 75 MB (57 MB stripped),
+4537 build steps, 150 compiler warnings (Cycles `-Warray-bounds`/`-Wclass-memaccess` and the like), no
+TLSDESC relocations (GCC's Haiku spec forces `-mtls-dialect=trad`), no run path. It needs 27 libraries; all
+**1381 undefined dynamic symbols resolve** against those libraries in the sysroot (checked with `nm -D`).
+Python 3.10, TBB (Cycles), SDL2 (GHOST_SDL), OIIO, OpenEXR, WebP, pugixml, epoxy are linked.
+- **Dependencies** (each `cross-port.sh` + `package-port.py --out artifacts/packages-test/blender`, not
+  published): libdeflate 1.18, Imath 3.1.12 (our recipe, `tools/recipes`), OpenEXR 3.2.4 (HaikuPorts recipe +
+  patchset, against that Imath), libtiff 4.7.0 (zlib + JPEG only, no libtiffxx: libtool's C++ link names a
+  libstdc++.a path that does not exist), libepoxy 1.5.8, Boost 1.83 (thread, chrono, atomic, date_time,
+  system, filesystem; b2 with a `gcc-haiku` toolset in a user-config.jam; Blender itself runs `WITH_BOOST=OFF`,
+  only OIIO links Boost), oneTBB 2022.3.0 (recipe patchset), **OpenImageIO 2.4.15.0** (our recipe;
+  HaikuPorts' 2.5.12 patchset applies unchanged; fmt 9.1.0 + robin-map 0.6.2 pinned, not git-cloned;
+  every optional reader the sysroot could offer — FFmpeg, FreeType, GL, OCIO, … — off explicitly, and the
+  script checks its NEEDED list), **pugixml 1.15** (new: Blender 3.6 looks for OIIO's internal copy as
+  `OpenImageIO/pugixml.hpp`, OIIO 2.4 keeps it in `detail/pugixml/` and its own namespace, so Cycles'
+  XML reader failed with `pugixml.hpp: No such file`; `WITH_PUGIXML=ON` now), sse2neon 1.6.0 (header only,
+  `sse2neon_devel`), FreeType 2.14.3 with Brotli (static, Blender's own: the sysroot's has no Brotli).
+- **Python 3.10.22**: `build-python.sh --version 3.10.22` (+ `--out`). 3.10 still builds its modules with
+  setup.py: configure finds `python3.10` on PATH (no `--with-build-python`); `patches/python3.10/0001` adds
+  Haiku to the cross-build host list and makes setup.py match `haiku-aarch64`. Two silent traps fixed: setup.py
+  took `--with-system-libmpdec=no` for "yes" (no `_decimal`), and the bootstrap `libffi.pc` names
+  `/packages/…/.self`, so `_ctypes` was linked **without libffi** (now a checked failure). `make altinstall`:
+  no unversioned names. 2 min per build.
+- **Host generators (R12)**: `makesdna makesrna datatoc datatoc_icon smaa_areatex` — `smaa_areatex`
+  (compositor) is a fifth one §4.2 did not list — built for the host from the same tree and
+  `tools/cmake/blender-minimal.cmake` (8 s). `patches/blender/0002` imports them as `IMPORTED GLOBAL`
+  executables when `-DBLENDER_HOST_TOOLS=DIR` is set (msgfmt too, for i18n later). The script fails unless
+  the host and cross caches end with identical `WITH_*:BOOL` values (143 compared, all equal).
+  `dna_verify.c` compiled for the target without error.
+- **Blender patches** (`patches/blender/`): 0001 GHOST_SDL core profile (windows and offscreen contexts), 0002
+  host generators, 0003 HaikuPorts' libmv `<assert.h>`. Not taken from HaikuPorts' 3.3.21 patchset: wcwidth
+  and uuid (Haiku now has `<uchar.h>` and `timespec_get`), `BLI_threads` pthread-key TLS (`__thread` works on
+  arm64), the platform-support dialog (our driver reports a supported 3.3, and the check is the safety net),
+  `-liconv -licu*` (Boost locale/i18n off), the OCIO and audaspace hunks (both off;
+  `CMAKE_POLICY_VERSION_MINIMUM=3.5` covers CMake 4).
+- Options beyond §4's list: `WITH_OPENMP=OFF` (TBB does the threading), `WITH_CYCLES_LOGGING=OFF` (as
+  HaikuPorts), `WITH_LINKER_GOLD/LLD/MOLD=OFF`, `WITH_PUGIXML=ON`.
+- **Cost (measured):** the whole Blender compile 13 min at `-j6` (03:41–03:54, incl. a 2006-step rebuild after
+  the pugixml fix), all dependencies ~10 min. Peak RSS of the cross compilers together **5.8 GB**, one job
+  1.24 GB (sampled every 2 s); under `heavy-build.sh --max 12`. Disk: blender tree 1.1 GB (src 286 MB), OIIO
+  229 MB, Python 3.10 work 213 MB + host 141 MB, Boost 186 MB after deleting its 1.8 GB source trees,
+  packages 41 MB.
+- **M3 prepared, not run** (no Pi use in M2): `build-blender.sh stage` makes `artifacts/blender-tests/`
+  (Blender/ = `blender` stripped + `3.6/{scripts,datafiles}`, 102 MB; packages/ = 17 runtime packages incl.
+  python3.10, the libraries, libsdl2 -8, libffi). `tools/pi-tests/blender-m3.sh DIR LABEL` installs them,
+  then `--version`, a bpy expression (Python 3.10.22 + `bpy.app.version_string`) and a Cycles CPU render of
+  the default cube (960×540, 32 samples, PNG), graded by "BM3 … PASS" lines:
+  ```
+  scripts/pi-session.sh start --image artifacts/images/haiku-pi4-2026-11-19.img --minutes 60 --label bm3
+  scripts/pi-ssh.sh put artifacts/blender-tests tools/pi-tests/blender-m3.sh /boot/home/
+  scripts/pi-ssh.sh sh /boot/home/blender-m3.sh /boot/home/blender-tests bm3 > artifacts/blender-tests/bm3.txt
+  scripts/pi-session.sh stop
+  ```
+  Likely first failures, in order: a package conflict or missing run-time library at `pkgman` time; Python
+  not finding its standard library (no bundled `3.6/python`; it should take libpython's prefix
+  `/boot/system`); TBB's thread start-up on Haiku; Cycles' NEON (sse2neon) kernels — then a slow render.
+  Estimated remaining to M3: **0.5–1 agent-day**, mostly the Pi session and whatever the first run shows.
 
 ## 8. Files
 
