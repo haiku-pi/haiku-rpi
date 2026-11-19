@@ -1,7 +1,8 @@
 # WiFi: a network joined once is joined again after a reboot
 
 Owner 2026-11-18: "join a network once in Network preferences / `ifconfig … join`, reboot, it re-joins by itself".
-Branch `v2-wifi` of haiku (origin), on rpi4 2753face8e. Not merged.
+Branch `v2-wifi` of haiku (origin), on rpi4 2753face8e. **Merged** into rpi4 (8491de54ed, 2026-11-18); released in
+image-2026-11-19.
 
 ## 1. How it works (and what was missing)
 

@@ -15,10 +15,12 @@
 dir=$1 label=${2:-run}
 [ -x "$dir/blender-glprobe" ] || { echo "usage: $0 DIR [LABEL]" >&2; exit 2; }
 export PATH=$dir:/boot/system/non-packaged/bin:$PATH
-export LIBRARY_PATH=$dir:${LIBRARY_PATH:-}
+# a session's shell may have no LIBRARY_PATH: then Haiku's default search path, not only $dir (with just
+# "$dir:" the runtime loader finds neither libEGL nor libvulkan)
+export LIBRARY_PATH=$dir:${LIBRARY_PATH:-%A/lib:/boot/home/config/non-packaged/lib:/boot/home/config/lib:/boot/system/non-packaged/lib:/boot/system/lib}
 # a crash is logged, not shown as an alert that waits for a click (as games-bench.sh)
-mkdir -p /boot/home/config/settings/system/debug_server
-echo "default_action log" > /boot/home/config/settings/system/debug_server/settings
+mkdir -p /boot/home/config/settings/system/debug_server 2> /dev/null
+echo "default_action log" 2> /dev/null > /boot/home/config/settings/system/debug_server/settings || true
 run() {
 	name=$1
 	shift

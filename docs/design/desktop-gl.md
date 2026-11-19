@@ -3,7 +3,10 @@
 Status (2026-11-18 23:30): **implemented on branches `v5-gl`** (mesa haiku-pi 364a5ec8c79, libglvnd haiku-pi 83d9cc2)
 plus an SDL2 patch (`patches/libsdl2/libsdl2-2.32.10-haiku-glview-core.patch`), Pi-tested (§6): **OpenGL 3.3 core
 (GLSL 3.30) and compatibility 3.1 (GLSL 1.40)**, was 2.1 and no core profile at all. SuperTuxKart's shader renderer
-and Quake II's GL3 renderer run. Not merged; recommendation in §8.
+and Quake II's GL3 renderer run. **Merged** (mesa/libglvnd rpi4, 2026-11-18) and released in image-2026-11-19 with mesa
+26.2.7-3, libsdl2 2.32.10-7 and supertuxkart 1.5-3 (its desktop build keeps the legacy renderer by default:
+patches/supertuxkart/0002). A further deviation found later (Blender probe, 11-19): **4 colour attachments**
+(MAX_DRAW_BUFFERS / MAX_COLOR_ATTACHMENTS 4; GL 3.0 asks for 8) — a shader with more outputs fails to link.
 Owner (11-18): "raise desktop OpenGL above 2.1" — KNOWN-ISSUES P1.
 
 Citation keys: **[M]** `sources/mesa` (branch `rpi4` b691443f2cd = 26.2.7 + our work; upstream `origin/main`

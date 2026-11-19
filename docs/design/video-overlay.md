@@ -1,6 +1,7 @@
 # Decoded video on a YCbCr display plane (KNOWN-ISSUES F2, P2)
 
-Status: **in progress (2026-11-18)**, branch `v1-overlay` of haiku-pi/haiku (from `rpi4` 2753face8e). Numbers are
+Status: **done, released in image-2026-11-19** (merged into `rpi4` at 92db783ffc; release gate 11-19: 1080p30 H.264
+25.1 %, the mode change 0 problems with the video back on the plane, HDMI-recorded). Was branch `v1-overlay` of haiku-pi/haiku (from `rpi4` 2753face8e). Numbers are
 marked **measured** (with the source) or **estimated**.
 
 Goal (owner 2026-11-18): hardware-decoded video (H.264 on the VideoCore through ffmpeg's `h264_mmal`, HEVC on rpivid)

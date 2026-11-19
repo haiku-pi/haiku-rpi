@@ -456,6 +456,27 @@ Cycles rendering on the Pi (M3), comes after about 6–8.5 of those.
   - document the 4-draw-buffer deviation in desktop-gl.md §5 / KNOWN-ISSUES.
 - Track B only: raise V3DV `MAX_STORAGE_BUFFERS` from 8 to ≥ 12.
 
+### 7.1 Step 0 result (2026-11-19, release image-2026-11-19 in a network session; artifacts/blender-probe/bp3.txt)
+
+Run on the release image itself (its mesa 26.2.7-3 + libsdl2 2.32.10-7 are the desktop-GL stack; no -91 package).
+The first two runs (gate sessions A and B) gave "status 3" for every program: `blender-probe.sh` set
+`LIBRARY_PATH=$dir:` in a shell without LIBRARY_PATH, so the runtime loader found no libEGL/libvulkan — fixed (the
+default search path is kept). Third run — every prediction of §2/§3 held:
+- `ghost-stock` (profile 0, 3.3) → **3.1** compatibility (GLSL 1.40): the GHOST patch is needed; `ghost-core` →
+  **3.3 core**, GLSL 3.30: PASS.
+- PASS: mrt4 link + framebuffer; RGBA16F / RGBA32F / R11F_G11F_B10F blending; texture buffers R32F, RG32F, RGBA32F,
+  RGBA8, R32UI; transform feedback; textureGather; EGL shared context current on a second thread.
+- INFO as expected: **mrt6 does not link** ("invalid explicit location 4") — EEVEE Legacy's opaque shader needs the
+  M5 patch; MAX_DRAW_BUFFERS = MAX_COLOR_ATTACHMENTS = 4; MAX_TEXTURE_BUFFER_SIZE 65536; MAX_TEXTURE_SIZE 4096;
+  GL_ARB_shader_draw_parameters, GL_ARB_gpu_shader5, GL_ARB_shader_image_load_store: no.
+- SDL thread check: the probe's own checks PASS, but **2 "Unlocking BLocker … from wrong thread"** lines: SDL2's
+  one process-wide current context, as predicted — M1 (per-thread current context) is required.
+- Vulkan (V3DV 1.3, conformance 1.3.8.3): maxPerStageDescriptorStorageBuffers **8** (Blender 5.x binds 12),
+  multiDrawIndirect and multiViewport **no** — track B stays blocked on V3DV limits.
+- 0 debugger entries.
+
+So M1 can start as planned; no Mesa work is needed for M1–M4.
+
 ## 8. Files
 
 - New, for step 0:
