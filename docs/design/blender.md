@@ -500,7 +500,7 @@ calling thread locked. libsdl2 **2.32.10-8** = the six earlier patches + this on
   deleted view; a program error on every platform), and making one view current on two threads at once (the
   second `LockGL()` now waits for the first thread to release it, where EGL returns `EGL_BAD_ACCESS`).
 
-### 7.3 M2 result (2026-11-19, host only; `scripts/build-blender.sh`, commits e7af9d7 + the M2 follow-up)
+### 7.3 M2 result (2026-11-19, host only; `scripts/build-blender.sh`, commits e7af9d7, 3360d6a + the clean-run follow-up)
 
 **`blender` links**: `artifacts/cross-ports/blender-3.6.23/build/bin/blender`, AArch64, 75 MB (57 MB stripped),
 4537 build steps, 150 compiler warnings (Cycles `-Warray-bounds`/`-Wclass-memaccess` and the like), no
@@ -528,8 +528,12 @@ Python 3.10, TBB (Cycles), SDL2 (GHOST_SDL), OIIO, OpenEXR, WebP, pugixml, epoxy
 - **Host generators (R12)**: `makesdna makesrna datatoc datatoc_icon smaa_areatex` — `smaa_areatex`
   (compositor) is a fifth one §4.2 did not list — built for the host from the same tree and
   `tools/cmake/blender-minimal.cmake` (8 s). `patches/blender/0002` imports them as `IMPORTED GLOBAL`
-  executables when `-DBLENDER_HOST_TOOLS=DIR` is set (msgfmt too, for i18n later). The script fails unless
-  the host and cross caches end with identical `WITH_*:BOOL` values (143 compared, all equal).
+  executables when `-DBLENDER_HOST_TOOLS=DIR` is set (msgfmt too, for i18n later). Guards: the cache
+  compare of `WITH_*:BOOL` (143 equal) alone is blind — `set_and_warn_library_found` turns an option off with
+  a normal variable that shadows the cache (the host's first "WebP not found, disabling WITH_IMAGE_WEBP" would
+  have passed it) — so the options file sets `WITH_STRICT_BUILD_OPTIONS=ON` (a missing library is an error)
+  and the script also compares the `-DWITH_*` defines makesrna's sources get on the host with those of the
+  same sources in `bf_rna` for the target (10 equal; the cross build's global `WITH_SSE2NEON` aside).
   `dna_verify.c` compiled for the target without error.
 - **Blender patches** (`patches/blender/`): 0001 GHOST_SDL core profile (windows and offscreen contexts), 0002
   host generators, 0003 HaikuPorts' libmv `<assert.h>`. Not taken from HaikuPorts' 3.3.21 patchset: wcwidth

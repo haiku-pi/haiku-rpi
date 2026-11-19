@@ -106,7 +106,9 @@ blender_option(WITH_COMPOSITOR_CPU ON)
 # Cycles' XML reader needs it (OIIO 2.4's own copy is not where Blender 3.6 looks for it)
 blender_option(WITH_PUGIXML ON)
 
-# build
+# build: a missing library is an error, not a silently disabled option (set_and_warn_library_found
+# only shadows the cache entry with a normal variable, so a WITH_* compare of the caches cannot see it)
+blender_option(WITH_STRICT_BUILD_OPTIONS ON)
 blender_option(WITH_GTESTS OFF)
 blender_option(WITH_BUILDINFO OFF)
 blender_option(WITH_DOC_MANPAGE OFF)

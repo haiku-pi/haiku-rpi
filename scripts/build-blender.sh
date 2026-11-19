@@ -182,6 +182,8 @@ echo "using gcc : haiku : $cxx : <compileflags>--sysroot=$SYSROOT <linkflags>--s
 	--layout=system install'
 	package "$recipe"
 	need non-packaged/lib/libboost_thread.so.1.83.0 develop/headers/boost/thread.hpp
+	# the unpacked and the built source trees: 1.8 GB
+	rm -rf "$root/artifacts/cross-ports/boost1.83-1.83.0/src" "$root/artifacts/cross-ports/boost1.83-1.83.0/source"
 }
 
 # oneTBB 2022.3.0 (Cycles and Blender's threading; WITH_TBB gates Cycles): the recipe + its patchset (the
@@ -313,6 +315,13 @@ with_options() {
 	grep -E '^WITH_[A-Z0-9_]+:BOOL=' "$1/CMakeCache.txt" | sort
 }
 
+# the -DWITH_* defines one object of a build.ninja is compiled with
+#   object_defines BUILD_NINJA OBJECT_PATTERN
+object_defines() {
+	awk -v pat="$2" '$0 ~ "^build " && $0 ~ pat {f=1; next} f && /^  DEFINES = / {print; exit}' "$1" \
+		| tr ' ' '\n' | grep '^-DWITH_' | sort -u
+}
+
 # the generators for the host (blender.md §4.2): the same tree and options file, the host compiler; the
 # libraries the host lacks (OpenImageIO, OpenEXR, TBB, WebP headers) are found in the sysroot only so
 # that configure keeps their options on (no generator links them), Python is the host 3.10
@@ -367,6 +376,16 @@ configure() {
 		echo "$diff" >&2
 		exit 1
 	fi
+	# what the generators were really compiled with (an option a configure turns off is only a normal
+	# variable, not in the cache): makesrna's sources on the host against the same sources compiled into
+	# bf_rna for the target (WITH_SSE2NEON: global, the cross build's only, unused by RNA/DNA)
+	diff="$(diff <(object_defines "$bl/host-build/build.ninja" 'makesrna.dir/rna_scene.c.o') \
+		<(object_defines "$bl/build/build.ninja" 'bf_rna.dir/rna_scene_gen.c.o' | grep -v '^-DWITH_SSE2NEON$') || true)"
+	if [ -n "$diff" ] || [ -z "$(object_defines "$bl/host-build/build.ninja" 'makesrna.dir/rna_scene.c.o')" ]; then
+		echo "build-blender: makesrna (host) and bf_rna (target) are compiled with different WITH_* defines:" >&2
+		echo "$diff" >&2
+		exit 1
+	fi
 	# what the minimal build is for, still on after configure
 	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP WITH_PUGIXML; do
 		grep -q "^$o:BOOL=ON" "$bl/build/CMakeCache.txt" || { echo "build-blender: $o is off" >&2; exit 1; }
@@ -377,9 +396,10 @@ configure() {
 		|| { echo "build-blender: not built WITH_SSE2NEON" >&2; exit 1; }
 }
 
-# ninja under the heavy-build guard: ~0.6-1 GB per compile job (Cycles kernels), at most 12 GB
+# ninja under the heavy-build guard: ~0.6-1 GB per compile job (Cycles kernels), at most 12 GB; every
+# target (stage installs them all)
 build() {
-	"$root/scripts/heavy-build.sh" -j 6 --mem-per-job 2 --max 12 -- ninja -C "$bl/build" -k 0 -j '{JOBS}' blender \
+	"$root/scripts/heavy-build.sh" -j 6 --mem-per-job 2 --max 12 -- ninja -C "$bl/build" -k 0 -j '{JOBS}' \
 		> "$bl/build.log" 2>&1 || { grep -a -A12 'FAILED:' "$bl/build.log" | head -n 80 >&2; exit 1; }
 	echo "build-blender: compiler warnings: $(grep -c 'warning:' "$bl/build.log" || true)"
 	"$tools-readelf" -h -d "$bl/build/bin/blender" | grep -E 'Machine|NEEDED' | sed 's/^/build-blender: /'
@@ -400,10 +420,13 @@ stage() {
 	mkdir -p "$t/packages"
 	cp "$out"/*.hpkg "$root"/artifacts/packages-test/libsdl2-8/libsdl2-2.32.10-8-arm64.hpkg "$t/packages/"
 	# and the run-time libraries of ours an image may not have yet (pkgman skips those it has)
-	for p in zstd brotli libwebp libjpeg_turbo libpng16; do
+	# (python3.10's modules link openssl, sqlite, bz2, libedit, expat, which package-port.py does not
+	# turn into requires: they are in the sysroot's lib/, not non-packaged/)
+	for p in zstd brotli libwebp libjpeg_turbo libpng16 openssl3 sqlite bzip2 libedit; do
 		cp "$(newest "$root/artifacts/packages" "$p")" "$t/packages/"
 	done
-	cp "$gen/download/libffi-3.4.6_bootstrap-1-arm64.hpkg" "$t/packages/"
+	cp "$gen/download/libffi-3.4.6_bootstrap-1-arm64.hpkg" "$gen/download/expat-2.5.0_bootstrap-1-arm64.hpkg" \
+		"$t/packages/"
 	rm -f "$t/packages"/*_devel-*.hpkg
 	echo "build-blender: $t: $(du -sh "$t/Blender" | cut -f1) Blender, $(ls "$t/packages" | wc -l) packages"
 }
