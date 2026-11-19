@@ -1496,3 +1496,226 @@ index e664c95..3dcc8f9 100644
 -- 
 2.53.0
 
+From 3f31cac564a302b0de20cfdec12ea77c264cca8c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Witold=20Bo=C5=82t?= <witold.bolt@jit.team>
+Date: Thu, 19 Nov 2026 23:07:12 +0100
+Subject: [PATCH 10/10] mmal: a port the VideoCore did not empty no longer
+ aborts its client
+
+mmal_vc_port_disable() asserted that the VideoCore had sent every buffer
+back. After the VideoCore failed (a flood of error events with two H.264
+decoders open; no reply to the disable within 5 s, patch 8) it had not,
+and the assertion aborted Firefox's decoder process when it closed the
+decoder (on quit). The buffers it still holds are now given back to the
+client, empty, through the port's callback queue, and their contexts'
+handles freed: a late message about one is dropped
+(mmal_vc_port_send_callback takes the handle; the bulk receive paths
+check it). The Haiku Makefile also defines NDEBUG, as upstream's Release
+build does: VCOS_ASSERT_LOGGING makes every failed vcos_assert() and
+vcos_verify() call abort() otherwise.
+---
+ interface/mmal/vc/mmal_vc_api.c         | 57 ++++++++++++++++++++++---
+ interface/mmal/vc/mmal_vc_client.c      | 54 ++++++++++++++++++++---
+ interface/mmal/vc/mmal_vc_client_priv.h |  5 +++
+ makefiles/haiku/Makefile                |  4 +-
+ 4 files changed, 108 insertions(+), 12 deletions(-)
+
+diff --git a/interface/mmal/vc/mmal_vc_api.c b/interface/mmal/vc/mmal_vc_api.c
+index 03080e3..f30aef9 100644
+--- a/interface/mmal/vc/mmal_vc_api.c
++++ b/interface/mmal/vc/mmal_vc_api.c
+@@ -283,6 +283,42 @@ static MMAL_STATUS_T mmal_vc_port_enable(MMAL_PORT_T *port, MMAL_PORT_BH_CB_T cb
+    return status;
+ }
+ 
++/** Gives the client back the buffers of a port that the VideoCore still holds, empty: they come back through the
++  * port's callback queue like any returned buffer. Their contexts' handles are freed, so a late message from the
++  * VideoCore about one is dropped (mmal_vc_port_send_callback). */
++static unsigned int mmal_vc_port_reclaim(MMAL_PORT_T *port)
++{
++   MMAL_PORT_MODULE_T *module = port->priv->module;
++   unsigned int count = 0, i;
++
++   for (i = 0; i < module->pool.num_subpools; i++)
++   {
++      const VCOS_BLOCKPOOL_SUBPOOL_T *subpool = &module->pool.subpools[i];
++      uint32_t handle = 0;
++
++      if (!subpool->mem)
++         continue;
++      while ((handle = mmal_vc_handle_next_in(handle, subpool->mem, subpool->end)) != 0)
++      {
++         MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context = mmal_vc_handle_take(handle);
++         MMAL_BUFFER_HEADER_T *buffer;
++
++         if (!client_context || client_context->magic != MMAL_MAGIC || client_context->port != port)
++            continue;
++         buffer = client_context->buffer;
++         vcos_blockpool_free(client_context);
++         buffer->cmd = 0;
++         buffer->offset = 0;
++         buffer->length = 0;
++         buffer->flags = 0;
++         buffer->priv->component_data = (void *)port;
++         mmal_queue_put(port->component->priv->module->callback_queue, buffer);
++         count++;
++      }
++   }
++   return count;
++}
++
+ /** Disable processing on a port */
+ static MMAL_STATUS_T mmal_vc_port_disable(MMAL_PORT_T *port)
+ {
+@@ -309,8 +345,14 @@ static MMAL_STATUS_T mmal_vc_port_disable(MMAL_PORT_T *port)
+    if (module->has_pool)
+    {
+       /* MMAL server should make sure that all buffers are sent back before it
+-       * disables the port. */
+-      vcos_assert(vcos_blockpool_available_count(&module->pool) == port->buffer_num);
++       * disables the port. A VideoCore that failed (a flood of error events, no reply to the
++       * disable) may not have: the client gets them back here rather than an assertion
++       * aborting it (Firefox's decoder process, on quit). */
++      if (vcos_blockpool_available_count(&module->pool) != port->buffer_num)
++      {
++         unsigned int reclaimed = mmal_vc_port_reclaim(port);
++         LOG_ERROR("%s: %u buffers not sent back by the VideoCore: given back empty", port->name, reclaimed);
++      }
+       vcos_blockpool_delete(&module->pool);
+       module->has_pool = 0;
+    }
+@@ -532,14 +574,17 @@ static void mmal_vc_port_send_callback(mmal_worker_buffer_from_host *msg)
+ {
+    MMAL_BUFFER_HEADER_T *buffer;
+    MMAL_PORT_T *port;
+-   MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context = mmal_vc_handle_get(msg->drvbuf.client_context);
++   /* taken: a port disable may give the buffer back at the same time (mmal_vc_port_reclaim) */
++   MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context = mmal_vc_handle_take(msg->drvbuf.client_context);
+ 
+-   vcos_assert(client_context);
+-   vcos_assert(client_context->magic == MMAL_MAGIC);
++   if (!client_context || client_context->magic != MMAL_MAGIC)
++   {
++      LOG_ERROR("buffer %u came back after its port gave it back: dropped", msg->drvbuf.client_context);
++      return;
++   }
+ 
+    buffer = client_context->buffer;
+    port = client_context->port;
+-   mmal_vc_handle_free(msg->drvbuf.client_context);
+    vcos_blockpool_free(client_context);
+ 
+    vcos_assert(port->priv->module->magic == MMAL_MAGIC);
+diff --git a/interface/mmal/vc/mmal_vc_client.c b/interface/mmal/vc/mmal_vc_client.c
+index 09ee1b3..7dc34f6 100644
+--- a/interface/mmal/vc/mmal_vc_client.c
++++ b/interface/mmal/vc/mmal_vc_client.c
+@@ -143,6 +143,43 @@ void *mmal_vc_handle_get(uint32_t handle)
+    return object;
+ }
+ 
++void *mmal_vc_handle_take(uint32_t handle)
++{
++   void *object;
++
++   if (handle == 0 || handle > MAX_HANDLES)
++      return NULL;
++   vcos_mutex_lock(&handles.lock);
++   object = handles.objects[handle - 1];
++   if (object)
++   {
++      handles.objects[handle - 1] = NULL;
++      handles.next_free[handle - 1] = handles.first_free;
++      handles.first_free = handle;
++   }
++   vcos_mutex_unlock(&handles.lock);
++   return object;
++}
++
++uint32_t mmal_vc_handle_next_in(uint32_t after, const void *start, const void *end)
++{
++   uint32_t i;
++
++   vcos_once(&once, init_once);
++   vcos_mutex_lock(&handles.lock);
++   for (i = after; i < handles.used; i++)
++   {
++      const char *object = handles.objects[i];
++      if (object && object >= (const char *)start && object < (const char *)end)
++      {
++         vcos_mutex_unlock(&handles.lock);
++         return i + 1;
++      }
++   }
++   vcos_mutex_unlock(&handles.lock);
++   return 0;
++}
++
+ void mmal_vc_handle_free(uint32_t handle)
+ {
+    if (handle == 0 || handle > MAX_HANDLES)
+@@ -609,8 +646,11 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+             mmal_worker_buffer_from_host *msg = (mmal_worker_buffer_from_host *)msg_hdr;
+             MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context =
+                mmal_vc_handle_get(msg->drvbuf.client_context);
+-            vcos_assert(client_context && client_context->magic == MMAL_MAGIC);
+-            client_context->callback(msg);
++            /* none: the port was disabled meanwhile and gave the buffer back (mmal_vc_port_disable) */
++            if (client_context && client_context->magic == MMAL_MAGIC)
++               client_context->callback(msg);
++            else
++               LOG_ERROR("bulk rx done for a buffer given back: dropped");
+             LOG_TRACE("bulk rx done: 0x%x, %d", msg->buffer_header.data, msg->buffer_header.length);
+          }
+          else
+@@ -650,9 +690,13 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
+             MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context =
+                mmal_vc_handle_get(msg->drvbuf.client_context);
+             LOG_TRACE("bulk rx aborted: 0x%x, %d", msg->buffer_header.data, msg->buffer_header.length);
+-            vcos_assert(client_context && client_context->magic == MMAL_MAGIC);
+-            msg->buffer_header.flags |= MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;
+-            client_context->callback(msg);
++            if (client_context && client_context->magic == MMAL_MAGIC)
++            {
++               msg->buffer_header.flags |= MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED;
++               client_context->callback(msg);
++            }
++            else
++               LOG_ERROR("bulk rx aborted for a buffer given back: dropped");
+          }
+          else
+          {
+diff --git a/interface/mmal/vc/mmal_vc_client_priv.h b/interface/mmal/vc/mmal_vc_client_priv.h
+index 8ac7307..52aad5a 100644
+--- a/interface/mmal/vc/mmal_vc_client_priv.h
++++ b/interface/mmal/vc/mmal_vc_client_priv.h
+@@ -69,6 +69,11 @@ MMAL_CLIENT_T *mmal_vc_get_client(void);
+ uint32_t mmal_vc_handle_alloc(void *object);
+ void *mmal_vc_handle_get(uint32_t handle);
+ void mmal_vc_handle_free(uint32_t handle);
++/** Frees the handle and returns its object, or NULL if it was free already: of two threads giving back the same
++  * buffer, only one gets it. */
++void *mmal_vc_handle_take(uint32_t handle);
++/** The first handle after 'after' (0: from the start) whose object lies in [start, end), 0 if none. */
++uint32_t mmal_vc_handle_next_in(uint32_t after, const void *start, const void *end);
+ 
+ MMAL_STATUS_T mmal_vc_sendwait_message(MMAL_CLIENT_T *client,
+                                        mmal_worker_msg_header *header,
+diff --git a/makefiles/haiku/Makefile b/makefiles/haiku/Makefile
+index b0ee8cd..38e29f6 100644
+--- a/makefiles/haiku/Makefile
++++ b/makefiles/haiku/Makefile
+@@ -17,7 +17,9 @@ includedir ?= $(headersdir)/raspberrypi_userland
+ pkgconfigdir ?= $(prefix)/develop/lib/pkgconfig
+ B ?= build-haiku
+ 
+-CPPFLAGS += -D_REENTRANT -D_GNU_SOURCE -DUSE_VCHIQ_ARM -DVCHI_BULK_ALIGN=1 -DVCHI_BULK_GRANULARITY=1 \
++# NDEBUG as upstream's Release build (buildme): a failed vcos_assert()/vcos_verify() logs, it does not abort the
++# application (VCOS_ASSERT_LOGGING makes them call abort() otherwise)
++CPPFLAGS += -DNDEBUG -D_REENTRANT -D_GNU_SOURCE -DUSE_VCHIQ_ARM -DVCHI_BULK_ALIGN=1 -DVCHI_BULK_GRANULARITY=1 \
+ 	-D__VIDEOCORE4__ -DOMX_SKIP64BIT -I. -Iinterface/vcos -Iinterface/vcos/pthreads -Iinterface/vchiq_arm -Iinterface/mmal
+ CFLAGS ?= -O2
+ CFLAGS += -std=gnu11 -fPIC -Wall -Wno-multichar -Wno-unused-but-set-variable
+-- 
+2.53.0
+

@@ -9,7 +9,9 @@
 # 5 = h264_vc (H.264 on the VideoCore for Firefox, with fallback) and the h264_mmal encoder
 # (docs/design/videocore-services.md); 6 = h264_mmal's first-frame quantiser (option initial_qp, default 25:
 # the VideoCore's own made a flat 720p key frame of 981 bytes, banded) and its timestamps in microseconds, as
-# MMAL counts them (API correctness; no measured effect on the output).
+# MMAL counts them (API correctness; no measured effect on the output); 7 = h264_vc decodes one stream per process
+# on the VideoCore (FFMPEG_H264_VC_STREAMS), the others in software: a second one failed there with ENOSPC, and the
+# failed decoder's teardown aborted Firefox's decoder process (docs/design/firefox-video-overlay.md §9.6).
 # Called by scripts/build-packages.sh; runs on its own too.
 #
 #   scripts/build-ffmpeg.sh [--publish | --out DIR]
@@ -21,7 +23,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 recipe="$root/sources/haikuports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
-revision=6
+revision=7
 unpublished=true out=""
 [ "${1:-}" = --publish ] && unpublished=false
 [ "${1:-}" = --out ] && { out="$(realpath -m "$2")"; unpublished=false; }

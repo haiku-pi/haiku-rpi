@@ -34,14 +34,19 @@
  * skips it (allcodecs.c): FFmpeg's other users keep the software decoder unless
  * they ask for this one by name.
  *
- * h264_mmal is opened with the first packet, not by avcodec_open2(). The
- * VideoCore is not used (the software decoder from the start) when
+ * h264_mmal is opened with the first packet, not by avcodec_open2(). One
+ * stream per process decodes on the VideoCore at a time (FFMPEG_H264_VC_STREAMS
+ * changes the number): a second one there failed with ENOSPC in the
+ * VideoCore's memory, and the failed decoder flooded its client with error
+ * events and did not answer when it was closed. The VideoCore is not used
+ * (the software decoder from the start) for a stream over that number, when
  * FFMPEG_H264_MMAL=0 is in the environment, for low-delay decoding
  * (AV_CODEC_FLAG_LOW_DELAY: h264_mmal holds 8 packets), for pictures larger
  * than 1920x1088 and for profiles the VideoCore does not decode (High 10,
  * 4:2:2, 4:4:4).
  */
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -71,8 +76,12 @@ typedef struct PacketInfo {
     int key;
 } PacketInfo;
 
+/* the streams of this process that hold (or are opening) a VideoCore decoder */
+static atomic_int vc_streams = 0;
+
 typedef struct H264VCContext {
     AVCodecContext *dec;        /* the inner decoder (none before the first packet) */
+    int vc_slot;                /* it holds one of vc_streams */
     int use_vc;                 /* h264_mmal is to be tried first */
     int on_vc;                  /* it is h264_mmal */
     int vc_frames;              /* frames from h264_mmal */
@@ -131,6 +140,28 @@ static const char *why_not_vc(AVCodecContext *avctx)
     return NULL;
 }
 
+static void release_vc_slot(H264VCContext *s)
+{
+    if (s->vc_slot) {
+        atomic_fetch_sub(&vc_streams, 1);
+        s->vc_slot = 0;
+    }
+}
+
+/* One of the VideoCore's streams for this one, if one is free. */
+static int take_vc_slot(H264VCContext *s)
+{
+    const char *setting = getenv("FFMPEG_H264_VC_STREAMS");
+    const int max = setting ? atoi(setting) : 1;
+
+    if (atomic_fetch_add(&vc_streams, 1) >= max) {
+        atomic_fetch_sub(&vc_streams, 1);
+        return 0;
+    }
+    s->vc_slot = 1;
+    return 1;
+}
+
 static int open_inner(AVCodecContext *avctx, const FFCodec *codec)
 {
     H264VCContext *s = avctx->priv_data;
@@ -139,6 +170,9 @@ static int open_inner(AVCodecContext *avctx, const FFCodec *codec)
 
     avcodec_free_context(&s->dec);
     s->on_vc = codec == &ff_h264_mmal_decoder;
+    /* the slot (taken by the caller) goes with h264_mmal */
+    if (!s->on_vc)
+        release_vc_slot(s);
 
     dec = avcodec_alloc_context3(&codec->p);
     if (!dec)
@@ -218,6 +252,11 @@ static int open_first(AVCodecContext *avctx)
     H264VCContext *s = avctx->priv_data;
     int ret;
 
+    if (s->use_vc && !take_vc_slot(s)) {
+        s->use_vc = 0;
+        av_log(avctx, AV_LOG_INFO,
+               "the VideoCore decodes another stream of this process: h264 decodes\n");
+    }
     if (s->use_vc) {
         ret = open_inner(avctx, &ff_h264_mmal_decoder);
         if (ret >= 0) {
@@ -226,6 +265,7 @@ static int open_first(AVCodecContext *avctx)
             return 0;
         }
         s->use_vc = 0;
+        release_vc_slot(s);
         av_log(avctx, AV_LOG_WARNING,
                "h264_mmal does not open (%s): h264 decodes\n", av_err2str(ret));
     }
@@ -262,6 +302,7 @@ static av_cold int h264_vc_close(AVCodecContext *avctx)
     H264VCContext *s = avctx->priv_data;
 
     avcodec_free_context(&s->dec);
+    release_vc_slot(s);
     forget_recorded(s);
     av_packet_free(&s->pending);
     avcodec_parameters_free(&s->par);

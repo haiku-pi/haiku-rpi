@@ -2,7 +2,8 @@
 # build.sh WORKDIR — the h264_vc host harness (docs/design/videocore-services.md §1.3): FFmpeg 6.1.6 for the
 # host (static, the h264 decoder, mov/h264 demuxers, from the recipe's source as scripts/cross-port.sh unpacked it
 # into artifacts/cross-ports/ffmpeg6-6.1.6/source), then t/vctest = vctest.c + fake_mmal.c (a stand-in h264_mmal)
-# + patches/ffmpeg6/files/libavcodec/h264_vcdec.c. Then: H264VC_WORK=WORKDIR run.sh CLIP.mp4
+# + patches/ffmpeg6/files/libavcodec/h264_vcdec.c, and t/vctwo (vctwo.c: two streams at once). Then:
+# H264VC_WORK=WORKDIR run.sh CLIP.mp4
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -20,4 +21,7 @@ F="$work/ffmpeg"
 gcc -O1 -g -Wall -I"$F" -I"$F/libavcodec" -o "$work/t/vctest" "$here/vctest.c" "$here/fake_mmal.c" \
 	"$root/patches/ffmpeg6/files/libavcodec/h264_vcdec.c" "$F/libavformat/libavformat.a" \
 	"$F/libavcodec/libavcodec.a" "$F/libavutil/libavutil.a" -lm -lpthread -lz
-echo "build.sh: $work/t/vctest"
+gcc -O1 -g -Wall -I"$F" -I"$F/libavcodec" -o "$work/t/vctwo" "$here/vctwo.c" "$here/fake_mmal.c" \
+	"$root/patches/ffmpeg6/files/libavcodec/h264_vcdec.c" "$F/libavformat/libavformat.a" \
+	"$F/libavcodec/libavcodec.a" "$F/libavutil/libavutil.a" -lm -lpthread -lz
+echo "build.sh: $work/t/vctest, $work/t/vctwo (two streams: the VideoCore slot)"

@@ -13,7 +13,8 @@
 # 3. tools/haiku-tests/mmal-h264.c -> artifacts/mmal/mmal-h264, with the libraries in artifacts/mmal/lib for a test
 #    session (tools/pi-tests/mmal.sh copies and runs them: LIBRARY_PATH);
 # --package: scripts/package-port.py -> artifacts/mmal/packages/raspberrypi_userland{,_devel}-20241223-REV-arm64.hpkg
-#    (REV: the recipe's REVISION; 2 = patch 8, the bounded reply wait; 3 = patch 9, the VCOS key at unload)
+#    (REV: the recipe's REVISION; 2 = patch 8, the bounded reply wait; 3 = patch 9, the VCOS key at unload;
+#    4 = patch 10, buffers the VideoCore kept are given back at a port disable instead of an abort, and NDEBUG)
 #    (moved out of the published artifacts/packages/; package-port.py also extracts both into the sysroot's boot/system);
 # --clips: the test streams artifacts/mmal/clips/<name>.h264 (the host's ffmpeg + libx264: synthetic pictures with
 #    noise, High profile, B-frames, Annex-B; one of them without samples outside the video range), ffmpeg's software
