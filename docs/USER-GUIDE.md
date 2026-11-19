@@ -406,7 +406,9 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
   media kit's ffmpeg plugin uses `h264_mmal` and falls back to the CPU when the hardware decoder
   cannot open (a second 1080p player, for one) or fails. 1080p30 in MediaPlayer takes 25 % of a core with
   every frame on time from image-2026-11-19 (88 % before; 159 % and mostly late on the CPU). `FFMPEG_H264_MMAL=0` forces the CPU decoder.
-  Firefox decodes H.264 on the CPU (KNOWN-ISSUES P2).
+  From image-2026-11-19b Firefox decodes H.264 on the VideoCore too (`h264_vc`: its decode process 58 % of a core
+  at 1080p30 instead of 123 %), and H.264 can be **encoded** on it: MediaConverter's "H.264 video", or
+  `ffmpeg -i in.mp4 -c:v h264_mmal -b:v 8M out.mp4` (KNOWN-ISSUES P2 for the limits).
 - From image-2026-11-19 MediaPlayer shows decoded video as planar YUV (B_YUV420) on a display plane: the display
   hardware converts and scales it, no CPU colour conversion (`FFMPEG_YUV420=0` brings back RGB). 720p30 H.264
   13 % of a core, 1080p30 25 %, HEVC 1080p30 24 %; 10-bit HEVC 1080p plays. Left: one copy of each frame out of
@@ -470,8 +472,9 @@ Video playback, 10-second test clips in a window (2026-10-20; frames dropped of 
 | VP9 720p | Firefox's own decoder | 10–16 of 300 |
 | AV1 720p | Firefox's own decoder | 11–15 of 300 |
 | HEVC 720p | the **hardware decoder** (§7.2), through the system ffmpeg | 2–32 of 150 |
-| H.264 720p | the system ffmpeg, on the CPU | 121–211 of 300 |
-| H.264 1080p | the system ffmpeg, on the CPU | 148–271 of 300 (149 with a test setting, below) |
+| H.264 720p | the system ffmpeg, on the CPU (before image-2026-11-19b) | 121–211 of 300 |
+| H.264 1080p | the system ffmpeg, on the CPU (before image-2026-11-19b) | 148–271 of 300 (149 with a test setting, below) |
+| H.264 1080p | the **VideoCore** (`h264_vc`, from image-2026-11-19b) | 304 of 719 in 25 s (CPU: 284 of 732) — the drops are Firefox's own drawing (G2) |
 
 **Limits:**
 
@@ -846,6 +849,26 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
   also with the right registers for 32-bit x86 programs (Box64 stops a suspended thread at a consistent point).
 - **Before updating or removing Wine, quit every Windows program** (and `wineserver -k`): a Wine process
   left running from the old package keeps the new one from starting programs (kill it, or restart Haiku).
+
+### 11.6 Blender 3.6 (3D modelling, animation, rendering)
+
+From image-2026-11-19b Blender 3.6.23 LTS is in the package repository: `pkgman install blender` (it brings
+Python 3.10, OpenImageIO, OpenColorIO, OpenSubdiv, TBB and the libraries they need) and start it from Deskbar ▸
+Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`. It draws with the desktop OpenGL 3.3 driver
+(§5.1) through SDL2 (libsdl2 2.32.10-8 or newer is required: it gives each thread its own GL context, which
+Blender's renders need).
+
+- **Works:** the whole UI, the solid (Workbench) viewport, edit mode, modifiers including Subdivision Surface,
+  save/load, the Preferences window, **Cycles** (CPU) and **EEVEE** rendering (F12 into the Render window,
+  Material Preview, Rendered view), Filmic colour management, Python scripting; headless renders:
+  `Blender -b scene.blend -E CYCLES -f 1` (or `-E BLENDER_EEVEE`; EEVEE needs the desktop running).
+- **Speed (measured on the Pi 4, 4 cores):** the factory scene at 1920×1080 renders in about 35 s with EEVEE and
+  1 min 37 s with Cycles; the viewport redraws at about 4–6 frames per second at 1600×900 — a smaller window
+  is smoother. A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
+- **Input:** click into the Blender window once before typing — keys go to the active window, and to the area
+  under the mouse pointer.
+- Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, no denoiser, no video/audio, no
+  Alembic/USD/OpenVDB, ASCII-only text input.
 
 ## 12. The CPU, clocks and temperature
 

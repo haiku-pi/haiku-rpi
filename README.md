@@ -27,11 +27,11 @@ work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNE
 ## Quick start
 
 **Download** the SD card image (unofficial, built from these sources):
-[releases/image-2026-11-19](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-19) — 335 MB,
-`haiku-pi4-2026-11-19.img.xz`, for an 8 GB or larger card:
+[releases/image-2026-11-19b](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-19b) — 335 MB,
+`haiku-pi4-2026-11-19b.img.xz`, for an 8 GB or larger card:
 
 ```sh
-xz -dc haiku-pi4-2026-11-19.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dc haiku-pi4-2026-11-19b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Or build the image yourself on an x86-64 Linux host and write it to a microSD card:
@@ -81,7 +81,7 @@ These numbers were measured on the bench Pi (4 GB) between 2026-10-18 and 2026-1
 | Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching, discovery and pairing by PIN. Bluetooth keyboards, mice and audio are untested |
 | Web | WebPositive (HaikuWebKit, JavaScript JIT) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback |
 | Windows programs | **Wine 11.21** with x86 translation: 32-bit x86 programs through Box64, x86-64 programs through FEX (`pkgman install wine wine_x86 wine_x86_64`). Heroes III, StarCraft, SimCity 3000, Half-Life (also full screen; a game's display mode becomes the screen's, scaled by the display hardware), Chocolate Doom and OpenTTD (x86-64) play; Direct3D 9 on the V3D |
-| Software | The system is built with **GCC 16.2**; the same compiler runs on the Pi (`pkgman install gcc gcc_fortran binutils`: C, C++, Fortran) with make, CMake, Ninja and Meson. Python 3.14 with pip and numpy, Rust 1.90 (cross-compiled), SQLite, llama2.c, and the published arm64 package repository |
+| Software | The system is built with **GCC 16.2**; the same compiler runs on the Pi (`pkgman install gcc gcc_fortran binutils`: C, C++, Fortran) with make, CMake, Ninja and Meson. Python 3.14 with pip and numpy, Rust 1.90 (cross-compiled), SQLite, llama2.c, **Blender 3.6** (`pkgman install blender`: Cycles and EEVEE on the Pi, from image-2026-11-19b), and the published arm64 package repository |
 
 Known limits are collected in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md). The main ones: HDMI audio only with a
 monitor connected at boot, and video in Firefox drops frames for the first seconds after the browser starts. The USB keyboard and mouse and everyday desktop use
