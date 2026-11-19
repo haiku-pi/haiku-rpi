@@ -13,6 +13,9 @@
  *     drag B X1 Y1 X2 Y2 N MS   move to X1,Y1, press B, N moves to X2,Y2 (MS between moves), release
  *     key NAME                  press and release a key: a-z 0-9 space tab esc return f1-f12
  *                               kp0-kp9 (numeric keypad), up down left right
+ *     text STRING               type STRING, UTF-8: one key press per character, the character's
+ *                               bytes as the typed text (as a keymap that has it on a key gives
+ *                               them; the key code is that of the letter, or of "a" for others)
  *     wait MS
  *
  * Build (cross):
@@ -82,6 +85,23 @@ key_code(const char* name, int32& key, char& byte)
 		}
 	}
 	return false;
+}
+
+
+static void
+post_key_text(uint32 what, int32 key, const char* bytes, int length)
+{
+	BMessage message(what);
+	message.AddInt64("when", system_time());
+	message.AddInt32("key", key);
+	message.AddInt32("modifiers", 0);
+	char text[8] = {};
+	memcpy(text, bytes, length);
+	for (int i = 0; i < length; i++)
+		message.AddInt8("byte", bytes[i]);
+	message.AddString("bytes", text);
+	message.AddInt32("raw_char", (uint8)bytes[0]);
+	sWindow.SendMessage(&message);
 }
 
 
@@ -222,6 +242,22 @@ main(int argc, char** argv)
 			post_key(B_KEY_DOWN, key, byte);
 			snooze(60000);
 			post_key(B_KEY_UP, key, byte);
+		} else if (strcmp(c, "text") == 0 && a + 1 < argc) {
+			const char* s = argv[++a];
+			while (*s != '\0') {
+				unsigned char lead = *s;
+				int length = lead < 0xc0 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+				char name[2] = { (char)(length == 1 ? *s : 'a'), 0 };
+				int32 key;
+				char byte;
+				if (!key_code(name, key, byte))
+					key_code("a", key, byte);
+				post_key_text(B_KEY_DOWN, key, s, length);
+				snooze(60000);
+				post_key_text(B_KEY_UP, key, s, length);
+				snooze(60000);
+				s += length;
+			}
 		} else if (strcmp(c, "wait") == 0 && a + 1 < argc) {
 			snooze(atoi(argv[++a]) * 1000LL);
 		} else {

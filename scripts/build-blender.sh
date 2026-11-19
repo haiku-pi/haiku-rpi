@@ -61,7 +61,8 @@ newest() {
 sysroot() {
 	local f p
 	for p in zstd zstd_devel brotli brotli_devel libwebp libwebp_devel bzip2 bzip2_devel libedit \
-			libedit_devel libpng16 libpng16_devel libjpeg_turbo libjpeg_turbo_devel libiconv libiconv_devel; do
+			libedit_devel libpng16 libpng16_devel libjpeg_turbo libjpeg_turbo_devel libiconv libiconv_devel \
+			ffmpeg6 ffmpeg6_devel; do
 		f="$(newest "$root/artifacts/packages" "$p")"
 		[ -n "$f" ] || { echo "build-blender: no $p package in artifacts/packages" >&2; exit 1; }
 		"$pkgtool" extract -C "$sysroot/boot/system" "$f"
@@ -401,7 +402,8 @@ hosttools() {
 		-DPYTHON_INCLUDE_DIR="$pyHost/include/python3.10" -DPYTHON_INCLUDE_CONFIG_DIR="$pyHost/include/python3.10" \
 		-DPYTHON_LIBRARY="$pyHost/lib/libpython3.10.a" -DPYTHON_LIBPATH="$pyHost/lib" \
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DPUGIXML_ROOT_DIR="$np" \
-		-DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" \
+		-DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" -DFFMPEG_ROOT_DIR="$np" \
+		-DTEST_PYTHON_EXE="$(command -v python3)" \
 		-DWEBP_INCLUDE_DIR="$sysroot/boot/system/develop/headers" -DWEBP_WEBP_LIBRARY="$dl/libwebp.so" \
 		-DWEBP_WEBPMUX_LIBRARY="$dl/libwebpmux.so" -DWEBP_WEBPDEMUX_LIBRARY="$dl/libwebpdemux.so" \
 		> "$bl/host-configure.log" 2>&1 || { tail -n 40 "$bl/host-configure.log" >&2; exit 1; }
@@ -415,6 +417,7 @@ hosttools() {
 }
 
 # the cross configure: the toolchain file, the options file, the generators from hosttools
+# (TEST_PYTHON_EXE: with FFmpeg the tests' configure wants a Python; the tests are not run here)
 configure() {
 	local diff
 	# (BLENDER_CLEAN=1: from an empty build directory; otherwise CMake reconfigures the one there and
@@ -432,6 +435,8 @@ configure() {
 		-DPYTHON_LIBPATH="$sysroot/boot/system/develop/lib" \
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DSSE2NEON_ROOT_DIR="$np" \
 		-DPUGIXML_ROOT_DIR="$np" -DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" \
+		-DFFMPEG_ROOT_DIR="$np" \
+		-DTEST_PYTHON_EXE="$(command -v python3)" \
 		-DFREETYPE_INCLUDE_DIR_ft2build="$blDeps/include/freetype2" \
 		-DFREETYPE_INCLUDE_DIR_freetype2="$blDeps/include/freetype2" \
 		-DFREETYPE_LIBRARY="$blDeps/lib/libfreetype.a;brotlidec;brotlicommon;png16;z" \
@@ -455,7 +460,7 @@ configure() {
 	fi
 	# what the minimal build is for, still on after configure
 	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP WITH_PUGIXML \
-			WITH_OPENCOLORIO WITH_OPENSUBDIV; do
+			WITH_OPENCOLORIO WITH_OPENSUBDIV WITH_CODEC_FFMPEG WITH_AUDASPACE; do
 		grep -q "^$o:BOOL=ON" "$bl/build/CMakeCache.txt" || { echo "build-blender: $o is off" >&2; exit 1; }
 	done
 	grep -q '^SSE2NEON_INCLUDE_DIR:PATH=/' "$bl/build/CMakeCache.txt" \
@@ -501,10 +506,10 @@ blender_package() {
 		r+=(--requires "lib:$lib")
 	done
 	# revision 2: EEVEE on 4 color attachments (patches/blender/0007); 3: the app icon; 4: the viewport's depth
-	# copy as a GPU blit on V3D (0008)
-	package "$recipe" --revision 4 --system-prefix --no-devel --provides app:Blender \
+	# copy as a GPU blit on V3D (0008); 5: video (FFmpeg), audio (audaspace on SDL), Unicode text input (0009)
+	package "$recipe" --revision 5 --system-prefix --no-devel --provides app:Blender \
 		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 "${r[@]}"
-	"$pkgtool" list -i "$out/blender-3.6.23-4-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+	"$pkgtool" list -i "$out/blender-3.6.23-5-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its

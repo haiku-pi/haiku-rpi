@@ -1,6 +1,6 @@
 # blender-input.py — an observer for input tests of Blender's UI (docs/design/blender.md §7, M4): every 0.5 s
 # one line "BMI <seconds> mode=<active object's mode> windows=<n> draws=<viewport redraws so far>
-# rot=<view rotation>", so that injected input (tools/haiku-tests/uiinject.cpp: Tab, middle-drag, numpad,
+# rot=<view rotation> name=<active object's name>", so that injected input (tools/haiku-tests/uiinject.cpp: Tab, middle-drag, numpad,
 # F12) can be checked from the log, and the viewport frame rate while orbiting is the change of draws over time.
 #
 #   blender FILE.blend --python blender-input.py
@@ -39,9 +39,9 @@ def report():
                 q = a.spaces.active.region_3d.view_rotation
                 rot = "%.3f,%.3f,%.3f,%.3f" % tuple(q)
                 break
-    print("BMI %.1f mode=%s windows=%d draws=%d rot=%s" % (
+    print("BMI %.1f mode=%s windows=%d draws=%d rot=%s name=%s" % (
         time.perf_counter() - start, obj.mode if obj else "-",
-        len(bpy.context.window_manager.windows), draws[0], rot), flush=True)
+        len(bpy.context.window_manager.windows), draws[0], rot, obj.name if obj else "-"), flush=True)
     return 0.5
 
 

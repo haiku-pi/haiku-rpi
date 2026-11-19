@@ -1,5 +1,7 @@
 
-resource app_flags B_SINGLE_LAUNCH | B_ARGV_ONLY;
+// (haiku-pi: B_MULTIPLE_LAUNCH instead of HaikuPorts' B_SINGLE_LAUNCH: a second Blender window, or a GUI
+// instance next to a running one, is normal Blender use; B_ARGV_ONLY: Tracker passes a .blend as an argument)
+resource app_flags B_MULTIPLE_LAUNCH | B_ARGV_ONLY;
 
 resource app_version {
 	major  = @MAJOR@,

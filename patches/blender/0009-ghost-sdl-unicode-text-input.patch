@@ -1,0 +1,105 @@
+GHOST_SDL: Unicode text input (SDL_TEXTINPUT)
+
+GHOST_SDL took a key's text from its SDL key-code, ASCII only (the TODO in processEvent): a
+character such as "ż" could not be typed into a text field. SDL reports the text a key types,
+as UTF-8 from the keyboard map, in an SDL_TEXTINPUT event that it queues right after the key's
+SDL_KEYDOWN. Text input is now started with the system, the key-down event takes the text of
+the SDL_TEXTINPUT that follows it (the ASCII conversion stays as the fallback for keys that type
+nothing), and text without a key event of its own (an input method) becomes one key press per
+character without a key-code.
+
+diff --git a/intern/ghost/intern/GHOST_SystemSDL.cc b/intern/ghost/intern/GHOST_SystemSDL.cc
+index 6b784c7..1c3099f 100644
+--- a/intern/ghost/intern/GHOST_SystemSDL.cc
++++ b/intern/ghost/intern/GHOST_SystemSDL.cc
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <cassert>
++#include <cstring>
+ #include <stdexcept>
+ 
+ #include "GHOST_ContextSDL.hh"
+@@ -29,6 +30,9 @@ GHOST_SystemSDL::GHOST_SystemSDL() : GHOST_System()
+   SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+   SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+   SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
++
++  /* UTF-8 text with the key events (#SDL_TEXTINPUT), see #processEvent. */
++  SDL_StartTextInput();
+ }
+ 
+ GHOST_SystemSDL::~GHOST_SystemSDL()
+@@ -280,6 +284,32 @@ static GHOST_TKey convertSDLKey(SDL_Scancode key)
+ }
+ #undef GXMAP
+ 
++/** The length of the UTF-8 sequence at \a text (1 for an invalid lead byte). */
++static int utf8_sequence_length(const char *text)
++{
++  const unsigned char c = (unsigned char)text[0];
++  const int len = c < 0xc0 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
++  return std::min(len, (int)strlen(text)); /* A truncated sequence: what there is. */
++}
++
++/**
++ * The text of the #SDL_TEXTINPUT event that SDL queues right after the #SDL_KEYDOWN of a key that
++ * types (the UTF-8 the keyboard map gives, e.g. "ż" on a Polish layout): taken off the queue into
++ * \a utf8_buf (the key's first character). False when there is none (a key that types nothing).
++ */
++static bool take_key_text(char utf8_buf[6])
++{
++  SDL_Event next;
++  if (SDL_PeepEvents(&next, 1, SDL_PEEKEVENT, SDL_TEXTINPUT, SDL_TEXTINPUT) != 1) {
++    return false;
++  }
++  SDL_PeepEvents(&next, 1, SDL_GETEVENT, SDL_TEXTINPUT, SDL_TEXTINPUT);
++  const int len = utf8_sequence_length(next.text.text);
++  memcpy(utf8_buf, next.text.text, len);
++  utf8_buf[len] = '\0';
++  return true;
++}
++
+ static char convert_keyboard_event_to_ascii(const SDL_KeyboardEvent &sdl_sub_evt)
+ {
+   SDL_Keycode sym = sdl_sub_evt.keysym.sym;
+@@ -602,16 +632,36 @@ void GHOST_SystemSDL::processEvent(SDL_Event *sdl_event)
+       /* NOTE: the `sdl_sub_evt.keysym.sym` is truncated,
+        * for unicode support ghost has to be modified. */
+ 
+-      /* TODO(@ideasman42): support full unicode, SDL supports this but it needs to be
+-       * explicitly enabled via #SDL_StartTextInput which GHOST would have to wrap. */
++      /* The key's text: the UTF-8 of the #SDL_TEXTINPUT that follows it (text input is started in
++       * the constructor), else the ASCII the key-code gives (keys that type nothing, keypad). */
+       char utf8_buf[sizeof(GHOST_TEventKeyData::utf8_buf)] = {'\0'};
+-      if (type == GHOST_kEventKeyDown) {
++      if (type == GHOST_kEventKeyDown && !take_key_text(utf8_buf)) {
+         utf8_buf[0] = convert_keyboard_event_to_ascii(sdl_sub_evt);
+       }
+ 
+       g_event = new GHOST_EventKey(getMilliSeconds(), type, window, gkey, is_repeat, utf8_buf);
+       break;
+     }
++    case SDL_TEXTINPUT: {
++      /* Text without a key event of its own (an input method, or more than one character for
++       * a key): one key press per character, with no key-code. */
++      SDL_TextInputEvent &sdl_sub_evt = sdl_event->text;
++      GHOST_WindowSDL *window = findGhostWindow(
++          SDL_GetWindowFromID_fallback(sdl_sub_evt.windowID));
++      if (window == nullptr) {
++        break;
++      }
++      const char *text = sdl_sub_evt.text;
++      while (*text != '\0') {
++        char utf8_buf[sizeof(GHOST_TEventKeyData::utf8_buf)] = {'\0'};
++        const int len = utf8_sequence_length(text);
++        memcpy(utf8_buf, text, len);
++        pushEvent(new GHOST_EventKey(
++            getMilliSeconds(), GHOST_kEventKeyDown, window, GHOST_kKeyUnknown, false, utf8_buf));
++        text += len;
++      }
++      break;
++    }
+   }
+ 
+   if (g_event) {

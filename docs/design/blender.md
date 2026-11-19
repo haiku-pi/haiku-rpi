@@ -775,6 +775,34 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
 - One debug_server entry in the session: the first trace build dereferenced the context before `init()`
   (diagnostic code only, fixed and removed).
 
+### 7.12 blender -5: video, audio, Unicode text input (2026-11-19 12:53–13:09, session blav, image-2026-11-19b)
+
+- **Video:** `WITH_CODEC_FFMPEG` against the ffmpeg6 6.1.6-5 package (Blender 3.6 pins FFmpeg 6.0; 6.1 builds
+  and works). Our FFmpeg has no software H.264 encoder (only `h264_mmal`), so the test writes **MPEG-4 Part 2
+  in MP4** (libavcodec `mpeg4`): `tools/pi-tests/blender-av.py -- render` — a turning cube, 24 frames at
+  640×360, Workbench, **7.5 s**; on the host ffprobe: `mpeg4 640x360 24/1 nb_frames=24`. The **Video Sequencer**
+  loads the MP4 (24 frames, 640×360) and a WAV (48 kHz), and renders its frame 12 from the decoded movie
+  (`artifacts/blender-tests/av/vse_0012.png`: the cube at 45°). Playback in the GUI: frame advancing,
+  fps 6.2 (`av/vse-play.png`). Also usable: MJPEG, FFV1, FLAC/PCM/Vorbis audio; no H.264/AAC encoding.
+- **Audio:** `WITH_AUDASPACE` on SDL2 (OpenAL/JACK/PulseAudio off; audaspace reads audio through FFmpeg).
+  Preferences ▸ System ▸ Sound device: **SDL**; the team gets SDL's BSoundPlayer thread ("SDL Audio control",
+  media priority 110, running); playback synced to the audio clock (`AUDIO_SYNC`) advances (frame 1 → 13–16 in
+  1.6 s). Not heard (no listener at the bench). The `aud` Python module is not there: Blender builds it only
+  with NumPy (WITH_PYTHON_NUMPY, a NumPy port for 3.10 — a big new dependency, left out).
+- **Unicode text input:** `patches/blender/0009-ghost-sdl-unicode-text-input.patch` — GHOST_SDL starts SDL
+  text input and takes a key's text from the SDL_TEXTINPUT event that follows its SDL_KEYDOWN (UTF-8 from the
+  keymap), with the old ASCII conversion as the fallback; text without a key event of its own becomes one key
+  press per character. Test: `uiinject … key f2 … text "zażółć" key return` (new `text` command: one key
+  event per UTF-8 character) → the observer prints **`name=zażółć`**; the outliner, header and properties
+  show it (`av/unicode-name.png`).
+- **App flags fixed:** HaikuPorts' rdef had `B_SINGLE_LAUNCH`, so with -4 a second Blender window (or a GUI
+  instance next to a running one) exited at once; now `B_MULTIPLE_LAUNCH | B_ARGV_ONLY` (ARGV_ONLY kept:
+  Tracker passes a .blend as an argument; it also hides the app from scripting, so input tests use the same
+  build without resources). Two instances checked (`av/two-instances.png`; Deskbar shows the icon).
+- **Package:** blender **-5** (49 MB) in artifacts/packages-test/blender, unpublished. Requires vs -4: + the seven
+  FFmpeg libraries (libavcodec/-device/-filter/-format/-util, libswresample, libswscale; the published ffmpeg6
+  package, which images already carry) — nothing else. 0 PANIC, 0 debugger entries.
+
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
 **USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
@@ -784,7 +812,10 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
 > needs) and start it from Deskbar ▸ Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`.
 > - **Works:** the whole UI, the solid (Workbench) viewport, edit mode, modifiers including Subdivision
 >   Surface, save/load, the Preferences window, Cycles rendering on the CPU (F12 into the image editor, or
->   headless: `Blender -b scene.blend -E CYCLES -f 1`), Python scripting, Filmic colour management.
+>   headless: `Blender -b scene.blend -E CYCLES -f 1`), Python scripting, Filmic colour management, video
+>   output and the Video Sequencer (FFmpeg), sound playback (SDL), typing any characters your keymap gives.
+> - **Video output:** choose FFmpeg Video with the MPEG-4 (or MJPEG / FFV1) codec; H.264 and AAC encoding are
+>   not available.
 > - **EEVEE and Cycles both render** (F12, Material Preview, Rendered view). EEVEE is the faster one; on the
 >   Pi 4's GPU it renders without Subsurface Scattering (see Known issues).
 > - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores). The viewport draws about
@@ -802,10 +833,10 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
 >   Cycles for skin, wax and similar materials.
 > - **No denoising:** OpenImageDenoise is not ported; renders are noisier at low sample counts (the
 >   Denoise checkbox is ignored instead of stopping the render).
-> - **No video, audio, Alembic/USD/OpenVDB import, fluid simulation** in this first package (built without
->   FFmpeg, audaspace, Alembic, USD, OpenVDB, Mantaflow).
+> - **No Alembic/USD/OpenVDB import, fluid simulation** (built without Alembic, USD, OpenVDB, Mantaflow);
+>   no H.264/AAC encoding; Python's `aud` (audio scripting) module is missing.
 > - GPU subdivision is off (no compute shaders); subdivision runs on the CPU.
-> - Text input is ASCII only (Blender's SDL backend); no tablet pressure, no input methods.
+> - No tablet pressure; input methods (IME) untested.
 
 ## 8. Files
 
