@@ -862,8 +862,9 @@ Blender's renders need).
   save/load, the Preferences window, **Cycles** (CPU) and **EEVEE** rendering (F12 into the Render window,
   Material Preview, Rendered view), Filmic colour management, Python scripting; headless renders:
   `Blender -b scene.blend -E CYCLES -f 1` (or `-E BLENDER_EEVEE`; EEVEE needs the desktop running). From
-  blender 3.6.23-5: **video output** (Output ▸ FFmpeg Video with MPEG-4, MJPEG or FFV1; 24 frames at 640×360 in
-  7.5 s) and the **Video Sequencer** (movies and sounds), **sound** playback through SDL, and typing any
+  blender 3.6.23-5: **video output** (Output ▸ FFmpeg Video: H.264 through the VideoCore's encoder, MPEG-4, MJPEG or FFV1, with AAC
+  sound; 48 frames at 1280×720 with sound in 33 s; blender -6 maps the quality presets to a bit rate for the
+  VideoCore encoder, which has no CRF) and the **Video Sequencer** (movies and sounds), **sound** playback through SDL, and typing any
   character your keymap gives (names, text fields; was ASCII only). Several Blender windows can run at once
   (blender -4 quit a second one at once).
 - **Speed (measured on the Pi 4, 4 cores):** the factory scene at 1920×1080 renders in about 35 s with EEVEE and
@@ -872,8 +873,8 @@ Blender's renders need).
   off (Preferences ▸ Viewport) about 15. A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
 - **Input:** click into the Blender window once before typing — keys go to the active window, and to the area
   under the mouse pointer.
-- Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, no denoiser, no H.264/AAC encoding,
-  no Alembic/USD/OpenVDB, no `aud` Python module.
+- Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, no denoiser, no Alembic/USD/OpenVDB, no `aud`
+  Python module.
 
 ## 12. The CPU, clocks and temperature
 
