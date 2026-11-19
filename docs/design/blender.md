@@ -828,10 +828,11 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
   **32.7 s** for 48 frames (0.64 s per frame, 0.19 s of it saving). Host ffprobe: `h264 High 1280x720
   nb_frames=48 duration=2.000000`, `aac LC 48000 Hz stereo duration=2.005`, file 117 kB
   (`artifacts/blender-tests/h264/h264_0001-0048.mp4`).
-- **MediaPlayer** plays it (h264_mmal decode, to the end; `h264/mediaplayer.png`), with ffmpeg6 -5 as on the
-  image and with -6. A "General system error" seen first was the media kit after uninstalling and
-  reinstalling ffmpeg6 inside the running session (a fresh session opens the file); `pkgman uninstall
-  ffmpeg6` also removes blender (it requires the libraries).
+- **MediaPlayer** plays it with ffmpeg6 -6 (`h264/mediaplayer.png`; its log: h264_mmal decode to the end of
+  the stream); with -5 as on the image its log shows the same (no screenshot). A "General system error" seen
+  first, after uninstalling and reinstalling ffmpeg6 inside the running session, was not reproduced in a
+  fresh session (cause not established). `pkgman uninstall ffmpeg6` also removes blender. The audio track
+  carries the WAV (volumedetect: mean −11.8 dB). The testsrc2 bit-rate runs above predate `initial_qp`.
 - **Packages** (unpublished, artifacts/packages-test): blender **-6** (49 MB; requires identical to -5) and
   ffmpeg6 **-6** (`scripts/build-ffmpeg.sh --out DIR`). 0 PANIC, 0 debugger entries.
 

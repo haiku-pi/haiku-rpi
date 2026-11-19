@@ -9,7 +9,7 @@ libmmal in `raspberrypi_userland`, `h264_mmal` in the media kit) and on the YUV 
 |---|---|---|
 | a | H.264 on the VideoCore in **Firefox** | **works**, no Firefox rebuild: `h264_vc` (ffmpeg6 patch 0003). Firefox's decode process 1080p30: 123 % → 58 % of a core; frames dropped unchanged (Firefox's drawing, G2) — §1 |
 | b | **JPEG** on the VideoCore for Haiku's translators | **not worth it**: the VideoCore decodes and encodes slower than one A72 core with libjpeg-turbo, no progressive; instead the translator's own overhead cut (1080p 94 → 63 ms) — §2 |
-| c | **H.264 encode** | **works**: `h264_mmal` encoder (ffmpeg6 patch 0004), 1080p 50 fps, quality on par with x264 `veryfast`; ffmpeg and the media kit (MediaConverter) — §3 |
+| c | **H.264 encode** | **works**: `h264_mmal` encoder (ffmpeg6 patch 0004), 1080p 50 fps, quality on par with x264 `veryfast`; ffmpeg and the media kit (MediaConverter) — §3. ffmpeg6 -6: option `initial_qp` (first-frame quantiser, default 25; the VideoCore's own banded a flat key frame) and pts in µs as MMAL defines them (blender.md §7.13) |
 | d | **Camera** (CSI) | **no camera attached** to the bench Pi (`start_x` firmware: `supported=1 detected=0`); design — §4 |
 
 Numbers are **measured** (with the session) unless marked **estimated**.
