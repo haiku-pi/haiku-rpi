@@ -4,7 +4,7 @@ Status (2026-11-19): **M1 (SDL2 per-thread GL context) done, §7.2; M2 done: `bl
 arm64 (cross-built, minimal option set), §7.3; M3 done: Cycles renders the default cube headless on the Pi
 (1920×1080 factory scene in 1 min 37 s), §7.4; M4 mostly done: the UI runs through GHOST_SDL on the desktop —
 solid viewport, edit mode, save/reload, preferences window, F12 Cycles render into the image editor — after two
-GPU patches; keyboard/mouse input not verified yet, §7.5.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+GPU patches; injected keyboard and mouse input acts (Tab, middle-drag and numpad orbit, F12), §7.5–7.6.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -631,19 +631,39 @@ Frames: `artifacts/blender-tests/m4/{1-start,2-viewport,3-edit,4-reloaded,4b-100
   screen: they open at the mouse position of the invoking event, and an operator called from a timer before
   any mouse event has none. With `window.cursor_warp()` first they open at 470,190 and 305,150.
 - **Open:**
-  - **Input not verified.** keyinject's B_KEY_DOWN messages ("^[n": Escape, then N for the sidebar) reached
-    the window ("typed 3 characters") but Blender did not react — most likely SDL routes keys only to the
-    window with keyboard focus, and a window started over ssh was never activated (unconfirmed). Needs a
-    real input path (input_server device add-on or a mouse-click injector) or a hands-on check.
+  - Input: resolved in §7.6 (the window was never activated).
   - The splash screen stays open (closing it needs a click), so it covers the viewport in frames 2–3.
   - **Subdivision Surface is disabled** in this build ("Disabled, built without OpenSubdiv"): OpenSubdiv
     (CPU) should come early in M6, it is one of the most used modifiers.
   - GHOST_SDL's `getCursorPosition` returns `y = yi + x_win` (upstream typo; harmless while x_win = 0).
 - 0 PANIC, 0 debug_server entries; "<!> event has no window" lines from GHOST_SDL are harmless.
 
-Next: finish M4 with real input (a mouse/keyboard injector through input_server, or the owner's hands-on
-check: orbit, select, Tab, F12) and viewport fps while orbiting; then M5 (EEVEE on 4 targets — patch 0005 is
-the frame-buffer half of it) or M6 (packaging + OpenSubdiv, OCIO, OIDN-free defaults).
+### 7.6 M4 input (2026-11-19 07:58–08:06, session bl4i)
+
+`tools/haiku-tests/uiinject.cpp` (new): activates a window through scripting (`set Active of Window N`, so
+app_server sends the real B_WINDOW_ACTIVATED) and posts mouse moves, button presses, drags and named keys to
+it, as app_server/input_server deliver them. `tools/pi-tests/blender-input.py` (new) prints every 0.5 s the
+active object's mode, the window count, the 3D viewport's redraw count (a POST_PIXEL draw handler) and the
+view rotation. Frames: `artifacts/blender-tests/m4/input/`.
+- **Root cause of the earlier "no reaction":** SDL hands key events to its keyboard-focus window, which it
+  learns only from WindowActivated(); a window started over ssh is never activated, so SDL sends the keys with
+  window id 0 and GHOST_SDL drops them ("<!> event has no window" in every earlier log). Not an SDL bug: a
+  user's click activates the window. After `activate`: 0 such lines.
+- A second condition, Blender's own: keys go to the area under the mouse pointer, and Blender has no pointer
+  position before the first mouse-move event — Tab did nothing until one `move` into the viewport.
+- **Acts:** Esc (closes the splash), **Tab** (mode OBJECT → EDIT → OBJECT), **middle-button drag** (view
+  rotation 0.716,0.439,… → 0.576,0.362,…), **numpad 6/6/8** (rotation changes again), **F12**.
+- **Viewport while orbiting** (240 drag steps at 16 ms, 1322×762 viewport, default cube): 18 redraws in
+  4.2 s = **4.3 fps**; the frame is GPU/driver bound at this size (to investigate in M5/M6: viewport AA,
+  overlay passes, a smaller window).
+- **F12 on the default scene crashes**: its render engine is EEVEE, whose opaque material shader does not link
+  on 4 color targets (`invalid explicit location 4 specified for 'sssRadius'`, §2.2), and Blender then takes a
+  segment violation (debug_server; the Release build has no symbols, the reported offset is not in .text:
+  unresolved). F12 with Cycles works (§7.5). → M5; until then the user docs must say "switch the render engine
+  to Cycles".
+
+Next: M6 (packaging; OpenSubdiv, OCIO, denoising off without OIDN), then M5 (EEVEE on 4 targets — patch 0005
+is the frame-buffer half of it — and the F12 crash).
 
 ## 8. Files
 
