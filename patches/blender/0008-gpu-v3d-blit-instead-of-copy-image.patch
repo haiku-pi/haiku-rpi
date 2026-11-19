@@ -1,0 +1,29 @@
+GPU: no glCopyImageSubData on Mesa's v3d (Raspberry Pi): blit instead
+
+Mesa's v3d implements glCopyImageSubData through util_resource_copy_region, on the CPU: both
+textures are mapped, untiled, copied and retiled (v3d_resource_transfer_map,
+v3d_move_pixels_general_percpp). Workbench's anti-aliasing copies the depth buffer with
+GPU_texture_copy() every viewport frame; on a Raspberry Pi 4 (V3D 4.2) at 1322x762 that was about 60%
+of all CPU samples while orbiting the default cube (Haiku's profile -f). GLTexture::copy_to() already
+has a framebuffer-blit fallback for drivers without ARB_copy_image; use it on V3D: the blit runs on
+the GPU.
+
+diff --git a/source/blender/gpu/opengl/gl_backend.cc b/source/blender/gpu/opengl/gl_backend.cc
+index 567254b..860c736 100644
+--- a/source/blender/gpu/opengl/gl_backend.cc
++++ b/source/blender/gpu/opengl/gl_backend.cc
+@@ -351,6 +351,14 @@ static void detect_workarounds()
+   {
+     GLContext::copy_image_support = false;
+   }
++  /* Mesa's v3d (Raspberry Pi) does glCopyImageSubData on the CPU: it maps both textures, untiles,
++   * copies and retiles them. Workbench's anti-aliasing copies the depth buffer every frame that way,
++   * which took about 60% of a viewport frame. The framebuffer blit fallback runs on the GPU. */
++  if (GPU_type_matches(GPU_DEVICE_UNKNOWN, GPU_OS_ANY, GPU_DRIVER_OPENSOURCE) &&
++      strstr(renderer, "V3D"))
++  {
++    GLContext::copy_image_support = false;
++  }
+   /* Special fix for these specific GPUs.
+    * Without this workaround, blender crashes on startup. (see #72098) */
+   if (GPU_type_matches(GPU_DEVICE_INTEL, GPU_OS_WIN, GPU_DRIVER_OFFICIAL) &&

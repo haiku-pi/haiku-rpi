@@ -719,6 +719,36 @@ is the frame-buffer half of it — and the F12 crash).
   the transmission monkey is dark in EEVEE as everywhere without screen-space refraction enabled on the material.
 - No x86-64 reference render (not cheap here); Cycles of the same scene is the comparison.
 
+### 7.10 Viewport speed (2026-11-19 11:48–12:10, sessions blperf and blperf2, image-2026-11-19b)
+
+`tools/pi-tests/blender-perf.py` measures the solid viewport: "window" = every region drawn and swapped
+(`redraw_timer DRAW_WIN_SWAP`), "orbit" = a 2° `view_orbit` + the viewport region drawn and swapped, per frame
+(interactive navigation). Profiles: Haiku's `profile -k -f -S` with an unstripped `blender` and the unstripped
+`libEGL_mesa` of the same Mesa build (loaded through `__EGL_VENDOR_LIBRARY_FILENAMES`); GPU time: the v3d
+driver's `v3d_stats` (kernel setting, read at boot: `pi-session.sh --add`).
+
+- **Before:** orbit 241 ms/frame (4.1 fps), window 192 ms (5.2 fps) at 1600×900 (viewport 1322×762); the cube
+  and a ~102k-triangle scene the same — not geometry. **62% of all CPU samples** were in Workbench's
+  anti-aliasing pass: `GLTexture::copy_to` → `glCopyImageSubData` → Mesa's `util_resource_copy_region`,
+  which v3d does on the CPU (`v3d_resource_transfer_map`, `v3d_move_pixels_general_percpp`, memcpy; the
+  kernel's page faults/zeroing/unmapping were its transfer buffers). The depth buffer is copied that way
+  every frame.
+- **`patches/blender/0008`:** `copy_image_support = false` on V3D, so `copy_to` uses its framebuffer-blit
+  fallback (GPU). Orbit **198 ms (5.0 fps, +22%)**, window 155 ms (6.5 fps); CPU samples for the same 120
+  frames 17089 → 6171. In blender **-4** (artifacts/packages-test/blender, with the -3 icon).
+- **What is left is the GPU:** `v3d_stats` during orbiting: GPU busy **99%**, ~36 control-list (render) jobs per
+  frame at ~5.4 ms each (bin ~0.19 ms). Each framebuffer switch is a full tile pass that loads and stores
+  every attachment (RGBA16F + depth at 1322×762), so the frame costs passes × bandwidth: frame time scales
+  with the pixel count (1024×600 window, 845×485 viewport: 81 ms, 12.3 fps). The present is cheap (one
+  5.6 MB cache sync, ~0.65 ms, per frame); Python and the draw manager's CPU time are small once the copy is
+  gone.
+- **Settings** (orbit, 1322×762): Smooth Wires off (Preferences ▸ Viewport) 167 ms (6.0 fps); viewport AA
+  off: −6 ms after 0008; overlays off: 147 ms (6.8 fps). Best cheap combination: a 1024×600 window with
+  AA and Smooth Wires off, **68 ms (14.6 fps)**.
+- **Next (not cheap):** fewer loads per pass — Mesa v3d skips a tile load when the buffer was cleared or
+  invalidated, Blender never invalidates; or fewer passes (overlay sub-passes, region framebuffers). Both
+  are real work in Mesa or the draw manager; the user doc gets the settings tip.
+
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
 **USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
@@ -731,8 +761,10 @@ is the frame-buffer half of it — and the F12 crash).
 >   headless: `Blender -b scene.blend -E CYCLES -f 1`), Python scripting, Filmic colour management.
 > - **EEVEE and Cycles both render** (F12, Material Preview, Rendered view). EEVEE is the faster one; on the
 >   Pi 4's GPU it renders without Subsurface Scattering (see Known issues).
-> - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores); the viewport redraws
->   at about 4–5 frames per second at 1600×900 — use a smaller window for smoother navigation.
+> - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores). The viewport draws about
+>   5 frames per second while navigating in a 1600×900 window; it is limited by the GPU's memory bandwidth,
+>   so a smaller window is much faster (1024×600: 12–15 fps). Turning off Preferences ▸ Viewport ▸ Smooth
+>   Wires and the scene's viewport anti-aliasing helps further.
 > - **Memory:** a simple scene needs about 300–400 MB; large scenes and big textures may not fit in 4 GB.
 > - **Input:** click into the Blender window once before typing — keys go to the active window, and to the
 >   area under the mouse pointer.
