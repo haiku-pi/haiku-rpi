@@ -456,8 +456,11 @@ static int ffmmal_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 static const AVOption options[] = {
     { "inline_headers", "parameter sets in front of every key frame", OFFSET(inline_headers),
       AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
-    { "initial_qp", "quantiser of the first frame (0: the VideoCore's own choice)", OFFSET(initial_qp),
-      AV_OPT_TYPE_INT, { .i64 = 25 }, 0, 51, VE },
+    /* off by default: with an initial quantiser set, the firmware stops following the target bit rate (a 10 s
+     * 720p clip came out ~2.2 Mbit/s whether asked for 0.5, 1 or 2 Mbit/s); without it the first frame may be
+     * blocky, the rate is kept */
+    { "initial_qp", "quantiser of the first frame (0: the VideoCore's own choice; >0 also disables rate control)",
+      OFFSET(initial_qp), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 51, VE },
     { NULL },
 };
 
