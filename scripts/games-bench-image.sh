@@ -14,7 +14,7 @@
 #       artifacts/packages/mesa_devel-26.2.5-7-arm64.hpkg:/boot/system/packages/mesa_devel-26.2.5-7-arm64.hpkg
 #
 # What goes in (to /boot/system/non-packaged): artifacts/games/non-packaged (QuakeSpasm, vkQuake, Yamagi
-# Quake II, the Quake III demo, OpenArena on ioquake3, their libSDL2), the Wine test programs gltest, d3dtest
+# Quake II, the Quake III demo, OpenArena on ioquake3; SDL2 is the image's libsdl2 package), the Wine test programs gltest, d3dtest
 # and input.exe (from the Wine build's test tree, never the Wine there: that would shadow the packages), and
 # Half-Life Uplink's installed tree (artifacts/wine-games). Not the GL stack's test tree: its lib/ and
 # add-ons/ would shadow the packaged Mesa and both images would run the same GL driver.
@@ -32,6 +32,7 @@ stage="$root/artifacts/games-bench/np"
 rm -rf "$stage"
 mkdir -p "$stage/data/wine-tests" "$stage/data/wine-games"
 cp -a "$root/artifacts/games/non-packaged/." "$stage/"
+rm -f "$stage/lib/libSDL2-2.0.so.0" # (an older build-games.sh's copy would shadow the package)
 for t in gltest-arm64 gltest-x86 d3dtest-arm64 d3dtest-x86 input; do
 	cp -a "$root/artifacts/wine-tests-11.20/$t.exe" "$stage/data/wine-tests/"
 done

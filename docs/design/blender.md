@@ -1,6 +1,6 @@
 # Blender on the Pi 4 (Haiku arm64): feasibility and plan
 
-Status (2026-11-19): **analysis, no Blender build yet.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+Status (2026-11-19): **analysis, no Blender build yet; M1 (SDL2 per-thread GL context) done, §7.2.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -197,6 +197,9 @@ the milestones below.
 - `HAIKU_GL_MakeCurrent(NULL)` then unlocks only the calling thread's view, and making a context current locks it
   on the calling thread.
 - Programs that use one thread do not change (STK, Quake II, the games).
+- Done (M1, §7.2): SDL's TLS (`SDL_TLSCreate`, as `SDL_video.c` keeps `SDL_GL_GetCurrentContext()`), not
+  `thread_local`: GCC's aarch64 default TLS dialect is descriptors, and Haiku's arm64 runtime loader has no
+  `R_AARCH64_TLSDESC` relocation.
 
 Blender's alternative, `GPU_use_main_context_workaround()`, is not enough: with it the job threads still activate
 the main context from their own thread, under a lock [B36 `draw_manager_shader.c:83-88`].
@@ -476,6 +479,24 @@ default search path is kept). Third run — every prediction of §2/§3 held:
 - 0 debugger entries.
 
 So M1 can start as planned; no Mesa work is needed for M1–M4.
+
+### 7.2 M1 result (2026-11-19, session sdlm1 on the mega image; artifacts/blender-probe/m1/)
+
+`patches/libsdl2/libsdl2-2.32.10-haiku-gl-thread-context.patch` (SDL_BApp.h, +17/−6 lines): `SDL_BHandler` keeps
+the current BGLView in an SDL TLS slot instead of one member, so `SetCurrentContext()` unlocks only the view the
+calling thread locked. libsdl2 **2.32.10-8** = the six earlier patches + this one
+(`artifacts/packages-test/libsdl2-8/`, not published).
+- `blender-probe.sh` with -8 in the probe directory: **`sdlthread: PASS no cross-thread BGLView unlocks`**, the
+  three `sdl thread:` checks PASS; the other probe results as in §7.1.
+- Same session, `blender-glprobe -t` per library: -7 → 2 "wrong thread" lines, 3 PASS; -8 → 0, 3 PASS; a traced
+  -8 build shows the job thread locking and unlocking only its own view (`t-diag.txt`).
+- Unchanged, -7 vs -8 (each loaded through LIBRARY_PATH): SuperTuxKart legacy 3.1, 37.7 vs 42.1 egl frames/s;
+  SuperTuxKart `force_legacy_device="false"` **3.3 core, shader renderer, race completes**, 16.1 vs 16.8;
+  Quake II GL3 "got version 3.3", 58.5 vs 58.6 fps (timedemo, 1280×720); GL1 60.0 vs 60.0; `desktop-gl.sh`
+  (its programs do not link SDL2) 0 failures.
+- Not covered: deleting a context that is current on *another* thread (that thread's slot then points at a
+  deleted view; a program error on every platform), and making one view current on two threads at once (the
+  second `LockGL()` now waits for the first thread to release it, where EGL returns `EGL_BAD_ACCESS`).
 
 ## 8. Files
 

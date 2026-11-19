@@ -64,12 +64,13 @@ for l in game/libgame.so media/libmedia.so; do
 done
 # with patches/libsdl2 (Vulkan windows through Mesa's Haiku WSI; OpenGL ES contexts; display modes that own their data;
 # window events handled on the thread that pumps events; SDL_GL_SetSwapInterval() passed on to
-# BGLView::SwapBuffers(vSync); the core profile asked for with BGL_CONTEXT_CORE, needs mesa 26.2.7-3); revision 7
+# BGLView::SwapBuffers(vSync); the core profile asked for with BGL_CONTEXT_CORE, needs mesa 26.2.7-3; the current
+# OpenGL context kept per thread, for programs that use GL on several threads such as Blender); revision 8
 "$root/scripts/cross-port.sh" --patches "$root/patches/libsdl2" \
 	"$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
 	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF -DSDL_VULKAN=ON
 "$root/scripts/package-port.py" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" \
-	--revision 7 --devel-bin sdl2-config
+	--revision 8 --devel-bin sdl2-config
 
 # ffmpeg (the media kit's ffmpeg plugin, MediaPlayer), with HEVC on the Pi 4's decoder block
 "$root/scripts/build-ffmpeg.sh"

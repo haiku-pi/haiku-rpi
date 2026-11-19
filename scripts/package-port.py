@@ -174,6 +174,9 @@ def main():
         help='a Unix group the package creates (the recipe\'s PACKAGE_GROUPS)')
     parser.add_argument('--post-install', action='append', default=[],
         help='a script run on package activation and first boot (the recipe\'s POST_INSTALL_SCRIPTS)')
+    parser.add_argument('--out', default='',
+        help='the directory the packages go to (default artifacts/packages; e.g. a test revision that is '
+            'not to be published yet)')
     args = parser.parse_args()
 
     recipeName = os.path.basename(args.recipe)[:-len('.recipe')]
@@ -385,7 +388,8 @@ def main():
                 os.makedirs(os.path.join(directory, 'data/licenses'), exist_ok=True)
                 shutil.copy(text, os.path.join(directory, 'data/licenses', license))
 
-    out = os.path.join(root, 'artifacts/packages')
+    out = os.path.realpath(args.out) if args.out else os.path.join(root, 'artifacts/packages')
+    os.makedirs(out, exist_ok=True)
     if args.source_package:
         source = os.path.join(work, 'source')
         revisioned = f'{port}-{version}-{args.revision}'

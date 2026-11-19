@@ -184,6 +184,30 @@ Not run / not covered:
 - 1986798cb22 (`st_pbo.c`: depth clipping on in the PBO rasterizer state — it was zeroed, so every PBO upload and
   readback draw would have run the emulation for nothing) is built, not Pi-run.
 
+### 7.1 Why the packaged SuperTuxKart got 3.1 with `force_legacy_device="false"` (2026-11-19)
+
+Seen on the mega image after the release (mesa 26.2.7-3, libsdl2 2.32.10-7): "OpenGL version: 3.1, GLSL 1.4,
+GLSL supported", then the `glVertexAttribDivisor` crash. **Not an SDL2 bug — a stale copy of SDL2 shadowed the
+package.** `scripts/build-games.sh` staged its own `lib/libSDL2-2.0.so.0` into `artifacts/games/non-packaged`
+(once meant for images whose libsdl2 had no Vulkan), and `build-mega-image.sh` / `games-bench-image.sh` /
+`gpu-queues-image.sh` copied it to `/boot/system/non-packaged/lib`, which comes before `/boot/system/lib` in the
+library search path. That copy was built 11-04 (the -6 patches, no glview-core patch), so every SDL program on
+those images ran without `BGL_CONTEXT_CORE`: each core request got the compatibility 3.1 context, Irrlicht's 4.3
+and 3.3 attempts failed its version check and the 3.1 one passed. V5's 3.3 run loaded its SDL2 through
+LIBRARY_PATH, ahead of the copy. The release image has no such copy (checked in the image file).
+
+Session sdlm1 (`tools/pi-tests/sdl-gl-check.sh`, `tools/gl-tests/sdl-coreseq.c`: Irrlicht's sequence — SDL
+started, stopped, started; core 4.3, 3.3, 3.1 in new windows; profile 0 2.1):
+- the mega image's own SDL2 (the copy): 4.3, 3.3 and 3.1 each "3.1 Mesa", profile mask 0 → FAIL; STK crashes;
+- the package's -7 (LIBRARY_PATH): 4.3 refused ("OpenGL 4.3 core profile not available"), **3.3 core taken**;
+  STK **"3.3 (Core Profile)", GLSL supported, shader renderer, the 60 s race completes, 16.1 frames/s**
+  (egl_haiku); -8 the same, 16.8.
+
+Fixed in the scripts: build-games.sh no longer stages libSDL2; the three image scripts drop any old copy (and
+gpu-queues-image.sh warns when its base has no libsdl2 package); the stale file is deleted from
+`artifacts/games/non-packaged`. The current `artifacts/images/haiku-pi4-mega.img` still has it until it is
+rebuilt (or `rm /boot/system/non-packaged/lib/libSDL2-2.0.so.0` on a running one).
+
 ## 8. Recommendation
 
 Merge all three together, after a mega image of them passes mega-smoke and a Wine W3 run:

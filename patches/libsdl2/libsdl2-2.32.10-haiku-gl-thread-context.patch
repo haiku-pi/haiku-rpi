@@ -1,0 +1,73 @@
+Haiku: OpenGL contexts are current per thread
+
+SDL2's Haiku backend kept one current OpenGL context for the whole process
+(SDL_BHandler::_current_context). Making a context current unlocked that
+view and locked the new one, so a program that makes contexts current on
+more than one thread (Blender's job threads, while the main thread keeps
+drawing its window) had each thread unlock another thread's BGLView: the GL
+kit reports "UnlockGL is called from wrong thread", BLocker "Unlocking
+BLocker ... from wrong thread", and which context is bound where drifts
+(another HGL stopped in the debugger there). The current view is now kept
+per thread (SDL TLS), as SDL_GL_GetCurrentContext() and EGL keep it: each
+thread locks the view it makes current and unlocks only that one. Programs
+that use OpenGL on one thread do not change.
+
+--- a/src/main/haiku/SDL_BApp.h	2026-11-19 02:44:31.586330474 +0100
++++ b/src/main/haiku/SDL_BApp.h	2026-11-19 02:49:58.567231530 +0100
+@@ -38,6 +38,7 @@
+ #include "../../SDL_internal.h"
+ 
+ #include "SDL_video.h"
++#include "SDL_thread.h"
+ 
+ /* Local includes */
+ #include "../../events/SDL_events_c.h"
+@@ -87,7 +88,7 @@
+     SDL_BHandler(const char* name) : BHandler(name)
+     {
+ #ifdef SDL_VIDEO_OPENGL
+-        _current_context = NULL;
++        _current_context = SDL_TLSCreate();
+ #endif
+     }
+ 
+@@ -225,18 +226,24 @@
+     }
+ 
+ #ifdef SDL_VIDEO_OPENGL
++    /* The current context is per thread, as SDL_GL_GetCurrentContext() and
++       EGL have it: BGLView::LockGL() binds the view's context to the calling
++       thread and takes a lock that thread owns, so each thread unlocks only
++       the view it locked itself (a program may make contexts current on
++       several threads at once) */
+     BGLView *GetCurrentContext()
+     {
+-        return _current_context;
++        return (BGLView *)SDL_TLSGet(_current_context);
+     }
+ 
+     void SetCurrentContext(BGLView *newContext)
+     {
+-        if (_current_context)
+-            _current_context->UnlockGL();
+-        _current_context = newContext;
+-        if (_current_context)
+-            _current_context->LockGL();
++        BGLView *current = GetCurrentContext();
++        if (current)
++            current->UnlockGL();
++        SDL_TLSSet(_current_context, newContext, NULL);
++        if (newContext)
++            newContext->LockGL();
+     }
+ #endif
+ 
+@@ -446,7 +453,7 @@
+     BMessageQueue _queue; /* SDL messages waiting for HAIKU_PumpEvents() */
+ 
+ #ifdef SDL_VIDEO_OPENGL
+-    BGLView *_current_context;
++    SDL_TLSID _current_context; /* the calling thread's current BGLView */
+ #endif
+ };
+ 

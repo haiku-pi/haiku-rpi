@@ -24,7 +24,7 @@ for f in "$driver" "$v3dtest"; do
 done
 stage="$root/artifacts/gpu-queues"
 rm -rf "$stage"
-mkdir -p "$stage/np/apps" "$stage/np/lib"
+mkdir -p "$stage/np/apps"
 
 cp --sparse=always "$base" "$out"
 bfs="$root/sources/haiku/generated.arm64/objects/linux/x86_64/release/tools/bfs_shell/bfs_shell"
@@ -57,7 +57,7 @@ grep -q 'mesa-' <<< "$packages" || echo "gpu-queues-image: warning: BASE has no 
 "$root/scripts/image-add.sh" --in-place "$out" "${files[@]}"
 
 cp -a "$root/artifacts/games/non-packaged/apps/QuakeSpasm" "$stage/np/apps/"
-cp -a "$root/artifacts/games/non-packaged/lib/libSDL2-2.0.so.0" "$stage/np/lib/"
+grep -q 'libsdl2-' <<< "$packages" || echo "gpu-queues-image: warning: BASE has no libsdl2 package (QuakeSpasm needs it)" >&2
 "$root/scripts/disk-add-tree.sh" --disk "$out" "$stage/np" /boot/system/non-packaged
 rm -rf "$stage/np"
 echo "gpu-queues-image: $out (kernel settings: $(grep -v -E '^[[:space:]]*(#|$)' "$stage/kernel" | tr '\n' ' '))"

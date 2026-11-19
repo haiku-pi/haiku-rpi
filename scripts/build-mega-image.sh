@@ -144,6 +144,8 @@ if [ ! -d "$root/artifacts/games/non-packaged/apps" ]; then
 		|| echo "mega: the Quakes were not built; their launchers are left out" >&2
 fi
 [ -d "$root/artifacts/games/non-packaged" ] && cp -a "$root/artifacts/games/non-packaged/." "$work/np/"
+# an older build-games.sh staged its libSDL2 there: in non-packaged/lib it would shadow the libsdl2 package
+rm -f "$work/np/lib/libSDL2-2.0.so.0"
 
 # 5. GL/Vulkan test programs
 for t in vkcube glview; do
