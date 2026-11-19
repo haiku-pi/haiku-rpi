@@ -1,7 +1,8 @@
 # Firefox `<video>` on the YUV overlay plane (KNOWN-ISSUES G2)
 
-Status: **design only (2026-11-19)**: no implementation, no Pi run, no Firefox build. One host-side compile
-probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
+Status: **design (2026-11-19)**, de-risking under way: step 0 measured on the Pi (§9.1: the video *is* a
+promoted compositor surface; its software composite is ≈1.1 cores); baseline rebuild with GCC 16.2 §9.2. One
+host-side compile probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
 [video-overlay.md](video-overlay.md) (B_YUV420 overlays, MediaPlayer), [gpu-stage6.md](gpu-stage6.md) (planes,
 alpha keying), [gpu-present.md](gpu-present.md) (the GL present path), [videocore-services.md](videocore-services.md)
 §1 (`h264_vc` in Firefox) and [perf-round-h20.md](perf-round-h20.md) "C6 / G2 results".
@@ -347,3 +348,50 @@ Every step ends with a log entry with the numbers. A Pi step uses the shared ben
 | A1/A1b | [F] `gfx/wr/webrender/src/composite.rs` (trait), `gfx/wr/webrender/src/compositor/sw_compositor.rs`, `gfx/wr/webrender/src/renderer/mod.rs` (A1b), `gfx/webrender_bindings/src/bindings.rs` (FFI), `gfx/webrender_bindings/RenderCompositor.{h,cpp}`, `RenderCompositorSWGL.{h,cpp}`, `widget/haiku/HaikuVideoOverlay.{h,cpp}` (new), `nsWindow.{h,cpp}`, `HaikuWindowBuffer.cpp`, `widget/haiku/moz.build` |
 | A2 | [F] `gfx/layers/NativeLayerHaiku.{h,cpp}`, `SurfacePoolHaiku.{h,cpp}` (new), `gfx/layers/moz.build`, `gfx/webrender_bindings/{RenderCompositor,RenderCompositorNative,RenderThread}.cpp`, `gfx/webrender_bindings/moz.build`, `modules/libpref/init/StaticPrefList.yaml`, `widget/haiku/nsWindow.{h,cpp}` |
 | B | [F] `gfx/gl/GLContextProviderBGL.cpp`, `widget/haiku/nsWindow.cpp`, `HaikuView.cpp`, `gfx/thebes/gfxPlatform.cpp` (`AccelerateLayersByDefault`), `widget/haiku/GfxInfo.cpp` (allowlist) |
+
+## 9. De-risking results
+
+### 9.1 Step 0 on the Pi (2026-11-19 17:36–17:47, session `ffv0`, image-2026-11-19b, network boot; **measured**)
+
+`tools/pi-tests/ffv0.sh CLIP LABEL [hud]`: the released Firefox 157.0.1-6 plays CLIP looped and muted in a 1280×720
+`<video>` (the `vc-services.sh firefox` page and prefs). After `WAIT` s (45 here; 30 for `m720a`) it takes every thread's CPU time in the
+system twice, 10 s apart, with `profile -a -k` in between (`PERTHREAD=1`: per thread). The
+`hud` mode adds WebRender's profiler HUD and `gfx.webrender.debug.surface-promotion-logging` with `RUST_LOG=webrender=warn`.
+Raw output in `artifacts/ffv0/` (not in git). The decoder is `h264_vc` → VideoCore for both clips. 0 debugger entries in all runs.
+
+**Promoted: yes.** The HUD (HDMI capture `artifacts/ffv0/h720-hud.png`, 720p, ~53 s after the start) shows:
+- Compositor surface **overlays 1**, underlays 0, blits 0.
+- Picture cache slices 4, **rendered picture tiles 0**.
+- No promotion-failure line in Firefox's stderr.
+
+So the video is an Overlay-kind external compositor surface (§1.2 steps 3–6 confirmed), and WebRender rasterises
+nothing per video frame.
+
+| CPU over 10 s (ms; 4 CPUs = 40 000) | 720p30 clip (`m720b`) | 1080p30 clip, downscaled (`m1080`) |
+|---|---|---|
+| Firefox `Renderer` | 6 429 | 7 003 |
+| Firefox `SwComposite` | 5 115 | 5 607 |
+| **`Renderer` + `SwComposite`** | **11 544 (1.15 cores)** | **12 610 (1.26 cores)** |
+| of it `memcpy` on `Renderer` (profile) | 994 of 6 122 samples | 1 069 of 6 090 |
+| app_server window thread (`w:…:ffv0`) | 1 548 (95.7 % `memcpy`) | 1 847 (95.7 % `memcpy`) |
+| Firefox main thread / a DOM worker | 2 162 / 2 228 | 2 063 / 2 009 |
+| decoder thread (`MediaPDecoder`) + `VCHIQ completion` (kernel) | ~1 000 + 1 061 | 2 570 + 2 329 |
+| Firefox teams in all (`m720a`, from 30 s) | 24 136 (2.4 cores), idle 8 213 of 40 000 | — |
+| frames 40→50 s: presented / dropped | 287 / 15 (5 %) | 201 / 100 (33 %) |
+
+Where the compositor's core goes:
+- `Renderer`'s time is not WebRender frame building, since no tiles are rendered.
+- `SwCompositor` splits each composite into bands, and the `Renderer` thread steals composite jobs while it waits
+  for `SwComposite` (`sw_compositor.rs:1120-1127`, `take_job`). So **both threads run the video's `composite_yuv`**:
+  ≈1.0–1.1 cores, about 35 ms of CPU per 720p frame.
+- The rest of `Renderer` is the `HaikuWindowBuffer` back→front `memcpy`: ~0.1 core.
+- The libxul samples cannot be resolved further, because the shipped libxul is stripped and the objdir is gone; the
+  baseline rebuild keeps symbols in its objdir.
+- app_server's two copies of the video rectangle take 0.15–0.19 core.
+
+Consequences for the plan:
+- **A1 is worth more than estimated.** The key fill replaces about 1 core of YUV composite, not ≈0.4.
+- **A1b removes the remaining ~0.25–0.3 core** (Firefox's `memcpy` and app_server's copies).
+- **Option 0 targets exactly the code that costs the core** (`composite_yuv` without NEON).
+- Nothing measured blocks A1. The surface is the Overlay kind (a sub-slice above it holds any content over the
+  video), as §2.3 assumed.

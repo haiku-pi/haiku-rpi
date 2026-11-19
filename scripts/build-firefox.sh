@@ -35,6 +35,8 @@
 #            (scripts/mkimage-pi4.sh --add-tree artifacts/firefox/non-packaged)
 #   package  artifacts/firefox/firefox-157.0.1-<revision>-arm64.hpkg from the staged app (vendor "Haiku Project";
 #            zstd), copied to jam's download directory and artifacts/packages (published)
+#            FIREFOX_PKG_OUT=DIR: copied to DIR only (a test build, never published); FIREFOX_REVISION=N: the
+#            package revision (default the one below)
 #
 # Toolchain: C/C++ = the Haiku cross gcc 13.3 (artifacts/rust/bin wrappers; see build-spidermonkey.sh
 # for why not clang); Rust = scripts/build-rust.sh's rustc 1.90.0; bindgen parses the headers with the
@@ -51,7 +53,7 @@ version=157.0.1
 # 100 MiB file limit, so the published repository carries it; 5: getentropy() for random bytes, GNU
 # hash tables; 6: packed relative relocations, DT_RELR: libxul.so's 11.7 MB of RELA entries become a
 # 0.1 MB .relr.dyn, so the package needs the runtime_loader of haiku 4539cd2f00)
-revision=6
+revision=${FIREFOX_REVISION:-6}
 # the link flags: GNU hash tables too (as the Haiku build, haiku-pi 91012322ef): the runtime loader's
 # symbol lookups skip an image that lacks a symbol with a Bloom filter test instead of walking its hash
 # chain; and DT_RELR (perf-round-h20.md C1: Firefox's cold start 1.85 s faster from BFS, warm -0.8 %).
@@ -389,6 +391,12 @@ INFO
 	# where the image build takes it from (the arm64 repository definition lists this revision), and
 	# where scripts/publish-repo.sh takes the published packages from
 	local dir
+	if [ -n "${FIREFOX_PKG_OUT:-}" ]; then
+		mkdir -p "$FIREFOX_PKG_OUT"
+		cp "$hpkg" "$FIREFOX_PKG_OUT/"
+		ls -l "$FIREFOX_PKG_OUT/$(basename "$hpkg")"
+		return
+	fi
 	for dir in "$gen/download" "$root/artifacts/packages"; do
 		[ -d "$dir" ] || continue
 		rm -f "$dir"/firefox-"$version"-*-arm64.hpkg
