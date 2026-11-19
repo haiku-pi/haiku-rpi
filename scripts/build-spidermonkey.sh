@@ -163,6 +163,15 @@ tests() {
 }
 
 steps=(source hosttools config build check tests)
+# --only STEP: that step alone (build-firefox.sh takes `source` and `hosttools` from here; without --only the
+# chain went on to build the js shell, ~7 min and 5 GB, every time)
+if [ "${1:-}" = --only ]; then
+	case " ${steps[*]} " in
+	*" ${2:-} "*) [ "$2" = source ] && source_ || "$2" ;;
+	*) echo "build-spidermonkey: no step ${2:-} (${steps[*]})" >&2; exit 2 ;;
+	esac
+	exit 0
+fi
 first="${1:-source}"
 run=0
 for s in "${steps[@]}"; do

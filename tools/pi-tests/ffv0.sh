@@ -15,7 +15,7 @@ mode=${3:-measure}
 wait=${WAIT:-30}
 secs=${SECS:-10}
 dir=$(cd "$(dirname "$0")" && pwd)
-ffx=/boot/system/apps/Firefox/Firefox
+ffx=${FFX:-/boot/system/apps/Firefox/Firefox}
 profile=$dir/ffv0-profile-$label
 say() { echo "FFV0 $label $*"; }
 [ -f "$dir/$clip" ] || { say "no $dir/$clip"; exit 1; }

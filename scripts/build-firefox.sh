@@ -38,7 +38,7 @@
 #            FIREFOX_PKG_OUT=DIR: copied to DIR only (a test build, never published); FIREFOX_REVISION=N: the
 #            package revision (default the one below)
 #
-# Toolchain: C/C++ = the Haiku cross gcc 13.3 (artifacts/rust/bin wrappers; see build-spidermonkey.sh
+# Toolchain: C/C++ = the Haiku cross gcc (16.2 since 11-19; 13.3 before) (artifacts/rust/bin wrappers; see build-spidermonkey.sh
 # for why not clang); Rust = scripts/build-rust.sh's rustc 1.90.0; bindgen parses the headers with the
 # host's libclang 21 (--target=aarch64-unknown-haiku, the arm64 sysroot), it generates no code.
 # Needs: scripts/build-rust.sh, scripts/build-spidermonkey.sh hosttools, the arm64 sysroot, host
@@ -46,6 +46,8 @@
 # build-spidermonkey.sh). Measured 2026-10-20 on the 16-thread / 29 GB host: ~1 h of compiling at
 # -j11 (heavy-build caps it), MemAvailable down to ~4 GB at the peak; objdir 3.4 GB (no debug
 # symbols; libxul.so 237 MB, 179 MB stripped); staged tree 288 MB; hpkg 112 MB.
+# GCC 16.2 (2026-11-19): 3 GB per job (2 GB was OOM-killed in the 22 GB scope), ~44 min of mach build in all;
+# objdir 3.7 GB, libxul 169 MB stripped, hpkg 101 MB.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version=157.0.1
@@ -73,7 +75,7 @@ libclang="${LIBCLANG_PATH:-/usr/lib/llvm-21/lib}"
 [ -f "$root/artifacts/rust/env.sh" ] || { echo "build-firefox: run scripts/build-rust.sh first" >&2; exit 1; }
 
 source_() {
-	"$root/scripts/build-spidermonkey.sh" source
+	"$root/scripts/build-spidermonkey.sh" --only source
 	local stamp="$src/.haiku-rpi-firefox-patches" p
 	for p in "$root"/patches/firefox/*.patch; do
 		grep -qxF "$(basename "$p")" "$stamp" 2> /dev/null && continue
@@ -94,14 +96,15 @@ deps() {
 		--with-default-fonts=/boot/system/data/fonts \
 		--with-add-fonts=/boot/system/non-packaged/data/fonts,/boot/home/config/data/fonts,/boot/home/config/non-packaged/data/fonts \
 		--with-cache-dir=/boot/home/config/cache/fontconfig ac_cv_va_copy=C99
-	# the recipe's flags
+	# the recipe's flags; GCC 14+ makes -Wint-conversion an error: kqueue.c stores an intptr_t in Haiku's
+	# void *udata (libevent picks the intptr_t form for unknown platforms; same width, so only a diagnostic)
 	"$cross" "$recipes/dev-libs/libevent/libevent-2.1.13.recipe" autotools \
 		--disable-static --disable-samples --disable-openssl --disable-libevent-regress \
-		CPPFLAGS="-D_BSD_SOURCE -DEV_ENABLE=0" LIBS="-lbsd -lnetwork"
+		CPPFLAGS="-D_BSD_SOURCE -DEV_ENABLE=0 -Wno-error=int-conversion" LIBS="-lbsd -lnetwork"
 }
 
 hosttools() {
-	"$root/scripts/build-spidermonkey.sh" hosttools
+	"$root/scripts/build-spidermonkey.sh" --only hosttools
 	# bindgen's libclang: configure looks for libclang.so (the host has only libclang-21.so.1, no
 	# -dev package), and libclang finds its headers (stddef.h, …) in ../lib/clang/21 next to itself
 	mkdir -p "$out/host/lib"
@@ -193,13 +196,22 @@ mach_env() {
 	export CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0
 	export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=none PIP_NO_INDEX=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 	export MOZ_NOSPAM=1
+	# FIREFOX_SWGL_CLANG=1: SWGL (WebRender's software rasteriser) alone compiled by the host clang, which has its
+	# NEON paths and -ffast-math (patches/firefox/0005; docs/design/firefox-video-overlay.md §1.4)
+	if [ "${FIREFOX_SWGL_CLANG:-0}" = 1 ]; then
+		local cxxInc="$sysroot/boot/system/develop/headers/c++"
+		export SWGL_CXX=/usr/bin/clang++
+		export SWGL_CXXFLAGS="--target=$target --sysroot=$sysroot -isystem $cxxInc -isystem $cxxInc/$target"
+	fi
 }
 
 build() {
 	mach_env
 	local start=$SECONDS
 	# ~2 GB per C++ job; the libxul link alone needs several GB (MemoryMax caps the whole build)
-	(cd "$src" && "$root/scripts/heavy-build.sh" -j 12 --mem-per-job 2 -- \
+	# FIREFOX_MEM_PER_JOB=GB: more memory per job (GCC 16.2's jobs on dom/'s unified files need more than 13.3's:
+	# at 2 GB the 22 GB scope was OOM-killed, 11-19)
+	(cd "$src" && "$root/scripts/heavy-build.sh" -j 12 --mem-per-job "${FIREFOX_MEM_PER_JOB:-3}" -- \
 		./mach --no-interactive build -j '{JOBS}')
 	echo "build-firefox: mach build took $(( (SECONDS - start) / 60 )) min"
 	ls -l "$obj/dist/bin/Firefox" "$obj/dist/bin/libxul.so"

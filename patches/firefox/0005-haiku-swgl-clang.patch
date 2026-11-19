@@ -1,0 +1,27 @@
+SWGL with clang on Haiku: its NEON paths and -ffast-math are clang-only
+
+Firefox for Haiku is compiled by GCC here; SWGL_CXX/SWGL_CXXFLAGS (set by
+scripts/build-firefox.sh with FIREFOX_SWGL_CLANG=1) compile SWGL alone with clang.
+
+--- a/gfx/wr/swgl/build.rs
++++ b/gfx/wr/swgl/build.rs
+@@ -180,6 +180,19 @@
+     println!("cargo:rerun-if-changed=src/gl.cc");
+     let mut build = cc::Build::new();
+     build.cpp(true);
++    // Haiku (haiku-rpi): SWGL's NEON paths (vector_type.h) and -ffast-math are clang-only, and Firefox for
++    // Haiku is compiled by GCC; with SWGL_CXX set, SWGL alone is compiled by that clang (SWGL_CXXFLAGS: its
++    // target, sysroot and C++ headers). SWGL has no thread-local data, so clang's TLS dialect does not matter.
++    println!("cargo:rerun-if-env-changed=SWGL_CXX");
++    println!("cargo:rerun-if-env-changed=SWGL_CXXFLAGS");
++    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("haiku") {
++        if let Ok(cxx) = std::env::var("SWGL_CXX") {
++            build.compiler(cxx);
++            for flag in std::env::var("SWGL_CXXFLAGS").unwrap_or_default().split_whitespace() {
++                build.flag(flag);
++            }
++        }
++    }
+ 
+     let _suppressed_cflags_env_vars = cflags_env_vars()
+         .filter_map(|(key, value)| {

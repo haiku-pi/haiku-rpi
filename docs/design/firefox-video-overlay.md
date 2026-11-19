@@ -1,8 +1,11 @@
 # Firefox `<video>` on the YUV overlay plane (KNOWN-ISSUES G2)
 
-Status: **design (2026-11-19)**, de-risking under way: step 0 measured on the Pi (§9.1: the video *is* a
-promoted compositor surface; its software composite is ≈1.1 cores); baseline rebuild with GCC 16.2 §9.2. One
-host-side compile probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
+Status: **design (2026-11-19); de-risking steps done**, nothing implemented beyond option 0:
+- Step 0 (§9.1): the video *is* a promoted compositor surface, and its software composite costs ≈1.1 cores.
+- GCC 16.2 baseline rebuild (§9.2): it works.
+- Option 0, SWGL with clang (§9.3): −14 % composite CPU at 720p, −25 % at 1080p, and 1080p drops from ~33 % to 5 %.
+
+One host-side compile probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
 [video-overlay.md](video-overlay.md) (B_YUV420 overlays, MediaPlayer), [gpu-stage6.md](gpu-stage6.md) (planes,
 alpha keying), [gpu-present.md](gpu-present.md) (the GL present path), [videocore-services.md](videocore-services.md)
 §1 (`h264_vc` in Firefox) and [perf-round-h20.md](perf-round-h20.md) "C6 / G2 results".
@@ -395,3 +398,64 @@ Consequences for the plan:
 - **Option 0 targets exactly the code that costs the core** (`composite_yuv` without NEON).
 - Nothing measured blocks A1. The surface is the Overlay kind (a sub-slice above it holds any content over the
   video), as §2.3 assumed.
+
+### 9.2 Baseline rebuild with GCC 16.2 (2026-11-19 17:49–18:47, host; Pi session `ffv7` 19:43–19:59)
+
+`scripts/build-firefox.sh deps` onward, unchanged sources, cross gcc 16.2.0, as a systemd user unit
+(`HEAVY_BUILD_LOCK` of the job). Package `firefox-157.0.1-7` (revision 7 only to tell it apart) into
+`artifacts/packages-test/firefox/` (unpublished).
+
+What GCC 16.2 needed:
+1. **libevent** (`deps`): GCC 14+ makes `-Wint-conversion` an error. `kqueue.c` stores an `intptr_t` in
+   Haiku's `void *udata`, so the build now passes `-Wno-error=int-conversion` (same width; only a diagnostic).
+2. **Memory**: at 2 GB per job (heavy-build: 11 jobs) the 22 GB scope was OOM-killed after 12 min, in `dom/`.
+   GCC 16.2's jobs are bigger than 13.3's. Now 3 GB per job (`FIREFOX_MEM_PER_JOB`, ~7 jobs); the build resumed
+   and finished.
+3. Found on the way: `build-spidermonkey.sh source|hosttools` ran the rest of its chain, which built the js shell
+   each time (7 min, 5.2 GB objdir). It now has `--only`, which `build-firefox.sh` uses.
+
+Cost (**measured**): mach build 12 min (OOM) + 32 min resumed. The whole chain took 17:49→18:47, including deps,
+cbindgen and the unwanted js shell. objdir 3.7 GB (kept for A1, with symbols); libxul 169 MB stripped; hpkg 101 MB.
+The check step passes (DT_RELR, no TLSDESC/COPY/`tpidr_el0`). 3 527 warning lines; none was looked at. Deleted
+afterwards: the js-shell objdir (5.2 GB) and the three deps ports' build/source trees.
+
+**Smoke on the Pi** (image-2026-11-19b, `pkgman install` of the test package, `tools/pi-tests/ffv-smoke.sh`):
+- haiku-os.org renders (HDMI `artifacts/ffv0/smoke7-haiku-os.png`).
+- `hey Firefox quit` ends all 10 Firefox teams in 5 s; 0 debugger entries over the whole session.
+- Clips (`ffv0.sh`, as §9.1; CPU over 10 s at 45 s):
+
+| Clip | `Renderer` + `SwComposite` | dropped in ~10–12 s |
+|---|---|---|
+| 720p30 | 5 757 + 4 787 = 10 544 ms | 5 of 301 |
+| 1080p30 (downscaled) | 6 802 + 5 132 = 11 934 ms | 125 of 362 |
+
+That is the same as the released 13.3 build (§9.1: 11 544 / 12 610 ms; 5 % / 33 % dropped).
+
+### 9.3 Option 0: SWGL compiled by clang (same session `ffv7`)
+
+`patches/firefox/0005-haiku-swgl-clang.patch` (`gfx/wr/swgl/build.rs`: with `SWGL_CXX` set, SWGL alone uses that
+compiler) and `FIREFOX_SWGL_CLANG=1` in `build-firefox.sh` (host clang 21.1.8, `--target=aarch64-unknown-haiku`,
+the sysroot and its libstdc++ headers). The SWGL object's `.comment` shows clang 21.1.8.
+- Incremental build 2 min; check passes; libxul +1.4 MB.
+- Package in `artifacts/packages-test/firefox-swglclang/`.
+- Without the variable the patch changes nothing.
+
+Measured on the Pi, both builds extracted to `/boot/home` and run from there (`FFX=`), alternating, 2 runs each:
+
+| | `Renderer` + `SwComposite` (ms / 10 s) | frames dropped | CPU per presented frame |
+|---|---|---|---|
+| 720p, GCC SWGL | 11 682, 10 626 (mean 11 154) | 9 / 361, 4 / 300 | ~38 ms |
+| 720p, **clang SWGL** | 9 681, 9 574 (mean 9 628, **−14 %**) | 0 / 361, 3 / 361 | ~32 ms |
+| 1080p, GCC SWGL | 10 515, 11 119 (mean 10 817) | 108 / 302, 90 / 301 (~33 %) | ~56 ms |
+| 1080p, **clang SWGL** | 7 936, 8 377 (mean 8 157, **−25 %**) | 19 / 361, 18 / 362 (**5 %**) | ~28 ms |
+
+- At 1080p the downscaling composite gains most: per presented frame it halves, and the drops fall from a third
+  to the 720p level. app_server's share is unchanged (it composites nothing).
+- Rendering checked on HDMI: `artifacts/ffv0/smoke7c-haiku-os.png` (haiku-os.org, the same as GCC's) and
+  `o720v-video.png` (the video's colours as before). Quit clean, 0 debugger entries.
+- Not measured: page drawing other than video (SWGL draws every page; scrolling would gain too) and a long soak.
+
+**Nothing found blocks A1.** The rebuilt objdir has symbols (for profiles), an incremental build takes ~2 min,
+and the bench test path works (`ffv0.sh`, `ffv-smoke.sh`, extracted packages). The objdir is now in the
+option-0 state (SWGL by clang). A1 replaces the composite whose cost option 0 reduced, so the two do not add up.
+Option 0 is worth shipping on its own regardless.
