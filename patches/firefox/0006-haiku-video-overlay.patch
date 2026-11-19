@@ -1,0 +1,977 @@
+Firefox <video> on Haiku's YUV overlay plane (docs/design/firefox-video-overlay.md, step 3 "A1")
+
+WebRender's software compositor (SwCompositor) offers the largest planar YUV
+compositor surface of each frame to the compositor (MappableCompositor::
+present_on_plane, false by default). On Haiku, RenderCompositorSWGL accepts
+8-bit 4:2:0 pictures shown whole and unflipped, in the colour space the display
+assumes (BT.709 from 720 lines on, BT.601 below, limited range), and hands them
+to the window's HaikuVideoOverlay: the planes are copied into a B_YUV420 overlay
+bitmap (three, rotating) shown with BView::SetViewOverlay(). SwCompositor then
+fills the surface's rectangle with the overlay's colour key instead of
+converting the picture (composite_yuv). app_server shows the plane through the
+key; anything drawn over the video covers it.
+
+Software as before, for that frame, while the rectangle moves (the plane must
+not lag the window by a frame), for a partly visible, cropped, flipped or
+rounded-clipped video, a second smaller video, other formats and colour spaces,
+no free plane (retried after 1 s), suspended overlays (mode change). The plane
+is left once a software frame has been drawn over its rectangle.
+
+MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
+"HVO show/hide/stats" lines (frames on the plane, the reasons for software).
+
+--- a/gfx/wr/webrender/src/composite.rs
++++ b/gfx/wr/webrender/src/composite.rs
+@@ -1754,6 +1754,25 @@
+         composite_info: *mut SWGLCompositeSurfaceInfo,
+     ) -> bool;
+     fn unlock_composite_surface(&mut self, ctx: *mut c_void, external_image_id: ExternalImageId);
++
++    /// Offers a locked planar YUV external surface (`info`, from lock_composite_surface) to a
++    /// hardware overlay plane: `src_rect` of the image shown at `dst_rect` in the framebuffer;
++    /// `whole`: wholly visible in the window, unflipped, no rounded clip. On true, the compositor
++    /// shows the picture on the plane and SwCompositor fills the surface's rectangle with `key`
++    /// (a BGRA8 pixel) instead of compositing it: the window system shows the plane where the
++    /// framebuffer holds the key. Called at most once per frame, at the start of compositing,
++    /// while the surface is locked. (Haiku; false elsewhere.)
++    fn present_on_plane(
++        &mut self,
++        _external_image_id: ExternalImageId,
++        _info: &SWGLCompositeSurfaceInfo,
++        _src_rect: DeviceIntRect,
++        _dst_rect: DeviceIntRect,
++        _whole: bool,
++        _key: &mut u32,
++    ) -> bool {
++        false
++    }
+ }
+ 
+ /// Defines an interface to a non-native (application-level) Compositor which handles
+--- a/gfx/wr/webrender/src/compositor/sw_compositor.rs
++++ b/gfx/wr/webrender/src/compositor/sw_compositor.rs
+@@ -290,6 +290,9 @@
+     external_image: Option<ExternalImageId>,
+     // The rounded clip that applies to this surface. All corners are zero if not used.
+     rounded_clip: RoundedClip,
++    /// This frame, the attached external image is shown on an overlay plane
++    /// (MappableCompositor::present_on_plane): its composite is a fill with the plane's key.
++    on_plane: bool,
+ }
+ 
+ impl SwSurface {
+@@ -300,6 +303,7 @@
+             tiles: Vec::new(),
+             external_image: None,
+             rounded_clip: RoundedClip::zero(),
++            on_plane: false,
+         }
+     }
+ 
+@@ -1187,6 +1191,12 @@
+     composite_context: Option<Arc<SwCompositeContext>>,
+     /// Whether we are currently in the middle of compositing
+     is_compositing: bool,
++    /// The surface shown on an overlay plane this frame (present_on_plane), if any.
++    plane_surface: Option<NativeSurfaceId>,
++    /// A texture of one row of the plane's key pixels, the source of a planed surface's fill, and
++    /// the row's storage (the texture's buffer).
++    key_texture: Option<u32>,
++    key_row: Vec<u32>,
+ }
+ 
+ impl SwCompositor {
+@@ -1228,6 +1238,81 @@
+             locked_framebuffer: None,
+             composite_context,
+             is_compositing: false,
++            plane_surface: None,
++            key_texture: None,
++            key_row: Vec::new(),
++        }
++    }
++
++    /// Offers the largest external planar YUV surface of this frame to an overlay plane
++    /// (MappableCompositor::present_on_plane), which decides; `whole` tells it whether the surface
++    /// is wholly visible, unflipped and without a rounded clip. On success its composite becomes a
++    /// fill with the plane's key (queue_composite). Runs before the dirty rects and occlusion
++    /// shrink the clip rects, so that "wholly visible" means visible in the window, not dirty.
++    fn offer_plane_surface(&mut self) {
++        if let Some(id) = self.plane_surface.take() {
++            if let Some(surface) = self.surfaces.get_mut(&id) {
++                surface.on_plane = false;
++            }
++        }
++        let mut best: Option<(NativeSurfaceId, ExternalImageId, DeviceIntRect, DeviceIntRect, bool)> = None;
++        for &(id, ref transform, ref clip_rect, _) in &self.frame_surfaces {
++            let surface = match self.surfaces.get(&id) {
++                Some(surface) => surface,
++                None => continue,
++            };
++            let external_image = match surface.external_image {
++                Some(external_image) => external_image,
++                None => continue,
++            };
++            match self.composite_surfaces.get(&external_image) {
++                Some(info) if info.yuv_planes == 3 => {}
++                _ => continue,
++            }
++            let (src_rect, dst_rect, flip_x, flip_y) = match surface.tiles[0].composite_rects(surface, transform, clip_rect) {
++                Some(rects) => rects,
++                None => continue,
++            };
++            let whole = !flip_x && !flip_y && !surface.rounded_clip.is_valid() && !dst_rect.is_empty() &&
++                clip_rect.contains_box(&dst_rect);
++            if best.map_or(true, |(_, _, _, rect, _)| dst_rect.area() > rect.area()) {
++                best = Some((id, external_image, src_rect, dst_rect, whole));
++            }
++        }
++        let (id, external_image, src_rect, dst_rect, whole) = match best {
++            Some(best) => best,
++            None => return,
++        };
++        let info = match self.composite_surfaces.get(&external_image) {
++            Some(info) => info,
++            None => return,
++        };
++        let mut key = 0u32;
++        if !self.compositor.present_on_plane(external_image, info, src_rect, dst_rect, whole, &mut key) {
++            return;
++        }
++        // One row of key pixels as wide as the surface: the fill is then a row copy per line
++        // (Composite's unscaled-width path), whatever the band or clip.
++        let width = dst_rect.width() as usize;
++        if self.key_texture.is_none() {
++            self.key_texture = Some(self.gl.gen_textures(1)[0]);
++        }
++        if self.key_row.len() < width || self.key_row[0] != key {
++            self.key_row = vec![key; width.max(self.key_row.len())];
++            self.gl.set_texture_buffer(
++                self.key_texture.unwrap(),
++                gl::RGBA8,
++                self.key_row.len() as i32,
++                1,
++                (self.key_row.len() * 4) as i32,
++                self.key_row.as_mut_ptr() as *mut _,
++                0,
++                0,
++            );
++        }
++        if let Some(surface) = self.surfaces.get_mut(&id) {
++            surface.on_plane = true;
++            self.plane_surface = Some(id);
+         }
+     }
+ 
+@@ -1429,8 +1514,17 @@
+         job_queue: &mut SwCompositeJobQueue,
+     ) {
+         if let Some(ref composite_thread) = self.composite_thread {
+-            if let Some((src_rect, dst_rect, flip_x, flip_y)) = tile.composite_rects(surface, transform, clip_rect) {
+-                let source = if let Some(ref external_image) = surface.external_image {
++            if let Some((mut src_rect, dst_rect, flip_x, flip_y)) = tile.composite_rects(surface, transform, clip_rect) {
++                let source = if surface.on_plane {
++                    // Shown on an overlay plane: fill with the key, one source row per line.
++                    match self.key_texture.and_then(|key_texture| self.gl.lock_texture(key_texture)) {
++                        Some(texture) => {
++                            src_rect = DeviceIntRect::from_size(DeviceIntSize::new(dst_rect.width(), 1));
++                            SwCompositeSource::BGRA(texture)
++                        }
++                        None => return,
++                    }
++                } else if let Some(ref external_image) = surface.external_image {
+                     // If the surface has an attached external image, lock any textures supplied in the descriptor.
+                     match self.composite_surfaces.get(external_image) {
+                         Some(ref info) => match info.yuv_planes {
+@@ -1482,10 +1576,10 @@
+                             dst_rect,
+                             clipped_dst,
+                             surface.rounded_clip,
+-                            surface.is_opaque,
++                            surface.is_opaque || surface.on_plane,
+                             flip_x,
+                             flip_y,
+-                            filter,
++                            if surface.on_plane { ImageRendering::Pixelated } else { filter },
+                             num_bands,
+                             tile.graph_node.clone(),
+                             job_queue,
+@@ -1686,6 +1780,10 @@
+             self.gl.delete_textures(&[depth_id]);
+         }
+ 
++        if let Some(key_texture) = self.key_texture.take() {
++            self.gl.delete_textures(&[key_texture]);
++        }
++
+         if self.use_native_compositor {
+             self.compositor.deinit();
+         }
+@@ -1934,6 +2032,10 @@
+ 
+         self.compositor.start_compositing(clear_color, dirty_rects, &opaque_rects);
+ 
++        if self.composite_thread.is_some() {
++            self.offer_plane_surface();
++        }
++
+         if let Some(dirty_rect) = dirty_rects
+             .iter()
+             .fold(DeviceIntRect::zero(), |acc, dirty_rect| acc.union(dirty_rect))
+--- a/gfx/webrender_bindings/src/bindings.rs
++++ b/gfx/webrender_bindings/src/bindings.rs
+@@ -2015,6 +2015,15 @@
+         composite_info: *mut SWGLCompositeSurfaceInfo,
+     ) -> bool;
+     fn wr_swgl_unlock_composite_surface(ctx: *mut c_void, external_image_id: ExternalImageId);
++    fn wr_compositor_present_on_plane(
++        compositor: *mut c_void,
++        external_image_id: ExternalImageId,
++        info: *const SWGLCompositeSurfaceInfo,
++        src_rect: DeviceIntRect,
++        dst_rect: DeviceIntRect,
++        whole: bool,
++        key: *mut u32,
++    ) -> bool;
+ }
+ 
+ impl MappableCompositor for WrCompositor {
+@@ -2070,6 +2079,17 @@
+     fn unlock_composite_surface(&mut self, ctx: *mut c_void, external_image_id: ExternalImageId) {
+         unsafe { wr_swgl_unlock_composite_surface(ctx, external_image_id) }
+     }
++    fn present_on_plane(
++        &mut self,
++        external_image_id: ExternalImageId,
++        info: &SWGLCompositeSurfaceInfo,
++        src_rect: DeviceIntRect,
++        dst_rect: DeviceIntRect,
++        whole: bool,
++        key: &mut u32,
++    ) -> bool {
++        unsafe { wr_compositor_present_on_plane(self.0, external_image_id, info, src_rect, dst_rect, whole, key) }
++    }
+ }
+ 
+ pub struct WrPartialPresentCompositor(*mut c_void);
+--- a/gfx/webrender_bindings/RenderCompositor.h
++++ b/gfx/webrender_bindings/RenderCompositor.h
+@@ -143,6 +143,17 @@
+     return false;
+   }
+   virtual void UnmapTile() {}
++  // A planar YUV external surface offered to a hardware overlay plane by
++  // SwCompositor (MappableCompositor::present_on_plane in WebRender): true if
++  // its picture is shown there; *aKey is then the BGRA8 colour key SwCompositor
++  // fills the surface's rectangle with. Haiku only.
++  virtual bool PresentOnPlane(wr::ExternalImageId aExternalImage,
++                              const wr::SWGLCompositeSurfaceInfo& aInfo,
++                              const wr::DeviceIntRect& aSrcRect,
++                              const wr::DeviceIntRect& aDstRect, bool aWhole,
++                              uint32_t* aKey) {
++    return false;
++  }
+   virtual void CreateSurface(wr::NativeSurfaceId aId,
+                              wr::DeviceIntPoint aVirtualOffset,
+                              wr::DeviceIntSize aTileSize, bool aIsOpaque) {}
+--- a/gfx/webrender_bindings/RenderCompositor.cpp
++++ b/gfx/webrender_bindings/RenderCompositor.cpp
+@@ -191,6 +191,17 @@
+   compositor->UnmapTile();
+ }
+ 
++bool wr_compositor_present_on_plane(void* aCompositor,
++                                    wr::ExternalImageId aExternalImage,
++                                    const wr::SWGLCompositeSurfaceInfo* aInfo,
++                                    wr::DeviceIntRect aSrcRect,
++                                    wr::DeviceIntRect aDstRect, bool aWhole,
++                                    uint32_t* aKey) {
++  RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
++  return compositor->PresentOnPlane(aExternalImage, *aInfo, aSrcRect, aDstRect,
++                                    aWhole, aKey);
++}
++
+ void wr_partial_present_compositor_set_buffer_damage_region(
+     void* aCompositor, const wr::DeviceIntRect* aRects, size_t aNRects) {
+   RenderCompositor* compositor = static_cast<RenderCompositor*>(aCompositor);
+--- a/gfx/webrender_bindings/RenderCompositorSWGL.h
++++ b/gfx/webrender_bindings/RenderCompositorSWGL.h
+@@ -10,6 +10,12 @@
+ 
+ namespace mozilla {
+ 
++#ifdef MOZ_WIDGET_HAIKU
++namespace widget {
++class HaikuVideoOverlay;
++}
++#endif
++
+ namespace wr {
+ 
+ class RenderCompositorSWGL : public RenderCompositor {
+@@ -57,6 +63,14 @@
+   // Interface for wr::Compositor
+   void GetCompositorCapabilities(CompositorCapabilities* aCaps) override;
+ 
++#ifdef MOZ_WIDGET_HAIKU
++  bool PresentOnPlane(wr::ExternalImageId aExternalImage,
++                      const wr::SWGLCompositeSurfaceInfo& aInfo,
++                      const wr::DeviceIntRect& aSrcRect,
++                      const wr::DeviceIntRect& aDstRect, bool aWhole,
++                      uint32_t* aKey) override;
++#endif
++
+  private:
+   void* mContext = nullptr;
+   RefPtr<gfx::DrawTarget> mDT;
+@@ -74,6 +88,14 @@
+   bool mRequestFullRender = false;
+ #endif
+ 
++#ifdef MOZ_WIDGET_HAIKU
++  // the window's video plane (nullptr: none, e.g. headless)
++  widget::HaikuVideoOverlay* mVideoOverlay = nullptr;
++  // StartCompositing ran in this frame, and the bounds it drew into the window
++  bool mComposited = false;
++  LayoutDeviceIntRect mDrawnBounds;
++#endif
++
+   void ClearMappedBuffer();
+ 
+   bool AllocateMappedBuffer(const wr::DeviceIntRect* aOpaqueRects,
+--- a/gfx/webrender_bindings/RenderCompositorSWGL.cpp
++++ b/gfx/webrender_bindings/RenderCompositorSWGL.cpp
+@@ -11,6 +11,13 @@
+ #  include "mozilla/WidgetUtilsGtk.h"
+ #endif
+ 
++#ifdef MOZ_WIDGET_HAIKU
++#  include "RenderTextureHostSWGL.h"
++#  include "RenderThread.h"
++#  include "mozilla/widget/HaikuVideoOverlay.h"
++#  include "nsIWidget.h"
++#endif
++
+ namespace mozilla {
+ using namespace gfx;
+ 
+@@ -35,6 +42,12 @@
+     : RenderCompositor(aWidget), mContext(aContext) {
+   MOZ_ASSERT(mContext);
+   LOG("RenderCompositorSWGL::RenderCompositorSWGL()");
++#ifdef MOZ_WIDGET_HAIKU
++  if (nsIWidget* widget = mWidget->RealWidget()) {
++    mVideoOverlay = static_cast<widget::HaikuVideoOverlay*>(
++        widget->GetNativeData(NS_NATIVE_HAIKU_VIDEO_OVERLAY));
++  }
++#endif
+ }
+ 
+ RenderCompositorSWGL::~RenderCompositorSWGL() {
+@@ -164,6 +177,9 @@
+     wr::ColorF aClearColor, const wr::DeviceIntRect* aDirtyRects,
+     size_t aNumDirtyRects, const wr::DeviceIntRect* aOpaqueRects,
+     size_t aNumOpaqueRects) {
++#ifdef MOZ_WIDGET_HAIKU
++  mComposited = true;
++#endif
+   if (mDT) {
+     // Cancel any existing buffers that might accidentally be left from updates
+     CommitMappedBuffer(false);
+@@ -185,8 +201,14 @@
+   // Now that the dirty rects have been supplied and the composition region
+   // is known, allocate and install a framebuffer encompassing the composition
+   // region.
++#ifdef MOZ_WIDGET_HAIKU
++  mDrawnBounds = mDirtyRegion.GetBounds();
++#endif
+   if (mDirtyRegion.IsEmpty() ||
+       !AllocateMappedBuffer(aOpaqueRects, aNumOpaqueRects)) {
++#ifdef MOZ_WIDGET_HAIKU
++    mDrawnBounds.SetEmpty();
++#endif
+     // If allocation of the mapped default framebuffer failed, then just install
+     // a temporary framebuffer (with a minimum size of 2x2) so compositing can
+     // still proceed.
+@@ -247,6 +269,10 @@
+ void RenderCompositorSWGL::CancelFrame() {
+   CommitMappedBuffer(false);
+   mRenderWidgetSize = Nothing();
++#ifdef MOZ_WIDGET_HAIKU
++  mComposited = false;
++  mDrawnBounds.SetEmpty();
++#endif
+ }
+ 
+ RenderedFrameId RenderCompositorSWGL::EndFrame(
+@@ -257,6 +283,15 @@
+   RenderedFrameId frameId = GetNextRenderFrameId();
+   CommitMappedBuffer();
+   mRenderWidgetSize = Nothing();
++#ifdef MOZ_WIDGET_HAIKU
++  // after the window drew the frame: a video composited in software now
++  // covers the key, so the plane can be left
++  if (mVideoOverlay) {
++    mVideoOverlay->EndFrame(mComposited, mDrawnBounds);
++  }
++  mComposited = false;
++  mDrawnBounds.SetEmpty();
++#endif
+   return frameId;
+ }
+ 
+@@ -308,5 +343,72 @@
+ #endif
+ }
+ 
++#ifdef MOZ_WIDGET_HAIKU
++bool RenderCompositorSWGL::PresentOnPlane(
++    wr::ExternalImageId aExternalImage,
++    const wr::SWGLCompositeSurfaceInfo& aInfo, const wr::DeviceIntRect& aSrcRect,
++    const wr::DeviceIntRect& aDstRect, bool aWhole, uint32_t* aKey) {
++  using Reason = widget::HaikuVideoOverlay::Reason;
++  if (!mVideoOverlay) {
++    return false;
++  }
++  if (!aWhole) {
++    mVideoOverlay->Decline(Reason::NotWhole);
++    return false;
++  }
++  const int32_t width = aInfo.size.width;
++  const int32_t height = aInfo.size.height;
++  if (aSrcRect.min.x != 0 || aSrcRect.min.y != 0 ||
++      aSrcRect.width() != width || aSrcRect.height() != height) {
++    mVideoOverlay->Decline(Reason::Cropped);
++    return false;
++  }
++  const LayoutDeviceIntSize buffer = GetBufferSize();
++  if (aDstRect.min.x < 0 || aDstRect.min.y < 0 ||
++      aDstRect.max.x > buffer.width || aDstRect.max.y > buffer.height) {
++    mVideoOverlay->Decline(Reason::NotWhole);
++    return false;
++  }
++  // 8-bit planar 4:2:0 of an even size (the overlay's B_YUV420)
++  RenderTextureHost* texture = RenderThread::Get()->GetRenderTexture(aExternalImage);
++  RenderTextureHostSWGL* swgl =
++      texture ? texture->AsRenderTextureHostSWGL() : nullptr;
++  if (!swgl || aInfo.yuv_planes != 3 ||
++      aInfo.color_depth != wr::ColorDepth::Color8 ||
++      swgl->GetFormat() != gfx::SurfaceFormat::YUV420 ||
++      swgl->LockedPlaneCount() != 3 || width < 2 || height < 2 ||
++      (width & 1) || (height & 1)) {
++    mVideoOverlay->Decline(Reason::Format);
++    return false;
++  }
++  widget::HaikuVideoOverlay::Plane planes[3];
++  for (size_t i = 0; i < 3; i++) {
++    const auto& plane = swgl->LockedPlane(i);
++    const int32_t w = i ? width / 2 : width;
++    const int32_t h = i ? height / 2 : height;
++    if (!plane.mData || plane.mSize.width != w || plane.mSize.height != h ||
++        plane.mStride < w) {
++      mVideoOverlay->Decline(Reason::Format);
++      return false;
++    }
++    planes[i] = {static_cast<const uint8_t*>(plane.mData), plane.mStride, w, h};
++  }
++  // the display converts with BT.709 from 720 lines on, BT.601 below, limited
++  // range (Firefox's default for untagged video is the same)
++  const wr::YuvRangedColorSpace expected =
++      height >= 720 ? wr::YuvRangedColorSpace::Rec709Narrow
++                    : wr::YuvRangedColorSpace::Rec601Narrow;
++  if (aInfo.color_space != expected) {
++    mVideoOverlay->Decline(Reason::ColorSpace);
++    return false;
++  }
++  return mVideoOverlay->Present(
++      wr::AsUint64(aExternalImage), planes,
++      LayoutDeviceIntRect(aDstRect.min.x, aDstRect.min.y, aDstRect.width(),
++                          aDstRect.height()),
++      aKey);
++}
++#endif
++
+ }  // namespace wr
+ }  // namespace mozilla
+--- a/gfx/webrender_bindings/RenderTextureHostSWGL.h
++++ b/gfx/webrender_bindings/RenderTextureHostSWGL.h
+@@ -55,6 +55,13 @@
+ 
+   void UnlockSWGLCompositeSurface() override;
+ 
++  // The planes mapped by LockSWGLCompositeSurface/LockSWGL while locked (Haiku's
++  // overlay plane copies them; RenderCompositorSWGL::PresentOnPlane).
++  size_t LockedPlaneCount() const {
++    return HasLockedSWGL() ? mPlanes.size() : 0;
++  }
++  const PlaneInfo& LockedPlane(size_t aIndex) const { return mPlanes[aIndex]; }
++
+   size_t BytesFromPlanes() {
+     NS_ASSERTION(mPlanes.size(), "Can't compute bytes without any planes");
+     size_t bytes = 0;
+--- a/widget/haiku/HaikuVideoOverlay.h
++++ b/widget/haiku/HaikuVideoOverlay.h
+@@ -0,0 +1,121 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef mozilla_widget_HaikuVideoOverlay_h
++#define mozilla_widget_HaikuVideoOverlay_h
++
++#include <stdint.h>
++
++#include "Units.h"
++#include "mozilla/Mutex.h"
++
++// No Be API headers here: WebRender's software compositor
++// (gfx/webrender_bindings/RenderCompositorSWGL.cpp, a unified build) uses this.
++// A forward declaration made under Gecko's hidden-visibility default would make
++// the system class hidden in every file that sees it first.
++#pragma GCC visibility push(default)
++class BBitmap;
++#pragma GCC visibility pop
++class nsWindow;
++
++// nsIWidget::GetNativeData() of a top-level Haiku nsWindow: its
++// HaikuVideoOverlay (other widgets: nullptr).
++#define NS_NATIVE_HAIKU_VIDEO_OVERLAY 0x48564f
++
++namespace mozilla::widget {
++
++// A video picture shown on a hardware overlay plane of the window's view
++// instead of being composited in software. WebRender's SwCompositor offers the
++// largest planar YUV compositor surface of each frame (RenderCompositorSWGL::
++// PresentOnPlane); if accepted, the planes are copied into a B_YUV420 overlay
++// bitmap shown with BView::SetViewOverlay(), and SwCompositor fills the
++// surface's rectangle with the overlay's colour key, through which app_server
++// shows the plane. Anything drawn over the video covers the plane. Otherwise
++// (moving, partly visible, no free plane, a mode change, ...) the frame is
++// composited in software, and the plane is left once that frame is drawn.
++//
++// Render thread: Present(), Decline(), EndFrame(); main thread: Destroy().
++// MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
++// the plane's state changes and counters (stderr, every 2 s).
++class HaikuVideoOverlay final {
++ public:
++  struct Plane {
++    const uint8_t* mData;
++    int32_t mStride;
++    int32_t mWidth;
++    int32_t mHeight;
++  };
++
++  // Why a frame's video was not shown on the plane (counted for the log).
++  enum class Reason : uint8_t {
++    Disabled,     // MOZ_HAIKU_VIDEO_OVERLAY=0
++    NotWhole,     // partly visible, flipped, or a rounded clip
++    Cropped,      // only part of the picture shown
++    Format,       // not 8-bit planar 4:2:0 YUV
++    ColorSpace,   // not what the display assumes (BT.709 from 720 lines on)
++    Unstable,     // the rectangle changed in the last frame (scrolling)
++    NoPlane,      // no overlay bitmaps (no free plane or memory)
++    Suspended,    // overlays suspended (mode change)
++    Window,       // the window could not be locked, or SetViewOverlay failed
++    NotOffered,   // a composite without a planar YUV surface (or not offered)
++    Count
++  };
++
++  explicit HaikuVideoOverlay(nsWindow* aWindow);
++  ~HaikuVideoOverlay();
++
++  // A picture of WIDTHxHEIGHT (aPlanes: Y, Cb, Cr) to show at aDst (view
++  // coordinates); aImageId identifies the picture (an unchanged picture is not
++  // copied again). True: shown, *aKey is the BGRA8 key to fill aDst with.
++  bool Present(uint64_t aImageId, const Plane aPlanes[3],
++               const LayoutDeviceIntRect& aDst, uint32_t* aKey);
++  void Decline(Reason aReason);
++  // After the window drew a frame (aDrawn: the bounds of what it drew, empty
++  // if nothing): with aComposited (a composite ran) and no picture presented
++  // in it, the plane is left once aDrawn covered its rectangle.
++  void EndFrame(bool aComposited, const LayoutDeviceIntRect& aDrawn);
++
++  void Destroy();
++
++ private:
++  bool EnsureBitmaps(int32_t aWidth, int32_t aHeight);
++  void Release(bool aClearView);
++  void Log(const char* aWhat);
++
++  nsWindow* mWindow;
++  Mutex mLock MOZ_UNANNOTATED;
++  bool mEnabled;
++  bool mLog;
++  bool mDestroyed = false;
++
++  static constexpr int kBitmaps = 3;
++  BBitmap* mBitmaps[kBitmaps] = {};
++  int32_t mWidth = 0;
++  int32_t mHeight = 0;
++  int mNext = 0;          // the bitmap filled next
++  bool mShown = false;    // SetViewOverlay done
++  bool mPresented = false;  // a picture presented this frame
++  bool mOffered = false;    // Present() or Decline() this frame
++  int mIdleFrames = 0;      // composites without a picture while shown
++  uint64_t mShownImage = 0;
++  LayoutDeviceIntRect mShownRect;
++  LayoutDeviceIntRect mLastOffered;
++  int mStableFrames = 0;
++  uint32_t mKey = 0xff005000;  // {0, 80, 0}, app_server's key; updated
++  int64_t mRetryAt = 0;  // after a failed allocation or LockBits()
++
++  // counters for the log
++  uint32_t mPlaneFrames = 0;
++  uint32_t mSameFrames = 0;
++  uint32_t mDeclined[size_t(Reason::Count)] = {};
++  uint32_t mWindowFrames = 0;  // composites that drew into the window
++  uint32_t mCleanFrames = 0;   // composites that drew nothing
++  uint32_t mShows = 0;
++  uint32_t mHides = 0;
++  int64_t mLastLog = 0;
++};
++
++}  // namespace mozilla::widget
++
++#endif  // mozilla_widget_HaikuVideoOverlay_h
+--- a/widget/haiku/HaikuVideoOverlay.cpp
++++ b/widget/haiku/HaikuVideoOverlay.cpp
+@@ -0,0 +1,270 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "HaikuVideoOverlay.h"
++
++#include <Bitmap.h>
++#include <OS.h>
++#include <View.h>
++#include <Window.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "nsWindow.h"
++
++namespace mozilla::widget {
++
++static const char* const kReasonNames[] = {
++    "disabled", "not-whole", "cropped", "format", "colour-space",
++    "unstable", "no-plane", "suspended", "window", "not-offered"};
++static_assert(sizeof(kReasonNames) / sizeof(kReasonNames[0]) ==
++              size_t(HaikuVideoOverlay::Reason::Count));
++
++// a window lock taken from the render thread: never wait long for it
++static const bigtime_t kLockTimeout = 100000;
++// after a failed allocation or LockBits(): software for this long
++static const bigtime_t kRetryDelay = 1000000;
++
++HaikuVideoOverlay::HaikuVideoOverlay(nsWindow* aWindow)
++    : mWindow(aWindow), mLock("HaikuVideoOverlay::mLock") {
++  const char* enabled = getenv("MOZ_HAIKU_VIDEO_OVERLAY");
++  mEnabled = !enabled || strcmp(enabled, "0") != 0;
++  const char* log = getenv("MOZ_HAIKU_VIDEO_OVERLAY_LOG");
++  mLog = log && strcmp(log, "0") != 0;
++}
++
++HaikuVideoOverlay::~HaikuVideoOverlay() { Destroy(); }
++
++void HaikuVideoOverlay::Log(const char* aWhat) {
++  if (!mLog) {
++    return;
++  }
++  char declined[256];
++  size_t used = 0;
++  declined[0] = '\0';
++  for (size_t i = 0; i < size_t(Reason::Count); i++) {
++    if (mDeclined[i] && used < sizeof(declined)) {
++      used += snprintf(declined + used, sizeof(declined) - used, " %s %u",
++                       kReasonNames[i], mDeclined[i]);
++    }
++  }
++  fprintf(stderr,
++          "HVO %s: plane %u same %u shows %u hides %u; window frames %u clean %u;"
++          " %dx%d at %d,%d %dx%d; software:%s\n",
++          aWhat, mPlaneFrames, mSameFrames, mShows, mHides, mWindowFrames,
++          mCleanFrames, mWidth, mHeight,
++          mShownRect.x, mShownRect.y, mShownRect.width, mShownRect.height,
++          used ? declined : " 0");
++}
++
++bool HaikuVideoOverlay::EnsureBitmaps(int32_t aWidth, int32_t aHeight) {
++  if (mBitmaps[0] && mWidth == aWidth && mHeight == aHeight) {
++    return true;
++  }
++  Release(true);
++  const BRect bounds(0, 0, aWidth - 1, aHeight - 1);
++  for (int i = 0; i < kBitmaps; i++) {
++    // the first reserves the overlay channel; the others take it over when
++    // SetViewOverlay() transfers it to them
++    mBitmaps[i] = new BBitmap(
++        bounds,
++        B_BITMAP_WILL_OVERLAY | (i == 0 ? B_BITMAP_RESERVE_OVERLAY_CHANNEL : 0),
++        B_YUV420);
++    if (mBitmaps[i]->InitCheck() != B_OK) {
++      Release(false);
++      return false;
++    }
++  }
++  mWidth = aWidth;
++  mHeight = aHeight;
++  mNext = 0;
++  return true;
++}
++
++// Hides the plane (aClearView: the view's overlay is cleared first) and frees
++// the bitmaps, which gives the plane and its memory back.
++void HaikuVideoOverlay::Release(bool aClearView) {
++  if (mShown && aClearView) {
++    auto* window = static_cast<BWindow*>(mWindow->GetNativeData(NS_NATIVE_WINDOW));
++    auto* view = static_cast<BView*>(mWindow->GetNativeData(NS_NATIVE_WIDGET));
++    if (window && view && window->LockWithTimeout(kLockTimeout) == B_OK) {
++      view->ClearViewOverlay();
++      window->Unlock();
++    }
++  }
++  if (mShown) {
++    mHides++;
++  }
++  mShown = false;
++  mShownImage = 0;
++  for (auto& bitmap : mBitmaps) {
++    delete bitmap;
++    bitmap = nullptr;
++  }
++  mWidth = mHeight = 0;
++}
++
++void HaikuVideoOverlay::Decline(Reason aReason) {
++  MutexAutoLock lock(mLock);
++  mOffered = true;
++  mDeclined[size_t(aReason)]++;
++}
++
++bool HaikuVideoOverlay::Present(uint64_t aImageId, const Plane aPlanes[3],
++                                const LayoutDeviceIntRect& aDst,
++                                uint32_t* aKey) {
++  MutexAutoLock lock(mLock);
++  if (mDestroyed) {
++    return false;
++  }
++  mOffered = true;
++  auto decline = [&](Reason aReason) {
++    mDeclined[size_t(aReason)]++;
++    return false;
++  };
++  if (!mEnabled) {
++    return decline(Reason::Disabled);
++  }
++  // The key goes out with the window's drawing, the plane moves at the next
++  // vertical blank: while the rectangle moves, composite in software.
++  if (!aDst.IsEqualEdges(mLastOffered)) {
++    mLastOffered = aDst;
++    mStableFrames = 0;
++  }
++  mStableFrames++;
++  if (!(mShown && aDst.IsEqualEdges(mShownRect)) && mStableFrames < 2) {
++    return decline(Reason::Unstable);
++  }
++  const bigtime_t now = system_time();
++  if (now < mRetryAt) {
++    return decline(Reason::NoPlane);
++  }
++
++  // the same picture again (the frame was composited for something else)
++  if (mShown && aImageId == mShownImage && aDst.IsEqualEdges(mShownRect)) {
++    mSameFrames++;
++    mPresented = true;
++    *aKey = mKey;
++    return true;
++  }
++
++  const int32_t width = aPlanes[0].mWidth;
++  const int32_t height = aPlanes[0].mHeight;
++  if (!EnsureBitmaps(width, height)) {
++    mRetryAt = now + kRetryDelay;
++    return decline(Reason::NoPlane);
++  }
++  BBitmap* bitmap = mBitmaps[mNext];
++  // fails while app_server has the overlays suspended (a mode change)
++  if (bitmap->LockBits() != B_OK) {
++    mRetryAt = now + kRetryDelay;
++    return decline(Reason::Suspended);
++  }
++  // B_YUV420 (planar I420): BytesPerRow() is the whole picture's, the luma rows
++  // are 2/3 of it, Cb and Cr follow the luma with rows of 1/3
++  uint8_t* bits = static_cast<uint8_t*>(bitmap->Bits());
++  const int32_t luma = bitmap->BytesPerRow() / 3 * 2;
++  const int32_t chroma = luma / 2;
++  uint8_t* dst[3] = {bits, bits + luma * height,
++                     bits + luma * height + chroma * (height / 2)};
++  const int32_t pitch[3] = {luma, chroma, chroma};
++  for (int p = 0; p < 3; p++) {
++    const uint8_t* src = aPlanes[p].mData;
++    const int32_t rowBytes = p == 0 ? width : width / 2;
++    const int32_t rows = p == 0 ? height : height / 2;
++    for (int32_t y = 0; y < rows; y++) {
++      memcpy(dst[p] + y * pitch[p], src + y * aPlanes[p].mStride, rowBytes);
++    }
++  }
++  bitmap->UnlockBits();
++
++  auto* window = static_cast<BWindow*>(mWindow->GetNativeData(NS_NATIVE_WINDOW));
++  auto* view = static_cast<BView*>(mWindow->GetNativeData(NS_NATIVE_WIDGET));
++  if (!window || !view || window->LockWithTimeout(kLockTimeout) != B_OK) {
++    return decline(Reason::Window);
++  }
++  // The first call configures the plane, under the desktop until the key
++  // reaches the window (after this frame's composite); later ones flip it at
++  // the next vertical blank.
++  const BRect dstRect(aDst.x, aDst.y, aDst.XMost() - 1, aDst.YMost() - 1);
++  rgb_color key;
++  const status_t status = view->SetViewOverlay(
++      bitmap, bitmap->Bounds(), dstRect, &key, B_FOLLOW_LEFT_TOP,
++      B_OVERLAY_FILTER_HORIZONTAL | B_OVERLAY_FILTER_VERTICAL |
++          (mShown ? B_OVERLAY_TRANSFER_CHANNEL : 0));
++  window->Unlock();
++  if (status != B_OK) {
++    if (!mShown) {
++      // no plane to be had now: free the bitmaps, try again later
++      Release(false);
++      mRetryAt = now + kRetryDelay;
++    }
++    return decline(Reason::Window);
++  }
++  mKey = 0xff000000u | uint32_t(key.red) << 16 | uint32_t(key.green) << 8 |
++         key.blue;
++  if (!mShown) {
++    mShown = true;
++    mShows++;
++    mShownRect = aDst;
++    Log("show");
++  }
++  mShownImage = aImageId;
++  mNext = (mNext + 1) % kBitmaps;
++  mPlaneFrames++;
++  mPresented = true;
++  *aKey = mKey;
++  return true;
++}
++
++void HaikuVideoOverlay::EndFrame(bool aComposited,
++                                 const LayoutDeviceIntRect& aDrawn) {
++  MutexAutoLock lock(mLock);
++  if (mDestroyed || !aComposited) {
++    return;
++  }
++  if (aDrawn.IsEmpty()) {
++    mCleanFrames++;
++  } else {
++    mWindowFrames++;
++  }
++  if (!mOffered) {
++    mDeclined[size_t(Reason::NotOffered)]++;
++  }
++  if (mPresented) {
++    mIdleFrames = 0;
++  } else if (mShown || mBitmaps[0]) {
++    // The frame went in software. Leave the plane once the window drew that
++    // frame over its rectangle (the key would show green otherwise); a plane
++    // unused for long goes in any case.
++    if (aDrawn.Contains(mShownRect) || !mShown || ++mIdleFrames > 60) {
++      const bool shown = mShown;
++      Release(true);
++      mIdleFrames = 0;
++      if (shown) {
++        Log("hide");
++      }
++    }
++  }
++  mPresented = false;
++  mOffered = false;
++  const bigtime_t now = system_time();
++  if (mLog && now - mLastLog >= 2000000) {
++    mLastLog = now;
++    Log("stats");
++  }
++}
++
++void HaikuVideoOverlay::Destroy() {
++  MutexAutoLock lock(mLock);
++  if (mDestroyed) {
++    return;
++  }
++  Release(true);
++  mDestroyed = true;
++}
++
++}  // namespace mozilla::widget
+--- a/widget/haiku/moz.build
++++ b/widget/haiku/moz.build
+@@ -6,6 +6,7 @@
+     BUG_COMPONENT = ("Core", "Widget")
+ 
+ EXPORTS.mozilla.widget += [
++    "HaikuVideoOverlay.h",
+     "nsWindow.h",
+ ]
+ 
+@@ -17,6 +18,7 @@
+     "HaikuIMEHandler.cpp",
+     "HaikuKeyboard.cpp",
+     "HaikuUtils.cpp",
++    "HaikuVideoOverlay.cpp",
+     "HaikuView.cpp",
+     "HaikuWindowBuffer.cpp",
+     "NativeKeyBindings.cpp",
+--- a/widget/haiku/nsWindow.h
++++ b/widget/haiku/nsWindow.h
+@@ -10,6 +10,7 @@
+ #include "HaikuIMEHandler.h"
+ #include "HaikuCursor.h"
+ #include "HaikuWindowBuffer.h"
++#include "HaikuVideoOverlay.h"
+ 
+ #include "nsIWidget.h"
+ #include "mozilla/Maybe.h"
+@@ -163,6 +164,9 @@
+   bool mHasBeenShown;
+ 
+   BRect mSavedFrame;
++
++  // the video plane; GetNativeData() hands it to WebRender's compositor
++  mozilla::widget::HaikuVideoOverlay mVideoOverlay;
+ };
+ 
+ #endif  // mozilla_widget_nsWindow_h
+--- a/widget/haiku/nsWindow.cpp
++++ b/widget/haiku/nsWindow.cpp
+@@ -64,7 +64,8 @@
+       mIsPopup(false),
+       mOnDestroyCalled(false),
+       mSettingSizeMode(false),
+-      mHasBeenShown(false) {}
++      mHasBeenShown(false),
++      mVideoOverlay(this) {}
+ 
+ nsWindow::~nsWindow() {
+   Destroy();
+@@ -257,6 +258,9 @@
+     mIMEHandler = nullptr;
+   }
+ 
++  // the video overlay leaves the view while the window still exists
++  mVideoOverlay.Destroy();
++
+   if (mWindow) {
+     if (mView) {
+       mView->DetachGeckoWindow();
+@@ -325,6 +329,8 @@
+       return static_cast<void*>(mWindow);
+     case NS_NATIVE_WIDGET:
+       return static_cast<void*>(mView);
++    case NS_NATIVE_HAIKU_VIDEO_OVERLAY:
++      return mIsPopup ? nullptr : static_cast<void*>(&mVideoOverlay);
+     default:
+       return nullptr;
+   }
