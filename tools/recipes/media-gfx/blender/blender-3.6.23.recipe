@@ -5,7 +5,7 @@ editing. Blender 3.6 LTS is the newest Blender with an OpenGL 3.3 renderer."
 HOMEPAGE="https://www.blender.org/"
 COPYRIGHT="1998-2023 Blender Foundation and contributors"
 LICENSE="GNU GPL v2"
-REVISION="5"
+REVISION="6"
 SOURCE_URI="https://download.blender.org/source/blender-$portVersion.tar.xz"
 SOURCE_DIR="blender-$portVersion"
 

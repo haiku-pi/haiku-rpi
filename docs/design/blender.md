@@ -783,7 +783,8 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
   640×360, Workbench, **7.5 s**; on the host ffprobe: `mpeg4 640x360 24/1 nb_frames=24`. The **Video Sequencer**
   loads the MP4 (24 frames, 640×360) and a WAV (48 kHz), and renders its frame 12 from the decoded movie
   (`artifacts/blender-tests/av/vse_0012.png`: the cube at 45°). Playback in the GUI: frame advancing,
-  fps 6.2 (`av/vse-play.png`). Also usable: MJPEG, FFV1, FLAC/PCM/Vorbis audio; no H.264/AAC encoding.
+  fps 6.2 (`av/vse-play.png`). Also usable: MJPEG, FFV1, FLAC/PCM/Vorbis audio. (H.264/AAC: wrongly
+  reported missing here — see §7.13.)
 - **Audio:** `WITH_AUDASPACE` on SDL2 (OpenAL/JACK/PulseAudio off; audaspace reads audio through FFmpeg).
   Preferences ▸ System ▸ Sound device: **SDL**; the team gets SDL's BSoundPlayer thread ("SDL Audio control",
   media priority 110, running); playback synced to the audio clock (`AUDIO_SYNC`) advances (frame 1 → 13–16 in
@@ -803,6 +804,37 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
   FFmpeg libraries (libavcodec/-device/-filter/-format/-util, libswresample, libswscale; the published ffmpeg6
   package, which images already carry) — nothing else. 0 PANIC, 0 debugger entries.
 
+### 7.13 blender -6: H.264 + AAC output (2026-11-19 14:15–14:36, sessions blh264 and blmp, image-2026-11-19b)
+
+- **§7.12 was wrong about H.264/AAC:** -5 already wrote both. Blender's writer looks encoders up by id
+  (`avcodec_find_encoder(AV_CODEC_ID_H264 / AV_CODEC_ID_AAC)`); without libx264 that returns our VideoCore
+  encoder `h264_mmal`, and AAC gets FFmpeg's native `aac`. No fallback was needed.
+- **What did not work: the quality setting.** Blender's Output Quality presets are CRF values: it sets
+  `bit_rate = 0` and passes the option `crf`, which `h264_mmal` does not have — so every preset gave the
+  encoder's 4 Mbit/s default. `patches/blender/0010-ffmpeg-bitrate-from-crf-for-encoders-without-crf.patch`:
+  when the encoder has no `crf` option, a bit rate from CRF, frame size and fps
+  (0.1 bit/pixel at CRF 23, doubling every 6 steps down, clamped to 0.25–50 Mbit/s; Medium at 720p24 →
+  2.2 Mbit/s, the encoder logs "1280x720 at 24/1 fps, 2211840 bit/s"). Constant Bitrate mode is unchanged.
+  The VideoCore honours the rate on detailed content (testsrc2 720p: 1 Mbit/s → 252 kB, 8 Mbit/s → 1.26 MB
+  per 10 s); flat content is quality-capped, so Medium and Low give the same small file.
+- **ffmpeg6 -6** (`patches/ffmpeg6/files/libavcodec/mmalenc.c`): the VideoCore's own first quantiser made a
+  flat 720p key frame of 981 bytes, visibly banded, with many frames to recover; new option `initial_qp`
+  (default 25, `MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT`) → 1921 bytes, clean (`h264/frames-qp.png`
+  vs `h264/frames.png`). Also pts in microseconds as MMAL defines them (API correctness; no measured effect —
+  an earlier "3.1 MB vs 59 kB" comparison was the ffmpeg CLI duplicating frames, not this). Provides/requires
+  identical to -5.
+- **Test:** `tools/pi-tests/blender-av.py -- h264 OUTDIR` — a cube turning 0→120°, 48 frames, 1280×720,
+  24 fps, Workbench, a 2 s 440 Hz stereo WAV as a sequencer strip; MPEG-4 container, H.264 Medium, AAC 192k.
+  **32.7 s** for 48 frames (0.64 s per frame, 0.19 s of it saving). Host ffprobe: `h264 High 1280x720
+  nb_frames=48 duration=2.000000`, `aac LC 48000 Hz stereo duration=2.005`, file 117 kB
+  (`artifacts/blender-tests/h264/h264_0001-0048.mp4`).
+- **MediaPlayer** plays it (h264_mmal decode, to the end; `h264/mediaplayer.png`), with ffmpeg6 -5 as on the
+  image and with -6. A "General system error" seen first was the media kit after uninstalling and
+  reinstalling ffmpeg6 inside the running session (a fresh session opens the file); `pkgman uninstall
+  ffmpeg6` also removes blender (it requires the libraries).
+- **Packages** (unpublished, artifacts/packages-test): blender **-6** (49 MB; requires identical to -5) and
+  ffmpeg6 **-6** (`scripts/build-ffmpeg.sh --out DIR`). 0 PANIC, 0 debugger entries.
+
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
 **USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
@@ -814,8 +846,9 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
 >   Surface, save/load, the Preferences window, Cycles rendering on the CPU (F12 into the image editor, or
 >   headless: `Blender -b scene.blend -E CYCLES -f 1`), Python scripting, Filmic colour management, video
 >   output and the Video Sequencer (FFmpeg), sound playback (SDL), typing any characters your keymap gives.
-> - **Video output:** choose FFmpeg Video with the MPEG-4 (or MJPEG / FFV1) codec; H.264 and AAC encoding are
->   not available.
+> - **Video output:** choose FFmpeg Video, container MPEG-4, codec H.264 and audio AAC: H.264 is encoded by
+>   the Pi's VideoCore (fast; the Output Quality presets become a bit rate, or set Constant Bitrate). MPEG-4,
+>   MJPEG and FFV1 also work. MediaPlayer plays the result.
 > - **EEVEE and Cycles both render** (F12, Material Preview, Rendered view). EEVEE is the faster one; on the
 >   Pi 4's GPU it renders without Subsurface Scattering (see Known issues).
 > - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores). The viewport draws about
@@ -834,7 +867,9 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
 > - **No denoising:** OpenImageDenoise is not ported; renders are noisier at low sample counts (the
 >   Denoise checkbox is ignored instead of stopping the render).
 > - **No Alembic/USD/OpenVDB import, fluid simulation** (built without Alembic, USD, OpenVDB, Mantaflow);
->   no H.264/AAC encoding; Python's `aud` (audio scripting) module is missing.
+>   Python's `aud` (audio scripting) module is missing.
+> - **H.264 quality on flat scenes:** the VideoCore encoder caps quality on simple content, so Medium and
+>   Low presets can give the same file; no B-frames, no lossless H.264 (use FFV1 for lossless).
 > - GPU subdivision is off (no compute shaders); subdivision runs on the CPU.
 > - No tablet pressure; input methods (IME) untested.
 

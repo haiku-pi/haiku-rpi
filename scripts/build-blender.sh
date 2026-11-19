@@ -506,10 +506,11 @@ blender_package() {
 		r+=(--requires "lib:$lib")
 	done
 	# revision 2: EEVEE on 4 color attachments (patches/blender/0007); 3: the app icon; 4: the viewport's depth
-	# copy as a GPU blit on V3D (0008); 5: video (FFmpeg), audio (audaspace on SDL), Unicode text input (0009)
-	package "$recipe" --revision 5 --system-prefix --no-devel --provides app:Blender \
+	# copy as a GPU blit on V3D (0008); 5: video (FFmpeg), audio (audaspace on SDL), Unicode text input (0009);
+	# 6: a bit rate from the quality setting for encoders without CRF, e.g. h264_mmal (0010)
+	package "$recipe" --revision 6 --system-prefix --no-devel --provides app:Blender \
 		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 "${r[@]}"
-	"$pkgtool" list -i "$out/blender-3.6.23-5-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+	"$pkgtool" list -i "$out/blender-3.6.23-6-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its

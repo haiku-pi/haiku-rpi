@@ -6,6 +6,11 @@
 #       Part 2 video in MP4 — libavcodec's mpeg4; our FFmpeg has no software H.264 encoder) + a 1 s 440 Hz WAV
 #       (OUTDIR/tone.wav); then a new scene whose Video Sequencer holds that MP4 and the WAV: the strips' lengths,
 #       and the sequencer's frame 12 rendered to OUTDIR/vse_0012.png
+#   blender -b --factory-startup --python blender-av.py -- h264 OUTDIR [CRF]
+#       48 frames of the turning cube at 1280x720, Workbench, to OUTDIR/h264_0001-0048.mp4: H.264 video (the
+#       VideoCore encoder h264_mmal, the only H.264 encoder of our FFmpeg) and AAC audio (FFmpeg's native
+#       encoder) from a 2 s WAV in the scene's sequencer; CRF: Blender's constant-rate-factor setting (default
+#       MEDIUM; NONE: the bitrate setting)
 #   blender OUTDIR/vse.blend --python blender-av.py -- play OUTDIR
 #       (windowed) the audio device (Preferences > System > Sound: SDL); the sequencer scene played with
 #       AUDIO_SYNC (the frame follows the audio device's clock: it advances only while SDL audio runs), then
@@ -130,7 +135,54 @@ def play():
     bpy.app.timers.register(tick, first_interval=5.0)
 
 
-if mode == "render":
+def h264():
+    scene = bpy.context.scene
+    cube = bpy.data.objects["Cube"]
+    cube.rotation_euler = (0, 0, 0)
+    cube.keyframe_insert("rotation_euler", frame=1)
+    cube.rotation_euler = (0, 0, math.pi * 2 / 3)
+    cube.keyframe_insert("rotation_euler", frame=48)
+    scene.render.engine = 'BLENDER_WORKBENCH'
+    scene.frame_start, scene.frame_end = 1, 48
+    scene.render.fps = 24
+    scene.render.resolution_x, scene.render.resolution_y = 1280, 720
+    scene.render.resolution_percentage = 100
+    tone = os.path.join(out, "tone2.wav")
+    with wave.open(tone, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(48000)
+        w.writeframes(b"".join(struct.pack("<hh", s, s) for s in
+                               (int(12000 * math.sin(2 * math.pi * 440 * i / 48000)) for i in range(96000))))
+    ed = scene.sequence_editor_create()
+    ed.sequences.new_sound("tone", tone, channel=1, frame_start=1)
+    ff = scene.render.ffmpeg
+    scene.render.image_settings.file_format = 'FFMPEG'
+    ff.format = 'MPEG4'
+    ff.codec = 'H264'
+    ff.constant_rate_factor = args[2] if len(args) > 2 else 'MEDIUM'
+    ff.video_bitrate = 6000
+    ff.audio_codec = 'AAC'
+    ff.audio_bitrate = 192
+    ff.audio_channels = 'STEREO'
+    ff.audio_mixrate = 48000
+    scene.render.filepath = os.path.join(out, "h264_")
+    start = time.perf_counter()
+    bpy.ops.render.render(animation=True)
+    mp4 = scene.render.frame_path(frame=1)
+    ok = os.path.exists(mp4) and os.path.getsize(mp4) > 10000
+    say("h264", "PASS" if ok else "FAIL", mp4, os.path.getsize(mp4) if os.path.exists(mp4) else 0,
+        "bytes, %.1f s, crf %s" % (time.perf_counter() - start, ff.constant_rate_factor))
+
+
+if mode == "h264":
+    try:
+        h264()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        say("ERROR", repr(e))
+elif mode == "render":
     try:
         render()
     except Exception as e:

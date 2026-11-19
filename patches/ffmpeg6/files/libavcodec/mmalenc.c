@@ -26,7 +26,8 @@
  * FRAME_END on the last) become one packet. The parameter sets (a buffer
  * flagged CONFIG) go in front of the next picture's data (in-band, as the
  * encoder also repeats them at each key frame), and the first ones also as
- * AV_PKT_DATA_NEW_EXTRADATA. No B-frames: dts = pts.
+ * AV_PKT_DATA_NEW_EXTRADATA. No B-frames: dts = pts. MMAL's timestamps are in microseconds: the frames'
+ * pts are rescaled to them and back, as the MMAL API defines them (no measured effect on the stream).
  */
 
 #ifndef __HAIKU__
@@ -53,6 +54,7 @@
 typedef struct MMALEncodeContext {
     AVClass *av_class;
     int inline_headers;
+    int initial_qp;
 
     MMAL_COMPONENT_T *encoder;
     MMAL_POOL_T *pool_in, *pool_out;
@@ -223,6 +225,11 @@ static av_cold int ffmmal_init_encoder(AVCodecContext *avctx)
     if (avctx->gop_size > 0 &&
         mmal_port_parameter_set_uint32(out, MMAL_PARAMETER_INTRAPERIOD, avctx->gop_size))
         av_log(avctx, AV_LOG_WARNING, "The VideoCore did not take the key frame interval\n");
+    /* the VideoCore's own first quantiser is coarse: a flat-shaded 720p key frame came out in under 1 KB,
+     * banded, and the rate control needed many frames to recover */
+    if (ctx->initial_qp > 0 &&
+        mmal_port_parameter_set_uint32(out, MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT, ctx->initial_qp))
+        av_log(avctx, AV_LOG_WARNING, "The VideoCore did not take the initial quantiser\n");
     if (mmal_port_parameter_set_boolean(out, MMAL_PARAMETER_VIDEO_ENCODE_INLINE_HEADER,
                                         ctx->inline_headers))
         av_log(avctx, AV_LOG_WARNING, "The VideoCore did not take the in-band headers setting\n");
@@ -314,7 +321,7 @@ static int ffmmal_send_frames(AVCodecContext *avctx)
             buffer->length = ctx->width * ctx->height * 3 / 2;
             buffer->flags = MMAL_BUFFER_HEADER_FLAG_FRAME_END;
             if (frame->pts != AV_NOPTS_VALUE)
-                buffer->pts = frame->pts;
+                buffer->pts = av_rescale_q(frame->pts, avctx->time_base, (AVRational){ 1, 1000000 });
             ctx->frames_in++;
             av_frame_unref(frame);
         }
@@ -410,7 +417,8 @@ static int ffmmal_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
         if (ctx->size && (buffer->flags & (MMAL_BUFFER_HEADER_FLAG_FRAME_END |
                                            MMAL_BUFFER_HEADER_FLAG_EOS))) {
             int key = !!(buffer->flags & MMAL_BUFFER_HEADER_FLAG_KEYFRAME);
-            int64_t pts = buffer->pts == MMAL_TIME_UNKNOWN ? AV_NOPTS_VALUE : buffer->pts;
+            int64_t pts = buffer->pts == MMAL_TIME_UNKNOWN ? AV_NOPTS_VALUE
+                : av_rescale_q(buffer->pts, (AVRational){ 1, 1000000 }, avctx->time_base);
             int eos = !!(buffer->flags & MMAL_BUFFER_HEADER_FLAG_EOS);
 
             mmal_buffer_header_release(buffer);
@@ -448,6 +456,8 @@ static int ffmmal_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 static const AVOption options[] = {
     { "inline_headers", "parameter sets in front of every key frame", OFFSET(inline_headers),
       AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
+    { "initial_qp", "quantiser of the first frame (0: the VideoCore's own choice)", OFFSET(initial_qp),
+      AV_OPT_TYPE_INT, { .i64 = 25 }, 0, 51, VE },
     { NULL },
 };
 
