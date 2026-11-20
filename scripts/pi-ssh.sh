@@ -5,11 +5,16 @@
 #   scripts/pi-ssh.sh put LOCAL... REMOTE    copy files (or directories) to the Pi
 #   scripts/pi-ssh.sh get REMOTE... LOCAL    copy files from the Pi
 # The login is "user" (regular images); PI_SSH_USER=baron for the minimum/development image (its only user).
+# PI_SESSION_LABEL=L: refuse unless the running session was started with --label L (agents sharing the bench).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dir="$root/artifacts/pi-session"
 [ -f "$dir/state" ] && . "$dir/state"
 [ -n "${ip:-}" ] || { echo "pi-ssh: no session (scripts/pi-session.sh start)" >&2; exit 1; }
+# Two agents may share the bench: with PI_SESSION_LABEL set, reach only the session started under that label.
+if [ -n "${PI_SESSION_LABEL:-}" ] && [ "${label:-}" != "$PI_SESSION_LABEL" ]; then
+	echo "pi-ssh: the running session is '${label:-?}', not '$PI_SESSION_LABEL' — refusing" >&2; exit 1
+fi
 opts=(-i "$dir/id_ed25519" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no
 	-o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ServerAliveInterval=15)
 [ $# -gt 0 ] || { sed -n '4,7p' "$0" >&2; exit 2; }
