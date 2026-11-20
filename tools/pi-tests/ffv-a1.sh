@@ -31,6 +31,10 @@
 #   switch    a 1280x720 video of CLIP; at 15 s its src becomes SWITCH (default play-1080p30.mp4) in the same page
 #             and process: with AVLOG=3, both should decode on the VideoCore (two "VideoCore H264 decode" lines, no
 #             "decodes another stream": h264_vc gives its VideoCore slot back when a decoder closes)
+#   url       CLIP is a web page (an http(s) URL, with NET=1), opened as it is; then as measure (no frame counts:
+#             the page is not ours)
+#   dash      CLIP is a DASH manifest (URL, NET=1) played through MSE by dash.js 4.7.4 (from jsdelivr) in a 1280x720
+#             <video>; DASHCODEC=vp9 (or avc1) keeps only video representations of that codec up to 1280 wide; then as measure
 #   avsync    the clip unmuted (a beep with a white flash once a second: tools/media-tests/gen-avsync-clip.sh) for
 #             SECS (default 40) s; the host records HDMI video + audio (tools/pi-tests/avsync-measure.sh)
 # Lines "FFA <label> ...", and "FFA <label> SNAP <name>" at the moments meant for an HDMI frame.
@@ -48,7 +52,11 @@ say() { echo "FFA $label $*"; }
 # snapshot NAME: a "SNAP" line, the moment the test means for an HDMI frame (the host takes frames on a schedule:
 # polling the log over ssh costs the Pi CPU during the measurement)
 snapshot() { say "SNAP $1"; }
-[ -f "$dir/$clip" ] || { say "no $dir/$clip"; exit 1; }
+# CLIP may be an http(s) URL (a video on the web; NET=1 lets the profile reach it)
+case "$clip" in
+http://*|https://*) src=$clip ;;
+*) [ -f "$dir/$clip" ] || { say "no $dir/$clip"; exit 1; }; src=file://$dir/$clip ;;
+esac
 rm -rf "$profile"
 mkdir -p "$profile"
 cat > "$profile/user.js" << 'PREFS'
@@ -68,6 +76,7 @@ user_pref("network.proxy.http_port", 9);
 user_pref("network.proxy.ssl", "127.0.0.1");
 user_pref("network.proxy.ssl_port", 9);
 user_pref("network.proxy.no_proxies_on", "");
+// NET=1 (below): the proxy is taken out again
 user_pref("browser.safebrowsing.malware.enabled", false);
 user_pref("browser.safebrowsing.phishing.enabled", false);
 user_pref("browser.safebrowsing.downloads.enabled", false);
@@ -91,7 +100,9 @@ quality='const t0 = performance.now();
 setInterval(() => { const v = document.querySelector("video"), q = v.getVideoPlaybackQuality();
   console.log("FFAQ " + ((performance.now() - t0) / 1000).toFixed(1) + " s: " + v.videoWidth + "x" + v.videoHeight
     + " frames " + q.totalVideoFrames + " dropped " + q.droppedVideoFrames + " presented " + v.mozPresentedFrames); }, 2000);'
-video="muted loop autoplay src=\"file://$dir/$clip\""
+# NET=1: the network reachable (web videos and pages: CLIP an URL, or MODE url)
+[ "${NET:-0}" = 1 ] && echo 'user_pref("network.proxy.type", 0);' >> "$profile/user.js"
+video="muted loop autoplay src=\"$src\""
 case "$mode" in
 real)
 	para='<p>Haiku is an open-source operating system that specifically targets personal computing. Inspired by the
@@ -132,6 +143,16 @@ cycle)
 	else
 		body="<body style=\"margin:0;background:#000\"><video width=\"1280\" height=\"720\" $video></video>"
 	fi ;;
+url)
+	body="" ;;
+dash)
+	body="<body style=\"margin:0;background:#000\"><video id=\"d\" width=\"1280\" height=\"720\" muted autoplay></video>
+<script src=\"https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js\"></script>
+<script>const p = dashjs.MediaPlayer().create(); const want = \"${DASHCODEC:-}\";
+if (want) p.registerCustomCapabilitiesFilter(r => !r.codecs || /mp4a|opus/.test(r.codecs) || (r.codecs.indexOf(want) >= 0 && !(r.width > 1280)));
+p.on(\"error\", e => console.log(\"FFA dash error \" + JSON.stringify(e.error)));
+p.on(\"playbackStarted\", () => { const q = p.getCurrentTrackFor(\"video\"); console.log(\"FFA dash video \" + (q ? q.codec : \"?\")); });
+p.initialize(document.getElementById(\"d\"), \"$src\", true);</script>" ;;
 measure|noplane|mode)
 	body="<body style=\"margin:0;background:#000\"><video width=\"1280\" height=\"720\" $video></video>" ;;
 scroll)
@@ -214,10 +235,12 @@ ovlenv=
 say "firefox $ffx ${ovlenv:-overlay on}"
 avlog=
 [ -n "$AVLOG" ] && avlog="MOZ_LOG=FFmpegLib:$AVLOG"
+page=file://$dir/ffa-$label.html
+[ "$mode" = url ] && page=$clip
 env $ovlenv $avlog MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 MOZ_CRASHREPORTER_DISABLE=1 $ffx --no-remote --profile "$profile" \
-	"file://$dir/ffa-$label.html" > "$log" 2>&1 &
+	"$page" > "$log" 2>&1 &
 case "$mode" in
-measure)
+measure|url|dash)
 	sleep "$wait"
 	snap > /tmp/ffa-a.txt
 	q0=$(tr -d '\r' < "$log" | grep -a FFAQ | tail -n 1)
@@ -371,7 +394,7 @@ say "quit: $left Firefox teams left after ${n} s"
 for t in $(ps | awk '$1 ~ /Firefox$/ { print $(NF-3) }'); do kill -9 "$t" 2> /dev/null; done
 grep -a -E "^HVO (show|hide)" "$log" | head -n 20 | while IFS= read -r l; do say "log $l"; done
 grep -a "^HVO stats" "$log" | tail -n 1 | while IFS= read -r l; do say "log last $l"; done
-tr -d '\r' < "$log" | grep -a "FFA tab\|FFA fullscreen\|FFA switched" | while IFS= read -r l; do say "page $l"; done
+tr -d '\r' < "$log" | grep -a "FFA tab\|FFA fullscreen\|FFA switched\|FFA dash" | while IFS= read -r l; do say "page $l"; done
 grep -a "VideoCore H264 decode\|decodes another stream\|h264_mmal [a-z ]*: h264\|frames decoded from" "$log" | cut -c1-160 \
 	| while IFS= read -r l; do say "decoder $l"; done
 tr -d '\r' < "$log" | grep -a "FFAQ\|FFA moved" | tail -n 2 | while IFS= read -r l; do say "page $l"; done

@@ -11,7 +11,7 @@ out=$R/artifacts/ffa1
 D=/boot/home/ffa
 snaps=() envs=()
 for a in "$@"; do case "$a" in @*) snaps+=("${a#@}") ;; *) envs+=("$a") ;; esac; done
-"$R/scripts/pi-ssh.sh" "cd $D && env ${envs[*]} sh ffv-a1.sh $mode $clip $label" > "$out/$label.out" 2>&1 &
+"$R/scripts/pi-ssh.sh" "cd $D && env ${envs[*]} sh ffv-a1.sh $mode '$clip' $label" > "$out/$label.out" 2>&1 &
 pid=$!
 t0=$(date +%s)
 for s in "${snaps[@]}"; do

@@ -854,6 +854,7 @@ decoder libraries, A1b builds abort on the two-video page more often than -7: 20
 - Done in ffa8/ffa9: installed with pkgman, one encode, a 10-minute play, fullscreen ×10. Not done: a long encode,
   long scrolling (show/hide never went past 9 cycles).
 - Only local test clips (`file://`): `colour-space`, `cropped` and rounded clips never fired; no real web video.
+  Closed by §9.7: web video from public servers, also through MSE; `colour-space` fires there.
 - **One VideoCore stream per browser process, not per page.** A stream that starts in software stays there, even
   after the other one ends.
 - The build environment changed: the sysroot and `artifacts/cross-ports` now hold ffmpeg6 -7 and userland -4, and
@@ -872,3 +873,50 @@ decoder libraries, A1b builds abort on the two-video page more often than -7: 20
   - `artifacts/packages-test/firefox-a1b/firefox-157.0.1-9-arm64.hpkg` (-9)
   - `artifacts/packages-test/ffmpeg6-7/` (final build 04:04: the slot wait and 0005)
   - `artifacts/packages-test/raspberrypi_userland-4/`
+
+### 9.7 Real web video (2026-11-20 05:15–05:29; sessions `ffa10`, `ffa11`; **measured**)
+
+Image-2026-11-19b, network boot. The three packages were installed with pkgman as in ffa9: firefox -10, ffmpeg6 -7
+(04:04 build), raspberrypi_userland -4. The network was open in the test profile (`NET=1` in `ffv-a1.sh`).
+Measurements are per 10 s after 40–45 s. The CPU columns are per 10 s on 4 cores: "Firefox" is the whole Firefox
+team, "idle" is out of 40 s.
+
+| Run | Source | Decoder | Plane? | Fallback reasons | Renderer (+ SwComposite) | Firefox / idle | Dropped |
+|---|---|---|---|---|---|---|---|
+| W1 | test-videos.co.uk BBB H.264 720p30 MP4, plain `<video src>` | VideoCore | **yes**: 1408 plane frames, 0 window frames while playing | none (`unstable` 1 and `not-offered` 129 before the first frame) | 1.0 s | 5.3 s / 32.4 s | 4 of 1433 |
+| W2 | same site, H.264 **1080p60** MP4 | VideoCore | 13 plane frames | none | — | 24.0 s / 10.3 s | **2454 of 2482** |
+| W3 | W2's file in the article page with the translucent caption | VideoCore | no: 0008 (`not-offered` 148) | — | — | — | 1514 of 1554 |
+| W4 | same site, **VP9** 720p30 WebM | software (libvpx) | **yes**: 1515 plane frames | none | 0.58 s | 8.4 s / 31.4 s | 11 of 1525 |
+| W5 | same site, **AV1** 720p WebM | software (dav1d) | **yes**: 1468 plane frames | none | 0.59 s | 13.7 s / 23.3 s | 31 of 1487 (1 while measured) |
+| M1 | **MSE**: dash.js 4.7.4, Shaka's Sintel DASH, VP9 only, ≤ 1280 wide (picked 1024×436 at 24 fps) | software | **no**: `colour-space` on every frame (909) | **colour-space** | **2.7 + 2.0 s** | 10.9 s / 23.8 s | 1 of 898 |
+| M2 | **MSE**: dash.js, Akamai's BBB 30 fps DASH, H.264 only (ABR 480×270 → 1280×720) | VideoCore (a new decoder after the switch, VideoCore again) | **yes**: 1279 plane frames; plane shown 2×, hidden 1× around the switch | none | 0.58 s | 6.9 s / 28.7 s | 26 of 1312, all around the switch; 0 while measured |
+| W6 | YouTube embed (`/embed/…?autoplay=1&mute=1`) | — | — | — | — | — | "Error 153: video player configuration error", no video |
+| W7 | YouTube watch page | — | — | — | — | — | stops at the EU cookie dialog ("Before you continue to YouTube"); not clicked through |
+
+0 debugger entries in either session (syslog and every run).
+
+**What this shows:**
+- **The plane works for web video**, for H.264 from the VideoCore and for software-decoded VP9 and AV1. It works
+  through MSE (M2), including a resolution switch: the plane is hidden, the new decoder takes the VideoCore after
+  the 0.5-s wait, and the plane comes back. No new failure modes.
+- **`colour-space` fires on a real stream** (M1: 1024×436 VP9 from MSE). The accelerant picks BT.601 below 720 lines,
+  and Firefox's colour space for this stream differs, so every frame is composited in software, as designed (§2.4).
+  The cost: Renderer + SwComposite 4.7 s per 10 s, against 0.6 s on the plane at 720p. Many web streams are BT.709
+  at under 720 lines (480p, letterboxed films), so this fallback will be common. Carrying the colour space to the
+  accelerant (open in video-overlay §5) would put them on the plane. That is a follow-up, not needed for the gate:
+  the fallback looks right (M1's HDMI frame) and drops nothing.
+- `cropped` never fired: every video was whole inside the window (M1's letterboxed picture was already software for its
+  colour space).
+- **H.264 1080p60 does not play** (W2, W3: about 1 frame in 90 shown). It decodes on the VideoCore. MediaPlayer
+  does the same with 1080p60 (video-overlay §3.1: 34–68 frames shown), so this is the decoder path, not the plane, and
+  -7 does no better on that path; not measured on -7 here. 1080p30 H.264 and 720p of every codec play.
+- **YouTube was not reached**: the embed gives error 153 and the watch page needs a consent click that the harness does
+  not make. MSE was tested with dash.js against two public DASH streams instead (CORS `*`).
+
+The verdict in §9.6 stands: ship -10 together with ffmpeg6 -7 and raspberrypi_userland -4. Two known limits go into the
+gate notes: H.264 1080p60 web video does not play (any Firefox build), and streams under 720 lines in BT.709 are
+composited in software.
+
+Harness: `ffv-a1.sh` takes a URL as CLIP (`NET=1` opens the network), mode `url` (a whole web page), and mode
+`dash` (a DASH manifest through dash.js; `DASHCODEC` picks the codec). Results: `artifacts/ffa1/W1–W7.*`,
+`M1.*`, `M2.*`, `F10-tail.out`, `F11-tail.out`, `syslog-ffa1{0,1}-session.txt`.
