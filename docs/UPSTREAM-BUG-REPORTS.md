@@ -131,7 +131,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [HK-22](#hk-22) | Haiku | System/Boot Loader | efi/arm64: secondary CPU reads a stale stack line, enters as a second CPU 0 | crash | arm64 | haiku eb4bdd0ea4 | open | notes | full |
 | [HK-23](#hk-23) | Haiku | System/Boot Loader | PL011 with clock-controller clock: garbled serial output | wrong output | arm64 | haiku a6502fab74 | open | yes | full |
 | [HK-21](#hk-21) | Haiku | System/Kernel | arm64: serial KDL reads endless 0xff | wrong output | arm64 | haiku b3a08271be | open | yes | full |
-| [HK-58](#hk-58) | Haiku | Network & Internet/IPv6 | IPv6: possible NULL dereference in ipv6_send_data() for socketless replies to multicast (unconfirmed; report privately) | crash (security) | general | none | open | no | short |
+| [HK-58](#hk-58) | Haiku | Network & Internet/IPv6 | IPv6: possible kernel crash in a send path (unconfirmed; details held for a private report) | crash (security) | general | none | open | no | short |
 | [HK-05](#hk-05) | Haiku | System/Kernel | vm: a team can shrink an area another team maps (RenkuOS) | crash (security) | general | haiku 2dcb0bb814 | open | no | short |
 | [HK-13](#hk-13) | Haiku | System/Kernel | vm: page writer may write a page that left its cache (RenkuOS) | crash | general | haiku 4d35669d1d | open | no | short |
 | [HK-14](#hk-14) | Haiku | System/Kernel | scheduler: power-saving pack_irqs() spins forever on an IRQ that stays (RenkuOS) | hang | general | haiku 8ed6c7589b | open | no | short |
@@ -1850,13 +1850,11 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 
 <a id="hk-58"></a>
 
-#### HK-58 — IPv6: possible NULL dereference in ipv6_send_data() for socketless replies to a multicast destination
+#### HK-58 — IPv6: possible kernel crash in a send path (unconfirmed; details held for a private report)
 
-- **What:** `ipv6_send_data()` lacks a NULL check of `protocol` that `ipv4_send_data()` has; kernel reply paths that send without a socket may reach it.
-- **Severity / scope:** crash, possibly remotely triggerable (security); all architectures; **from code reading, not confirmed**.
-- **Our fix:** none; our tree has the same code in the echo-reply and reset paths (our ICMPv6 error reply checks the source).
-- **Upstream status (2026-11-20):** open: unchanged at hrev60450, `src/add-ons/kernel/network/protocols/ipv6/ipv6.cpp:1369-1370`.
-- **Short form because:** unconfirmed, and if real it is a remote kernel crash. Confirm it on a test VM first, then report it privately to the Haiku developers rather than on the public tracker.
+- **Severity / scope:** possibly a remotely triggerable kernel crash; all architectures; **from code reading, not confirmed**.
+- **Status:** to be confirmed on a test VM first; if real, it goes to the Haiku developers privately, not to the public
+  tracker. The details are deliberately not in this public document.
 
 <a id="hk-05"></a>
 
@@ -3679,7 +3677,7 @@ Bugs we found and fixed that upstream has fixed since (often its own way), with 
 - Spin-table release address not cleaned to PoC: our 022ca91504 (flush part) and d3c5064bd0; upstream b00f6a9170 (hrev60321, 2026-10-24) — `dc cvac` before `sev`. `sCpus`/`sSecondaryStacks` are already cleaned by the primary's `arm64_mmu_setup()` → `_arch_cache_clean_poc()` (`arch_mmu.cpp:135`).
 - Secondary CPUs released at EL2 enable their MMU with `TTBR0_EL1 = 0`: our 022ca91504; upstream 6df6939f4e (hrev60404, 2026-10-28) — copies the primary's TTBR0/MAIR/VBAR_EL2 to secondaries, partly. `_arch_transition_EL2_EL1()` (`transition.S:49-53`) still replaces the EL1 TTBR0/MAIR/VBAR that `arm64_mmu_setup()` just wrote with the firmware's EL2 values. Under U-Boot, EL1 then runs on U-Boot's MAIR (no 0xbb entry), so a `B_WRITE_THROUGH_MEMORY` or `B_WRITE_PROTECTED_MEMORY` mapping would reach `panic("MAIR entry not found")` (`VMSAv8TranslationMap.cpp:504`). No in-tree caller requests one today, so it is not filed.
 - device_manager `get_next_child_node()` returned only the first child: our 81deb24f8c; upstream 4aae8640c9 (hrev60379, committed 2026-11-07) — the skip loop now stops at the previous child.
-- ICMPv6 error messages were stubs (no Destination Unreachable sent or delivered; resolver waits without DNS): our 25c9881600; upstream 5119a99783 (hrev60438, committed 2026-11-19) — `icmp6_error_reply()` implemented; it has the separate bugs in HK-86 (and reaches HK-58).
+- ICMPv6 error messages were stubs (no Destination Unreachable sent or delivered; resolver waits without DNS): our 25c9881600; upstream 5119a99783 (hrev60438, committed 2026-11-19) — `icmp6_error_reply()` implemented; it has the separate bugs in HK-86.
 - launch_daemon environment pipe not close-on-exec (RenkuOS #231): our fb4e339ce8; upstream e039b9662a (hrev60329, committed 2026-11-03) — `pipe2(..., O_CLOEXEC)` in `_GetSourceFileEnvironment()`.
 - freebsd_network `compat_send()` leaked the mbuf on early returns (RenkuOS PR #483): our 03f7a90189; upstream b96eb67dce (hrev60439, committed 2026-11-19) — the same fix (`m_free()`).
 - libroot rw_lock spun after an interrupted block (lost hand-off, application freeze): our 2bf2f773ba; upstream cf3a20899c (hrev60391, committed 2026-11-10) — fixed at the root in the kernel (`block_thread` no longer leaves `B_INTERRUPTED` in `wait_status`); the libroot `rw_lock.cpp:43-44` loop is unchanged, and `src/tests/system/libroot/os/rw_lock_interrupt_test.cpp` has not been re-run on hrev60391 or later, so this rests on code reading.
