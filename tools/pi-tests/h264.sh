@@ -21,6 +21,9 @@
 #   long    a 5.5-minute play: the team's areas and memory, the system's memory and the VideoCore's before and after
 #   hevc    MediaPlayer on HEVC (rpivid): still decoded by the block
 #   web     WebPositive on video.html (a <video> of play-720p30.mp4)
+#   rate    the decoder chosen by the stream's pixel rate (V8): 720p30 and 1080p30 on the VideoCore, 1080p60 on the
+#           CPU with at most 2 % of its frames dropped; FFMPEG_H264_MMAL=1 / =0 override it; 1080p60 also with RGB32 output
+#           (FFMPEG_YUV420=0: no YCbCr plane, like WebPositive) by rate and on the VideoCore
 # Lines start with "H264 "; each phase ends with "H264 <phase> result: N problems".
 # seek: MP=PATH another MediaPlayer, SEEK_CLIP=name (without .mp4) another clip (60 s long).
 phase=${1:?usage: h264.sh PHASE [DIR]}
@@ -70,7 +73,7 @@ play_one() {
 	forget_positions
 	if [ -n "$4" ]; then
 		forget_positions
-		env "$4" /boot/system/apps/MediaPlayer "$dir/$1" > "$log" 2>&1 &
+		env $4 /boot/system/apps/MediaPlayer "$dir/$1" > "$log" 2>&1 &
 	else
 		forget_positions
 		/boot/system/apps/MediaPlayer "$dir/$1" > "$log" 2>&1 &
@@ -278,6 +281,35 @@ hevc)
 		play_one "$clip" "hevc-${clip%.mp4}" 10
 	done
 	grep -a -q "rpivid: hardware HEVC decode" "$dir/hevc-fhd.log" "$dir/hevc-hd.log" || fail "HEVC not on the block"
+	;;
+rate)
+	# expect LABEL DECODER [MAXDROPPED]: the player of LABEL chose DECODER (and dropped at most MAXDROPPED frames)
+	expect() {
+		line=$(grep -a -m 1 "^AVCodecDecoder: video decoder" "$dir/$1.log")
+		say "$1 choice: ${line:-none}"
+		case "$line" in
+		"AVCodecDecoder: video decoder $2 ("*) ;;
+		*) fail "$1: not decoded by $2" ;;
+		esac
+		dropped=$(grep -a -c 'VideoProducer: dropped frame' "$dir/$1.log")
+		[ -z "$3" ] || [ "$dropped" -le "$3" ] || fail "$1: $dropped frames dropped (more than $3)"
+	}
+	play_one play-720p30.mp4 rate-720p30 20 "" shot
+	expect rate-720p30 h264_mmal 5
+	play_one play-1080p30.mp4 rate-1080p30 20 "" shot
+	expect rate-1080p30 h264_mmal 5
+	play_one play-1080p60.mp4 rate-1080p60 20 "" shot
+	# (0-11 of the ~1500 frames of a run were dropped, in its first seconds: at most 2 %)
+	expect rate-1080p60 h264 30
+	play_one play-1080p60.mp4 rate-1080p60-vc 20 FFMPEG_H264_MMAL=1
+	expect rate-1080p60-vc h264_mmal
+	play_one play-1080p30.mp4 rate-1080p30-sw 20 FFMPEG_H264_MMAL=0
+	expect rate-1080p30-sw h264
+	play_one play-1080p60.mp4 rate-1080p60-rgb 20 FFMPEG_YUV420=0 shot
+	expect rate-1080p60-rgb h264
+	play_one play-1080p60.mp4 rate-1080p60-rgb-vc 20 "FFMPEG_YUV420=0 FFMPEG_H264_MMAL=1"
+	expect rate-1080p60-rgb-vc h264_mmal
+	gpu rate:
 	;;
 web)
 	log="$dir/web.log"

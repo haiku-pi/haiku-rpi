@@ -281,3 +281,89 @@ Binaries of the tested builds and raw session output (not in git): `artifacts/v4
 - Tests: `tools/haiku-tests/mmal-codec.c` (probe, jpegdec, jpegenc, h264enc), `tools/haiku-tests/jpegtime.cpp`,
   `tools/pi-tests/vc-services.sh` (phases probe, jpeg, jpegenc, h264enc, ffenc, firefox),
   `tools/media-tests/h264vc-host/` (the host harness of §1.3).
+
+## 7. (V8) H.264: the decoder chosen by the stream's rate (2026-11-20)
+
+Haiku branch **`v8-h264-rate`** (haiku-pi, off rpi4 552c42233d, **not merged**): a5011fe1cc `ffmpeg: keep H.264 on
+the CPU when the VideoCore cannot keep up`, 0807f116bb `ffmpeg: name the hardware decoder's failure as the decoder
+choice`. Test: `tools/pi-tests/h264.sh rate` (new phase). Raw output: `artifacts/v8-rate/results/` (not in git).
+
+### 7.1 Why
+
+The pre-gate check (W47 11-20 16:28) found that play-1080p60 on the VideoCore drops ~215 frames in 20 s while the
+software decoder plays it with none dropped at ~2 cores: the VideoCore decodes 1080p at ~69 fps (vchiq.md §8.3:
+79 fps flat out with the clock held), which leaves no headroom at 60 fps, and MediaPlayer's late-frame path then
+skips to the next key frame, so most of the stream is never decoded (below: 210–826 frames decoded of the ~1500 of
+a run).
+
+### 7.2 The rule (`AVCodecDecoder::_PreferHardwareDecoder()`, media kit ffmpeg plugin)
+
+- Decided in `Setup()` from the container's format: width × height (`encoded_video.output.display`) × frame rate
+  (`field_rate`, from `av_guess_frame_rate()` in AVFormatReader). Above **1920×1080 × 45 fps = 93 Mpixel/s**
+  (two thirds of the VideoCore's ~143 Mpixel/s at 69 fps) the software `h264` decodes; at or below, `h264_mmal`
+  with the CPU fallback as before. So 1080p30 (62), 720p30 (28) and 720p60 (55) stay on the VideoCore; 1080p48/50/60
+  go to the CPU.
+- A frame rate the container cannot tell (≤ 0, or above 240 fps: AVFormatReader falls back to the time base's rate,
+  e.g. 90000) keeps the VideoCore, as before.
+- `FFMPEG_H264_MMAL=0` forces the software decoder (unchanged), **`FFMPEG_H264_MMAL=1` forces the VideoCore**
+  whatever the rate (new; the open/decode fallback still applies).
+- Logged with a reason, once per decoder, as the `AVCodecDecoder: video decoder` line (before: only for the
+  hardware decoder, without a reason):
+  `video decoder h264_mmal (1920x1080 at 30 fps: 62 of its 93 Mpixel/s)`,
+  `video decoder h264 (1920x1080 at 60 fps: 124 Mpixel/s, more than h264_mmal's 93)`,
+  `video decoder h264 (FFMPEG_H264_MMAL=0)`, `video decoder h264_mmal (FFMPEG_H264_MMAL=1; 1920x1080 at 60 fps)`,
+  after a failed open `video decoder h264 (h264_mmal failed: does not open)`.
+- Not conditional on the output colour space: the decoder is chosen before the output is negotiated, and with
+  RGB32 output too the CPU does better than the VideoCore at 1080p60 (§7.3).
+- The CPU is not checked: the rule exists only where `h264_mmal` does (the Pi 4, 4 cores).
+
+### 7.3 Results (Pi 4, network session `v8rate`, 2026-11-20 16:34–16:53, image `haiku-pi4-pregate-1120.img` + the branch's plugin in `~/config/non-packaged`; 0 PANIC, 0 debugger entries)
+
+MediaPlayer, 20 s measured from 5 s after the start (`teamstat`), dropped = "VideoProducer: dropped frame" over the
+whole run (~25 s), shown = the overlay plane's updates per 10 s. Three `rate` runs plus one `play` run; ranges:
+
+| Clip | decoder (how chosen) | MediaPlayer CPU (of one core) | system (4 cores) | dropped | shown per 10 s |
+|---|---|---|---|---|---|
+| 720p30 | h264_mmal (rate) | 13.5–15.0 % | 4.6–5.2 % | 0 | 300–302 (all) |
+| 1080p30 | h264_mmal (rate) | 24.5–26.1 % | 7.9–8.2 % | 0 | 301–302 (all) |
+| **1080p60** | **h264 (rate)** | **203–207 %** | **52–53 %** | **0, 8, 11, 10** (of ~1500; in the first seconds) | **588–601 of 600** |
+| 1080p60 | h264_mmal (`=1`) | 14–76 % | 5–24 % | 216, 420, 538 | 29–170 (210–826 frames decoded in the run) |
+| 1080p30 | h264 (`=0`) | 95.8–96.4 % | 24.8–25.0 % | 0 | all |
+| 1080p60, RGB32 output (`FFMPEG_YUV420=0`) | h264 (rate) | 318–320 % | 82 % | 832–850 | 181–214 (~20 fps) |
+| 1080p60, RGB32 output | h264_mmal (`=1`) | 13.4–13.5 % | 4.6–4.7 % | 172–174 | 91–92 frames decoded in the run (~4 fps) |
+
+- **1080p60 now plays on the CPU with every frame shown** after the first seconds (0–11 of ~1500 dropped), at ~2.05
+  cores; on the VideoCore (`=1`) it still collapses as before (the pre-gate numbers).
+- 720p30 and 1080p30 stay on the VideoCore at the known cost (KNOWN-ISSUES P2: 25.8 % / 13.5 %).
+- RGB32 output (a consumer without the YCbCr plane, as WebPositive): 1080p60 is poor either way, the CPU's ~20 fps
+  better than the VideoCore's ~4 (its late-frame path again) — the rule stays unconditional.
+- `h264.sh two`: the second window prints `h264_mmal failed (does not open): h264 continues from the start` and
+  `video decoder h264 (h264_mmal failed: does not open)` (before 0807f116bb its decoder line carried the reason the
+  VideoCore had been chosen); ffmpeg's `-c:v h264_mmal` exits 14 ("decoder is in use"); 0 problems. `h264.sh kill`
+  (3 kills mid-decode, then a 720p30 player on the VideoCore): 0 problems. `h264.sh play`, `rate`: 0 problems (one
+  `rate` run counted 11 drops against a first limit of 10; the limit is now 2 % of the run, 30).
+- `late` counts (an update within 2 ms of the blank) vary run to run for the same clip and decoder (720p30 on the
+  VideoCore: 0 in three runs, 294 of 302 in one): the producer's phase, as in video-overlay.md §3; no frame lost.
+
+### 7.4 Firefox's `h264_vc` (ffmpeg6 patch 0003): not changed
+
+- `why_not_vc()` (`files/libavcodec/h264_vcdec.c`) is where the same rule would go, but Firefox does not give a frame
+  rate: its `FFmpegVideoDecoder::InitCodecContext()` sets width, height, threads, `get_format` (and the low-delay
+  flag), never `framerate` (mozilla-central source, read 2026-11-20). The rate would have to come from the stream:
+  the SPS's VUI timing (`time_scale / (2 × num_units_in_tick)`), which libavcodec parses cheaply inside h264_vc
+  (`ff_h264_decode_extradata()` on the avcC record) — our clips carry it (x264: 120 / 2 → 60 fps); a stream without
+  VUI timing would stay on the VideoCore as now.
+- Whether it helps Firefox is **unproven**: its main process already takes ~2 cores drawing video (G2) and drops
+  ~40 % at 1080p30 with either decoder (§1.5); two more cores of software decoding at 1080p60 would compete with it.
+  To measure (`vc-services.sh firefox` on a 1080p60 clip, h264_vc vs `FFMPEG_H264_MMAL=0`) before an ffmpeg6 -9.
+  Saturday's gate ships ffmpeg6 -7; nothing changed there.
+
+### 7.5 Merging (for the main session, after the 2026-11-21 gate)
+
+- Cherry-pick/merge `v8-h264-rate` (two commits, the ffmpeg add-on only) into rpi4; no package changes.
+- KNOWN-ISSUES P2: replace "1080p60 H.264 now runs in real time but drops ~200 of 240 frames (the VideoCore's ~69
+  fps leaves no headroom; before: shown in slow motion at 23.98 fps)" with: "**H.264 above 1080p at 45 fps (1080p50,
+  1080p60) is decoded on the CPU** from image-<merge> (the VideoCore's ~69 fps at 1080p leaves no headroom: it showed
+  1080p60 with most frames dropped): 1080p60 ~2.05 cores (53 % of the system), every frame shown after the first
+  seconds (0–11 of ~1500 dropped); `FFMPEG_H264_MMAL=1` forces the VideoCore", and the workaround column: "CPU
+  decoding (`FFMPEG_H264_MMAL=0` forces it, `=1` forces the VideoCore)".
