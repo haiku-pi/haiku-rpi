@@ -104,9 +104,9 @@ run compositor "$bl" -b --factory-startup -t 4 -E CYCLES --python-expr "$comp" -
 rendered compositor
 
 # 6. aud (audaspace's Python API, built with NumPy): a 440 Hz sine as a NumPy array, a sound made from
-# that array, played for 0.6 s: the handle's position must advance. Played in a GUI Blender (the desktop's
-# SDL audio needs the application object GHOST_SDL creates; with -b, SDL cannot open the device), on
-# Blender's own sound device (Preferences > System > Sound: SDL)
+# that array, played for 0.6 s on Blender's own sound device (aud.Device(): SDL, Preferences > System >
+# Sound): the handle's position must advance. aud.Device('SDL') would fail: Blender holds the one SDL audio
+# device a team can open on Haiku (blender.md §7.14)
 audpy="
 import os, time, numpy, aud
 s = aud.Sound.sine(440, 48000).limit(0, 1.0)
@@ -135,7 +135,7 @@ else
 	echo "BB7 $label aud: FAIL"
 	grep -v '^BB7AUD' /tmp/bb7-$label-aud.txt | tail -n 15
 fi
-# the same without a window (-b): the NumPy part works there, the device does not
+# the same without a window (-b)
 run aud-b "$bl" -b --factory-startup --python-expr "$audpy"
 grep '^BB7AUD' /tmp/bb7-$label-aud-b.txt | sed 's/^/(-b) /'
 
