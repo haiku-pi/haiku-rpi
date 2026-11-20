@@ -1201,7 +1201,7 @@ packages). lz4, zstd, tiff and libiconv are already published. Revision bump che
 `sources/haiku/generated.arm64/download/` if the image lists them, and the versions in
 `build/jam/repositories/HaikuPorts/arm64`.
 
-### 7.16 blender -9: USD import/export (2026-11-20 14:14–15:55; sessions b9 15:09–15:21, b9b, b9c, b9d 15:32–15:34, b9e 15:35–15:47, b9f 15:47–15:50, image-2026-11-19b)
+### 7.16 blender -9: USD import/export (2026-11-20 14:14–16:15; sessions b9 15:09–15:21, b9b, b9c, b9d 15:32–15:34, b9e 15:35–15:47, b9f 15:47–15:50, b9g 16:00–16:02, b9h 16:04–16:07, image-2026-11-19b)
 
 Task B9, time-boxed to one working day: USD (File ▸ Import/Export ▸ Universal Scene Description, `.usd`/`.usda`/
 `.usdc`/`.usdz`). Blender linked with USD after **54 minutes** (15:08); everything below is in
@@ -1279,19 +1279,25 @@ Task B9, time-boxed to one working day: USD (File ▸ Import/Export ▸ Universa
 | `bpy.app.build_options.usd` | 1 | 1 |
 | Factory scene + Suzanne (Subdivision, render level 2) + a material → `.usdc`, re-imported | 762 705 bytes; **4 objects (camera, light, 2 meshes), 7966 vertices, 7878 faces, 2 materials** | 762 704 bytes; the same counts |
 | … → `.usda`, re-imported | 2 535 574 bytes; the same counts | 2 534 140 bytes; the same |
-| … → `.usdz`, re-imported | 762 870 bytes; the same counts | 762 865 bytes; the same |
-| x86-64's `.usdc`/`.usda`/`.usdz` imported on the Pi | the same counts, all three | — |
-| The Pi's three files imported by x86-64's Blender | — | the same counts, all three |
+| … → `.usdz`, re-imported | 762 867–762 871 bytes (the zip's time stamps); the same counts | 762 865–762 870 bytes; the same |
+| … → `.usd` (crate), re-imported (session b9g) | 762 705 bytes; the same counts | 762 697 bytes; the same |
+| x86-64's `.usdc`/`.usda`/`.usdz`/`.usd` imported on the Pi | the same counts, all four | — |
+| The Pi's `.usdc`/`.usda`/`.usdz` imported by x86-64's Blender | — | the same counts, all three |
+| **As the GUI runs them** (`blender-b9-gui.py`, a window; session b9h, 2 runs): File ▸ Export's file browser confirmed, the export **as a window-manager job** (worker thread), then the import job | 3333 bytes; 3 objects (camera, light, mesh, 8 vertices) re-imported, 2 of 2 | 3331 bytes; the same (Xvfb) |
 | UsdGeom gprims (usdImaging adapters): Capsule, Cone, Cube, Cylinder, Sphere | **82/90, 31/20, 8/6, 42/30, 92/100** vertices/faces | the same |
 | Times (export / import): usdc, usda, usdz | 377/47, 349/211, 231/36 ms | 76/8, 90/70, 64/8 ms |
 
-- The `.usda` text equals x86-64's except for the prim order (`defaultPrim` Suzanne vs Cube) and the last digit of
+- The `.usda` text equals x86-64's (as sorted lines; the "sha" in the log is not a byte-identity check: two x86-64
+  runs gave different hashes and 2 534 140 / 2 534 139 bytes) except for the prim order (`defaultPrim` Suzanne vs Cube) and the last digit of
   some floats of the subdivided Suzanne (points, normals, UVs, extent: OpenSubdiv's float arithmetic on arm64; the
   cube, camera, light and materials are identical): 5 lines differ after sorting.
-- 0 debugger entries in the final sessions (b9d, b9e, b9f); USD printed no warnings or coding errors.
+- 0 debugger entries in the final sessions (b9d–b9h); USD printed no warnings or coding errors.
+- The headless checks run the operators directly (no job); the GUI check runs them through invoke, where Blender
+  starts them as window-manager jobs (`as_background_job`): USD on a worker thread works too.
 
 **Regression probes with the final -9 installed** (session b9e 15:35–15:47, `artifacts/blender-tests/b9e/`; the
-same probes on the package before 0016, session b9, gave the same within 0.6 s):
+same probes on the package before 0016, session b9, gave the same within 0.6 s, but a manual `pi-ssh` debugging
+command ran during b9's M3, so its numbers are not quoted):
 - M3: version, bpy (Python 3.10.22), subsurf 98 vertices, 960×540 cube **9.7 s**, factory 1080p **3 min 29 s**,
   1.57 GB peak, Filmic (-8: 9.8 s, 3 min 31 s, 1.55 GB).
 - M5: EEVEE factory **35.6 s**, scene 57.2 s, Cycles scene 81.4 s, the SSS message once (-8: 35.4, 57.2, 82.0 s).
@@ -1307,7 +1313,7 @@ same probes on the package before 0016, session b9, gave the same within 0.6 s):
 | Package | Size | Note |
 |---|---|---|
 | blender-3.6.23-9 | 65.0 MB (-8: 64.8) | requires `lib:libusd_ms` |
-| usd-24.08-1 | 12.7 MB | `libusd_ms.so` + `lib/usd` (28 plug-in directories); requires haiku, libtbb, libosdcpu (both published) |
+| usd-24.08-1 | 12.7 MB | `libusd_ms.so` + `lib/usd` (27 plug-ins); requires haiku, libtbb, libosdcpu (both published); license: the Tomorrow Open Source Technology License 1.0 (OpenUSD's from 24.08: Apache 2.0 with a different §6, Trademarks), its text in `data/licenses` |
 | usd_devel-24.08-1 | 1.6 MB | headers (`develop/headers/pxr`) |
 
 **blender -9 against the published -8** (`scripts/package-diff.sh`): requires gain `lib:libusd_ms`, nothing dropped;
@@ -1320,7 +1326,7 @@ files 2457 → 2457, **the same paths** (USD's data is in the usd package).
 - No USD Python module (`from pxr import Usd` in Blender's console): the official build has it; ours is built
   without Python (Blender 3.6's io/usd does not need it; it would bring Boost.Python and a `lib/python` tree).
 - Not probed: USD skeletal animation (UsdSkel) and blend shapes, volumes (UsdVol with OpenVDB assets), instancing,
-  animated (time-sampled) export, the import/export dialogs in the GUI (the operators ran headless).
+  animated (time-sampled) export; the file browser was confirmed by script, not clicked.
 - The update was checked from files (`pkgman install` of -9 + usd over -8), not as `pkgman update` from a
   repository that has -9.
 
@@ -1330,8 +1336,8 @@ USER-GUIDE Blender section: "From blender 3.6.23-9: **USD** — File ▸ Import/
 Also fixed in -9 for every user: recursive deletes and copies of non-empty directories (0016) no longer crash.
 
 **Recommendation:** publish blender **-9** with **usd 24.08-1** (+ usd_devel): every check equals the official
-x86-64 3.6.23 in both directions, the regression probes are unchanged from -8, and -9 also carries the Haiku
-recursive-delete fix (0016). Revision bump checklist (AGENTS.md): the `.hpkg`s into `artifacts/packages/` (blender
+x86-64 3.6.23 in both directions (`.usd`, `.usdc`, `.usda`, `.usdz`; headless and as GUI jobs), the regression
+probes are unchanged from -8, and -9 also carries the Haiku recursive-delete fix (0016). Revision bump checklist (AGENTS.md): the `.hpkg`s into `artifacts/packages/` (blender
 -8 to packages-old), the same files into `sources/haiku/generated.arm64/download/` if the image lists them, and the
 versions in `build/jam/repositories/HaikuPorts/arm64`; usd's requirements (libtbb, libosdcpu) are published. GitHub
 size: blender -9 is 62.0 MiB (-8 61.8), usd 12.1 MiB.

@@ -7,7 +7,7 @@ usdImaging's scene adapters, built as one shared library, libusd_ms, without \
 Python bindings, OpenGL (Storm) or command-line tools."
 HOMEPAGE="https://openusd.org/"
 COPYRIGHT="2016-2024 Pixar"
-LICENSE="Apache v2"
+LICENSE="Tomorrow Open Source Technology License 1.0"
 REVISION="1"
 SOURCE_URI="https://github.com/PixarAnimationStudios/OpenUSD/archive/refs/tags/v$portVersion.tar.gz"
 CHECKSUM_SHA256="6640bb184bf602c6df14fa4a83af6ac5ae1ab8d1d38cf7bb7decfaa9a7ad5d06"

@@ -4,7 +4,7 @@
 #   sh blender-b9.sh DIR [LABEL]
 #
 # DIR/packages: blender -9 and what it needs (pkgman installs the ones the image does not have in that very
-# version, as blender-b8.sh); DIR/ref/b9/factory.{usdc,usda,usdz}: the scene the official x86-64 Blender
+# version, as blender-b8.sh); DIR/ref/b9/factory.{usdc,usda,usdz,usd}: the scene the official x86-64 Blender
 # 3.6.23 exported (blender-b9.py's "export" check there); blender-b9.py next to this script. Blender is the
 # installed package (BLENDER=PATH for another). Output lines start with "BB9 "; grade by the PASS lines and
 # compare the numbers with the reference's (DIR/ref/b9ref.txt, the same script on x86-64). Logs:

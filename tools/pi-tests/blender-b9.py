@@ -2,11 +2,11 @@
 # "BB9X <name>: PASS/FAIL ..." line. The same script runs on the official x86-64 Blender 3.6.23, whose
 # numbers are the reference the Pi's must equal (blender-b9.sh prints both):
 #   options   bpy.app.build_options.usd
-#   export    the factory scene plus a subdivided Suzanne with a material, exported to .usdc, .usda and
-#             .usdz; each file re-imported into an empty scene: objects by type, mesh vertices/faces,
-#             materials. The .usda text is hashed without its "doc" line (Blender's version string), so
-#             the Pi's file can be compared with x86-64's byte for byte
-#   refimport FILE...  files the reference wrote (--ref DIR: factory.usdc, factory.usda, factory.usdz)
+#   export    the factory scene plus a subdivided Suzanne with a material, exported to .usdc, .usda,
+#             .usdz and .usd (crate by default); each file re-imported into an empty scene: objects by type, mesh vertices/faces,
+#             materials. The .usda text is hashed without its "doc" line (Blender's version string): a
+#             quick same-or-not between runs (not stable even between two x86-64 runs; compare the text)
+#   refimport FILE...  files the reference wrote (--ref DIR: factory.usdc, .usda, .usdz, .usd)
 #             imported: the same counts as the reference's own re-import
 #   shapes    a hand-written .usda with the five UsdGeom gprims (Cube, Sphere, Cylinder, Cone, Capsule):
 #             Blender meshes them through usdImaging's shape adapters; vertex/face counts per object
@@ -91,7 +91,7 @@ def build_scene():
 def export():
     results = []
     ok = True
-    for ext in ("usdc", "usda", "usdz"):
+    for ext in ("usdc", "usda", "usdz", "usd"):
         build_scene()
         before = summary()
         path = os.path.join(out, "factory." + ext)
@@ -115,7 +115,7 @@ def refimport():
         return False, "no --ref DIR"
     parts = []
     ok = True
-    for ext in ("usdc", "usda", "usdz"):
+    for ext in ("usdc", "usda", "usdz", "usd"):
         path = os.path.join(ref, "factory." + ext)
         empty_scene()
         r = bpy.ops.wm.usd_import(filepath=path)
