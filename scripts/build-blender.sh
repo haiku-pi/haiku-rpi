@@ -20,17 +20,21 @@
 #                (scripts/build-numpy.sh --python 3.10)
 #   alembic fftw Alembic 1.8.3 (Alembic import/export) and FFTW 3.3.10 (the Ocean modifier; -7), the
 #                recipes and patchsets
+#   blosc openvdb gmp potrace libharu
+#                c-blosc 1.21.6, OpenVDB 10.1.0 (+ NanoVDB), GMP 6.3.0, potrace 1.16, libharu 2.4.3 (-8)
 #   freetype     FreeType with Brotli, static, into Blender's own deps/ (not packaged)
 #   blender_source  artifacts/downloads/blender/blender-3.6.23 + patches/blender/*.patch
-#   hosttools    makesdna, makesrna, datatoc, datatoc_icon, smaa_areatex built for this host
+#   hosttools    makesdna, makesrna, datatoc, datatoc_icon, smaa_areatex, msgfmt built for this host
 #   configure    the cross configure (tools/cmake/haiku-arm64.cmake + tools/cmake/blender-minimal.cmake,
 #                -DBLENDER_HOST_TOOLS); fails unless its WITH_* options equal the host configure's
-#   build        ninja blender, under scripts/heavy-build.sh (≤ 12 GB)
+#   build        ninja blender, under scripts/heavy-build.sh (≤ 16 GB)
 #   stage        the install tree + runtime packages for the Pi test, artifacts/blender-tests/
-#   blender_package  blender-3.6.23-7-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender-7
+#   blender_package  blender-3.6.23-8-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender-8
 #
 # Packages: the libraries of revisions 1-6 in artifacts/packages-test/blender/ (unchanged since); what
-# -7 adds (oidn, numpy_python3.10, blender itself) in artifacts/packages-test/blender-7/.
+# -7 adds (oidn, numpy_python3.10, alembic, fftw) in artifacts/packages-test/blender-7/; what -8 adds (boost1.83
+# -2 with regex, iostreams and locale; c_blosc, openvdb, gmp, potrace, libharu; blender itself) in
+# artifacts/packages-test/blender-8/.
 #
 # Work directories: artifacts/cross-ports/<port>-<version>/ for the libraries,
 # artifacts/cross-ports/blender-3.6.23/{src,deps,host-build,host-tools,build}/ for Blender.
@@ -47,8 +51,9 @@ hostTools="$gen/objects/linux/x86_64/release/tools"
 tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
 out="$root/artifacts/packages-test/blender"
 out7="$root/artifacts/packages-test/blender-7"
+out8="$root/artifacts/packages-test/blender-8"
 package() { "$root/scripts/package-port.py" "$@" --out "$out"; }
-mkdir -p "$out" "$out7"
+mkdir -p "$out" "$out7" "$out8"
 
 # the script-mode builds see pkg-config into the sysroot
 export PKG_CONFIG_SYSROOT_DIR="$sysroot"
@@ -72,7 +77,7 @@ sysroot() {
 	local f p
 	for p in zstd zstd_devel brotli brotli_devel libwebp libwebp_devel bzip2 bzip2_devel libedit \
 			libedit_devel libpng16 libpng16_devel libjpeg_turbo libjpeg_turbo_devel libiconv libiconv_devel \
-			ffmpeg6 ffmpeg6_devel; do
+			ffmpeg6 ffmpeg6_devel lz4 lz4_devel; do
 		f="$(newest "$root/artifacts/packages" "$p")"
 		[ -n "$f" ] || { echo "build-blender: no $p package in artifacts/packages" >&2; exit 1; }
 		"$pkgtool" extract -C "$sysroot/boot/system" "$f"
@@ -95,7 +100,7 @@ sysroot() {
 		lib/libwebp.so.7 develop/headers/webp/decode.h lib/libbz2.so.1.0 lib/libedit.so.0 \
 		lib/libpng16.so.16 develop/headers/png.h lib/libjpeg.so.62 develop/headers/jpeglib.h \
 		lib/libexpat.so.1 develop/headers/expat.h develop/lib/libSDL2.so develop/headers/SDL2/SDL.h \
-		develop/lib/libGL.so develop/lib/libEGL.so lib/libiconv.so.2
+		develop/lib/libGL.so develop/lib/libEGL.so lib/libiconv.so.2 lib/liblz4.so.1 develop/headers/lz4.h
 }
 
 python() {
@@ -176,12 +181,16 @@ epoxy() {
 	need non-packaged/lib/libepoxy.so.0 develop/headers/epoxy/gl.h
 }
 
-# Boost 1.83 (the version HaikuPorts' blender3 builds against; Blender 3.6 pins 1.80): only what OIIO
-# 2.4 links (thread; filesystem is std::filesystem with GCC >= 9) and what thread needs, shared, as the
-# recipe's b2 options. b2 has no cross mode of its own: the engine is built for the host
-# (bootstrap.sh), the cross g++ is a "gcc-haiku" toolset in a user-config.jam, target-os=haiku.
+# Boost 1.83 (the version HaikuPorts' blender3 builds against; Blender 3.6 pins 1.80), shared, as the
+# recipe's b2 options. Revision 1 (published) had only what OIIO 2.4 links (thread; filesystem is
+# std::filesystem with GCC >= 9) and what thread needs. Revision 2 (-8, artifacts/packages-test/blender-8)
+# adds what Blender's own find_package(Boost) asks for once WITH_BOOST is on (OpenVDB, Quadriflow, i18n):
+# regex, iostreams (OpenVDB's delayed loading: mapped_file only, so no compression filters: no zlib,
+# bzip2, lzma, zstd) and locale (i18n; iconv from libiconv, no ICU, no POSIX backend). b2 has no cross
+# mode of its own: the engine is built for the host (bootstrap.sh), the cross g++ is a "gcc-haiku"
+# toolset in a user-config.jam, target-os=haiku.
 boost() {
-	local recipe
+	local recipe lib l
 	recipe="$(recipe_with "$ports/dev-libs/boost/boost1.83-1.83.0.recipe" '${portVersion%.*}' 1.83)"
 	"$cross" "$recipe" script '
 ./bootstrap.sh --with-toolset=gcc --without-icu > bootstrap.log 2>&1 || { cat bootstrap.log; exit 1; }
@@ -190,11 +199,26 @@ echo "using gcc : haiku : $cxx : <compileflags>--sysroot=$SYSROOT <linkflags>--s
 ./b2 -q -j"$(nproc)" --user-config=user-config.jam toolset=gcc-haiku target-os=haiku \
 	architecture=arm address-model=64 binary-format=elf abi=aapcs \
 	--with-thread --with-chrono --with-atomic --with-date_time --with-system --with-filesystem \
-	--disable-icu boost.locale.icu=off pch=off inlining=on threading=multi variant=release \
+	--with-regex --with-iostreams --with-locale \
+	-sNO_ZLIB=1 -sNO_BZIP2=1 -sNO_LZMA=1 -sNO_ZSTD=1 \
+	--disable-icu boost.locale.icu=off boost.locale.posix=off boost.locale.iconv=on \
+	pch=off inlining=on threading=multi variant=release \
 	link=shared runtime-link=shared --prefix="$DEST" --libdir="$DEST/lib" --includedir="$DEST/include" \
 	--layout=system install'
-	package "$recipe"
-	need non-packaged/lib/libboost_thread.so.1.83.0 develop/headers/boost/thread.hpp
+	lib="$root/artifacts/cross-ports/boost1.83-1.83.0/install/boot/system/non-packaged/lib"
+	for l in thread chrono atomic date_time system filesystem regex iostreams locale; do
+		[ -f "$lib/libboost_$l.so.1.83.0" ] || { echo "build-blender: Boost built without $l" >&2; exit 1; }
+	done
+	# iostreams without filters (nothing but libroot/libstdc++), locale with iconv
+	! "$tools-readelf" -d "$lib/libboost_iostreams.so.1.83.0" | grep -E 'NEEDED.*\[lib(z|bz2|lzma|zstd)' \
+		|| { echo "build-blender: Boost iostreams links a compression library" >&2; exit 1; }
+	"$tools-readelf" -d "$lib/libboost_locale.so.1.83.0" | grep 'NEEDED.*\[libiconv' > /dev/null \
+		|| { echo "build-blender: Boost locale does not link libiconv" >&2; exit 1; }
+	# (libiconv is in the sysroot's lib/, which package-port.py does not turn into requires)
+	"$root/scripts/package-port.py" "$recipe" --revision 2 --requires lib:libiconv --out "$out8"
+	need non-packaged/lib/libboost_thread.so.1.83.0 non-packaged/lib/libboost_iostreams.so.1.83.0 \
+		non-packaged/lib/libboost_regex.so.1.83.0 non-packaged/lib/libboost_locale.so.1.83.0 \
+		develop/headers/boost/thread.hpp develop/headers/boost/graph/adjacency_list.hpp
 	# the unpacked and the built source trees: 1.8 GB
 	rm -rf "$root/artifacts/cross-ports/boost1.83-1.83.0/src" "$root/artifacts/cross-ports/boost1.83-1.83.0/source"
 }
@@ -425,6 +449,122 @@ fftw() {
 	need non-packaged/lib/libfftw3.so.3 develop/headers/fftw3.h
 }
 
+# c-blosc 1.21.6 (-8: OpenVDB's grid compression; Blender pins 1.21.1, HaikuPorts has 1.18.1): ours
+# (tools/recipes), shared, the system's LZ4 (OpenVDB writes LZ4 blocks: a Blosc without it builds and
+# links, then fails on real .vdb files), Zstd and zlib, no Snappy; C11 (GCC 16 defaults to C23, where
+# shuffle.c's typedef of bool is an error)
+blosc() {
+	local recipe="$root/tools/recipes/dev-libs/c_blosc/c_blosc-1.21.6.recipe" lib n
+	"$cross" "$recipe" cmake -DBUILD_STATIC=OFF -DBUILD_TESTS=OFF -DBUILD_FUZZERS=OFF -DBUILD_BENCHMARKS=OFF \
+		-DPREFER_EXTERNAL_LZ4=ON -DPREFER_EXTERNAL_ZLIB=ON -DPREFER_EXTERNAL_ZSTD=ON -DDEACTIVATE_SNAPPY=ON \
+		-DDEACTIVATE_AVX2=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev \
+		-DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON
+	lib="$root/artifacts/cross-ports/c_blosc-1.21.6/install/boot/system/non-packaged/lib/libblosc.so.1.21.6"
+	for n in liblz4 libzstd libz; do
+		"$tools-readelf" -d "$lib" | grep "NEEDED.*\[$n\.so" > /dev/null \
+			|| { echo "build-blender: Blosc does not link $n" >&2; exit 1; }
+	done
+	# (the system's LZ4 and Zstd are in the sysroot's lib/: named here)
+	"$root/scripts/package-port.py" "$recipe" --requires lib:liblz4 --requires lib:libzstd --out "$out8"
+	need non-packaged/lib/libblosc.so.1 develop/headers/blosc.h
+}
+
+# OpenVDB 10.1.0 (-8: voxel remesh, .vdb import, the volume nodes, the OpenVDB fluid cache; NanoVDB for
+# Cycles' volumes): ours (tools/recipes; Blender pins 10.0.0, 10.1 is the same ABI 10), the core library
+# shared with Blosc, zlib, delayed loading (Boost iostreams), oneTBB, OpenVDB's own half; NanoVDB's headers;
+# vdb_print. Explicit instantiation makes compile jobs of 2-3 GB (8 jobs went over 14 GB): under
+# heavy-build.sh, 5 jobs.
+openvdb() {
+	local recipe="$root/tools/recipes/media-gfx/openvdb/openvdb-10.1.0.recipe" w="$root/artifacts/cross-ports/openvdb-10.1.0"
+	local lib n v
+	"$root/scripts/heavy-build.sh" -j 5 --mem-per-job 3 --max 16 -- env CROSS_PORT_JOBS='{JOBS}' \
+		"$cross" "$recipe" cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DOPENVDB_BUILD_CORE=ON \
+		-DOPENVDB_CORE_SHARED=ON -DOPENVDB_CORE_STATIC=OFF -DOPENVDB_BUILD_BINARIES=ON -DOPENVDB_BUILD_VDB_PRINT=ON \
+		-DOPENVDB_BUILD_PYTHON_MODULE=OFF -DOPENVDB_BUILD_UNITTESTS=OFF -DOPENVDB_BUILD_DOCS=OFF \
+		-DOPENVDB_BUILD_AX=OFF -DUSE_AX=OFF -DUSE_BLOSC=ON -DUSE_ZLIB=ON -DUSE_IMATH_HALF=OFF -DUSE_EXR=OFF \
+		-DUSE_PNG=OFF -DUSE_LOG4CPLUS=OFF -DUSE_CCACHE=OFF -DOPENVDB_USE_DELAYED_LOADING=ON \
+		-DUSE_NANOVDB=ON -DOPENVDB_BUILD_NANOVDB=ON -DNANOVDB_BUILD_TOOLS=OFF -DNANOVDB_BUILD_UNITTESTS=OFF \
+		-DNANOVDB_BUILD_EXAMPLES=OFF -DNANOVDB_BUILD_BENCHMARK=OFF -DNANOVDB_USE_CUDA=OFF -DNANOVDB_USE_OPENVDB=ON \
+		-DOPENVDB_ENABLE_RPATH=OFF -DCMAKE_SKIP_RPATH=ON -DDISABLE_DEPENDENCY_VERSION_CHECKS=OFF \
+		-DTBB_ROOT="$np" -DBlosc_ROOT="$np" -DBoost_ROOT="$np" -DBoost_NO_SYSTEM_PATHS=ON \
+		-DZLIB_ROOT="$sysroot/boot/system/develop" -DZLIB_INCLUDE_DIR="$sysroot/boot/system/develop/headers" \
+		-DZLIB_LIBRARY="$sysroot/boot/system/develop/lib/libz.so" -Wno-dev
+	lib="$w/install/boot/system/non-packaged/lib/libopenvdb.so.10.1.0"
+	"$tools-readelf" -d "$lib" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ' | sed 's/^/build-blender: libopenvdb needs: /'
+	echo
+	for n in libblosc libz libtbb libboost_iostreams; do
+		"$tools-readelf" -d "$lib" | grep "NEEDED.*\[$n\.so" > /dev/null \
+			|| { echo "build-blender: OpenVDB does not link $n" >&2; exit 1; }
+	done
+	! "$tools-readelf" -d "$lib" | grep -E 'RPATH|RUNPATH' > /dev/null || { echo "build-blender: OpenVDB has a run path" >&2; exit 1; }
+	# the features in the installed version header (a configure that loses one only warns)
+	v="$w/install/boot/system/non-packaged/include/openvdb/version.h"
+	for n in OPENVDB_USE_BLOSC OPENVDB_USE_ZLIB OPENVDB_USE_DELAYED_LOADING; do
+		grep -q "^#define $n" "$v" || { echo "build-blender: OpenVDB built without $n" >&2; exit 1; }
+	done
+	! grep -q '^#define OPENVDB_USE_IMATH_HALF' "$v" || { echo "build-blender: OpenVDB uses Imath's half" >&2; exit 1; }
+	[ -f "$w/install/boot/system/non-packaged/include/nanovdb/NanoVDB.h" ] \
+		|| { echo "build-blender: NanoVDB headers not installed" >&2; exit 1; }
+	cmake_relative OpenVDB 2> /dev/null || true
+	"$root/scripts/package-port.py" "$recipe" --out "$out8"
+	need non-packaged/lib/libopenvdb.so.10.1 develop/headers/openvdb/openvdb.h develop/headers/nanovdb/NanoVDB.h
+	rm -rf "$w/src" "$w/source" "$w/build"
+}
+
+# GMP 6.3.0 (-8: the Boolean modifier's Exact solver; without it Blender silently uses Fast): the recipe
+# (autotools), libgmp + the C++ libgmpxx Blender links, the generic ARM64 assembly. Fetched from the GNU
+# mirror (gmplib.org refused connections on 2026-11-20; same file, the recipe's sha256 checks it)
+gmp() {
+	local recipe lib="$root/artifacts/cross-ports/gmp-6.3.0/install/boot/system/non-packaged/lib"
+	recipe="$(recipe_with "$ports/dev-libs/gmp/gmp-6.3.0.recipe" https://gmplib.org/download/gmp/ https://ftp.gnu.org/gnu/gmp/)"
+	# The recipe's configure, built in script mode for one fix: libtool links C++ libraries with
+	# -lstdc++ resolved through the cross tools' libstdc++.la, whose libstdc++.a does not exist (libtiffxx,
+	# blender.md §7.3), so libgmpxx would not link; the generated libtool names the shared one (-l:libstdc++.so) instead.
+	# C17: GCC 16 defaults to C23, which rejects the K&R-style tests of GMP's configure ("could not find a
+	# working compiler").
+	"$cross" "$recipe" script '
+touch doc/*.info*
+autoreconf -fi > autoreconf.log 2>&1
+mkdir -p build && cd build
+../configure --host=aarch64-unknown-haiku --prefix=/boot/system/non-packaged CC="$CC" CXX="$CXX" AR="$AR" \
+	RANLIB="$RANLIB" STRIP="$STRIP" CFLAGS="-O2 -std=gnu17" --enable-cxx --disable-static
+grep -q "^postdeps=\"-lstdc++ " libtool
+sed -i "s|^postdeps=\"-lstdc++ |postdeps=\"-l:libstdc++.so |" libtool
+make -j"$(nproc)"
+make install DESTDIR="${DEST%/boot/system/non-packaged}"
+find "$DEST" -name "*.la" -delete'
+	rm -rf "$root/artifacts/cross-ports/gmp-6.3.0/install/boot/system/non-packaged/share"
+	[ -f "$lib/libgmp.so.10.5.0" ] && [ -f "$lib/libgmpxx.so.4.7.0" ] \
+		|| { ls -l "$lib" >&2; echo "build-blender: GMP built without libgmp/libgmpxx" >&2; exit 1; }
+	"$tools-readelf" -d "$lib/libgmpxx.so.4.7.0" | grep 'NEEDED.*\[libgmp.so' > /dev/null \
+		|| { echo "build-blender: libgmpxx does not link libgmp" >&2; exit 1; }
+	"$root/scripts/package-port.py" "$recipe" --out "$out8"
+	need non-packaged/lib/libgmp.so.10 non-packaged/lib/libgmpxx.so.4 develop/headers/gmp.h develop/headers/gmpxx.h
+}
+
+# potrace 1.16 (-8: Grease Pencil's Trace Image; Blender's pin): the recipe + patchset, libpotrace and the
+# potrace/mkbitmap programs
+potrace() {
+	local recipe="$ports/media-gfx/potrace/potrace-1.16.recipe"
+	"$cross" "$recipe" autotools --with-libpotrace --disable-static CFLAGS="-O2 -std=gnu17"
+	rm -rf "$root/artifacts/cross-ports/potrace-1.16/install/boot/system/non-packaged/share"
+	"$root/scripts/package-port.py" "$recipe" --out "$out8"
+	need non-packaged/lib/libpotrace.so.0 develop/headers/potracelib.h
+}
+
+# libharu 2.4.3 (-8: Grease Pencil's PDF export; Blender 3.6 pins 2.3.0, its calls are in 2.4 unchanged):
+# the recipe + patchset, shared, with libpng and zlib
+libharu() {
+	local recipe="$ports/media-libs/libharu/libharu-2.4.3.recipe" lib
+	"$cross" "$recipe" cmake -DLIBHPDF_STATIC=NO -DBUILD_SHARED_LIBS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev
+	lib="$(ls "$root"/artifacts/cross-ports/libharu-2.4.3/install/boot/system/non-packaged/lib/libhpdf.so.* | head -n 1)"
+	"$tools-readelf" -d "$lib" | grep 'NEEDED.*\[libpng16' > /dev/null \
+		|| { echo "build-blender: libharu does not link libpng" >&2; exit 1; }
+	rm -rf "$root/artifacts/cross-ports/libharu-2.4.3/install/boot/system/non-packaged/share"
+	"$root/scripts/package-port.py" "$recipe" --requires lib:libpng16 --out "$out8"
+	need develop/headers/hpdf.h develop/lib/libhpdf.so
+}
+
 # --- Blender itself: artifacts/cross-ports/blender-3.6.23/ (kept between runs: src/ is only made
 # when missing; rm -rf it to start over) ---
 bl="$root/artifacts/cross-ports/blender-3.6.23"
@@ -469,6 +609,15 @@ blender_source() {
 	mv "$bl/src.tmp" "$bl/src"
 }
 
+# the libraries -8 adds, for both configures (the host one only finds them so that the options stay on):
+# OpenVDB + NanoVDB + Blosc, GMP, potrace, libharu, Boost 1.83 (its CMake config, not CMake's removed
+# FindBoost; Boost_NO_SYSTEM_PATHS: never the host's own Boost)
+roots8() {
+	echo -DOPENVDB_ROOT_DIR="$np" -DNANOVDB_ROOT_DIR="$np" -DBLOSC_ROOT_DIR="$np" -DGMP_ROOT_DIR="$np" \
+		-DPOTRACE_ROOT_DIR="$np" -DHARU_ROOT_DIR="$np" -DBoost_ROOT="$np" -DBOOST_ROOT="$np" \
+		-DBoost_NO_SYSTEM_PATHS=ON -DBoost_DIR="$np/lib/cmake/Boost-1.83.0"
+}
+
 # the WITH_* values a configured build ended with
 with_options() {
 	grep -E '^WITH_[A-Z0-9_]+:BOOL=' "$1/CMakeCache.txt" | sort
@@ -496,6 +645,7 @@ hosttools() {
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DPUGIXML_ROOT_DIR="$np" \
 		-DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" -DFFMPEG_ROOT_DIR="$np" \
 		-DOPENIMAGEDENOISE_ROOT_DIR="$np" -DALEMBIC_ROOT_DIR="$np" -DFFTW3_ROOT_DIR="$np" \
+		$(roots8) \
 		-DPYTHON_NUMPY_PATH="$numpyPath" \
 		-DPYTHON_NUMPY_INCLUDE_DIRS="$numpyPath/numpy/core/include" \
 		-DTEST_PYTHON_EXE="$(command -v python3)" \
@@ -504,8 +654,17 @@ hosttools() {
 		> "$bl/host-configure.log" 2>&1 || { tail -n 40 "$bl/host-configure.log" >&2; exit 1; }
 	ninja -C "$bl/host-build" makesdna makesrna datatoc datatoc_icon smaa_areatex > "$bl/host-build.log" 2>&1 \
 		|| { grep -A10 FAILED "$bl/host-build.log" | head -n 40 >&2; exit 1; }
+	# msgfmt (-8: translations, .po -> .mo at build time) links bf_blenlib, whose link line names the
+	# target's libraries the host configure found in the sysroot (TBB, GMP: wrong format); the objects
+	# it uses need none of them, so it is linked with that line minus the sysroot's libraries. Its
+	# German .mo was checked byte-identical to the official x86-64 3.6.23 release's (2026-11-20).
+	ninja -C "$bl/host-build" -k 0 bin/msgfmt >> "$bl/host-build.log" 2>&1 || true
+	(cd "$bl/host-build" && bash -c "$(ninja -t commands bin/msgfmt | tail -n 1 \
+		| sed -E "s# $sysroot/[^ ]*\.so##g")") >> "$bl/host-build.log" 2>&1 \
+		|| { tail -n 20 "$bl/host-build.log" >&2; exit 1; }
+	file "$bl/host-build/bin/msgfmt" | grep -q 'x86-64' || { echo "build-blender: no host msgfmt" >&2; exit 1; }
 	mkdir -p "$bl/host-tools"
-	for t in makesdna makesrna datatoc datatoc_icon smaa_areatex; do
+	for t in makesdna makesrna datatoc datatoc_icon smaa_areatex msgfmt; do
 		cp "$bl/host-build/bin/$t" "$bl/host-tools/"
 	done
 	file "$bl/host-tools"/* | sed 's/^/build-blender: /'
@@ -531,6 +690,7 @@ configure() {
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DSSE2NEON_ROOT_DIR="$np" \
 		-DPUGIXML_ROOT_DIR="$np" -DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" \
 		-DFFMPEG_ROOT_DIR="$np" -DOPENIMAGEDENOISE_ROOT_DIR="$np" -DALEMBIC_ROOT_DIR="$np" -DFFTW3_ROOT_DIR="$np" \
+		$(roots8) \
 		-DPYTHON_NUMPY_PATH="$numpyPath" \
 		-DPYTHON_NUMPY_INCLUDE_DIRS="$numpyPath/numpy/core/include" \
 		-DTEST_PYTHON_EXE="$(command -v python3)" \
@@ -558,19 +718,29 @@ configure() {
 	# what the minimal build is for, still on after configure
 	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP WITH_PUGIXML \
 			WITH_OPENCOLORIO WITH_OPENSUBDIV WITH_CODEC_FFMPEG WITH_AUDASPACE WITH_OPENIMAGEDENOISE \
-			WITH_PYTHON_NUMPY WITH_ALEMBIC WITH_FFTW3 WITH_MOD_OCEANSIM WITH_MOD_FLUID; do
+			WITH_PYTHON_NUMPY WITH_ALEMBIC WITH_FFTW3 WITH_MOD_OCEANSIM WITH_MOD_FLUID WITH_BOOST WITH_OPENVDB \
+			WITH_OPENVDB_BLOSC WITH_NANOVDB WITH_GMP WITH_POTRACE WITH_HARU WITH_INTERNATIONAL WITH_QUADRIFLOW \
+			WITH_DRACO; do
 		grep -q "^$o:BOOL=ON" "$bl/build/CMakeCache.txt" || { echo "build-blender: $o is off" >&2; exit 1; }
 	done
+	# -8: what set_and_warn_dependency or a find module could still turn off with a normal variable (the
+	# cache keeps ON): the defines the sources get (WITH_DRACO: extern_draco is built; WITH_INTERNATIONAL:
+	# the locale files are made)
+	for o in WITH_OPENVDB WITH_OPENVDB_BLOSC WITH_NANOVDB WITH_GMP WITH_POTRACE WITH_HARU WITH_INTERNATIONAL \
+			WITH_QUADRIFLOW; do
+		grep -q -- "-D$o\b" "$bl/build/build.ninja" || { echo "build-blender: nothing is compiled with -D$o" >&2; exit 1; }
+	done
+	grep -q 'libextern_draco.so' "$bl/build/build.ninja" || { echo "build-blender: no extern_draco target" >&2; exit 1; }
 	grep -q '^SSE2NEON_INCLUDE_DIR:PATH=/' "$bl/build/CMakeCache.txt" \
 		|| { echo "build-blender: sse2neon not found (Cycles would build without SIMD)" >&2; exit 1; }
 	grep -q -- '-DWITH_SSE2NEON' "$bl/build/build.ninja" \
 		|| { echo "build-blender: not built WITH_SSE2NEON" >&2; exit 1; }
 }
 
-# ninja under the heavy-build guard: ~0.6-1 GB per compile job (Cycles kernels), at most 12 GB; every
-# target (stage installs them all)
+# ninja under the heavy-build guard: ~0.6-1 GB per compile job (Cycles kernels), more where OpenVDB's
+# headers come in (-8), 5 jobs at most 16 GB; every target (stage installs them all)
 build() {
-	"$root/scripts/heavy-build.sh" -j 6 --mem-per-job 2 --max 12 -- ninja -C "$bl/build" -k 0 -j '{JOBS}' \
+	"$root/scripts/heavy-build.sh" -j 5 --mem-per-job 3 --max 16 -- ninja -C "$bl/build" -k 0 -j '{JOBS}' \
 		> "$bl/build.log" 2>&1 || { grep -a -A12 'FAILED:' "$bl/build.log" | head -n 80 >&2; exit 1; }
 	echo "build-blender: compiler warnings: $(grep -c 'warning:' "$bl/build.log" || true)"
 	"$tools-readelf" -h -d "$bl/build/bin/blender" | grep -E 'Machine|NEEDED' | sed 's/^/build-blender: /'
@@ -580,7 +750,8 @@ build() {
 		|| { echo "build-blender: blender does not link OpenImageDenoise" >&2; exit 1; }
 	"$tools-nm" "$bl/build/bin/blender" | grep ' T PyInit_aud$' > /dev/null \
 		|| { echo "build-blender: blender has no aud module (PyInit_aud)" >&2; exit 1; }
-	for n in libAlembic.so.1.8 libfftw3.so.3; do
+	for n in libAlembic.so.1.8 libfftw3.so.3 libopenvdb.so.10.1 libgmp.so.10 libgmpxx.so.4 libpotrace.so.0 \
+			libhpdf.so.2.4.3 libboost_locale.so.1.83.0; do
 		"$tools-readelf" -d "$bl/build/bin/blender" | grep "NEEDED.*\[$n\]" > /dev/null \
 			|| { echo "build-blender: blender does not link $n" >&2; exit 1; }
 	done
@@ -618,11 +789,19 @@ blender_package() {
 	# (OpenImageDenoise 2.5: 0011 instead of 0006, Balanced quality 0012), the aud module (NumPy:
 	# numpy_python3.10, a run-time requirement that no NEEDED entry shows: `import aud` imports numpy),
 	# Alembic, the Ocean modifier (FFTW), fluid simulation (Mantaflow), and Cycles' Rendered viewport
-	# (GL contexts shared with the first one, 0013)
-	"$root/scripts/package-port.py" "$recipe" --revision 7 --system-prefix --no-devel --provides app:Blender \
-		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 --requires numpy_python3.10 "${r[@]}" \
-		--out "$out7"
-	"$pkgtool" list -i "$out7/blender-3.6.23-7-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+	# (GL contexts shared with the first one, 0013); 8: OpenVDB 10.1 + NanoVDB (voxel remesh, .vdb import, volume
+	# nodes and Cycles volumes, the OpenVDB fluid cache), GMP (the Exact Boolean solver), Quadriflow, Draco
+	# (glTF compression, 0014: libextern_draco.so in 3.6/lib), potrace, libharu, translations (Boost.Locale:
+	# boost1.83 -2, which also has regex and iostreams)
+	[ -f "$sys/apps/Blender/3.6/lib/libextern_draco.so" ] || { echo "build-blender: no libextern_draco.so" >&2; exit 1; }
+	[ ! -e "$sys/apps/Blender/3.6/python" ] \
+		|| { echo "build-blender: 3.6/python exists (Blender would take it as its Python home)" >&2; exit 1; }
+	[ -f "$sys/apps/Blender/3.6/datafiles/locale/de/LC_MESSAGES/blender.mo" ] \
+		|| { echo "build-blender: no translations in 3.6/datafiles/locale" >&2; exit 1; }
+	"$root/scripts/package-port.py" "$recipe" --revision 8 --system-prefix --no-devel --provides app:Blender \
+		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 --requires numpy_python3.10 \
+		--requires "boost1.83 >= 1.83.0-2" "${r[@]}" --out "$out8"
+	"$pkgtool" list -i "$out8/blender-3.6.23-8-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its
@@ -639,14 +818,15 @@ stage() {
 		|| { echo "build-blender: incomplete install tree $t/Blender" >&2; exit 1; }
 	mkdir -p "$t/packages"
 	cp "$out"/*.hpkg "$root"/artifacts/packages-test/libsdl2-8/libsdl2-2.32.10-8-arm64.hpkg "$t/packages/"
-	# -7: blender itself (blender_package runs first) and its new libraries from blender-7/, not the
-	# earlier blender revisions of blender/ (pkgman would get two versions of one package)
-	rm -f "$t/packages"/blender-3.6.23-*.hpkg
-	cp "$out7"/*.hpkg "$t/packages/"
+	# -7/-8: blender itself (blender_package runs first) from blender-8/, its libraries from blender-7/ and
+	# blender-8/, not the earlier revisions of blender/ (blender, boost1.83 -1: pkgman would get two
+	# versions of one package)
+	cp "$out7"/*.hpkg "$out8"/*.hpkg "$t/packages/"
+	rm -f "$t/packages"/blender-3.6.23-[1-7]-*.hpkg "$t/packages"/boost1.83*-1.83.0-1-*.hpkg
 	# and the run-time libraries of ours an image may not have yet (pkgman skips those it has)
 	# (python3.10's modules link openssl, sqlite, bz2, libedit, expat, which package-port.py does not
 	# turn into requires: they are in the sysroot's lib/, not non-packaged/)
-	for p in zstd brotli libwebp libjpeg_turbo libpng16 openssl3 sqlite bzip2 libedit; do
+	for p in zstd brotli libwebp libjpeg_turbo libpng16 openssl3 sqlite bzip2 libedit lz4 libiconv; do
 		cp "$(newest "$root/artifacts/packages" "$p")" "$t/packages/"
 	done
 	cp "$gen/download/libffi-3.4.6_bootstrap-1-arm64.hpkg" "$gen/download/expat-2.5.0_bootstrap-1-arm64.hpkg" \
@@ -656,7 +836,7 @@ stage() {
 }
 
 steps=(sysroot python libdeflate imath openexr tiff epoxy boost tbb oiio pugixml yaml_cpp pystring
-	minizip_ng opencolorio opensubdiv sse2neon oidn numpy alembic fftw freetype blender_source
+	minizip_ng opencolorio opensubdiv sse2neon oidn numpy alembic fftw blosc openvdb gmp potrace libharu freetype blender_source
 	hosttools configure build blender_package stage)
 start="${1:-${steps[0]}}" last="${2:-}"
 started=0

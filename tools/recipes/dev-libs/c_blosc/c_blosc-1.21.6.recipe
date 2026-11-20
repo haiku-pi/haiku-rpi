@@ -1,0 +1,72 @@
+SUMMARY="Blocking, shuffling and lossless compression library"
+DESCRIPTION="Blosc is a high performance compressor optimized for binary \
+data. It has been designed to transmit data to the processor cache faster \
+than the traditional, non-compressed, direct memory fetch approach via a \
+memcpy() OS call. OpenVDB compresses its grids with it."
+HOMEPAGE="https://www.blosc.org/"
+COPYRIGHT="2009-2018 Francesc Alted
+	2019-2024 Blosc Development team"
+LICENSE="BSD (3-clause)"
+REVISION="1"
+SOURCE_URI="https://github.com/Blosc/c-blosc/archive/v$portVersion.tar.gz"
+CHECKSUM_SHA256="9fcd60301aae28f97f1301b735f966cc19e7c49b6b4321b839b4579a0c156f38"
+SOURCE_FILENAME="c_blosc-$portVersion.tar.gz"
+SOURCE_DIR="c-blosc-$portVersion"
+
+ARCHITECTURES="arm64"
+
+# Cross-built by scripts/build-blender.sh (haiku-pi) for OpenVDB (Blender 3.6 pins c-blosc 1.21.1;
+# HaikuPorts has 1.18.1): 1.21.6, the newest 1.x, shared, with the system's LZ4, Zstd and zlib (OpenVDB
+# writes LZ4 blocks), without Snappy (no package; OpenVDB does not use it). Same options as HaikuPorts'
+# 1.18.1 recipe otherwise.
+PROVIDES="
+	c_blosc = $portVersion
+	lib:libblosc = $portVersion compat >= 1
+	"
+REQUIRES="
+	haiku
+	lib:liblz4
+	lib:libz
+	lib:libzstd
+	"
+
+PROVIDES_devel="
+	c_blosc_devel = $portVersion
+	devel:libblosc = $portVersion compat >= 1
+	"
+REQUIRES_devel="
+	c_blosc == $portVersion base
+	"
+
+BUILD_REQUIRES="
+	haiku_devel
+	devel:liblz4
+	devel:libz
+	devel:libzstd
+	"
+BUILD_PREREQUIRES="
+	cmd:cmake
+	cmd:gcc
+	cmd:make
+	"
+
+BUILD()
+{
+	cmake -Bbuild -S. -DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_STATIC=OFF -DBUILD_TESTS=OFF -DBUILD_FUZZERS=OFF -DBUILD_BENCHMARKS=OFF \
+		-DPREFER_EXTERNAL_LZ4=ON -DPREFER_EXTERNAL_ZLIB=ON -DPREFER_EXTERNAL_ZSTD=ON \
+		-DDEACTIVATE_SNAPPY=ON -DDEACTIVATE_AVX2=ON \
+		$cmakeDirArgs
+	make -C build $jobArgs
+}
+
+INSTALL()
+{
+	make -C build install
+	mkdir -p $(dirname $includeDir)
+	mv $prefix/include $includeDir
+	prepareInstalledDevelLibs libblosc
+	fixPkgconfig
+	packageEntries devel \
+		$developDir
+}

@@ -1,0 +1,72 @@
+Draco (glTF mesh compression) on Haiku, with the system's Python
+
+WITH_DRACO is turned off unless WITH_PYTHON_INSTALL bundles a Python, because the library is
+installed into the bundled Python's site-packages, where the glTF add-on looks for it. Haiku
+uses the system's Python 3.10 package, and a python/ directory beside the scripts must not
+exist: Blender takes it as its bundled Python's home (bpy_interface.c), and the standard
+library is then not found. So on Haiku libextern_draco.so goes to <version>/lib, and the
+add-on (which knows only win32, linux and darwin, and Haiku's sys.platform is 'haiku1') looks
+for it there.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -885,7 +885,8 @@
+ set_and_warn_dependency(WITH_PYTHON WITH_DRACO         OFF)
+ set_and_warn_dependency(WITH_PYTHON WITH_MOD_FLUID     OFF)
+ 
+-if(WITH_DRACO AND NOT WITH_PYTHON_INSTALL)
++# Haiku: the system's Python, the library installed beside the scripts (see source/creator).
++if(WITH_DRACO AND NOT WITH_PYTHON_INSTALL AND NOT CMAKE_SYSTEM_NAME STREQUAL "Haiku")
+   message(STATUS "WITH_DRACO requires WITH_PYTHON_INSTALL to be ON, disabling WITH_DRACO for now")
+   set(WITH_DRACO OFF)
+ endif()
+--- a/scripts/addons/io_scene_gltf2/io/com/gltf2_io_draco_compression_extension.py
++++ b/scripts/addons/io_scene_gltf2/io/com/gltf2_io_draco_compression_extension.py
+@@ -19,21 +19,26 @@
+     python_lib = Path('{v[0]}.{v[1]}/python/lib'.format(v=bpy.app.version))
+     python_version = 'python{v[0]}.{v[1]}'.format(v=sys.version_info)
+ 
++    # Haiku's sys.platform is 'haiku1'; Blender uses the system's Python there.
++    platform = 'haiku' if sys.platform.startswith('haiku') else sys.platform
++
+     path = os.environ.get('BLENDER_EXTERN_DRACO_LIBRARY_PATH')
+     if path is None:
+         path = {
+             'win32': blender_root / python_lib / 'site-packages',
+             'linux': blender_root / python_lib / python_version / 'site-packages',
+-            'darwin': blender_root.parent / 'Resources' / python_lib / python_version / 'site-packages'
+-        }.get(sys.platform)
++            'darwin': blender_root.parent / 'Resources' / python_lib / python_version / 'site-packages',
++            'haiku': blender_root / '{v[0]}.{v[1]}/lib'.format(v=bpy.app.version)
++        }.get(platform)
+     else:
+         return Path(path)
+ 
+     library_name = {
+         'win32': '{}.dll'.format(lib_name),
+         'linux': 'lib{}.so'.format(lib_name),
+-        'darwin': 'lib{}.dylib'.format(lib_name)
+-    }.get(sys.platform)
++        'darwin': 'lib{}.dylib'.format(lib_name),
++        'haiku': 'lib{}.so'.format(lib_name)
++    }.get(platform)
+ 
+     if path is None or library_name is None:
+         print_console('WARNING', 'Unsupported platform {}, Draco mesh compression is unavailable'.format(sys.platform))
+--- a/source/creator/CMakeLists.txt
++++ b/source/creator/CMakeLists.txt
+@@ -868,7 +868,13 @@
+     endif()
+   endif()
+ 
+-  if(WITH_DRACO)
++  if(WITH_DRACO AND CMAKE_SYSTEM_NAME STREQUAL "Haiku")
++    # Not in a python/ directory: Blender takes one as its bundled Python's home.
++    install(
++      PROGRAMS $<TARGET_FILE:extern_draco>
++      DESTINATION ${TARGETDIR_VER}/lib
++    )
++  elseif(WITH_DRACO)
+     install(
+       PROGRAMS $<TARGET_FILE:extern_draco>
+       DESTINATION ${TARGETDIR_VER}/python/lib/python${PYTHON_VERSION}/site-packages
