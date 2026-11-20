@@ -118,6 +118,7 @@ third-party software are in `patches/`.
 | [docs/HARDWARE-SUPPORT.md](docs/HARDWARE-SUPPORT.md) | Which BCM2711 block has which driver, its state, measured speed and limits |
 | [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md) | Open problems, how often they happen and workarounds |
 | [docs/HAIKU-RPI4-CHANGES.md](docs/HAIKU-RPI4-CHANGES.md) | Every change this fork makes to Haiku, grouped by area |
+| [docs/UPSTREAM-BUG-REPORTS.md](docs/UPSTREAM-BUG-REPORTS.md) | Draft bug reports (not submitted) for upstream Haiku, Mesa, Wine and other projects: bugs we found and fixed |
 | [SHOWCASE.md](SHOWCASE.md) | Highlights and screenshots |
 | [docs/LAB-SETUP.md](docs/LAB-SETUP.md) | The test bench: serial console, HDMI capture, power switch, netboot server, scripts |
 | [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNEY.md) | A field report on how an AI agent did this port |
