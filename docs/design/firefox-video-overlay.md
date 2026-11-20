@@ -9,7 +9,8 @@ Status: **A1 and A1b implemented and Pi-tested (2026-11-19), unpublished test pa
 - **A1b** (§9.5, `patches/firefox/0007`): no window drawing while only the video changes; 0.7 s (720p) and 1.9 s
   (1080p) per 10 s, app_server 0.
 - **0008 + the decoder fix** (§9.6): translucent content over the video keeps it in software (firefox -10); the
-  decoder process's abort at quit with two videos (option 0 too) fixed in raspberrypi_userland 4 + ffmpeg6 7.
+  decoder process's abort at quit with two videos (option 0 too) fixed in raspberrypi_userland 4 + ffmpeg6 7 (one
+  VideoCore H.264 decoder system-wide).
   **Recommended for the 11-21 gate: firefox -10 and the two decoder packages.**
 
 One host-side compile probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
@@ -643,7 +644,7 @@ Test package firefox-157.0.1-**9** in `artifacts/packages-test/firefox-a1b/` (un
   `patches/firefox/*.patch`, so a rebuild from scratch now includes 0006 and 0007. The option-0 candidate 157.0.1-7
   (`artifacts/packages-test/firefox-swglclang/`) was built before them and does not change.
 
-### 9.6 Open checks, the decoder abort at quit, and the recommendation (2026-11-19 23:12 – 2026-11-20 02:56; sessions `ffa3`–`ffa7`; **measured**)
+### 9.6 Open checks, the decoder abort at quit, and the recommendation (2026-11-19 23:12 – 2026-11-20 04:21; sessions `ffa3`–`ffa9`; **measured**)
 
 **Packages:**
 - **-9** = 0006 + 0007 (A1b).
@@ -700,7 +701,7 @@ syslog):
 - The failed decoder also kept sending error events: 470–650 lines of `no event buffer left for ERRO` per run.
 - The ENOSPC is what was observed here. vchiq.md §8 records two 720p decodes fitting, in other conditions.
 
-**Fix, in our code, two parts:**
+**Fix, in our code, two parts (a third, ffmpeg6 0005, came after ffa8; below):**
 1. **raspberrypi_userland patch 10** (recipe REVISION 4):
    - `mmal_vc_port_disable()` gives the client back, empty, the buffers the VideoCore kept, through the port's
      callback queue. Their handles are freed, so a late message about one is dropped (`mmal_vc_port_send_callback`
@@ -756,15 +757,51 @@ caption with a translucent background (and text drawn straight on the video) was
 - **Only 30 of the 90 ran on the final ffmpeg6 -7** (CY-Y1, CY-Y2, after the slot wait). H and X used its first
   build, which has the same one-stream rule without the wait.
 - **With the image's libraries,** 25 of 41 two-video cycles aborted: CY-B2 11/15, CY-D2 2/3, CY-S2 5/5 and CY-Z2 2/3
-  on A1b builds (20 of 26), CY-O2 5/15 on -7. A1b aborts more often (it frees CPU, so more starts reach the second
-  decoder in time?), so **-10 must ship together with the decoder packages**.
+  on A1b builds (20 of 26), CY-O2 5/15 on -7. A1b aborts more often (reason not established), so **-10 must ship
+  together with the decoder packages**.
 - Single-video cycles with the image's libraries: 0 of 30.
+
+#### Installed packages, long play, and the wedge outside h264_vc (ffa8, ffa9, 2026-11-20 03:35–04:21)
+
+**ffa8: the three packages installed with `pkgman`** (ffmpeg6 -7 of 02:37):
+- **Encode:** one `ffmpeg -c:v h264_mmal -b:v 2M` encode: 300 frames, 2.00 Mbit/s.
+- **Fullscreen ×10 on -10:** on the plane each time, **no stall** (813–849 frames at the same point, 14–48
+  dropped).
+- **A 10-minute play:** 17 674 frames on the plane, 0 debugger entries.
+- **The wedge, reproduced outside h264_vc:** two 720p MediaPlayer windows (one team, h264_mmal opened by the media
+  plugin, no h264_vc slot).
+  - The second decoder failed with `MMAL error 2` (ENOSPC). With userland 4 there was no abort, but MediaPlayer hung
+    for minutes in 5-s port timeouts (disable, then flush, then disable again) and did not quit.
+  - Then every open in every process failed: `no reply to message 4`, component create EIO. Firefox and the next
+    cycles fell back to software until the reboot.
+  - So the per-process slot in h264_vc was not enough.
+
+**Fix: ffmpeg6 patch 0005.** mmaldec takes a **system-wide token** before it opens: an `flock()` on
+`/tmp/.h264_mmal-decoder.lock`.
+- The lock is exclusive per open file, so it also separates two decoders of one team, and the kernel releases it
+  when a team dies.
+- A decoder waits 0.5 s for it, then fails with EBUSY ("the VideoCore's H.264 decoder is in use"). The caller falls
+  back as for any open failure: the media plugin, h264_vc.
+- ffmpeg6 -7 was rebuilt with it (04:04). h264_vc's own per-process slot stays: it skips the attempt in Firefox.
+
+**ffa9: fresh boot, the final packages installed with `pkgman`:**
+
+| Check | Result |
+|---|---|
+| Firefox single video ×10 + ×3 at the end | 0 debugger entries; every one `VideoCore H264 decode`, 333–339 frames in 15 s |
+| Firefox two-video page ×10 | 0 debugger entries; one stream on the VideoCore, one in software ("decodes another stream"); 270–337 frames |
+| Source switch ×2 | 2 VideoCore decoders, 0 refused |
+| Two 720p MediaPlayer windows | the second "the VideoCore's H.264 decoder is in use" → "h264_mmal failed (does not open): h264 continues from the start" (software); the first 590 frames on the VideoCore; **`hey MediaPlayer quit` returns, 0 teams left** |
+| MediaPlayer 720p + Firefox 720p | Firefox: "in use" → h264 in software (EBUSY), video on the plane; MediaPlayer 1799 of 1800 frames on the VideoCore, quits |
+| `h264.sh play`, `two`, `kill` | 0 problems each (`two`: 3 "in use" fallbacks) |
+| After all that: 3 Firefox cycles | on the VideoCore: **no wedge** |
+| Debugger entries in the session | **0** |
 
 #### Recommendation for the gate (2026-11-21 04:23)
 
 Two decisions, independent of each other.
 
-**1. Ship raspberrypi_userland 20241223-4 and ffmpeg6 6.1.6-7: yes.** They fix a crash that the released Firefox
+**1. Ship raspberrypi_userland 20241223-4 and ffmpeg6 6.1.6-7 (the 04:04 build with 0005): yes.** They fix a crash that the released Firefox
 (and option 0) has on any page with two H.264 videos:
 
 | Criterion | Result |
@@ -773,13 +810,13 @@ Two decisions, independent of each other.
 | A single video still decodes on the VideoCore | 60 of 60 cycles |
 | A changed `src` gets the VideoCore again | yes, after the 0.5-s slot wait (SW2, SW3) |
 | MediaPlayer unchanged | `h264.sh play/two/kill`: 0 problems |
-| Another process holding the VideoCore | clean software fallback, no wedge (XP1 + 3 cycles) |
+| Another process holding the VideoCore, two MediaPlayer windows | clean software fallback, quits, no wedge (ffa9) |
+| Installed with pkgman, encode, 10-minute play | ok (ffa8, ffa9) |
 
 **Limits:**
-- A second H.264 video in the same Firefox process decodes in software: about 1 core at 720p, and it waits 0.5 s
-  to start.
-- The ENOSPC-after-enable failure across processes was not reproduced. If it happens, it is no longer an abort, but
-  the firmware's MMAL service can stay wedged until a reboot (CY-G1).
+- **One H.264 stream on the VideoCore in the whole system.** Every other one decodes in software (about 1 core at
+  720p) and waits 0.5 s to start; vchiq.md §8's "two 720p fit" no longer applies.
+- A non-FFmpeg MMAL client (the `mmal-codec` test tool) does not take the token.
 
 **Gate notes:**
 - ffmpeg6 -7 is -6 plus h264_vc, so it supersedes the -6 held for this gate.
@@ -810,15 +847,12 @@ decoder libraries, A1b builds abort on the two-video page more often than -7: 20
 - Screenshots show black where the plane is.
 - The 1080p plane copy runs at ~670 MB/s (~0.14 core).
 - -10 has less Pi time than -9: about 60 runs in ffa5–ffa7, against more than 100 for -9 and A1.
-- **Open risk: a fullscreen stall.** FS1 (-9, ffa3) lost ~12 s of video in its first fullscreen period; not
-  explained. By build: 1 stall in 5 A1b fullscreen runs (FS1; FS2 and FX1–3 clean), 0 of 3 on -7 (FO1–3). ffa8
-  runs fullscreen ×10 on the installed -10.
+- **A fullscreen stall, not explained:** FS1 (-9, ffa3, during the screen-saver session) lost ~12 s of video. By
+  build: 1 stall in 15 A1b fullscreen runs (FS1; FS2, FX1–3 and ffa8's 10 clean), 0 of 3 on -7.
 
 **Gate conditions (not tested here):**
-- Up to ffa7 the new libraries ran through `LIBS`; the MMAL ones came from the build directory, only libavcodec from
-  the hpkg. ffa8 installs the three packages with pkgman.
-- h264_mmal **encoding** on userland 4 / ffmpeg6 7: one encode in ffa8.
-- Long play: no run before ffa8 exceeded ~65 s; ffa8 plays 10 minutes. Scroll show/hide never went past 9 cycles.
+- Done in ffa8/ffa9: installed with pkgman, one encode, a 10-minute play, fullscreen ×10. Not done: a long encode,
+  long scrolling (show/hide never went past 9 cycles).
 - Only local test clips (`file://`): `colour-space`, `cropped` and rounded clips never fired; no real web video.
 - **One VideoCore stream per browser process, not per page.** A stream that starts in software stays there, even
   after the other one ends.
@@ -836,5 +870,5 @@ decoder libraries, A1b builds abort on the two-video page more often than -7: 20
 - The packages:
   - `artifacts/packages-test/firefox-a1b2/firefox-157.0.1-10-arm64.hpkg` (-10)
   - `artifacts/packages-test/firefox-a1b/firefox-157.0.1-9-arm64.hpkg` (-9)
-  - `artifacts/packages-test/ffmpeg6-7/` (rebuilt 02:37 with the slot wait)
+  - `artifacts/packages-test/ffmpeg6-7/` (final build 04:04: the slot wait and 0005)
   - `artifacts/packages-test/raspberrypi_userland-4/`
