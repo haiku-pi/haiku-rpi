@@ -7,8 +7,10 @@ Status: **A1 and A1b implemented and Pi-tested (2026-11-19), unpublished test pa
 - **A1** (§9.4, `patches/firefox/0006`): the video on the overlay plane; `Renderer` + `SwComposite` 8.0 → 2.7 s per
   10 s at 720p, 7.9 → 4.6 s at 1080p, against option 0. Every fallback exercised.
 - **A1b** (§9.5, `patches/firefox/0007`): no window drawing while only the video changes; 0.7 s (720p) and 1.9 s
-  (1080p) per 10 s, app_server 0. Open: the plane copy at 1080p, and a VideoCore decoder abort at quit with two
-  videos that option 0 has too.
+  (1080p) per 10 s, app_server 0.
+- **0008 + the decoder fix** (§9.6): translucent content over the video keeps it in software (firefox -10); the
+  decoder process's abort at quit with two videos (option 0 too) fixed in raspberrypi_userland 4 + ffmpeg6 7.
+  **Recommended for the 11-21 gate: firefox -10 and the two decoder packages.**
 
 One host-side compile probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
 [video-overlay.md](video-overlay.md) (B_YUV420 overlays, MediaPlayer), [gpu-stage6.md](gpu-stage6.md) (planes,
@@ -641,7 +643,7 @@ Test package firefox-157.0.1-**9** in `artifacts/packages-test/firefox-a1b/` (un
   `patches/firefox/*.patch`, so a rebuild from scratch now includes 0006 and 0007. The option-0 candidate 157.0.1-7
   (`artifacts/packages-test/firefox-swglclang/`) was built before them and does not change.
 
-### 9.6 Open checks, the decoder abort at quit, and the recommendation (2026-11-19 23:12 – 2026-11-20; sessions `ffa3`–`ffa6`; **measured**)
+### 9.6 Open checks, the decoder abort at quit, and the recommendation (2026-11-19 23:12 – 2026-11-20 02:56; sessions `ffa3`–`ffa7`; **measured**)
 
 **Packages:**
 - **-9** = 0006 + 0007 (A1b).
@@ -735,3 +737,87 @@ caption with a translucent background (and text drawn straight on the video) was
   - **plain page:** on the plane as -9. 720p 964 / 903 ms per 10 s for `Renderer` + `SwComposite`, 0 window frames;
     1080p 2 334 / 2 826 ms. With the same libraries, option 0 takes 8 249 ms (720p) and 8 126 ms (1080p).
   - **two videos, scroll, haiku-os.org:** as -9; 0 debugger entries.
+
+#### The remaining checks (ffa6, ffa7; -10 with userland 4 + ffmpeg6 7)
+
+| Check | Result |
+|---|---|
+| Slot released in a live browser: one page, `src` changed from the 720p to the 1080p clip after 15 s (`switch` mode) | **First build of ffmpeg6 7: failed.** Firefox opens the new source's decoder just before it closes the old one, so the new stream found the slot taken and went to software (SW1). **Fixed:** h264_vc now waits up to 0.5 s for the slot (`vctwo` gained the case). The rebuilt package puts both on the VideoCore (SW2, SW3: 2 VideoCore decoders, 0 refused). The ffa6 numbers in this table are from the first build; the switch, CY-Y1/Y2 and CY-Z2 rows are from the rebuilt one |
+| 0008 must not decline: the real page **without** its caption (RN1) | On the plane when wholly visible: 235 plane frames, as -9 (233–237); hidden controls and text near the video do not count as translucent |
+| 0008 must not decline: fullscreen, `<video controls>` unhovered, ×3 on -10 (FX1–3) and ×3 on -7 (FO1–3) | -10: **on the plane at 0,0 1920×1080 every time** (784–800 plane frames). Dropped frames by the end: **19–24** against **108–198** for -7, which scales 1080p in software. FS1's stall (§ above) did not recur in 6 runs |
+| MediaPlayer on the new libraries (`h264.sh play/two/kill` with `LIBRARY_PATH`) | **0 problems** in all three phases. A second window and an ffmpeg in another team fall back as before ("h264_mmal failed (does not open): h264 continues from the start"); after three `kill -9`s mid-decode the next player decodes on the VideoCore |
+| Cross-process: MediaPlayer (image libraries) decoding 1080p on the VideoCore while Firefox -10 (new libraries) starts a 720p video (XP1), then 3 Firefox cycles | Firefox's open failed **at port enable (ENOMEM)** and went to software cleanly. The video played on the plane (360 plane frames per 10 s); 0 debugger entries. The next 3 cycles decoded on the VideoCore, with no wedge. The ENOSPC-after-enable path (two decoders in one process) did not happen across processes here |
+| Two-video page ×10, single video ×20, rebuilt ffmpeg6 7 (CY-Y2, CY-Y1) | **0 of 10 / 0 of 20** aborts. Every single-video cycle on the VideoCore (20 `VideoCore H264 decode`); on the two-video page one stream on the VideoCore and one in software (10 + 10). Frames in 15 s as the image libraries |
+| Release image libraries on the two-video page ×3, same boot (CY-Z2, control) | **2 of 3 abort** (the bug is still there without the new libraries) |
+
+**Totals:**
+- **With the new decoder libraries: 0 debugger entries** in 90 start/play/quit cycles (H, X, Y: 30 two-video, 60
+  single), in every -10 run of ffa5–ffa7 and in MediaPlayer's three phases.
+- **With the image's libraries:** 23 of 38 two-video cycles aborted (11/15, 5/15, 5/5, 2/3), Firefox -7 and -9
+  alike.
+- Single-video cycles with the image's libraries: 0 of 30.
+
+#### Recommendation for the gate (2026-11-21 04:23)
+
+Two decisions, independent of each other.
+
+**1. Ship raspberrypi_userland 20241223-4 and ffmpeg6 6.1.6-7: yes.** They fix a crash that the released Firefox
+(and option 0) has on any page with two H.264 videos:
+
+| Criterion | Result |
+|---|---|
+| The abort is gone | 0 of 30 two-video cycles against 23 of 38 with the image's libraries |
+| A single video still decodes on the VideoCore | 60 of 60 cycles |
+| A changed `src` gets the VideoCore again | yes, after the 0.5-s slot wait (SW2, SW3) |
+| MediaPlayer unchanged | `h264.sh play/two/kill`: 0 problems |
+| Another process holding the VideoCore | clean software fallback, no wedge (XP1 + 3 cycles) |
+
+**Limits:**
+- A second H.264 video in the same Firefox process decodes in software: about 1 core at 720p, and it waits 0.5 s
+  to start.
+- The ENOSPC-after-enable failure across processes was not reproduced. If it happens, it is no longer an abort, but
+  the firmware's MMAL service can stay wedged until a reboot (CY-G1).
+
+**Gate notes:**
+- ffmpeg6 -7 is -6 plus h264_vc, so it supersedes the -6 held for this gate.
+- `build-ffmpeg.sh` and `build-mmal.sh` now build these revisions.
+- The packages are in `artifacts/packages-test/{ffmpeg6-7,raspberrypi_userland-4}`. Moving them to the image means
+  the usual three steps per package (packages, jam download, `HaikuPorts/arm64`); not done here.
+
+**2. Firefox: ship -10 (0006 + 0007 + 0008) instead of -7.**
+
+| Criterion (§6 steps 3–4, the coordinator's list) | -10 |
+|---|---|
+| Video on the plane | yes: driver statistics one flip per frame, no key visible, colours as software |
+| CPU, `Renderer` + `SwComposite` per 10 s, against option 0 (same session and libraries) | **720p 0.90–0.96 s against 8.2 s; 1080p 2.3–2.8 s against 8.1 s**; app_server's window thread 0; window frames 0 |
+| 1080p dropped frames | 1 per 10 s; 31 and 35 in the first 38 s against 120 for option 0 (same session; 720p: 6 and 11 against 24) |
+| Fallbacks: scroll, half visible, two videos, no plane, mode change, 10-bit, cropped page edge | all exercised (§9.4, §9.5; the realistic page) |
+| Translucent content over the video | 0008: software while there is any, so captions and controls look right (RE3, C4) |
+| No content over the video (real page without caption, fullscreen) | on the plane (RN1, FX1–3) |
+| Tab switch, minimise | plane released, an overlaytest gets a plane meanwhile, plane back afterwards (-9) |
+| Fullscreen | on the plane at 1920×1080, 19–24 drops against 108–198 for -7 |
+| A/V sync | +10.7 ms median against +1.9 ms for -7 (-9; within one capture frame) |
+| Page without video (haiku-os.org) | renders, quits in 4–6 s |
+| Debugger entries | 0 in all -10 runs; the two-video abort needs decision 1, as for -7 |
+
+**Known and accepted:**
+- A Firefox tooltip or popup window over a playing video has a dark green fringe (window-level translucency over the
+  key).
+- Screenshots show black where the plane is.
+- The 1080p plane copy runs at ~670 MB/s (~0.14 core).
+- -10 has less Pi time than -9: about 60 runs in ffa5–ffa7, against more than 100 for -9 and A1.
+- FS1's 12-s stall in fullscreen (-9, ffa3) did not recur in 7 later fullscreen runs; not explained.
+
+**If decision 2 is not taken**, -7 (option 0) stays the candidate. A rollback is one package.
+`MOZ_HAIKU_VIDEO_OVERLAY=0` turns the plane off in -10 without a new package.
+
+**Build state:**
+- The Firefox tree has 0006–0008 applied and in its stamp.
+- The objdir and `artifacts/firefox/non-packaged` hold -10.
+- jam's download directory and `artifacts/packages` still have firefox -6, ffmpeg6 -5 and raspberrypi_userland -3.
+  Nothing is published, and the image's package list is unchanged.
+- The packages:
+  - `artifacts/packages-test/firefox-a1b2/firefox-157.0.1-10-arm64.hpkg` (-10)
+  - `artifacts/packages-test/firefox-a1b/firefox-157.0.1-9-arm64.hpkg` (-9)
+  - `artifacts/packages-test/ffmpeg6-7/` (rebuilt 02:37 with the slot wait)
+  - `artifacts/packages-test/raspberrypi_userland-4/`
