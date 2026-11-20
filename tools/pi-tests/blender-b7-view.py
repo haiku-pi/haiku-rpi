@@ -18,7 +18,11 @@ WAIT = float(os.environ.get("BB7_WAIT", "45"))
 # BB7_DENOISE=1: with viewport denoising from the start (switching it on in a running viewport render
 # from this script did not restart the render with it)
 DENOISE = os.environ.get("BB7_DENOISE") == "1"
-NAME = "view-denoised" if DENOISE else "view-noisy"
+# BB7_MODE: "cycles" (the default: Rendered shading with Cycles), "material" (Material Preview, EEVEE),
+# "eevee-f12" (an EEVEE F12 render into the render window: the render job's GL context on its thread)
+MODE = os.environ.get("BB7_MODE", "cycles")
+NAME = {"cycles": "view-denoised" if DENOISE else "view-noisy", "material": "view-material",
+        "eevee-f12": "view-eevee-f12"}[MODE]
 
 
 def say(*args):
@@ -58,10 +62,23 @@ def steps():
     space.region_3d.view_perspective = 'CAMERA'
     with bpy.context.temp_override(window=window, area=area, region=area.regions[-1]):
         bpy.ops.view3d.view_center_camera()
-    space.shading.type = 'RENDERED'
-    say("rendered", "denoising", "on" if DENOISE else "off", scene.cycles.preview_denoiser,
-        scene.cycles.preview_denoising_input_passes, scene.cycles.preview_denoising_prefilter,
-        area.width, area.height)
+    if MODE == "cycles":
+        space.shading.type = 'RENDERED'
+        say("rendered", "denoising", "on" if DENOISE else "off", scene.cycles.preview_denoiser,
+            scene.cycles.preview_denoising_input_passes, scene.cycles.preview_denoising_prefilter,
+            area.width, area.height)
+    elif MODE == "material":
+        scene.render.engine = 'BLENDER_EEVEE'
+        space.shading.type = 'MATERIAL'
+        say("material preview", area.width, area.height)
+    else:
+        scene.render.engine = 'BLENDER_EEVEE'
+        scene.render.resolution_percentage = 50
+        # (the render window opens at the pointer; before any mouse event there is none: off screen)
+        window.cursor_warp(400, 300)
+        with bpy.context.temp_override(window=window, area=area):
+            bpy.ops.render.render('INVOKE_DEFAULT')
+        say("eevee F12 started")
     yield WAIT
     yield from snapped(NAME)
     say("quit")

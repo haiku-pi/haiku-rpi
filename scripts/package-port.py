@@ -129,7 +129,11 @@ def create(directory, info, out, extract=True):
         subprocess.run([pkgtool, 'extract', '-C', os.path.join(sysroot, 'boot/system'), out],
             check=True)
         # (the extracted package's own .PackageInfo is not part of a system tree)
-        os.remove(os.path.join(sysroot, 'boot/system/.PackageInfo'))
+        # (another packaging run may have removed it already)
+        try:
+            os.remove(os.path.join(sysroot, 'boot/system/.PackageInfo'))
+        except FileNotFoundError:
+            pass
     print(f'package-port: {out} ({os.path.getsize(out)} bytes)')
 
 

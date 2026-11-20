@@ -68,8 +68,8 @@ idle=$(used)
 ( peak=$idle; while [ ! -f /tmp/bm3-$label-done ]; do u=$(used); [ "$u" -gt "$peak" ] && peak=$u; echo $peak > /tmp/bm3-$label-peak; sleep 1; done ) &
 rm -f /tmp/bm3-$label-done
 # Cycles, CPU, 4 threads: the default cube, frame 1, at 960x540 and 32 samples first (minutes, not hours, if
-# it is slow). Denoising off: the factory scene has it on, and this build has no OpenImageDenoise ("Error:
-# Build without OpenImageDenoiser", Blender quits)
+# it is slow). Denoising off: the time is the path tracing alone (the factory scene has denoising on; up to
+# -6 there was no OpenImageDenoise, from -7 it runs, blender.md §7.14)
 run render "$bl" -b --factory-startup -t 4 -E CYCLES -o "$out/cube_####" -F PNG \
 	--python-expr "import bpy; s = bpy.context.scene; s.render.resolution_x = 960; s.render.resolution_y = 540; s.render.resolution_percentage = 100; s.cycles.samples = 32; s.cycles.device = 'CPU'; s.cycles.use_denoising = False" \
 	-f 1
@@ -84,7 +84,8 @@ grep -q "Saved: .*cube_0001.png" /tmp/bm3-$label-render.txt && echo "BM3 $label 
 	|| echo "BM3 $label png: FAIL"
 
 # the factory scene exactly as it is (1920x1080, up to 4096 samples with adaptive sampling, final-render
-# denoising on: without OpenImageDenoise, patches/blender/0006 renders without it instead of stopping)
+# denoising on: -1 to -6 rendered without it (patches/blender/0006, no OpenImageDenoise), -7 denoises with
+# OpenImageDenoise: 1 min 37 s became 3 min 30 s on the Pi 4)
 rm -f /tmp/bm3-$label-done
 ( peak=$idle; while [ ! -f /tmp/bm3-$label-done ]; do u=$(used); [ "$u" -gt "$peak" ] && peak=$u; echo $peak > /tmp/bm3-$label-peak; sleep 1; done ) &
 run factory "$bl" -b --factory-startup -t 4 -E CYCLES -o "$out/factory_####" -F PNG -f 1

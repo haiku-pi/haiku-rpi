@@ -4,6 +4,7 @@
 #            has no lights)
 #   ocean    an Ocean modifier (FFTW) on a plane: evaluated vertex count and a displaced z
 #   fluid    a Mantaflow smoke domain baked for 6 frames at resolution 24 (cache files written)
+#   liquid   the same with a liquid domain and flow (particles and the mesh baked too: bake_all)
 #
 #   blender -b --factory-startup --python blender-b7-extras.py -- OUTDIR
 import glob
@@ -58,7 +59,7 @@ def ocean():
     return len(zs) > 4 and span > 0.0, "%d vertices, z span %.3f" % (len(zs), span)
 
 
-def fluid():
+def fluid(kind="GAS"):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     # the smoke source first: a domain made before its flow object fails its first evaluation in a script
     # (also with the official x86-64 Blender 3.6.23, always with -t 1: mantaflow's smoke grids are not
@@ -67,16 +68,16 @@ def fluid():
     flow = bpy.context.active_object
     fm = flow.modifiers.new("fluid", 'FLUID')
     fm.fluid_type = 'FLOW'
-    fm.flow_settings.flow_type = 'SMOKE'
+    fm.flow_settings.flow_type = 'SMOKE' if kind == "GAS" else 'LIQUID'
     fm.flow_settings.flow_behavior = 'INFLOW'
     bpy.ops.mesh.primitive_cube_add(size=4, location=(0, 0, 0))
     domain = bpy.context.active_object
     mod = domain.modifiers.new("fluid", 'FLUID')
     mod.fluid_type = 'DOMAIN'
     settings = mod.domain_settings
-    settings.domain_type = 'GAS'
+    settings.domain_type = kind
     settings.resolution_max = 24
-    cache = os.path.join(out, "fluid-cache")
+    cache = os.path.join(out, "fluid-cache-" + kind.lower())
     settings.cache_directory = cache
     settings.cache_type = 'ALL'
     settings.cache_frame_start = 1
@@ -94,4 +95,5 @@ def fluid():
 check("alembic", alembic)
 check("ocean", ocean)
 check("fluid", fluid)
+check("liquid", lambda: fluid("LIQUID"))
 say("done")

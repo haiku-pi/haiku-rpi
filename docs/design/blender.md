@@ -1004,18 +1004,23 @@ removes the `.PackageInfo` that extraction left in `boot/system/`.
 **USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
 
 > Blender 3.6 LTS runs on the Pi 4 with the desktop OpenGL 3.3 driver. Install it with
-> `pkgman install blender` (it brings Python 3.10, OpenImageIO, OpenColorIO, OpenSubdiv, TBB and the SDL2 it
-> needs) and start it from Deskbar ▸ Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`.
+> `pkgman install blender` (it brings Python 3.10 with NumPy, OpenImageIO, OpenColorIO, OpenSubdiv,
+> OpenImageDenoise, Alembic, FFTW, TBB and the SDL2 it needs) and start it from Deskbar ▸ Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`.
 > - **Works:** the whole UI, the solid (Workbench) viewport, edit mode, modifiers including Subdivision
 >   Surface, save/load, the Preferences window, Cycles rendering on the CPU (F12 into the image editor, or
 >   headless: `Blender -b scene.blend -E CYCLES -f 1`), Python scripting, Filmic colour management, video
->   output and the Video Sequencer (FFmpeg), sound playback (SDL), typing any characters your keymap gives.
+>   output and the Video Sequencer (FFmpeg), sound playback (SDL), typing any characters your keymap gives;
+>   from blender -7 also **denoising** (Cycles' Denoise for F12 and the viewport, the compositor's Denoise
+>   node; OpenImageDenoise on the CPU), Alembic import/export, the Ocean modifier, fluid
+>   simulation (Mantaflow; smoke baking checked, liquids not yet) and Python's `aud` audio module.
 > - **Video output:** choose FFmpeg Video, container MPEG-4, codec H.264 and audio AAC: H.264 is encoded by
 >   the Pi's VideoCore (fast; the Output Quality presets become a bit rate, or set Constant Bitrate). MPEG-4,
 >   MJPEG and FFV1 also work. MediaPlayer plays the result.
 > - **EEVEE and Cycles both render** (F12, Material Preview, Rendered view). EEVEE is the faster one; on the
 >   Pi 4's GPU it renders without Subsurface Scattering (see Known issues).
-> - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores). The viewport draws about
+> - **Speed:** the default cube renders in about 1½ minutes at 1920×1080 (4 cores), 3½ minutes with
+>   denoising on (the default in a new file; Render Properties ▸ Sampling ▸ Denoise, Prefilter Fast makes
+>   it about a minute shorter). The viewport draws about
 >   5 frames per second while navigating in a 1600×900 window; it is limited by the GPU's memory bandwidth,
 >   so a smaller window is much faster (1024×600: 12–15 fps). Turning off Preferences ▸ Viewport ▸ Smooth
 >   Wires and the scene's viewport anti-aliasing helps further.
@@ -1028,10 +1033,11 @@ removes the `.PackageInfo` that extraction left in `boot/system/`.
 > - **EEVEE without Subsurface Scattering:** the Pi 4's GPU (V3D 4.2) has 4 colour attachments, EEVEE's
 >   SSS needs 6; subsurface materials render as diffuse (a message in the terminal says so once). Use
 >   Cycles for skin, wax and similar materials.
-> - **No denoising:** OpenImageDenoise is not ported; renders are noisier at low sample counts (the
->   Denoise checkbox is ignored instead of stopping the render).
-> - **No Alembic/USD/OpenVDB import, fluid simulation** (built without Alembic, USD, OpenVDB, Mantaflow);
->   Python's `aud` (audio scripting) module is missing.
+> - **Denoising is slow and needs memory** (OpenImageDenoise on the CPU): about 20 s per denoising pass of a
+>   1920×1080 frame, three passes with the default Accurate prefilter (one with Fast), ~1.5 GB of memory;
+>   viewport denoising redraws every few seconds.
+> - **No USD or OpenVDB** (no `.usd`/`.vdb` import, no voxel remesh, no volume conversion nodes; fluid
+>   caches use Blender's own format).
 > - **H.264 quality on flat scenes:** the VideoCore encoder caps quality on simple content, so Medium and
 >   Low presets can give the same file; no B-frames, no lossless H.264 (use FFV1 for lossless).
 > - GPU subdivision is off (no compute shaders); subdivision runs on the CPU.
