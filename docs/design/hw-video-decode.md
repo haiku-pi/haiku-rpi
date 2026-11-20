@@ -373,15 +373,16 @@ So the decoder writes NV12_COL128 for pictures that go to the display (Phoenix's
 |---|---|
 | rpivid driver (2c6cace0e0) | `RPIVID_PICTURE_SCAN_OUT`: the picture below 1 GiB (the display keeps 30 address bits), NV12_COL128 (both column strides C × 128, chroma at H16 × 128), its client mapping `B_CLONEABLE_AREA`; pictures of the two layouts are not mixed in one decode (`same_geometry`). Additive: API version stays 2, an older driver refuses the flag (B_BAD_VALUE) and the hwaccel falls back to ordinary pictures; the -7 hwaccel never asks |
 | libavcodec (ffmpeg6 -8: `patches/ffmpeg6-next`) | option `rpivid_out` (`planar` default, `sand`): scan-out pictures, each frame's picture in `opaque_ref` (`RpividSandFrame`, `rpivid_hevc.h`: area, offset, size, coded size, depth, column height, chroma offset), holding the picture buffer while the frame lives; the SAND → planar conversion is skipped while the option is `sand` (`planar` in the descriptor says whether it ran); the caller may switch back at any time. `FFMPEG_RPIVID_SCAN_OUT=1`: the scan-out layout with conversion (a test). The CPU decoder's frames (pictures the block did not take) have no picture |
-| media kit plugin (a592852e59) | a caller asking for `B_YUV420_SAND128` gets, from hevc_rpivid, an `overlay_video_frame` per frame (headers/private/media/OverlayVideoFrame.h: area, offset, size, bytes_per_row = C, space) instead of pixels, and the plugin holds the last 8 frames (`B_OVERLAY_VIDEO_FRAME_HOLD`); 10-bit → `B_YUV420_SAND128_10`; output switched to another space: the decoder converts again, the frames it kept are de-tiled by the plugin |
+| media kit plugin (317dcf80d5) | a caller asking for `B_YUV420_SAND128` gets, from hevc_rpivid, an `overlay_video_frame` per frame (headers/private/media/OverlayVideoFrame.h: area, offset, size, bytes_per_row = C, space) instead of pixels, and the plugin holds the last 8 frames (`B_OVERLAY_VIDEO_FRAME_HOLD`); 10-bit → `B_YUV420_SAND128_10`; output switched to another space: the decoder converts again, the frames it kept are de-tiled by the plugin |
 | interface kit, app_server (cdd1c52acb, 1ff1913b4c) | public color spaces `B_YUV420_SAND128` (0x4028) and `_10` (0x4029), overlays only, bytes_per_row = the column height. `BBitmap(area, offset, bounds, B_BITMAP_WILL_OVERLAY, space, bpr)`: app_server clones the area (read-only) and asks the accelerant to **import** it as the overlay buffer (new optional hook `B_IMPORT_OVERLAY_BUFFER`); refused → no bitmap. Mode changes release and re-import. A server bitmap now releases its overlay before its memory |
 | bcm2711_display (c6ad488cd8) | `IMPORT_OVERLAY_BUFFER`: an area of the caller (app_server's clone), contiguous below 1 GiB, kept by a kernel clone until freed; SAND buffers shown as image type 19 (8 bit) / 59 YUV10COL (10 bit), `pitch` = C, `planes[1]` = chroma |
-| MediaPlayer (c564022db6) | asks for `B_YUV420_SAND128` when the screen has such overlays (else B_YUV420 as before; the plugin answers B_YUV420 for h264_mmal); the consumer makes one overlay bitmap per picture (≤ 24, LRU, never the shown one or the one it replaced) and flips between them: no copy. `MEDIAPLAYER_SAND=0` turns it off |
+| MediaPlayer (25b4611377) | asks for `B_YUV420_SAND128` when the screen has such overlays (else B_YUV420 as before; the plugin answers B_YUV420 for h264_mmal); the consumer makes one overlay bitmap per picture (≤ 24, LRU, never the shown one or the one it replaced) and flips between them: no copy. `MEDIAPLAYER_SAND=0` turns it off |
 
-Host (2026-11-20 08:01–08:08, x86, ASan, the register-level mock, `HOST_NEXT=1`): `host-test.sh` **PASS** in both
-layouts — 34 clips/variants BIT-EXACT each, the fault injections as before — with the ordinary pictures and with
-`FFMPEG_RPIVID_SCAN_OUT=1` (NV12_COL128 pictures converted): the hwaccel's planar output is unchanged and the new
-layout is read back exactly.
+Host (2026-11-20 08:01–08:08, and again 09:31–09:35 on the final -8 sources with the up-front reserve; x86, ASan,
+the register-level mock, `HOST_NEXT=1`): `host-test.sh` **PASS** in both layouts — 34 clips/variants BIT-EXACT each,
+the fault injections as before — with the ordinary pictures and with `FFMPEG_RPIVID_SCAN_OUT=1` (NV12_COL128 pictures
+converted): the hwaccel's planar output is unchanged and the new layout is read back exactly. With the reserve, the
+injected out-of-memory hits the reservation: the stream keeps all 40 frames on ordinary pictures (before: 36 of 40).
 
 ### 9.3 Pi results (sessions `v6s1` 08:52–09:13 and `v6s2` 09:16–09:27, image `v6-base` = rpi4 6a20a50380 + the branch's driver, rpivid, accelerant, app_server, libbe, plugin and MediaPlayer from non-packaged, ffmpeg6 -8 + raspberrypi_userland -4 installed; **measured**)
 
@@ -398,7 +399,8 @@ plane's updates in the driver's statistics; the decoder's own counters at the en
 - Branch binaries with ffmpeg6 **-7** (no `rpivid_out`): HEVC 1080p30 as B_YUV420, 23.1 %, 0 dropped — the -7/-8
   boundary is clean. (The first build asked the plugin for SAND and got B_RGB32 at 46 %: fixed before the numbers above.)
 - **The block writes NV12_COL128 bit-exactly**: `ffmpeg -f framemd5` of 90 frames with `FFMPEG_RPIVID_SCAN_OUT=1`
-  equals the CPU decoder's for `play-hevc-1080p30` (8 bit) and `play-hevc10-1080p30` (10 bit), as does the ordinary layout.
+  equals the CPU decoder's for `play-hevc-1080p30` (8 bit) and `play-hevc10-1080p30` (10 bit), as does the ordinary layout
+  (run on the -8 build before the up-front reserve, which changes only how many pictures are allocated when).
 - Colours on the SAND plane (video-overlay.md §7 clips): HEVC BT.709 1080p **3**, BT.601 720p **0**, Main 10 BT.709 **3**
   off the RGB path (max per channel).
 - overlaytest `-s sand` and `-s sand10` at 1920×1080 (app_server-allocated SAND buffers): bars right, keyed window,
@@ -424,9 +426,10 @@ plane's updates in the driver's statistics; the decoder's own counters at the en
   no saving either. A reserved region in the rpivid driver (as the display driver reserves its overlay buffers at boot)
   would remove that; not done.
 - Before the up-front reserve, a 4K stream got 3 scan-out pictures, fell back to the CPU path and the plugin repeated
-  its last frame (a frozen picture): the reserve fixed that, and the plugin still repeats the last picture if a stream
-  falls back to the CPU *later* (a later PPS the block refuses, a picture the block fails) — then the video stands until
-  the next random access point.
+  its last frame (a frozen picture): the reserve fixed that. The plugin still repeats the last picture if a stream
+  falls back to the CPU *later* (a later PPS the block refuses, a picture the block fails): the video stands until the
+  block takes the stream again at the next random access point — and for the rest of the stream if the re-attach
+  cannot reserve its scan-out pictures or its three retries are used up. A known limit (rare streams), not handled.
 - The decoder holds the last 8 frames it handed out; a seek decodes frames nobody shows, so the picture on the screen
   can be reused before it is replaced. Not seen in the seek test; a consumer-side release would be exact.
 - 4K: no plane either way (memory); `ffmpeg -c:v h264_mmal` frame rate: see video-overlay.md §7.5.

@@ -335,3 +335,18 @@ Branch `v6-video` of haiku-pi/haiku (from `rpi4` 6a20a50380), two series that me
 - KNOWN-ISSUES F2 then loses "rpivid's HEVC frames are still converted from SAND on the CPU" and gains the low-memory
   fallback (hw-video-decode.md §9.4); P2's HEVC numbers become 4.4–6.5 % (1080p30), 5–6 % (Main 10), 3–4 % (720p).
 - Firefox follow-up (§7.4): pass its colour space with `SetViewOverlay()` in 0006 instead of declining on a mismatch.
+
+Re-test kit (kept): `artifacts/v6-video/v6-base.img` (rpi4 6a20a50380 built in the worktree before any change),
+`artifacts/v6-video/stage/` (the branch's binaries), `artifacts/v6-video/bin/` (clips, tools, ffmpeg6 -7/-8 and
+userland -4 packages); `tools/pi-tests/v6-session.sh start LABEL` boots it with the binaries in non-packaged. The
+worktree's build directory was deleted (4 GB); to recreate it:
+
+```sh
+cd sources/haiku-v6 && mkdir generated.arm64 && cd generated.arm64
+../configure --cross-tools-prefix $PWD/../../haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-
+cp -al ../../haiku/generated.arm64/download download && cd ../../..
+HEAVY_BUILD_LOCK=... scripts/build.sh --generated sources/haiku-v6/generated.arm64 @pi-mmc     # first: everything
+scripts/build.sh --generated sources/haiku-v6/generated.arm64 --light libbe.so app_server \
+  bcm2711_display.accelerant bcm2711_display rpivid ffmpeg MediaPlayer                         # then: the changed parts
+V6_SAND=1 tools/pi-tests/v6-session.sh stage
+```

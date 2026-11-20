@@ -16,6 +16,7 @@
 #   col-709-hevc.mp4        HEVC 1920x1080, BT.709 limited (rpivid)
 #   col-601-hevc.mp4        HEVC 1280x720, BT.601 limited (601-tagged HD on rpivid)
 #   col-709-hevc10.mp4      HEVC Main 10 1920x1080, BT.709 limited (rpivid, 10 bit)
+#   col-601full-hevc.mp4    HEVC 1920x1080, BT.601 full range (rpivid: on the SAND plane as encoding 3)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 out="${1:-$root/artifacts/v6-video/clips}"
@@ -51,3 +52,4 @@ clip col-601full-sd.mp4 720x480 bt601 pc tagged h264 yuvj420p
 clip col-709-hevc.mp4 1920x1080 bt709 tv tagged hevc
 clip col-601-hevc.mp4 1280x720 bt601 tv tagged hevc
 clip col-709-hevc10.mp4 1920x1080 bt709 tv tagged hevc10
+clip col-601full-hevc.mp4 1920x1080 bt601 pc tagged hevc
