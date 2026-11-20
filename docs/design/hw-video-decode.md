@@ -417,13 +417,18 @@ plane's updates in the driver's statistics; the decoder's own counters at the en
 - Regression on -8: `h264.sh play/seek/web` 0 problems (stock MediaPlayer, the new plugin); VP9 and MPEG-4 clips play
   as B_YUV420 with the right colours; the new plugin costs the same as the old on H.264 1080p30 (26.2 / 26.6 %).
 - 0 debugger entries, 0 PANIC in both sessions.
+- Session `v6s3` (09:44–09:54, the same binaries, Firefox -10 + ffmpeg6 -8 + userland -4): a full-range BT.601 HEVC
+  clip goes on the SAND plane as encoding 3, **0** off the RGB path; one 4K attempt on a fresh boot leaves the display
+  driver's four reserved buffers alone (no extra kept) and 1080p still gets scan-out pictures afterwards.
 
 ### 9.4 Limits and what is left
 
 - **Low memory**: a stream gets scan-out pictures only if all it may hold (DPB + 8 held + 2) can be had below 1 GiB up
   front (`pool_reserve`); otherwise it is the B_YUV420 path from its start. Late in a session that had run 4K (v6s1),
   even 1080p 8- and 10-bit fell back this way (`vm_page_allocate_page_run` could not find 3.2 MB runs): no freeze, but
-  no saving either. A reserved region in the rpivid driver (as the display driver reserves its overlay buffers at boot)
+  no saving either. Cause not established: no picture or imported buffer was left over, and in v6s3 one 4K attempt
+  left neither extra display buffers nor a 1080p fallback (v6s1 had run 4K four times, one of them with the old
+  hwaccel that froze). A reserved region in the rpivid driver (as the display driver reserves its overlay buffers at boot)
   would remove that; not done.
 - Before the up-front reserve, a 4K stream got 3 scan-out pictures, fell back to the CPU path and the plugin repeated
   its last frame (a frozen picture): the reserve fixed that. The plugin still repeats the last picture if a stream

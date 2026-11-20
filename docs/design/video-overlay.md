@@ -335,6 +335,10 @@ Branch `v6-video` of haiku-pi/haiku (from `rpi4` 6a20a50380), two series that me
 - KNOWN-ISSUES F2 then loses "rpivid's HEVC frames are still converted from SAND on the CPU" and gains the low-memory
   fallback (hw-video-decode.md §9.4); P2's HEVC numbers become 4.4–6.5 % (1080p30), 5–6 % (Main 10), 3–4 % (720p).
 - Firefox follow-up (§7.4): pass its colour space with `SetViewOverlay()` in 0006 instead of declining on a mismatch.
+- Other overlay clients on the new app_server + libbe (session `v6s3`, 09:44–09:54): Firefox -10 `ffv-a1.sh measure`
+  (720p H.264): 1279 frames on the plane, 7 dropped of 1339, the plane at image type 3 (as §9.7 of the Firefox doc);
+  `glflip -w -n 1200 -i 1` (full-screen GL on a plane, the image's Mesa): 1200 frames in 20.000 s = 60.00 fps, 0 stalls,
+  `602 updates in 602 vblanks, 0 gaps`. 0 debugger entries.
 
 Re-test kit (kept): `artifacts/v6-video/v6-base.img` (rpi4 6a20a50380 built in the worktree before any change),
 `artifacts/v6-video/stage/` (the branch's binaries), `artifacts/v6-video/bin/` (clips, tools, ffmpeg6 -7/-8 and
