@@ -213,6 +213,8 @@ scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/p
 - ffmpeg's command line (`-c:v h264_mmal`) still reports 23.98 fps for every stream: mmaldec tells the VideoCore
   24000/1001 and hands the echo back as the stream's rate; fixing it is a ffmpeg6 patch (not done; the plugin no
   longer trusts it).
+- (V6, §7 and hw-video-decode.md §9: the colour item below is done, rpivid's SAND pictures go to the plane without a
+  copy, and the h264_mmal frame rate is patched in ffmpeg6 -8; branch `v6-video`, not merged.)
 - Colour: the accelerant picks BT.709 from 720 lines on, BT.601 below, limited range — the usual convention, but
   not the stream's tag: 601-tagged HD (and our untagged test clips, encoded with BT.601) shows a hue shift against
   the old RGB path (§3); full-range or BT.2020 streams too. Passing the tag on needs a media-kit/overlay field (e.g. a
@@ -305,3 +307,31 @@ or'ed into the options of its `SetViewOverlay()` call (~line 845); `Rec709Full`/
 tried: `SetViewOverlay()` now fails with B_NOT_SUPPORTED, which 0006 already treats as "no plane now"). Needs a Firefox
 rebuild (~1 h, scripts/build-firefox.sh); not done here. The §9.7 M1 stream (untagged VP9 sub-720) would then go to the
 plane with whatever Firefox assumed for it.
+
+### 7.5 `ffmpeg -c:v h264_mmal` and 23.98 fps (§5): ffmpeg6 -8 patch 0007
+
+mmaldec told the VideoCore 24000/1001 for every stream and copied the output port's echo of it into
+`avctx->framerate`. Patch 0007 gives the input port the caller's rate when known and leaves `avctx->framerate` alone.
+Measured on the Pi with the -7 and the -8 libavcodec side by side (session `v6s1`): the CLI's stream lines and a
+transcode's result show the stream's rate with **both** (60 fps for `play-1080p60.mp4`, 30 for the 30-fps clips;
+an Annex-B elementary stream: 25 fps / 120 tbr, the demuxer's guess, with both): the 23.98 of §5 did not reproduce
+in these paths (it was seen through the plugin, which ignores a hardware decoder's rate since a9465e1c3f). The patch
+removes the wrong value at the API level; nothing that used to work changed (`h264.sh play/seek/web` 0 problems).
+
+## 8. V6: merging (for the main session)
+
+Branch `v6-video` of haiku-pi/haiku (from `rpi4` 6a20a50380), two series that merge separately:
+
+| Series | Commits | Needs |
+|---|---|---|
+| A: the YCbCr encoding (§7) | f3243c7287 app_server, 274816191c bcm2711_display, 9eaa066d36 ffmpeg plugin, 552c42233d MediaPlayer | nothing new: works with ffmpeg6 -7 (the image's set); tested on the Pi (v6c1) |
+| B: SAND zero copy (hw-video-decode.md §9) | 2c6cace0e0 rpivid, cdd1c52acb interface kit (public color spaces, BBitmap of client memory), 1ff1913b4c app_server (import), c6ad488cd8 bcm2711_display (import, SAND types), 317dcf80d5 ffmpeg plugin, 25b4611377 MediaPlayer | ffmpeg6 **-8** (`patches/ffmpeg6-next`, `artifacts/packages-test/ffmpeg6-8`) for the saving; with -7 everything works as before (tested) |
+
+- B touches public headers (GraphicsDefs.h, Bitmap.h's private field, MediaDefs.h is A's), the accelerant hook list
+  (video_overlay.h) and libbe: an image build, not a binary drop.
+- ffmpeg6 -8 = -7 + 0006 (rpivid_out), 0007 (mmaldec rate) + the rpivid files of `patches/ffmpeg6-next`; to adopt it,
+  move those into `patches/ffmpeg6` and bump the revision (scripts/build-ffmpeg.sh `--next` builds it today without
+  touching the default -7 build or the shared sysroot).
+- KNOWN-ISSUES F2 then loses "rpivid's HEVC frames are still converted from SAND on the CPU" and gains the low-memory
+  fallback (hw-video-decode.md §9.4); P2's HEVC numbers become 4.4–6.5 % (1080p30), 5–6 % (Main 10), 3–4 % (720p).
+- Firefox follow-up (§7.4): pass its colour space with `SetViewOverlay()` in 0006 instead of declining on a mismatch.

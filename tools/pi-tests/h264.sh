@@ -22,6 +22,7 @@
 #   hevc    MediaPlayer on HEVC (rpivid): still decoded by the block
 #   web     WebPositive on video.html (a <video> of play-720p30.mp4)
 # Lines start with "H264 "; each phase ends with "H264 <phase> result: N problems".
+# seek: MP=PATH another MediaPlayer, SEEK_CLIP=name (without .mp4) another clip (60 s long).
 phase=${1:?usage: h264.sh PHASE [DIR]}
 dir=${2:-/boot/home/h264}
 cd "$dir" || exit 1
@@ -154,7 +155,7 @@ seek)
 	log="$dir/seek.log"
 	gpu "seek before:"
 	forget_positions
-	/boot/system/apps/MediaPlayer "$dir/play-1080p30.mp4" > "$log" 2>&1 &
+	${MP:-/boot/system/apps/MediaPlayer} "$dir/${SEEK_CLIP:-play-1080p30}.mp4" > "$log" 2>&1 &
 	sleep 6
 	say "position at 6 s: $(hey MediaPlayer get Position of Window 0 2>&1 | grep -o -E '[0-9]{4,}' | head -n 1)"
 	hey MediaPlayer do Pause of Window 0 > /dev/null 2>&1

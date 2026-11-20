@@ -242,6 +242,54 @@ pool_get(RpividPool* pool)
 }
 
 
+/* Scan-out pictures where the display reaches are scarce (below 1 GiB): a
+   stream gets them only if all it may hold at once can be had up front -
+   the DPB, the pictures a caller holds while they may be on the screen
+   (RPIVID_SAND_HOLD), the one being decoded and the pending one. Otherwise
+   it has ordinary pictures and converted frames from its start, instead of
+   running out in the middle (its frames would then have no picture to
+   show). */
+#define RPIVID_SAND_HOLD	8
+
+static void
+pool_reserve(RpividPool* pool, int count)
+{
+	RpividBuffer* taken = NULL;
+	int ok = 1;
+
+	for (int i = 0; i < count && ok; i++) {
+		RpividBuffer* buffer = av_mallocz(sizeof(*buffer));
+		if (buffer == NULL || ff_rpivid_device_create_picture(pool->device,
+				pool->width, pool->height, pool->bit_depth,
+				pool->motion_vectors, 1, &buffer->picture) < 0) {
+			av_free(buffer);
+			ok = 0;
+			break;
+		}
+		buffer->next = taken;
+		taken = buffer;
+	}
+	while (taken != NULL) {
+		RpividBuffer* buffer = taken;
+		taken = buffer->next;
+		if (ok) {
+			buffer->next = pool->free;
+			pool->free = buffer;
+			pool->count++;
+		} else {
+			ff_rpivid_device_delete(pool->device, buffer->picture.handle);
+			av_free(buffer);
+		}
+	}
+	if (!ok) {
+		pool->scan_out = 0;
+		av_log(NULL, AV_LOG_WARNING, "rpivid: no room for %d pictures the "
+			"display can show (%ux%u): converted frames only\n", count,
+			pool->width, pool->height);
+	}
+}
+
+
 static void
 buffer_ref(RpividPool* pool, RpividBuffer* buffer)
 {
@@ -514,6 +562,10 @@ ff_rpivid_hevc_attach(AVCodecContext* avctx, int level)
 	ctx->pool = pool_create(ctx->device, sps, ctx->sand
 		|| (getenv("FFMPEG_RPIVID_SCAN_OUT") != NULL
 			&& !strcmp(getenv("FFMPEG_RPIVID_SCAN_OUT"), "1")));
+	if (ctx->pool != NULL && ctx->pool->scan_out) {
+		pool_reserve(ctx->pool, sps->temporal_layer[sps->max_sub_layers - 1]
+			.max_dec_pic_buffering + RPIVID_SAND_HOLD + 2);
+	}
 	if (ctx->pool == NULL) {
 		ff_rpivid_device_unref(ctx->device);
 		av_free(ctx);
