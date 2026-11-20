@@ -1,0 +1,134 @@
+Firefox video on the overlay plane: translucent content over the video keeps it in software
+
+On top of 0007 (docs/design/firefox-video-overlay.md §9.6). app_server shows
+the plane only where the window holds the exact key colour, so a translucent
+pixel over a planed video (a caption's background, text edges straight on the
+video) blended with the key green, not with the picture. A1b's rule (software
+while the content over the video changes) does not cover still content.
+SwCompositor now checks the picture-cache tiles composited above the video
+before it offers it to the plane: a tile being updated this frame, or one
+with any pixel whose alpha is neither 0 nor 255 over the video's rect, keeps
+the video in software. A tile's answer is kept until the tile changes
+(invalidate_tile), so a still page scans its tiles once.
+
+--- a/gfx/wr/webrender/src/compositor/sw_compositor.rs
++++ b/gfx/wr/webrender/src/compositor/sw_compositor.rs
+@@ -190,6 +190,9 @@
+     invalid: Cell<bool>,
+     /// Graph node for job dependencies of this tile
+     graph_node: SwCompositeGraphNodeRef,
++    /// Whether the tile has translucent pixels over a surface on the overlay plane: the rect of
++    /// the plane's surface it was checked against, and the answer (until the tile changes).
++    translucent: Cell<Option<(DeviceIntRect, bool)>>,
+ }
+ 
+ impl SwTile {
+@@ -203,6 +206,7 @@
+             overlaps: Cell::new(0),
+             invalid: Cell::new(false),
+             graph_node: SwCompositeGraphNode::new(),
++            translucent: Cell::new(None),
+         }
+     }
+ 
+@@ -1251,6 +1255,80 @@
+         }
+     }
+ 
++    /// Whether a surface composited above surface `id` (later in the frame) has translucent pixels
++    /// (alpha neither 0 nor 255) within `rect`, or is being updated there this frame. A tile's
++    /// answer is kept until the tile changes (invalidate_tile), so a still page is checked once.
++    fn translucent_over(&self, id: NativeSurfaceId, rect: &DeviceIntRect) -> bool {
++        let mut above = false;
++        for &(sid, ref transform, ref clip_rect, _) in &self.frame_surfaces {
++            if sid == id {
++                above = true;
++                continue;
++            }
++            if !above || !clip_rect.intersects(rect) {
++                continue;
++            }
++            let surface = match self.surfaces.get(&sid) {
++                Some(surface) if surface.external_image.is_none() => surface,
++                _ => continue,
++            };
++            for tile in &surface.tiles {
++                let (src, dst, _, _) = match tile.composite_rects(surface, transform, clip_rect) {
++                    Some(rects) => rects,
++                    None => continue,
++                };
++                let overlap = match dst.intersection(rect) {
++                    Some(overlap) => overlap,
++                    None => continue,
++                };
++                if tile.invalid.get() {
++                    return true;
++                }
++                if let Some((checked, translucent)) = tile.translucent.get() {
++                    if checked == overlap {
++                        if translucent {
++                            return true;
++                        }
++                        continue;
++                    }
++                }
++                // the overlap in the tile's texture: exact when unscaled, else the whole tile
++                let src_overlap = if dst.size() == src.size() {
++                    overlap.translate(src.min - dst.min)
++                } else {
++                    src
++                };
++                let translucent = match self.gl.lock_texture(tile.color_id) {
++                    Some(texture) => {
++                        let (buf, width, height, stride) = texture.get_buffer();
++                        if buf.is_null() {
++                            true
++                        } else {
++                            let mut found = false;
++                            'rows: for y in src_overlap.min.y.max(0)..src_overlap.max.y.min(height) {
++                                let row = unsafe { (buf as *const u8).offset(y as isize * stride as isize) };
++                                for x in src_overlap.min.x.max(0)..src_overlap.max.x.min(width) {
++                                    let alpha = unsafe { *row.offset(x as isize * 4 + 3) };
++                                    if alpha != 0 && alpha != 255 {
++                                        found = true;
++                                        break 'rows;
++                                    }
++                                }
++                            }
++                            found
++                        }
++                    }
++                    None => true,
++                };
++                tile.translucent.set(Some((overlap, translucent)));
++                if translucent {
++                    return true;
++                }
++            }
++        }
++        false
++    }
++
+     /// Offers the largest external planar YUV surface of this frame to an overlay plane
+     /// (MappableCompositor::present_on_plane), which decides; `whole` tells it whether the surface
+     /// is wholly visible, unflipped and without a rounded clip. On success its composite becomes a
+@@ -1297,6 +1375,11 @@
+         if self.covered_until.map_or(false, |until| Instant::now() < until) {
+             return;
+         }
++        // Translucent pixels over it (a caption's background, text edges) would blend with the
++        // plane's key, not with the picture: software while there are any.
++        if self.translucent_over(id, &dst_rect) {
++            return;
++        }
+         let info = match self.composite_surfaces.get(&external_image) {
+             Some(info) => info,
+             None => return,
+@@ -1871,6 +1954,7 @@
+         if let Some(surface) = self.surfaces.get_mut(&id.surface_id) {
+             if let Some(tile) = surface.tiles.iter_mut().find(|t| t.x == id.x && t.y == id.y) {
+                 tile.invalid.set(true);
++                tile.translucent.set(None);
+                 tile.valid_rect = valid_rect;
+             }
+         }

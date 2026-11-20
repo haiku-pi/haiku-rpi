@@ -25,8 +25,12 @@
 #             (uiinject) at 32 s, out with Esc at 42 s; CPU over 5 s in the first fullscreen period
 #   cycle     CYCLES (default 10) times: Firefox started on PAGE (single: a 1280x720 video; two: the two-video
 #             page), PLAY s (default 12) of playing, `hey Firefox quit`; per cycle the debugger entries in the syslog
-#             and the Firefox teams left after 20 s (killed then). LIBS=DIR: DIR first in LIBRARY_PATH (test builds of
-#             libavcodec / libmmal*)
+#             and the Firefox teams left after 20 s (killed then)
+# LIBS=DIR: DIR first in LIBRARY_PATH (test builds of libavcodec / libmmal*), any mode; AVLOG=N: FFmpeg's own log at
+# level N (MOZ_LOG FFmpegLib, 3 = info) in every mode; NOCAP=1: the real page without its caption
+#   switch    a 1280x720 video of CLIP; at 15 s its src becomes SWITCH (default play-1080p30.mp4) in the same page
+#             and process: with AVLOG=3, both should decode on the VideoCore (two "VideoCore H264 decode" lines, no
+#             "decodes another stream": h264_vc gives its VideoCore slot back when a decoder closes)
 #   avsync    the clip unmuted (a beep with a white flash once a second: tools/media-tests/gen-avsync-clip.sh) for
 #             SECS (default 40) s; the host records HDMI video + audio (tools/pi-tests/avsync-measure.sh)
 # Lines "FFA <label> ...", and "FFA <label> SNAP <name>" at the moments meant for an HDMI frame.
@@ -93,16 +97,22 @@ real)
 	para='<p>Haiku is an open-source operating system that specifically targets personal computing. Inspired by the
 BeOS, Haiku is fast, simple to use, easy to learn and yet very powerful. This paragraph is here so that text
 flows around the video the way it does on a news site or a blog, with a few lines above and below.</p>'
+	cap='<figcaption style='
+	[ "${NOCAP:-0}" = 1 ] && cap='<figcaption hidden style='
 	body="<body style=\"margin:0;font:19px/1.5 serif;background:#f4f1e8;color:#222\">
 <header style=\"height:64px;background:#24384f;color:#fff;font:28px sans-serif;padding:14px 30px\">The Daily Haiku</header>
 <main style=\"width:1000px;margin:0 auto;padding:10px 30.5px\"><h1 style=\"font:34px sans-serif\">An article with a video</h1>
 $para $para
 <figure style=\"position:relative;margin:0 0 0 7.5px;width:864px;height:486px\">
 <video style=\"transform:scale(0.9);transform-origin:0 0\" width=\"960\" height=\"540\" $video></video>
-<figcaption style=\"position:absolute;left:16px;bottom:18px;padding:4px 10px;background:rgba(0,0,0,0.55);color:#fff;font:18px sans-serif\">A translucent caption over the video</figcaption></figure>
+$cap\"position:absolute;left:16px;bottom:18px;padding:4px 10px;background:rgba(0,0,0,0.55);color:#fff;font:18px sans-serif\">A translucent caption over the video</figcaption></figure>
 $para $para $para $para $para $para</main>
 <script>function glide(dy) { let n = 0; const t = setInterval(() => { window.scrollBy(0, dy / 40); if (++n == 40) clearInterval(t); }, 50); }
 setTimeout(() => glide(200), 15000); setTimeout(() => glide(-200), 25000);</script>" ;;
+switch)
+	body="<body style=\"margin:0;background:#000\"><video id=\"s\" width=\"1280\" height=\"720\" $video></video>
+<script>setTimeout(() => { const s = document.getElementById(\"s\"); s.src = \"file://$dir/${SWITCH:-play-1080p30.mp4}\";
+  s.play(); console.log(\"FFA switched\"); }, 15000);</script>" ;;
 tab|minimize)
 	body="<body style=\"margin:0;background:#000\"><video width=\"1280\" height=\"720\" $video></video>"
 	[ "$mode" = tab ] && body="$body
@@ -161,9 +171,10 @@ ffteam() { ps | awk -v f="$ffx" '$1 == f { print $(NF-3); exit }'; }
 
 dbg0=$(grep -a -c "entered the debugger" /var/log/syslog)
 sys0=$(wc -l < /var/log/syslog)
+# LIBS=DIR (any mode): DIR first in LIBRARY_PATH (an ssh shell has none: then the runtime_loader's default, which a
+# set one replaces)
+[ -n "$LIBS" ] && export LIBRARY_PATH="$LIBS:${LIBRARY_PATH:-%A/lib:/boot/home/config/non-packaged/lib:/boot/home/config/lib:/boot/system/non-packaged/lib:/boot/system/lib}"
 if [ "$mode" = cycle ]; then
-	# (an ssh shell has no LIBRARY_PATH: then the runtime_loader's default, which a set one replaces)
-	[ -n "$LIBS" ] && export LIBRARY_PATH="$LIBS:${LIBRARY_PATH:-%A/lib:/boot/home/config/non-packaged/lib:/boot/home/config/lib:/boot/system/non-packaged/lib:/boot/system/lib}"
 	total=0 i=1
 	while [ $i -le "${CYCLES:-10}" ]; do
 		d0=$(grep -a -c "entered the debugger" /var/log/syslog)
@@ -201,7 +212,9 @@ fi
 ovlenv=
 [ "${OVL:-1}" = 0 ] && ovlenv="MOZ_HAIKU_VIDEO_OVERLAY=0"
 say "firefox $ffx ${ovlenv:-overlay on}"
-env $ovlenv MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 MOZ_CRASHREPORTER_DISABLE=1 $ffx --no-remote --profile "$profile" \
+avlog=
+[ -n "$AVLOG" ] && avlog="MOZ_LOG=FFmpegLib:$AVLOG"
+env $ovlenv $avlog MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 MOZ_CRASHREPORTER_DISABLE=1 $ffx --no-remote --profile "$profile" \
 	"file://$dir/ffa-$label.html" > "$log" 2>&1 &
 case "$mode" in
 measure)
@@ -329,6 +342,11 @@ fullscreen)
 avsync)
 	sleep "${SECS:-40}"
 	;;
+switch)
+	sleep 32
+	snapshot "$label-after"
+	sleep 3
+	;;
 mode)
 	sleep 20
 	snapshot "$label-before"
@@ -353,7 +371,9 @@ say "quit: $left Firefox teams left after ${n} s"
 for t in $(ps | awk '$1 ~ /Firefox$/ { print $(NF-3) }'); do kill -9 "$t" 2> /dev/null; done
 grep -a -E "^HVO (show|hide)" "$log" | head -n 20 | while IFS= read -r l; do say "log $l"; done
 grep -a "^HVO stats" "$log" | tail -n 1 | while IFS= read -r l; do say "log last $l"; done
-tr -d '\r' < "$log" | grep -a "FFA tab\|FFA fullscreen" | while IFS= read -r l; do say "page $l"; done
+tr -d '\r' < "$log" | grep -a "FFA tab\|FFA fullscreen\|FFA switched" | while IFS= read -r l; do say "page $l"; done
+grep -a "VideoCore H264 decode\|decodes another stream\|h264_mmal [a-z ]*: h264\|frames decoded from" "$log" | cut -c1-160 \
+	| while IFS= read -r l; do say "decoder $l"; done
 tr -d '\r' < "$log" | grep -a "FFAQ\|FFA moved" | tail -n 2 | while IFS= read -r l; do say "page $l"; done
 tail -n +$((sys0 + 1)) /var/log/syslog | grep -a -o "plane [0-9]: [0-9]* updates in [0-9]* vblanks, [0-9]* late.*" \
 	| tail -n 6 | while IFS= read -r l; do say "driver $l"; done
