@@ -1853,8 +1853,8 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 #### HK-58 — IPv6: possible kernel crash in a send path (unconfirmed; details held for a private report)
 
 - **Severity / scope:** possibly a remotely triggerable kernel crash; all architectures; **from code reading, not confirmed**.
-- **Status:** to be confirmed on a test VM first; if real, it goes to the Haiku developers privately, not to the public
-  tracker. The details are deliberately not in this public document.
+- **Status:** not confirmed by us (no test-VM confirmation was done). To be passed to the Haiku developers privately
+  for them to assess, not to the public tracker. The details are deliberately not in this public document.
 
 <a id="hk-05"></a>
 
