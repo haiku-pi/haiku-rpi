@@ -753,8 +753,11 @@ caption with a translucent background (and text drawn straight on the video) was
 **Totals:**
 - **With the new decoder libraries: 0 debugger entries** in 90 start/play/quit cycles (H, X, Y: 30 two-video, 60
   single), in every -10 run of ffa5–ffa7 and in MediaPlayer's three phases.
-- **With the image's libraries:** 23 of 38 two-video cycles aborted (11/15, 5/15, 5/5, 2/3), Firefox -7 and -9
-  alike.
+- **Only 30 of the 90 ran on the final ffmpeg6 -7** (CY-Y1, CY-Y2, after the slot wait). H and X used its first
+  build, which has the same one-stream rule without the wait.
+- **With the image's libraries,** 25 of 41 two-video cycles aborted: CY-B2 11/15, CY-D2 2/3, CY-S2 5/5 and CY-Z2 2/3
+  on A1b builds (20 of 26), CY-O2 5/15 on -7. A1b aborts more often (it frees CPU, so more starts reach the second
+  decoder in time?), so **-10 must ship together with the decoder packages**.
 - Single-video cycles with the image's libraries: 0 of 30.
 
 #### Recommendation for the gate (2026-11-21 04:23)
@@ -784,7 +787,8 @@ Two decisions, independent of each other.
 - The packages are in `artifacts/packages-test/{ffmpeg6-7,raspberrypi_userland-4}`. Moving them to the image means
   the usual three steps per package (packages, jam download, `HaikuPorts/arm64`); not done here.
 
-**2. Firefox: ship -10 (0006 + 0007 + 0008) instead of -7.**
+**2. Firefox: ship -10 (0006 + 0007 + 0008) instead of -7, but only together with decision 1** (with the image's
+decoder libraries, A1b builds abort on the two-video page more often than -7: 20 of 26 against 5 of 15).
 
 | Criterion (§6 steps 3–4, the coordinator's list) | -10 |
 |---|---|
@@ -798,7 +802,7 @@ Two decisions, independent of each other.
 | Fullscreen | on the plane at 1920×1080, 19–24 drops against 108–198 for -7 |
 | A/V sync | +10.7 ms median against +1.9 ms for -7 (-9; within one capture frame) |
 | Page without video (haiku-os.org) | renders, quits in 4–6 s |
-| Debugger entries | 0 in all -10 runs; the two-video abort needs decision 1, as for -7 |
+| Debugger entries | 0 in every -10 run with the new decoder libraries; with the image's ones -10 aborts like -9 (CY-Z2 2 of 3), so decision 1 is a precondition |
 
 **Known and accepted:**
 - A Firefox tooltip or popup window over a playing video has a dark green fringe (window-level translucency over the
@@ -806,7 +810,20 @@ Two decisions, independent of each other.
 - Screenshots show black where the plane is.
 - The 1080p plane copy runs at ~670 MB/s (~0.14 core).
 - -10 has less Pi time than -9: about 60 runs in ffa5–ffa7, against more than 100 for -9 and A1.
-- FS1's 12-s stall in fullscreen (-9, ffa3) did not recur in 7 later fullscreen runs; not explained.
+- **Open risk: a fullscreen stall.** FS1 (-9, ffa3) lost ~12 s of video in its first fullscreen period; not
+  explained. By build: 1 stall in 5 A1b fullscreen runs (FS1; FS2 and FX1–3 clean), 0 of 3 on -7 (FO1–3). ffa8
+  runs fullscreen ×10 on the installed -10.
+
+**Gate conditions (not tested here):**
+- Up to ffa7 the new libraries ran through `LIBS`; the MMAL ones came from the build directory, only libavcodec from
+  the hpkg. ffa8 installs the three packages with pkgman.
+- h264_mmal **encoding** on userland 4 / ffmpeg6 7: one encode in ffa8.
+- Long play: no run before ffa8 exceeded ~65 s; ffa8 plays 10 minutes. Scroll show/hide never went past 9 cycles.
+- Only local test clips (`file://`): `colour-space`, `cropped` and rounded clips never fired; no real web video.
+- **One VideoCore stream per browser process, not per page.** A stream that starts in software stays there, even
+  after the other one ends.
+- The build environment changed: the sysroot and `artifacts/cross-ports` now hold ffmpeg6 -7 and userland -4, and
+  `artifacts/mmal/packages` no longer has userland -3 (still in `artifacts/packages` and jam's download).
 
 **If decision 2 is not taken**, -7 (option 0) stays the candidate. A rollback is one package.
 `MOZ_HAIKU_VIDEO_OVERLAY=0` turns the plane off in -10 without a new package.
