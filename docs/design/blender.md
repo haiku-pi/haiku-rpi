@@ -986,6 +986,11 @@ passes) was fixed: the checks read all input now. The patched tree was checked e
 **Sysroot:** it now also holds oidn, alembic and fftw (`non-packaged/`) and numpy_python3.10. The packager now
 removes the `.PackageInfo` that extraction left in `boot/system/`.
 
+**Misses and gaps:** QuadriFlow's result differs slightly from x86-64 (cause not investigated); the Boolean
+difference case does not separate Exact from Fast (the coplanar union does); only German of the 38 languages was
+looked at; Mesh to Volume and the geometry-nodes volume nodes were not probed; the update path from an installed
+-7 is untested; M4's frames 6-render and 7-key were not taken (as in -7's run).
+
 **Not done, with effort** (*estimated*):
 - **OpenVDB 10.0** (Blender's pin), 0.5–1 day. It needs c-blosc 1.21 (HaikuPorts has 1.18), Boost iostreams in
   the boost step, and oneTBB (10.0 supports it). Its compile jobs are 2–3 GB each. It would bring voxel remesh,
@@ -1153,6 +1158,11 @@ crypto ports look for it) would depend on a package that is not in the repositor
 Clean intermediates: the library work trees were deleted after packaging (sources and build directories); the
 official x86-64 Blender used as reference (in the agent's temp directory) is deleted at the end.
 
+**Misses and gaps:** QuadriFlow's result differs slightly from x86-64 (cause not investigated); the Boolean
+difference case does not separate Exact from Fast (the coplanar union does); only German of the 38 languages was
+looked at; Mesh to Volume and the geometry-nodes volume nodes were not probed; the update path from an installed
+-7 is untested; M4's frames 6-render and 7-key were not taken (as in -7's run).
+
 **Not done, with effort** (*estimated*):
 - **USD**, 2–4 days, high risk (as §7.14: USD 23.05 uses the TBB 2020 API).
 - Blosc's NEON shuffle (its CMake does not recognise `aarch64`; generic shuffle is used): small, no measured need.
@@ -1164,19 +1174,21 @@ official x86-64 Blender used as reference (in the agent's temp directory) is del
 **Proposed KNOWN-ISSUES F12 text for the publish:**
 - **Gone:** "Built without USD and OpenVDB (no `.usd`/`.vdb`, no voxel remesh or volume nodes)" becomes "Built
   without USD (no `.usd` import/export)".
-- **New sentence:** "From blender -8: OpenVDB volumes (`.vdb` import, voxel remesh, volume nodes, Cycles volumes),
-  the Exact Boolean solver (GMP), QuadriFlow remesh, Draco glTF compression, Grease Pencil Trace Image and PDF
-  export, and translated interfaces (Preferences ▸ Interface ▸ Translation)."
+- **New sentence:** "From blender -8: OpenVDB volumes (`.vdb` import, voxel remesh, Volume to Mesh, Cycles
+  volumes, OpenVDB fluid caches), the Exact Boolean solver (GMP), QuadriFlow remesh, Draco glTF compression, Grease
+  Pencil Trace Image and PDF export, and translated interfaces (Preferences ▸ Interface ▸ Translation)."
+  (Mesh to Volume and the geometry-nodes volume nodes need OpenVDB too, but were not probed.)
 - Everything else in F12 stays.
 
 **Proposed USER-GUIDE §11.6 text** (replacing the "Limits are listed …" item's "no USD/OpenVDB" and adding a
 sentence to **Works**):
 > From blender 3.6.23-8: **OpenVDB** — File ▸ Import ▸ OpenVDB (`.vdb`), voxel remesh (Remesh modifier in Voxel
-> mode, Mesh ▸ Remesh), Volume to Mesh and Mesh to Volume, volumes rendered by Cycles, and fluid caches in
+> mode, Object Data ▸ Remesh), the Volume to Mesh modifier, volumes rendered by Cycles, and fluid caches in
 > OpenVDB format (the default); the **Exact** solver of the Boolean modifier (it was silently replaced by Fast);
 > **QuadriFlow** remesh; glTF export with **Draco** mesh compression; Grease Pencil **Trace Image** and **PDF
 > export**; the interface in **38 languages** (Preferences ▸ Interface ▸ Translation, or the splash screen's
-> Language). `pkgman update blender` also updates boost1.83 to -2.
+> Language). (blender -8 needs boost1.83 -2; only a fresh install from the test packages was checked, not
+> `pkgman update` over an installed -7 — check that at the publish.)
 >
 > Limits: no USD; …(the rest as now).
 
