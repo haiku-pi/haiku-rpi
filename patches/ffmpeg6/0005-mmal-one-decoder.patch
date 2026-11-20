@@ -1,0 +1,112 @@
+mmaldec: one H.264 decoder on the VideoCore in the whole system
+
+A second h264_mmal decoder (two MediaPlayer windows, two videos in Firefox,
+MediaPlayer and Firefox) failed with MMAL_ENOSPC after its ports were
+enabled, flooded its client with error events and stopped answering: closing
+it aborted the client (VCOS assert) or, with raspberrypi_userland 4, hung it
+for a 5-s timeout per port operation, and the firmware's MMAL service could
+stay unusable until a reboot. The decoder now takes a system-wide token, an
+flock() on /tmp/.h264_mmal-decoder.lock (exclusive per open file, so also
+between decoders of one team; released by the kernel when a team dies),
+waiting up to 0.5 s for it (a player replacing its source opens the new
+decoder just before it closes the old one); without it, it does not open
+(EBUSY) and the caller falls back to software (the media plugin, h264_vc).
+
+diff -ruN a/libavcodec/mmaldec.c b/libavcodec/mmaldec.c
+--- a/libavcodec/mmaldec.c
++++ b/libavcodec/mmaldec.c
+@@ -34,6 +34,9 @@
+ #include <interface/mmal/util/mmal_default_components.h>
+ #include <interface/mmal/vc/mmal_vc_api.h>
+ #include <stdatomic.h>
++#include <fcntl.h>
++#include <sys/file.h>
++#include <unistd.h>
+ 
+ #include "avcodec.h"
+ #include "bsf.h"
+@@ -102,8 +105,48 @@
+     int64_t total_frames;
+     int interlaced_frame;
+     int top_field_first;
++    int vc_lock;            // the system's one VideoCore decoder (vc_decoder_lock), or -1
+ } MMALDecodeContext;
+ 
++/*
++ * One H.264 decoder on the VideoCore in the whole system: a second one (in the
++ * same team or another) failed after its ports were enabled with MMAL_ENOSPC,
++ * flooded its client with error events and stopped answering, which hung or
++ * aborted the application closing it and could leave the firmware's MMAL
++ * service unusable until a reboot (docs/design/firefox-video-overlay.md §9.6).
++ * The token is an flock() on a file: exclusive per open file, so also between
++ * two decoders of one team, and released by the kernel when a team dies. A
++ * decoder waits up to VC_LOCK_WAIT_MS for it (a player replacing its source
++ * opens the new decoder just before it closes the old one), else it does not
++ * open and the caller falls back to software (the media plugin, h264_vc).
++ */
++#define VC_LOCK_PATH "/tmp/.h264_mmal-decoder.lock"
++#define VC_LOCK_WAIT_MS 500
++
++static int vc_decoder_lock(AVCodecContext *avctx)
++{
++    int fd = open(VC_LOCK_PATH, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
++
++    if (fd < 0)
++        return -1; /* (no /tmp: no limit) */
++    for (int waited = 0; flock(fd, LOCK_EX | LOCK_NB) != 0; waited += 10) {
++        if (waited >= VC_LOCK_WAIT_MS) {
++            close(fd);
++            return -2;
++        }
++        usleep(10000);
++    }
++    return fd;
++}
++
++static void vc_decoder_unlock(MMALDecodeContext *ctx)
++{
++    if (ctx->vc_lock >= 0) {
++        close(ctx->vc_lock);
++        ctx->vc_lock = -1;
++    }
++}
++
+ // Assume decoder is guaranteed to produce output after at least this many
+ // packets (where each packet contains 1 frame).
+ #define MAX_DELAYED_FRAMES 16
+@@ -219,6 +262,7 @@
+ 
+     mmal_vc_deinit();
+ 
++    vc_decoder_unlock(ctx);
+     return 0;
+ }
+ 
+@@ -383,17 +427,26 @@
+ 
+     ctx->pkt = avctx->internal->in_pkt;
+ 
++    ctx->vc_lock = vc_decoder_lock(avctx);
++    if (ctx->vc_lock == -2) {
++        av_log(avctx, AV_LOG_WARNING, "mmal: the VideoCore's H.264 decoder is in use\n");
++        return AVERROR(EBUSY);
++    }
++
+ #ifndef __HAIKU__
+     bcm_host_init();
+ #endif
+ 
+     if (mmal_vc_init()) {
+         av_log(avctx, AV_LOG_ERROR, "Cannot initialize MMAL VC driver!\n");
++        vc_decoder_unlock(ctx);
+         return AVERROR(ENOSYS);
+     }
+ 
+-    if ((ret = ff_get_format(avctx, avctx->codec->pix_fmts)) < 0)
++    if ((ret = ff_get_format(avctx, avctx->codec->pix_fmts)) < 0) {
++        vc_decoder_unlock(ctx);
+         return ret;
++    }
+ 
+     avctx->pix_fmt = ret;
+ 

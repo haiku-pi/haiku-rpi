@@ -10,7 +10,8 @@
 # (docs/design/videocore-services.md); 6 = h264_mmal's first-frame quantiser (option initial_qp, default 25:
 # the VideoCore's own made a flat 720p key frame of 981 bytes, banded) and its timestamps in microseconds, as
 # MMAL counts them (API correctness; no measured effect on the output); 6b: initial_qp off by default (0: it
-# disabled the firmware's rate control, W47 11-19 14:45); 7 = 6b + h264_vc decodes one stream per process
+# disabled the firmware's rate control, W47 11-19 14:45); 7 = 6b + mmaldec takes a system-wide token (one
+# H.264 decoder on the VideoCore at a time, others do not open: patch 0005) + h264_vc decodes one stream per process
 # on the VideoCore (FFMPEG_H264_VC_STREAMS), the others in software: a second one failed there with ENOSPC, and the
 # failed decoder's teardown aborted Firefox's decoder process (docs/design/firefox-video-overlay.md §9.6).
 # Called by scripts/build-packages.sh; runs on its own too.
