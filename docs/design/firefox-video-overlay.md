@@ -640,3 +640,98 @@ Test package firefox-157.0.1-**9** in `artifacts/packages-test/firefox-a1b/` (un
 - **Whether these patches go into a release package is the release gate's decision.** The `source` step applies every
   `patches/firefox/*.patch`, so a rebuild from scratch now includes 0006 and 0007. The option-0 candidate 157.0.1-7
   (`artifacts/packages-test/firefox-swglclang/`) was built before them and does not change.
+
+### 9.6 Open checks, the decoder abort at quit, and the recommendation (2026-11-19 23:12 – 2026-11-20; sessions `ffa3`–`ffa6`; **measured**)
+
+**Packages:**
+- **-9** = 0006 + 0007 (A1b).
+- **-10** = -9 + **0008**: translucent content over the video keeps it in software (below).
+- **-7** = option 0.
+- The decoder fix comes in two packages, both in `artifacts/packages-test/{raspberrypi_userland-4,ffmpeg6-7}`:
+  - **raspberrypi_userland 20241223-4** (patch 10);
+  - **ffmpeg6 6.1.6-7** (h264_vc).
+
+  On the Pi their libraries went first in `LIBRARY_PATH` (`ffv-a1.sh` `LIBS=`).
+
+**Two traps in the tools, fixed on the way:**
+- **Stale HDMI frames.** The capture card returned leftover frames: in a series, each one showed the screen of the
+  one before it (ffa3's first frames). `hdmi_snap` now keeps the 6th frame.
+  - The test clip's burned-in clock confirms that the later frames are live: clip time = script time − ~7 s.
+  - It also confirms ffa2's frames in §9.4 (C1/C2 at 22 s show 14.1 / 14.8 s).
+- **`LIBS=` without `%A/lib`.** A `LIBRARY_PATH` set in an ssh shell replaced the runtime_loader's default search
+  path, so Firefox did not start.
+
+#### Open checks on -9 (ffa3)
+
+| Check | Result |
+|---|---|
+| Realistic page: a styled article, a 960×540 video scaled 0.9 at a half-pixel offset (864×486 at 141,y), text around it, a translucent caption over it, scrolled by 200 px while playing (RE1, RE2) | **On the plane whenever the video is wholly in the window** (233 frames at y = 289); software while scrolling (`unstable`) and while the window edge cuts it (`not-whole`); fractional CSS positions land on whole pixels. **With -9 the static translucent caption is blended with the key green whenever the video is on the plane** (the A1 limitation, §9.4), which is what 0008 fixes |
+| Tab switch: another tab in front for 15 s (`window.open`/`close`) (TB1, TB2) | Plane left when the other tab came to the front, **an `overlaytest` B_YUV420 overlay works meanwhile** (HDMI: its bars over the New Tab page), plane back when the tab closed |
+| Minimise and restore (MN1, MN2) | Plane left when minimised, `overlaytest` works meanwhile, back after the restore |
+| Fullscreen by script and by a double-click on the video (FS1, FS2) | On the plane at 0,0 **1920×1080** (the plane scales 1280×720), back to the windowed plane on exit. FS1 played only 795 frames in 40 s (FS2: 1162); see ffa6 |
+| A/V sync, flash + beep clip (`tools/media-tests/gen-avsync-clip.sh`), HDMI video + audio from the capture card (`tools/pi-tests/avsync-measure.sh`), 20 pairs each | audio − video, median (range): **-9 +10.7 ms** (−23…+27); -7 +1.9 ms (−41…+29); MediaPlayer +109 ms (the same capture chain). -9 and -7 differ by less than one capture frame (16.7 ms) |
+| Two videos (TW1) | The larger one on the plane, the other one in software |
+
+#### The abort at quit: cause and fix (ffa3, ffa4)
+
+**Start/play/quit cycles** (`ffv-a1.sh cycle`: start, play 15 s, `hey Firefox quit`; debugger entries from the
+syslog):
+
+| | single 1280×720 video | two-video page |
+|---|---|---|
+| -9, image libraries (ffa3) | 0 of 15 | **11 of 15** abort; in 3 the first video never started |
+| -7 (option 0), image libraries (ffa3) | 0 of 15 | **5 of 15** abort; in 3 the first video never started |
+| -9 + userland 4 + ffmpeg6 7 (ffa4, fresh boot) | **0 of 20**, every one on the VideoCore | **0 of 10**: one video on the VideoCore, the other in software, ~315 frames in 15 s |
+| -9, image libraries again (ffa4, same boot, control) | — | **5 of 5** abort |
+| -10 + userland 4 + ffmpeg6 7 (ffa5) | **0 of 20** | **0 of 10** |
+
+**Cause.** The stack was resolved against the unstripped builds:
+- `mozalloc_abort` ← `vcos_pthreads_logging_assert` ← `mmal_vc_port_disable` (libmmal_vc_client) ←
+  `mmal_port_disable` ← mmaldec's `ffmmal_stop_decoder` (libavcodec).
+- `FFmpegLib` logging (`MOZ_LOG=FFmpegLib:3`) shows what leads there. The second H.264 stream of the page opened a
+  second VideoCore decoder, which failed with **`MMAL error 2` (ENOSPC) on its control port**.
+- h264_vc moved that stream to software ("h264_mmal failed … h264 continues from the start") and closed the failed
+  decoder. The VideoCore did not answer its port disable (`no reply to message 10 in 5000 ms`, patch 8's bound) and
+  kept the port's buffers.
+- `mmal_vc_port_disable()` asserts that every buffer came back. Our Haiku Makefile built VCOS without `NDEBUG`, where
+  `VCOS_ASSERT_LOGGING` turns every failed `vcos_assert` into `abort()`; upstream builds Release.
+- The failed decoder also kept sending error events: 470–650 lines of `no event buffer left for ERRO` per run.
+- The ENOSPC is what was observed here. vchiq.md §8 records two 720p decodes fitting, in other conditions.
+
+**Fix, in our code, two parts:**
+1. **raspberrypi_userland patch 10** (recipe REVISION 4):
+   - `mmal_vc_port_disable()` gives the client back, empty, the buffers the VideoCore kept, through the port's
+     callback queue. Their handles are freed, so a late message about one is dropped (`mmal_vc_port_send_callback`
+     now takes the handle; the bulk-receive paths check it).
+   - The Haiku Makefile defines `NDEBUG`, as upstream's Release build does.
+   - With these libraries and the image's ffmpeg (ffa3, CY-G2), the two-video page aborted **0 of 10** times.
+   - **But this alone trades the abort for a wedge.** After a run that survived a failed decoder, the firmware's
+     MMAL service stopped answering (`failed to create component 'vc.ril.video_decode' (EIO)` after 5 s). Every
+     later open in every process went to software until a reboot: 20 single-video cycles at ~200 frames instead of
+     ~338 (CY-G1). Before the fix, the aborting process's death seems to have released it: clean runs followed.
+2. **ffmpeg6 h264_vc** (revision 7):
+   - **One stream per process decodes on the VideoCore** (`FFMPEG_H264_VC_STREAMS`, default 1); others go to the
+     software h264 from the start ("the VideoCore decodes another stream of this process: h264 decodes").
+   - The slot is released when the decoder closes or falls back. Host harness `tools/media-tests/h264vc-host/vctwo.c`:
+     two streams, then a third after the first closed, gets the VideoCore again. `run.sh`'s single-stream scenarios
+     are unchanged (bit-exact).
+   - So Firefox never runs into the ENOSPC. Two streams in **different** processes (MediaPlayer + Firefox) can
+     still meet it; the userland fix makes that a software fallback, not an abort; whether the firmware then wedges
+     is in ffa6.
+
+`scripts/build-mmal.sh` and `scripts/build-ffmpeg.sh` now build these revisions by default. jam's download directory
+and `artifacts/packages` still hold the image's raspberrypi_userland-3 and ffmpeg6-5: nothing published.
+
+#### 0008: translucent content over the video (-10, ffa5)
+
+Why -10 exists: A1b moves the video to software only while the content over it changes. The common case of a still
+caption with a translucent background (and text drawn straight on the video) was blended with the key green.
+- **What 0008 does.** Before offering a video to the plane, `SwCompositor` checks the picture-cache tiles composited
+  above it. A tile updated this frame, or one with a pixel over the video whose alpha is neither 0 nor 255, keeps
+  the video in software (HVO counts it as `not-offered`). A tile's answer is kept until the tile changes.
+- **Measured on -10:**
+  - **caption page:** never on the plane. HDMI shows the caption blended with the picture (RE3).
+  - **50 % white box and opaque caption:** never on the plane; the box shows the bars through it (C4).
+  - **plain page:** on the plane as -9. 720p 964 / 903 ms per 10 s for `Renderer` + `SwComposite`, 0 window frames;
+    1080p 2 334 / 2 826 ms. With the same libraries, option 0 takes 8 249 ms (720p) and 8 126 ms (1080p).
+  - **two videos, scroll, haiku-os.org:** as -9; 0 debugger entries.
