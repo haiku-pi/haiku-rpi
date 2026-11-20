@@ -36,7 +36,8 @@
  *
  * h264_mmal is opened with the first packet, not by avcodec_open2(). One
  * stream per process decodes on the VideoCore at a time (FFMPEG_H264_VC_STREAMS
- * changes the number): a second one there failed with ENOSPC in the
+ * changes the number; a new stream waits up to 0.5 s for the slot, as a
+ * player replacing its source closes the old decoder just after): a second one there failed with ENOSPC in the
  * VideoCore's memory, and the failed decoder flooded its client with error
  * events and did not answer when it was closed. The VideoCore is not used
  * (the software decoder from the start) for a stream over that number, when
@@ -53,6 +54,7 @@
 #include "libavutil/error.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
+#include "libavutil/time.h"
 
 #include "avcodec.h"
 #include "codec_par.h"
@@ -148,15 +150,22 @@ static void release_vc_slot(H264VCContext *s)
     }
 }
 
-/* One of the VideoCore's streams for this one, if one is free. */
+/* One of the VideoCore's streams for this one, if one is free within
+ * SLOT_WAIT_US: a player that changes its source (Firefox: a new src) opens
+ * the new decoder just before it closes the old one. */
+#define SLOT_WAIT_US 500000
 static int take_vc_slot(H264VCContext *s)
 {
     const char *setting = getenv("FFMPEG_H264_VC_STREAMS");
     const int max = setting ? atoi(setting) : 1;
 
-    if (atomic_fetch_add(&vc_streams, 1) >= max) {
+    for (int waited = 0;; waited += 10000) {
+        if (atomic_fetch_add(&vc_streams, 1) < max)
+            break;
         atomic_fetch_sub(&vc_streams, 1);
-        return 0;
+        if (waited >= SLOT_WAIT_US)
+            return 0;
+        av_usleep(10000);
     }
     s->vc_slot = 1;
     return 1;

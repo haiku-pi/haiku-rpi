@@ -1,6 +1,10 @@
 /* vctwo FILE : the VideoCore slot of h264_vc (one stream per process): two h264_vc contexts decode FILE at once
- * (the first takes h264_mmal, the second must go to h264), then the first is closed and a third opened (it must
- * get h264_mmal again). Prints which inner decoder each used and the frames each gave; exit 0 when as expected. */
+ * (the first takes h264_mmal, the second must go to h264 after waiting 0.5 s for the slot), then the first is closed
+ * and a third opened (it must get h264_mmal again); then a fourth starts while the third is closed 100 ms later
+ * by another thread (a player replacing its source: the fourth must wait for the slot and get h264_mmal). Prints
+ * which inner decoder each used and the frames each gave; exit 0 when as expected. */
+#include <pthread.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <string.h>
 #include "libavformat/avformat.h"
@@ -42,6 +46,12 @@ static int decode(AVFormatContext *fmt, int vs, AVCodecContext *c, int n, int *u
     av_packet_free(&pkt); av_frame_free(&fr);
     return frames;
 }
+static void *close_later(void *arg)
+{
+    usleep(100000);
+    avcodec_free_context((AVCodecContext **)arg);
+    return NULL;
+}
 int main(int argc, char **argv)
 {
     AVFormatContext *fmt = NULL; int vs, u1 = -1, u2 = -1, u3 = -1, f1, f2, f3;
@@ -56,8 +66,16 @@ int main(int argc, char **argv)
     avcodec_free_context(&c1);
     c3 = open_vc(fmt, vs);
     f3 = decode(fmt, vs, c3, 30, &u3);
-    printf("vctwo: first VideoCore %d (%d frames), second %d (%d frames), third after the first closed %d (%d frames)\n",
-           u1, f1, u2, f2, u3, f3);
-    avcodec_free_context(&c2); avcodec_free_context(&c3); avformat_close_input(&fmt);
-    return u1 == 1 && u2 == 0 && u3 == 1 && f1 > 0 && f2 > 0 && f3 > 0 ? 0 : 1;
+    avcodec_free_context(&c2);
+    /* c3 holds the slot; it is closed 100 ms after c4 starts */
+    AVCodecContext *c4 = open_vc(fmt, vs);
+    pthread_t closer;
+    int u4 = -1, f4;
+    pthread_create(&closer, NULL, close_later, &c3);
+    f4 = decode(fmt, vs, c4, 30, &u4);
+    pthread_join(closer, NULL);
+    printf("vctwo: first VideoCore %d (%d frames), second %d (%d frames), third after the first closed %d (%d frames),"
+           " fourth while the third closes %d (%d frames)\n", u1, f1, u2, f2, u3, f3, u4, f4);
+    avcodec_free_context(&c4); avformat_close_input(&fmt);
+    return u1 == 1 && u2 == 0 && u3 == 1 && u4 == 1 && f1 > 0 && f2 > 0 && f3 > 0 && f4 > 0 ? 0 : 1;
 }
