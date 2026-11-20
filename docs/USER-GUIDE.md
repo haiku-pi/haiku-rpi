@@ -853,7 +853,8 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
 ### 11.6 Blender 3.6 (3D modelling, animation, rendering)
 
 From image-2026-11-19b Blender 3.6.23 LTS is in the package repository: `pkgman install blender` (it brings
-Python 3.10, OpenImageIO, OpenColorIO, OpenSubdiv, TBB and the libraries they need) and start it from Deskbar ▸
+Python 3.10 with NumPy, OpenImageIO, OpenColorIO, OpenSubdiv, OpenImageDenoise, Alembic, FFTW, TBB and the
+libraries they need; `pkgman update blender` on an older install) and start it from Deskbar ▸
 Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`. It draws with the desktop OpenGL 3.3 driver
 (§5.1) through SDL2 (libsdl2 2.32.10-8 or newer is required: it gives each thread its own GL context, which
 Blender's renders need).
@@ -866,15 +867,21 @@ Blender's renders need).
   sound; 48 frames at 1280×720 with sound in 33 s; blender -6 maps the quality presets to a bit rate for the
   VideoCore encoder, which has no CRF) and the **Video Sequencer** (movies and sounds), **sound** playback through SDL, and typing any
   character your keymap gives (names, text fields; was ASCII only). Several Blender windows can run at once
-  (blender -4 quit a second one at once).
+  (blender -4 quit a second one at once). From blender 3.6.23-7 (2026-11-20): **denoising** (Cycles' Denoise for
+  F12 and the Rendered viewport, the compositor's Denoise node: OpenImageDenoise 2.5 on the CPU), **Alembic**
+  import/export, the **Ocean** modifier, **fluid simulation** (Mantaflow smoke and liquid bakes), Python's `aud`
+  audio module (`aud.Device()` plays through Blender's own sound device), and the Rendered viewport shows the
+  render (-6 and older drew Blender's icon sheet there).
 - **Speed (measured on the Pi 4, 4 cores):** the factory scene at 1920×1080 renders in about 35 s with EEVEE and
-  1 min 37 s with Cycles. The viewport is GPU-bound: orbiting at 1322×762 runs at about 5 frames per second
+  1 min 37 s with Cycles without denoising. Denoising is on in a new file, and from blender -7 it really runs: the
+  same F12 then takes about **3½ minutes and ~1.5 GB of RAM** (Render Properties ▸ Sampling ▸ Denoise; Prefilter
+  Fast is about a minute shorter, unticking Denoise gives the old time). The viewport is GPU-bound: orbiting at 1322×762 runs at about 5 frames per second
   (blender 3.6.23-4; -2: 4); a 1024×600 window gives about 12, and with viewport anti-aliasing and Smooth Wires
   off (Preferences ▸ Viewport) about 15. A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
 - **Input:** click into the Blender window once before typing — keys go to the active window, and to the area
   under the mouse pointer.
-- Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, no denoiser, no Alembic/USD/OpenVDB, no `aud`
-  Python module.
+- Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, no USD/OpenVDB, slow CPU denoising, no
+  GPU subdivision, no tablet pressure.
 
 ## 12. The CPU, clocks and temperature
 
