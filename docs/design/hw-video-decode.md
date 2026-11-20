@@ -541,14 +541,23 @@ is af5e4eaa54's now): picture A, a clone of it, A deleted → `1 gone but still 
 clone deleted, picture C → `0 gone`. The 4K/1080p numbers of §10.3 should be repeated on it once (the sweep runs on
 every allocation). The bench was reserved for the owner before this could be run.
 
+**Run on the Pi** (session `v7d`, 2026-11-20 23:19–23:26, `V6_KIT=artifacts/v7`, rpivid af5e4eaa54; **measured**):
+- `rpivid-poolclone`: **PASS** (6 of 6): A deleted with its clone kept → `1 gone but still cloned`; B → `in 2
+  pictures` (a part of its own); clone and B gone, C made → `0 gone`.
+- 4K HEVC just after boot: SAND, **6.5 %**, 0 dropped, 600 of 600 pictures scanned out; 1080p after it 4.4 %, SAND.
+- After a Firefox load (3 measure runs + 6 quit cycles; below 1 GiB 53 MiB free, longest free run 0.8 MiB): 4K
+  **6.9 %**, 0 dropped, SAND; 1080p **4.4 %**, SAND. Pool after each play: `0 KiB in 0 pictures, 0 gone but still
+  cloned` (the display's and app_server's clones went: nothing lingers).
+- Ordinary pictures (`MEDIAPLAYER_SAND=0`, 1080p on rpivid, 6 picture buffers converted on the CPU): during the play
+  the report lists no "rpivid" contiguous area below 1 GiB except the pool — they are above 1 GiB now.
+- 0 debugger entries, 0 PANIC.
+
 ### 10.5 Merging and what is left
 
-- Branch `v7-rpivid-reserve` (df33d556ca, b633e5cc13, 8349d5f2db, af5e4eaa54) sits on `v6-video`: merge after series
-  B, **and only after af5e4eaa54 has passed rpivid-poolclone and one 4K/1080p round on the Pi**; without the Pi run,
-  the report (df33d556ca) and the MediaPlayer probe (8349d5f2db) can go alone, the pool cannot. The driver change is
-  additive (no API change; ffmpeg6 -7 never asks for scan-out pictures, so the pool stays unused).
-- Not verified: that rpivid's ordinary buffers now land above 1 GiB (the report lists contiguous areas below 1 GiB by
-  name; a `cat` during a `MEDIAPLAYER_SAND=0` play would show none named "rpivid").
+- Branch `v7-rpivid-reserve` (df33d556ca, b633e5cc13, 8349d5f2db, af5e4eaa54) sits on `v6-video`: **go — merge after
+  series B** (af5e4eaa54 passed on the Pi, above). The driver change is additive (no API change; ffmpeg6 -7 never asks
+  for scan-out pictures, so the pool stays unused). With it, the KNOWN-ISSUES F2 note "4K HEVC: no plane" goes, and the
+  192 MiB reserve is worth a line (the setting to give it back).
 - Not done: a pool shared with the display driver's own overlay reserve; sizing for 4K Main 10 (255 MiB) by default;
   returning the pool to the system on low memory. The cause of the scattering — the page allocator hands out the
   lowest pages first — is a kernel matter (a "DMA zone"); not changed here.

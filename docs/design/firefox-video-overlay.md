@@ -1012,7 +1012,20 @@ wide, `v7b`): **on the plane**, bt709, through an ABR switch 1024×436 → 1280�
 - Full-range BT.709 and BT.2020 stay in software; so do all VideoCore H.264 streams' real range/BT.2020 (Firefox does
   not know them; same as -10 on the plane).
 
-**Recommendation:** after Saturday's gate, ship -11 in place of -10 with that image (it has series A), once one Pi run
-on the gate image itself (series A only) repeats M1, the 601-tagged clip and a `two` run (the two hides above); the
-gate's ffmpeg6 -7 and raspberrypi_userland -4 are what it was tested with. The bench was reserved for the owner
-before that run could be made.
+**On the gate image** (session `v7c`, 2026-11-20 23:06–23:18, network boot of
+`artifacts/images/haiku-pi4-pregate-1120.img` = rpi4 552c42233d, series A only, with the gate's ffmpeg6 -7 and
+raspberrypi_userland -4; -11 installed over the image's -10 with pkgman; **measured**):
+
+| Check | Result |
+|---|---|
+| M1 Sintel MSE VP9 | **plane**, bt709 (encoding 2), through the ABR switch 1024×436 → 1280×546; Renderer 0.37 s per 10 s, Firefox team 4.7 s, idle 34.8 of 40 s, 0 dropped (as in `v7b`) |
+| H.264 1080p BT.601-tagged | **plane**, bt601, encoding 1, 526 plane frames; plane vs software max diff **1** |
+| Two videos, -11 and -10 alternating ×3 (the -10 binary extracted from its package, same boot) | -11: hides 0/1/0, 598–634 plane frames, 49–62 dropped; **-10: hides 1/0/1**, 603–619 plane frames, 66–74 dropped. The occasional hide is in -10 too: not a -11 regression |
+| Realistic page with caption | software throughout (0008), as -10 |
+| Realistic page without caption | plane when whole and still: 237 plane frames, 4 shows / 4 hides with the scrolls (as `v7b`, -10's RN1 235) |
+| Quit cycles | 10 of 10 quit in 1–3 s, 0 left, 0 mmal errors |
+| Debugger entries / PANIC | 0 / 0 for the whole session |
+
+**Recommendation: go** — ship firefox 157.0.1-11 instead of -10 in Saturday's gate, with the gate's ffmpeg6 -7 and
+raspberrypi_userland -4 (the image has series A, which -11 needs). Open, not blocking: BT.601 full range through
+Firefox untested (no stream made Firefox report it).
