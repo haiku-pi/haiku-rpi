@@ -11,10 +11,12 @@
 # plugin in ~/config/non-packaged (found before the system's); MediaPlayer, the tests and the clips in
 # /boot/home/v6. The kernel and everything else are BASE's (default artifacts/v6-video/v6-base.img: rpi4 at the
 # branch point). V6_SAND=1 stage: also libbe.so and the rpivid driver (the SAND scan-out, §9 there).
-# HAIKU_GEN: the build directory (default sources/haiku-v6/generated.arm64).
+# HAIKU_GEN: the build directory (default sources/haiku-v6/generated.arm64). V6_KIT=DIR: another kit with the same
+# layout (DIR/stage, DIR/bin; default artifacts/v6-video), e.g. artifacts/v7 for the V7 rpivid driver.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-st="$root/artifacts/v6-video/stage"
+kit="${V6_KIT:-$root/artifacts/v6-video}"
+st="$kit/stage"
 gen="${HAIKU_GEN:-$root/sources/haiku-v6/generated.arm64}"
 obj="$gen/objects/haiku/arm64/release"
 tools="$root/sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku"
@@ -60,7 +62,7 @@ start)
 	)
 	[ -f "$st/libbe.so" ] && adds+=("$st/libbe.so:$np/lib/libbe.so")
 	[ -f "$st/rpivid" ] && adds+=("$st/rpivid:$np/add-ons/kernel/drivers/video/rpivid")
-	for f in "$root"/artifacts/v6-video/bin/*; do adds+=("$f:$h/$(basename "$f")"); done
+	for f in "$kit"/bin/*; do adds+=("$f:$h/$(basename "$f")"); done
 	args=()
 	for a in "${adds[@]}"; do args+=(--add "$a"); done
 	exec "$root/scripts/pi-session.sh" start --image "$base" --minutes "$minutes" --label "$label" "${args[@]}"

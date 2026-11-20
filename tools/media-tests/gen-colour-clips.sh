@@ -17,23 +17,36 @@
 #   col-601-hevc.mp4        HEVC 1280x720, BT.601 limited (601-tagged HD on rpivid)
 #   col-709-hevc10.mp4      HEVC Main 10 1920x1080, BT.709 limited (rpivid, 10 bit)
 #   col-601full-hevc.mp4    HEVC 1920x1080, BT.601 full range (rpivid: on the SAND plane as encoding 3)
+# For Firefox (V7: its overlay passes the encoding Firefox decided on; VP9 is decoded in software there):
+#   col-2020-hd.mp4         H.264 1920x1080, BT.2020 limited      (plane encoding 9)
+#   col-601-vp9.webm        VP9 1280x720, BT.601 limited           (601-tagged HD)
+#   col-709full-vp9.webm    VP9 1280x720, BT.709 full range        (no such plane encoding: software)
+#   col-u-vp9-436.webm      VP9 1024x436, BT.601 limited, untagged (as the Sintel MSE stream of
+#                           firefox-video-overlay.md §9.7: Firefox's default applies)
+#   col-2020-vp9.webm       VP9 1280x720, BT.2020 limited
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 out="${1:-$root/artifacts/v6-video/clips}"
 mkdir -p "$out"
 ff() { ffmpeg -hide_banner -loglevel error -y "$@"; }
 
-# clip NAME SIZE MATRIX(bt601|bt709) RANGE(tv|pc) TAG(tagged|untagged) CODEC(h264|hevc|hevc10) [PIXFMT]
+# clip NAME SIZE MATRIX(bt601|bt709|bt2020) RANGE(tv|pc) TAG(tagged|untagged) CODEC(h264|hevc|hevc10|vp9) [PIXFMT]
 clip() {
 	local name=$1 size=$2 matrix=$3 range=$4 tag=$5 codec=$6 pixfmt=${7:-}
-	local space=$([ "$matrix" = bt709 ] && echo bt709 || echo smpte170m)
+	local space primaries trc
+	case $matrix in
+	bt709) space=bt709 primaries=bt709 trc=bt709 ;;
+	bt2020) space=bt2020nc primaries=bt2020 trc=bt2020-10 ;;
+	*) space=smpte170m primaries=smpte170m trc=smpte170m ;;
+	esac
 	local tags=()
-	[ "$tag" = tagged ] && tags=(-colorspace "$space" -color_range "$range" -color_primaries "$([ "$matrix" = bt709 ] && echo bt709 || echo smpte170m)" -color_trc "$([ "$matrix" = bt709 ] && echo bt709 || echo smpte170m)")
+	[ "$tag" = tagged ] && tags=(-colorspace "$space" -color_range "$range" -color_primaries "$primaries" -color_trc "$trc")
 	local enc
 	case $codec in
 	h264) enc=(-c:v libx264 -preset medium -profile:v high -g 30 -b:v 2M); pixfmt=${pixfmt:-yuv420p} ;;
 	hevc) enc=(-c:v libx265 -preset fast -x265-params "keyint=30:log-level=error"); pixfmt=${pixfmt:-yuv420p} ;;
 	hevc10) enc=(-c:v libx265 -preset fast -profile:v main10 -x265-params "keyint=30:log-level=error"); pixfmt=yuv420p10le ;;
+	vp9) enc=(-c:v libvpx-vp9 -b:v 1M -g 30 -deadline good -cpu-used 4); pixfmt=${pixfmt:-yuv420p} ;;
 	esac
 	# untagged x264/x265 still write VUI from the frames' tags: the frames carry none (setparams unknown)
 	ff -f lavfi -i "pal75bars=size=$size:rate=30" -t 10 \
@@ -53,3 +66,8 @@ clip col-709-hevc.mp4 1920x1080 bt709 tv tagged hevc
 clip col-601-hevc.mp4 1280x720 bt601 tv tagged hevc
 clip col-709-hevc10.mp4 1920x1080 bt709 tv tagged hevc10
 clip col-601full-hevc.mp4 1920x1080 bt601 pc tagged hevc
+clip col-2020-hd.mp4 1920x1080 bt2020 tv tagged h264
+clip col-601-vp9.webm 1280x720 bt601 tv tagged vp9
+clip col-709full-vp9.webm 1280x720 bt709 pc tagged vp9
+clip col-u-vp9-436.webm 1024x436 bt601 tv untagged vp9
+clip col-2020-vp9.webm 1280x720 bt2020 tv tagged vp9

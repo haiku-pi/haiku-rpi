@@ -253,7 +253,7 @@ Copies per 720p frame:
 | Several videos | One plane per window (one overlay per `BView`); the largest qualifying one gets it, the rest stay in software |
 | No free plane (six in use, low memory below 1 GiB), mode change (`Bits()` NULL / `LockBits()` fails while suspended, video-overlay §3.1) | `false` → software for that frame; retry on a later frame |
 | 10-bit HEVC (`hevc_rpivid` yuv420p10le), 4:2:2/4:4:4, RGB video | Software (MediaPlayer converts 10-bit with swscale; Firefox gets no such step) |
-| Colour space | The accelerant picks BT.709 from 720 lines, BT.601 below, limited range (video-overlay §5); Firefox knows the stream's (`GetYUVColorSpace()`, range). Use the plane only when they agree; software otherwise until a colour-space field reaches the accelerant (open in video-overlay §5) |
+| Colour space | The accelerant picks BT.709 from 720 lines, BT.601 below, limited range (video-overlay §5); Firefox knows the stream's (`GetYUVColorSpace()`, range). Use the plane only when they agree; software otherwise until a colour-space field reaches the accelerant (open in video-overlay §5). **-11 (§9.8):** the encoding goes with `SetViewOverlay()`; BT.601/BT.709 limited and BT.601 full range on the plane, the rest in software |
 | Fullscreen | The plane scales; the window's bitmap is the key only. The best case |
 | Screenshots | Black where the plane is (gpu-stage6 §3.4), as for MediaPlayer |
 
@@ -928,3 +928,74 @@ streams under 720 lines are composited in software (`colour-space`).
 Harness: `ffv-a1.sh` takes a URL as CLIP (`NET=1` opens the network), mode `url` (a whole web page), and mode
 `dash` (a DASH manifest through dash.js; `DASHCODEC` picks the codec). Results: `artifacts/ffa1/W1–W7.*`,
 `M1.*`, `M2.*`, `W8.*`, `W9.*`, `F1{0,1,2}-tail.out`, `syslog-ffa1{0,1,2}-session.txt`.
+
+### 9.8 -11: the stream's encoding goes to the plane (2026-11-20; sessions `v7a` 10:10–10:43, `v7b` 10:58–11:21; **measured**)
+
+The colour-space rule of §2.4 (plane only when Firefox's colour space equals the accelerant's guess: BT.709 from 720
+lines, else BT.601, limited range) is replaced by passing the encoding (video-overlay.md §7, app_server series A, in
+`rpi4` since 552c42233d).
+
+**Change (patches/firefox 0006, regenerated; 0007/0008 unchanged and still apply):** `RenderCompositorSWGL::PresentOnPlane`
+maps `Rec601Narrow` → BT.601, `Rec601Full` → BT.601 full range, `Rec709Narrow` → BT.709; `HaikuVideoOverlay` or's
+`B_OVERLAY_YCbCr_BT601|_BT709|_FULL_RANGE` (local constants: the build's sysroot headers predate them) into every
+`SetViewOverlay()` call, flips included (app_server applies them before each configuration). Everything else
+(`Rec709Full`, `Rec2020Narrow`, `Rec2020Full`, `GbrIdentity`) stays `colour-space` → software. BT.2020 was passed to
+the plane in the first -11 build (`v7a`) and came out up to 11 off the software path (below), so the final -11 keeps it
+in software. The HVO log lines name the encoding (`1920x1080 bt601 at ...`, a new `HVO encoding` line when it changes
+while shown). Firefox's own default for untagged video is untouched.
+
+**Package:** firefox 157.0.1-11, `artifacts/packages-test/firefox-11/firefox-157.0.1-11-arm64.hpkg` (101 379 831
+bytes, sha256 1a5df4c4…), built incrementally (`FIREFOX_REVISION=11 FIREFOX_PKG_OUT=...`; compile + link under a minute,
+then stage + package). Not published. The objdir and `artifacts/firefox/non-packaged` now hold -11; the -10 package is
+unchanged in `artifacts/packages-test/firefox-a1b2/` and `artifacts/firefox/`.
+
+**Colours** (`tools/pi-tests/ffv-colour.sh`: each clip in `ffv-a1.sh measure` twice, plane and `OVL=0`, an HDMI frame
+24 s after the start; `colour-bars.py`, 1280×720 `<video>`; clips from `gen-colour-clips.sh`, 4 new ones). "Firefox
+says" is the encoding in the HVO line, "driver" the plane's `encoding` in the display driver's statistics:
+
+| Clip | Firefox says | -10 | **-11** | driver | plane vs software, max |
+|---|---|---|---|---|---|
+| H.264 720×480 BT.601 | bt601 | plane | plane, 493 frames | 1 | **1** |
+| H.264 1080p BT.709 | bt709 | plane | plane, 532 | 2 | **3** |
+| H.264 1080p BT.601-tagged | bt601 | software (`colour-space`) | **plane**, 529 | 1 | **1** |
+| H.264 1080p BT.601 untagged | bt709 | plane | plane, 529 | 2 | **2** |
+| H.264 1080p BT.601 full range | bt709 (range and matrix not seen) | plane | plane, 505 | 2 | **3** |
+| H.264 1080p BT.709 full range | bt709 (range dropped) | plane | plane, 542 | 2 | 5 (blue 187 vs 192: both read the same out-of-range samples as limited range; -10 did the same) |
+| H.264 1080p BT.2020 | bt709 (tag dropped) | plane | plane, 528 | 2 | **3** |
+| VP9 720p BT.601 | bt601 | software (`colour-space`) | **plane**, 584 | 1 | **1** |
+| VP9 720p BT.709 full range | not 601/709 limited (`colour-space`) | software | software (`colour-space`) | — | 0 |
+| **VP9 1024×436 untagged (as M1)** | **bt709** | software (`colour-space`) | **plane**, 570 | 2 | **2** |
+| VP9 720p BT.2020 | bt2020 (first -11's log) | software | first -11: plane at encoding 9, **11 off** (cyan 0,179,180 vs 1,188,182); final: software | — | 0 |
+
+So Firefox's default for an untagged VP9 stream is BT.709 whatever its height: that is why §9.7's M1 fell back. The
+VideoCore H.264 clips reach Firefox's colour space only as far as the BT.601 matrix: their full-range flag and the
+BT.2020 tag do not (why was not traced). Either way the plane shows what software shows, which is all -11 can do.
+
+**Same-size source switch** (`switch`, 601-tagged → 709 1080p in one `<video>`): plane at encoding 1, a hide/show
+around the new decoder, then encoding 2; colours of both right (ideal diff 9 and 13, as the clips alone).
+
+**M1 again** (dash.js, Shaka's Sintel DASH `storage.googleapis.com/shaka-demo-assets/sintel/dash.mpd`, VP9 ≤ 1280
+wide, `v7b`): **on the plane**, bt709, through an ABR switch 1024×436 → 1280×546 (3 shows, 2 hides); Renderer
+**0.35 s** per 10 s (-10: Renderer + SwComposite 4.7 s), whole Firefox team 4.7 s (-10: 10.9 s), idle 34.8 of 40 s (-10:
+23.8), 0 dropped of 240 while measured.
+
+**The -10 checks on -11** (`v7b`, ffmpeg6 -7 + raspberrypi_userland -4 as for the gate):
+
+| Check | -11 | -10 (§9.6) |
+|---|---|---|
+| 720p H.264 plain page, Renderer + SwComposite per 10 s | 0.57 s, 0 dropped, 303 plane frames, 0 window frames | 0.90–0.96 s |
+| Realistic page with the translucent caption (`real`) | software throughout (0008), as -10's RE3 | same |
+| Realistic page without caption (`real NOCAP=1`) | plane when wholly visible and still: 237 plane frames, 4 shows / 4 hides while scrolling | RN1: 235 |
+| Two videos | the larger on the plane (571 frames) | works |
+| Quit cycles | 10 single + 6 two-video: quit in 1 s each, 0 left, 0 debugger entries, 0 mmal errors | 0 in 90 |
+| Debugger entries / PANIC, whole sessions | 0 / 0 | 0 |
+
+**Limits:**
+- -11 needs app_server + accelerant with series A (rpi4 ≥ 552c42233d: the 2026-11-21 gate image onwards). On an
+  older image the options are ignored and the display guesses: then a 601-tagged HD or an untagged sub-720 VP9 stream
+  shows shifted hues on the plane where -10 used software. The package does not state this dependency.
+- Full-range BT.709 and BT.2020 stay in software; so do all VideoCore H.264 streams' real range/BT.2020 (Firefox does
+  not know them; same as -10 on the plane).
+
+**Recommendation:** after Saturday's gate, ship -11 in place of -10 together with that image (it has series A); the
+gate's ffmpeg6 -7 and raspberrypi_userland -4 are what it was tested with.

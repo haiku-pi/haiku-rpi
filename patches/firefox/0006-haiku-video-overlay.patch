@@ -3,10 +3,12 @@ Firefox <video> on Haiku's YUV overlay plane (docs/design/firefox-video-overlay.
 WebRender's software compositor (SwCompositor) offers the largest planar YUV
 compositor surface of each frame to the compositor (MappableCompositor::
 present_on_plane, false by default). On Haiku, RenderCompositorSWGL accepts
-8-bit 4:2:0 pictures shown whole and unflipped, in the colour space the display
-assumes (BT.709 from 720 lines on, BT.601 below, limited range), and hands them
-to the window's HaikuVideoOverlay: the planes are copied into a B_YUV420 overlay
-bitmap (three, rotating) shown with BView::SetViewOverlay(). SwCompositor then
+8-bit 4:2:0 pictures shown whole and unflipped and hands them to the window's
+HaikuVideoOverlay: the planes are copied into a B_YUV420 overlay bitmap (three,
+rotating) shown with BView::SetViewOverlay(), whose options name the picture's
+YCbCr encoding (B_OVERLAY_YCbCr_*: BT.601 or BT.709 limited range, BT.601 full
+range; an app_server without them shows BT.709 from 720 lines on, BT.601
+below, limited range). SwCompositor then
 fills the surface's rectangle with the overlay's colour key instead of
 converting the picture (composite_yuv). app_server shows the plane through the
 key; anything drawn over the video covers it.
@@ -15,7 +17,8 @@ Software as before, for that frame, while the rectangle moves (the plane must
 not lag the window by a frame; back on the plane after 2 still frames, 15
 within a second of leaving it, so a slow scroll does not flip it every few
 frames), for a partly visible, cropped, flipped or
-rounded-clipped video, a second smaller video, other formats and colour spaces,
+rounded-clipped video, a second smaller video, other formats, encodings the
+plane does not show as the software path does (BT.2020, full-range BT.709, RGB),
 no free plane (retried after 1 s), suspended overlays (mode change). The plane
 is left once a software frame has been drawn over its rectangle.
 
@@ -422,7 +425,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
    return frameId;
  }
  
-@@ -308,5 +343,72 @@
+@@ -308,5 +343,83 @@
  #endif
  }
  
@@ -476,17 +479,28 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +    }
 +    planes[i] = {static_cast<const uint8_t*>(plane.mData), plane.mStride, w, h};
 +  }
-+  // the display converts with BT.709 from 720 lines on, BT.601 below, limited
-+  // range (Firefox's default for untagged video is the same)
-+  const wr::YuvRangedColorSpace expected =
-+      height >= 720 ? wr::YuvRangedColorSpace::Rec709Narrow
-+                    : wr::YuvRangedColorSpace::Rec601Narrow;
-+  if (aInfo.color_space != expected) {
-+    mVideoOverlay->Decline(Reason::ColorSpace);
-+    return false;
++  // the plane converts in the picture's encoding; it has no full-range BT.709
++  // or BT.2020, and its BT.2020 (the firmware's REC_2020) is up to 11 off what
++  // the software path shows for the same picture (VP9 colour bars on HDMI,
++  // firefox-video-overlay.md §9.8): those stay in software
++  using Encoding = widget::HaikuVideoOverlay::Encoding;
++  Encoding encoding;
++  switch (aInfo.color_space) {
++    case wr::YuvRangedColorSpace::Rec601Narrow:
++      encoding = Encoding::BT601;
++      break;
++    case wr::YuvRangedColorSpace::Rec601Full:
++      encoding = Encoding::BT601Full;
++      break;
++    case wr::YuvRangedColorSpace::Rec709Narrow:
++      encoding = Encoding::BT709;
++      break;
++    default:
++      mVideoOverlay->Decline(Reason::ColorSpace);
++      return false;
 +  }
 +  return mVideoOverlay->Present(
-+      wr::AsUint64(aExternalImage), planes,
++      wr::AsUint64(aExternalImage), planes, encoding,
 +      LayoutDeviceIntRect(aDstRect.min.x, aDstRect.min.y, aDstRect.width(),
 +                          aDstRect.height()),
 +      aKey);
@@ -513,7 +527,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
      size_t bytes = 0;
 --- a/widget/haiku/HaikuVideoOverlay.h
 +++ b/widget/haiku/HaikuVideoOverlay.h
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,129 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -569,7 +583,8 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +    NotWhole,     // partly visible, flipped, or a rounded clip
 +    Cropped,      // only part of the picture shown
 +    Format,       // not 8-bit planar 4:2:0 YUV
-+    ColorSpace,   // not what the display assumes (BT.709 from 720 lines on)
++    ColorSpace,   // an encoding the plane does not show right (BT.2020, full-
++                  // range BT.709)
 +    Unstable,     // the rectangle changed in the last frame (scrolling)
 +    NoPlane,      // no overlay bitmaps (no free plane or memory)
 +    Suspended,    // overlays suspended (mode change)
@@ -578,13 +593,18 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +    Count
 +  };
 +
++  // The YCbCr encoding of a picture, as the plane can show it (limited range
++  // unless named).
++  enum class Encoding : uint8_t { BT601, BT601Full, BT709 };
++
 +  explicit HaikuVideoOverlay(nsWindow* aWindow);
 +  ~HaikuVideoOverlay();
 +
-+  // A picture of WIDTHxHEIGHT (aPlanes: Y, Cb, Cr) to show at aDst (view
-+  // coordinates); aImageId identifies the picture (an unchanged picture is not
-+  // copied again). True: shown, *aKey is the BGRA8 key to fill aDst with.
-+  bool Present(uint64_t aImageId, const Plane aPlanes[3],
++  // A picture of WIDTHxHEIGHT (aPlanes: Y, Cb, Cr) in aEncoding to show at
++  // aDst (view coordinates); aImageId identifies the picture (an unchanged
++  // picture is not copied again). True: shown, *aKey is the BGRA8 key to fill
++  // aDst with.
++  bool Present(uint64_t aImageId, const Plane aPlanes[3], Encoding aEncoding,
 +               const LayoutDeviceIntRect& aDst, uint32_t* aKey);
 +  void Decline(Reason aReason);
 +  // After the window drew a frame (aDrawn: the bounds of what it drew, empty
@@ -611,6 +631,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +  int32_t mHeight = 0;
 +  int mNext = 0;          // the bitmap filled next
 +  bool mShown = false;    // SetViewOverlay done
++  Encoding mEncoding = Encoding::BT601;  // of the picture shown
 +  bool mPresented = false;  // a picture presented this frame
 +  bool mOffered = false;    // Present() or Decline() this frame
 +  int mIdleFrames = 0;      // composites without a picture while shown
@@ -638,7 +659,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +#endif  // mozilla_widget_HaikuVideoOverlay_h
 --- a/widget/haiku/HaikuVideoOverlay.cpp
 +++ b/widget/haiku/HaikuVideoOverlay.cpp
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,311 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -663,6 +684,30 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +    "unstable", "no-plane", "suspended", "window", "not-offered"};
 +static_assert(sizeof(kReasonNames) / sizeof(kReasonNames[0]) ==
 +              size_t(HaikuVideoOverlay::Reason::Count));
++
++// SetViewOverlay() options naming the picture's YCbCr encoding: InterfaceDefs.h's
++// B_OVERLAY_YCbCr_BT601, _BT709 and _FULL_RANGE (haiku-pi rpi4 since
++// 552c42233d; the build's headers may predate them). An older app_server
++// ignores them and the display guesses (BT.709 from 720 lines on, BT.601
++// below, limited range).
++static const uint32 kOverlayYCbCrBT601 = 0x00100000;
++static const uint32 kOverlayYCbCrBT709 = 0x00200000;
++static const uint32 kOverlayYCbCrFullRange = 0x00400000;
++
++static uint32 EncodingOptions(HaikuVideoOverlay::Encoding aEncoding) {
++  using Encoding = HaikuVideoOverlay::Encoding;
++  switch (aEncoding) {
++    case Encoding::BT601:
++      return kOverlayYCbCrBT601;
++    case Encoding::BT601Full:
++      return kOverlayYCbCrBT601 | kOverlayYCbCrFullRange;
++    case Encoding::BT709:
++      return kOverlayYCbCrBT709;
++  }
++  return 0;
++}
++
++static const char* const kEncodingNames[] = {"bt601", "bt601-full", "bt709"};
 +
 +// a window lock taken from the render thread: never wait long for it
 +static const bigtime_t kLockTimeout = 100000;
@@ -700,9 +745,9 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +  }
 +  fprintf(stderr,
 +          "HVO %s: plane %u same %u shows %u hides %u; window frames %u clean %u;"
-+          " %dx%d at %d,%d %dx%d; software:%s\n",
++          " %dx%d %s at %d,%d %dx%d; software:%s\n",
 +          aWhat, mPlaneFrames, mSameFrames, mShows, mHides, mWindowFrames,
-+          mCleanFrames, mWidth, mHeight,
++          mCleanFrames, mWidth, mHeight, kEncodingNames[size_t(mEncoding)],
 +          mShownRect.x, mShownRect.y, mShownRect.width, mShownRect.height,
 +          used ? declined : " 0");
 +}
@@ -762,6 +807,7 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +}
 +
 +bool HaikuVideoOverlay::Present(uint64_t aImageId, const Plane aPlanes[3],
++                                Encoding aEncoding,
 +                                const LayoutDeviceIntRect& aDst,
 +                                uint32_t* aKey) {
 +  MutexAutoLock lock(mLock);
@@ -795,7 +841,8 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +  }
 +
 +  // the same picture again (the frame was composited for something else)
-+  if (mShown && aImageId == mShownImage && aDst.IsEqualEdges(mShownRect)) {
++  if (mShown && aImageId == mShownImage && aEncoding == mEncoding &&
++      aDst.IsEqualEdges(mShownRect)) {
 +    mSameFrames++;
 +    mPresented = true;
 +    *aKey = mKey;
@@ -839,12 +886,13 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +  }
 +  // The first call configures the plane, under the desktop until the key
 +  // reaches the window (after this frame's composite); later ones flip it at
-+  // the next vertical blank.
++  // the next vertical blank. Each one names the picture's encoding.
 +  const BRect dstRect(aDst.x, aDst.y, aDst.XMost() - 1, aDst.YMost() - 1);
 +  rgb_color key;
 +  const status_t status = view->SetViewOverlay(
 +      bitmap, bitmap->Bounds(), dstRect, &key, B_FOLLOW_LEFT_TOP,
 +      B_OVERLAY_FILTER_HORIZONTAL | B_OVERLAY_FILTER_VERTICAL |
++          EncodingOptions(aEncoding) |
 +          (mShown ? B_OVERLAY_TRANSFER_CHANNEL : 0));
 +  window->Unlock();
 +  if (status != B_OK) {
@@ -857,11 +905,15 @@ MOZ_HAIKU_VIDEO_OVERLAY=0 turns it off; MOZ_HAIKU_VIDEO_OVERLAY_LOG=1 prints
 +  }
 +  mKey = 0xff000000u | uint32_t(key.red) << 16 | uint32_t(key.green) << 8 |
 +         key.blue;
++  const bool encodingChanged = mShown && aEncoding != mEncoding;
++  mEncoding = aEncoding;
 +  if (!mShown) {
 +    mShown = true;
 +    mShows++;
 +    mShownRect = aDst;
 +    Log("show");
++  } else if (encodingChanged) {
++    Log("encoding");
 +  }
 +  mShownImage = aImageId;
 +  mNext = (mNext + 1) % kBitmaps;

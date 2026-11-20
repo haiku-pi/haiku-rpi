@@ -354,3 +354,20 @@ scripts/build.sh --generated sources/haiku-v6/generated.arm64 --light libbe.so a
   bcm2711_display.accelerant bcm2711_display rpivid ffmpeg MediaPlayer                         # then: the changed parts
 V6_SAND=1 tools/pi-tests/v6-session.sh stage
 ```
+
+## 9. V7 (2026-11-20): Firefox passes its encoding; BT.2020 on the plane is off; 4K on the plane
+
+- **Firefox** (patches/firefox 0006, firefox 157.0.1-11 test package): §7.4 done — `RenderCompositorSWGL` maps
+  `Rec601Narrow`/`Rec601Full`/`Rec709Narrow` to the `B_OVERLAY_YCbCr_*` options of every `SetViewOverlay()` call and no
+  longer compares with the accelerant's guess. Results in firefox-video-overlay.md §9.8.
+- **BT.2020 is not right on the plane (measured, session `v7a`):** a VP9 1280×720 clip of the colour bars converted
+  with the BT.2020 matrix (gen-colour-clips.sh `col-2020-vp9.webm`), shown by Firefox on the plane as `color_encoding`
+  9 (the driver line says `encoding 9`), is **up to 11 off** Firefox's software path (cyan 0,179,180 against 1,188,182;
+  magenta 190,5,182 against 180,1,182), and the software path is the one within the capture's error of the source.
+  That fits the probe of §7.1 (code 9 behaves close to BT.709 plus something; not the BT.2020 matrix). So Firefox -11
+  keeps BT.2020 in software. **MediaPlayer with series A still sends BT.2020 as code 9** (not measured with
+  MediaPlayer: no BT.2020 clip was played there); the accelerant should probably refuse `B_OVERLAY_YCbCr_BT2020`
+  (B_NOT_SUPPORTED) so that the plugin converts. Not changed here (series A is in the gate).
+- **4K on the plane**: 4K HEVC now plays on the SAND plane (hw-video-decode.md §10): the rpivid scan-out pool and
+  MediaPlayer's smaller overlay probe. `overlaytest -s sand|yuv420 -x 3840x2160` pass (the display scales 4K
+  overlays down to the 1920×1080 mode).

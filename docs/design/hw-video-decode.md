@@ -429,7 +429,8 @@ plane's updates in the driver's statistics; the decoder's own counters at the en
   no saving either. Cause not established: no picture or imported buffer was left over, and in v6s3 one 4K attempt
   left neither extra display buffers nor a 1080p fallback (v6s1 had run 4K four times, one of them with the old
   hwaccel that froze). A reserved region in the rpivid driver (as the display driver reserves its overlay buffers at boot)
-  would remove that; not done.
+  would remove that; not done. → Done in V7: §10 (cause: wired pages scattered through the first GiB; fix: a pool
+  taken at boot).
 - Before the up-front reserve, a 4K stream got 3 scan-out pictures, fell back to the CPU path and the plugin repeated
   its last frame (a frozen picture): the reserve fixed that. The plugin still repeats the last picture if a stream
   falls back to the CPU *later* (a later PPS the block refuses, a picture the block fails): the video stands until the
@@ -437,6 +438,99 @@ plane's updates in the driver's statistics; the decoder's own counters at the en
   cannot reserve its scan-out pictures or its three retries are used up. A known limit (rare streams), not handled.
 - The decoder holds the last 8 frames it handed out; a seek decodes frames nobody shows, so the picture on the screen
   can be reused before it is replaced. Not seen in the seek test; a consumer-side release would be exact.
-- 4K: no plane either way (memory); `ffmpeg -c:v h264_mmal` frame rate: see video-overlay.md §7.5.
+- 4K: no plane either way (memory; on the plane since V7, §10); `ffmpeg -c:v h264_mmal` frame rate: see video-overlay.md §7.5.
 - Firefox and other media-kit clients are not affected: SAND is only given to a caller that asks for
   `B_YUV420_SAND128`.
+
+## 10. Scan-out memory: a pool taken at boot (V7, 2026-11-20; haiku-pi/haiku `v7-rpivid-reserve`, on `v6-video`)
+
+§9.4 left two misses: 4K never got its scan-out pictures, and late in a long session even 1080p fell back. Both are
+about the physical memory below 1 GiB, the only memory the display scans out.
+
+### 10.1 Why the memory below 1 GiB runs out (session `v7a`, 10:10–10:43, the V6 kit with a diagnostic rpivid; **measured**)
+
+df33d556ca makes `cat /dev/video/rpivid/0` report that memory: pages per state, the longest runs a contiguous
+allocation could take, how many 12.7 MiB (a 4K scan-out picture) and 3.2 MiB (1080p) runs fit, a map in 1 MiB cells
+(what blocks a run there: wired pages, mapped user pages), and the kernel's contiguous areas there by name. Snapshots
+(MiB below 1 GiB; runs = free or cached pages, which `vm_page_allocate_page_run()` can take):
+
+| When | free | cached | wired | inactive + active | longest run | 12.7 MiB runs | 3.2 MiB runs |
+|---|---|---|---|---|---|---|---|
+| desktop up, ~1 min after boot | 509 | 144 | 204 | 89 | 486 MiB | 40 | 162 |
+| after `pkgman install` (ffmpeg6 -8 + userland -4) | 287 | 362 | 208 | 88 | 249 MiB | 24 | 127 |
+| after one HEVC 1080p SAND play | 299 | 346 | 210 | 90 | 136 MiB | 15 | 108 |
+| after one 4K attempt and another 1080p play | 323 | 323 | 210 | 89 | 136 MiB | 14 | 99 |
+| after ~20 Firefox runs (§9.8 of the Firefox doc) | 206 | 413 | 239 | 86 | **10 MiB** | **0** | **19** |
+| end of session | 221 | 395 | 240 | 88 | 6 MiB | 0 | 13 |
+
+(Plus, in every snapshot, 76 MiB of the VideoCore's memory at the top, and ~118 MiB wired just under it that no
+kernel area holds: early boot allocations.)
+
+- **Every page the system allocates comes from the lowest free memory first.** `vm_page_init()` puts the pages on the
+  free list in address order, allocations take its head, and freed pages are put back at the head. So the file cache
+  of a package install, a player, a browser walk up through the first GiB within minutes, and once used, a page is
+  reused before any untouched one. The map shows it: at boot 345–830 MiB are free; after Firefox, nearly every MiB up
+  to 830 holds wired pages (`w`).
+- **What blocks a run is wired pages**, not cached ones (cached pages are stolen by the run allocator already), and
+  Haiku cannot move wired pages: retrying or "compaction" cannot help. Only memory taken before it is scattered does.
+- The rpivid driver itself made it worse: contiguous allocations take the lowest run that fits, so a 4K stream's
+  ordinary pictures (old path) took ~190 MiB of low memory and gave it back to the head of the free list.
+- **4K on a fresh boot got its 15 scan-out pictures** (40 runs free), but then **MediaPlayer's overlay probe failed**:
+  it tests "an overlay of this space can be had" with an app_server-allocated SAND bitmap of the video's size, 12.4 MB
+  more below 1 GiB, which was no longer there (`VideoConsumer::CreateBuffers - no <unknown format> overlay: Out of
+  memory`, then the B_YUV420 overlay buffer failed the same way, `vm_page_allocate_page_run(): Failed to allocate run
+  of length 3038`): B_RGB32, **78.6 %, 367 dropped** (as §9.3). `overlaytest -s sand -x 3840x2160` and `-s yuv420 -x
+  3840x2160` pass when the memory is there: the display shows 4K overlays.
+- **The late 1080p fallback reproduced** after the Firefox runs: `no room for 15 pictures`, B_YUV420, **23.0 %** of a
+  CPU (SAND: 4.4 %).
+
+The rpivid driver is probed at boot (the syslog has its `block ...` line before the desktop starts), early enough to
+take memory before it is scattered — as the display driver takes its four overlay buffers when app_server starts.
+
+### 10.2 Fix (branch `v7-rpivid-reserve`, 3 commits on `v6-video` 25b4611377)
+
+| Commit | Change |
+|---|---|
+| df33d556ca rpivid | the low memory report above (kept: it is how a fallback is diagnosed on a user's machine) and a syslog line when a scan-out picture cannot be had |
+| b633e5cc13 rpivid | **a scan-out pool taken in `init_driver`**: one contiguous area below 1 GiB ("rpivid scan-out pool"); scan-out pictures are first-fit extents of it, each an area of its own (`map_physical_memory()` of its part, write-back, so the client's and app_server's clones and the display's import work as before), cleared before it is handed out (no picture of one client shows through to the next); a picture that does not fit is allocated as before. Size: driver settings `rpivid`, `scan_out_pool <MiB>`; default 192 MiB (one 4K 8-bit stream: 15 × 12.7 MiB), at most 1/16 of the memory, 0 = none. The driver's other memory (ordinary pictures, bitstreams, scratch) is now taken above 1 GiB when it can be (`low_address` 1 GiB, then anywhere) |
+| 8349d5f2db MediaPlayer | the SAND overlay probe is a 128×64 bitmap: it checks the space and the overlay channel, not 12 MB of low memory per stream |
+
+Neither the API nor ffmpeg6 -8 changes. A larger pool is needed for 4K Main 10 (15 × ~17 MiB = 255 MiB) or two
+streams at once.
+
+### 10.3 Pi results (session `v7b`, 10:58–11:21: the V6 kit, `artifacts/v7/stage` = v6-video's binaries + rpivid and MediaPlayer of 8349d5f2db; ffmpeg6 -8 + raspberrypi_userland -4 for MediaPlayer, firefox -11 + ffmpeg6 -7 for the Firefox runs in between; **measured**)
+
+- Boot: `rpivid: scan-out pool: 192 MiB at 0x42b1000` (in the syslog before the desktop). The rest of the first GiB
+  still had a 297 MiB run when the desktop was up.
+- MediaPlayer, `video-overlay.sh play` (20 s from 5 s after the start, `teamstat`), every 4K run SAND on the plane:
+
+| Run | HEVC 2160p30 (old path: 78.6 %, 358–367 dropped, B_RGB32) | HEVC 1080p30 right after it |
+|---|---|---|
+| early 1 (just after boot) | **5.7 %**, 0 dropped, 600 of 600 pictures handed out as they are, plane 599 updates per 20 s (image type 19) | 4.4 %, SAND, 0 dropped |
+| early 2 | 6.5 %, 0 dropped, 600 of 600 | 4.3 %, SAND |
+| early 3 | 6.7 %, 0 dropped, 600 of 600 | 4.2 %, SAND |
+| **late 1** (after ~30 Firefox starts of firefox-video-overlay.md §9.8: 0 runs of 12.7 MiB and a 0.6 MiB longest free run left outside the pool) | **7.0 %**, 0 dropped, 600 of 600 | **4.3 %**, SAND (v7a, same state without the pool: B_YUV420, 23.0 %) |
+| late 2 | 6.8 %, 0 dropped | 4.4 %, SAND |
+
+  Also early: HEVC Main 10 1080p30 4.8 %, 720p30 3.0 %, both SAND, 0 dropped. An HDMI frame of the 4K clip on the
+  plane (`artifacts/v7/out/v7b-4k-plane.png`) shows it right. The pool's peak is 189 960 KiB (15 pictures).
+- **Two streams**: 4K in one MediaPlayer, then HEVC 1080p in a second: the pool held the 4K stream's 15 pictures, 2 of
+  the 1080p stream's fit, 13 "did not fit" and were allocated below 1 GiB as before (3.2 MiB runs were still there);
+  the 1080p stream played at 6.1 %, 0 dropped (its output space was not logged).
+- **kill -9** of MediaPlayer while 4K plays: the pool is back to `0 KiB in 0 pictures`.
+- **Memory left for applications**: the pool is 192 MiB of the 3.86 GiB the system manages (4.9 %); `sysinfo -mem` at
+  boot: 506 MB used (with the pool), 3.64 GB free. The pool is taken whether or not HEVC is ever played; `scan_out_pool
+  0` in `~/config/settings/kernel/drivers/rpivid` gives it back (the old behaviour).
+- 0 debugger entries, 0 PANIC in the session.
+
+### 10.4 Merging and what is left
+
+- Branch `v7-rpivid-reserve` (df33d556ca, b633e5cc13, 8349d5f2db) sits on `v6-video`: merge after series B. The
+  driver change is additive (no API change; ffmpeg6 -7 never asks for scan-out pictures, so the pool stays unused).
+- Not done: a pool shared with the display driver's own overlay reserve; sizing for 4K Main 10 (255 MiB) by default;
+  returning the pool to the system on low memory. The cause of the scattering — the page allocator hands out the
+  lowest pages first — is a kernel matter (a "DMA zone"); not changed here.
+- To rebuild: `sources/haiku-v7/generated.arm64` was deleted after the session (2.9 GB). Recreate it as §9's V6 note
+  says, with `haiku-v7` in place of `haiku-v6`; then `scripts/build.sh --generated sources/haiku-v7/generated.arm64
+  --light rpivid MediaPlayer` (a light build of just these two works from an empty configured directory: jam builds
+  what they need, ~1 minute each) and `V6_KIT=artifacts/v7` for `tools/pi-tests/v6-session.sh`.
