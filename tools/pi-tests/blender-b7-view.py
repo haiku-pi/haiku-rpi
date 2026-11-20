@@ -55,7 +55,10 @@ def steps():
     scene.cycles.preview_samples = 8
     scene.cycles.use_preview_adaptive_sampling = False
     scene.cycles.use_preview_denoising = DENOISE
-    scene.cycles.preview_denoiser = 'OPENIMAGEDENOISE'
+    try:
+        scene.cycles.preview_denoiser = 'OPENIMAGEDENOISE'
+    except TypeError:  # a build without OpenImageDenoise (blender -6 and earlier): only 'AUTO'
+        say("no OpenImageDenoise in this build")
     scene.cycles.preview_denoising_start_sample = 1
     window, area = view3d()
     space = area.spaces.active

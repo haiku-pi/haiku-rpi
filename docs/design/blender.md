@@ -887,7 +887,8 @@ fftw`, then the Blender steps) and `artifacts/packages-test/blender-7/` (not pub
   The compositor's Denoise node renders. PNGs are in `b7/renders/`, checked by eye: glass, metal and the shadows
   are clean where the 16-sample render is grainy.
 - **Viewport:** the Rendered (Cycles) viewport drew **Blender's icon sheet** instead of the render (frame
-  `b7/view/view-denoised.png`). This is not a denoiser problem, and it is in -6 too (same code):
+  `b7/view/view-denoised.png`). This is not a denoiser problem:
+  - **Measured with the published -6 as well** (session bb7c, `b7/view-6/view-noisy.png`: the icon sheet).
   - **Cause:** GHOST_SDL creates contexts with `SDL_GL_SHARE_WITH_CURRENT_CONTEXT`, and SDL 2 shares only with the
     context *current* on the calling thread. Cycles' display context is created right after the draw manager
     releases its own, with nothing current (a diagnostic print confirmed it). So the new context had its own object
@@ -922,8 +923,12 @@ at run time (`import_array`), so this needs a NumPy package for Python 3.10, not
   - `aud.Sound.sine(440).limit(0, 1).data()` returns `ndarray (48000, 1) float32`;
   - `aud.Sound.buffer()` takes the array;
   - in a GUI Blender, `aud.Device()` plays it, and `handle.position` is **0.6 after 0.6 s**.
-- Headless (`-b`), `aud.Device('SDL')` failed twice ("The audio device couldn't be opened with SDL"); both were the
-  first sound of that boot. It worked in the run after a GUI one. Not investigated further.
+- `aud.Device('SDL')` fails ("The audio device couldn't be opened with SDL"); `aud.Device()` works, headless too.
+  A 2×2 on a fresh boot (session bb7c, before any other sound) settled it: `-b` + `Device()` played, `-b` +
+  `Device('SDL')` failed twice, GUI + `Device('SDL')` failed, GUI + `Device()` played. Blender has already opened
+  its SDL sound device (also with `-b`), and `Device()` returns that one. Opening a second SDL device in the
+  same team fails: a limit of SDL's Haiku audio backend, not of the port. (A first reading of session bb7 had
+  blamed `-b`; the two failing runs there used `'SDL'`.)
 - blender -7 **requires numpy_python3.10**, because no NEEDED entry shows that requirement.
 
 **Cheap F12 items done:**
@@ -945,6 +950,15 @@ at run time (`import_array`), so this needs a NumPy package for Python 3.10, not
   - M5: EEVEE factory 34.9 s and scene 56.4 s (-2: 35 s and 57 s), the SSS message once; Cycles scene 82.7 s
     (-2: 69 s; its factory settings denoise now).
   - Session: 0 debugger entries, 0 PANIC (UART `20261120-074416-session-bb7.log`).
+- **GUI coverage of the final package** (session bb7c 09:27–09:49, `b7/session2.txt`, 0 debugger entries, 0 PANIC):
+  - M4 on the staged tree (the same binary): 3.3 core context; fps default 6.4, edit mode 6.8, 100k triangles
+    6.4 (as -4); edit mode; save and reload; Preferences window; F12 Cycles render 9.9 s; keyinject. Frames
+    match the earlier M4 run. **0 "wrong thread" lines.**
+  - `blender-b7-view.sh` on the package: Cycles Rendered noisy and denoised, Material Preview (EEVEE) and an EEVEE
+    F12 into the render window, all drawn correctly (`b7/view-final/`), 0 "wrong thread" lines.
+  - Started with no arguments, as the Deskbar entry does: the UI, nearly full screen (`b7/noargs.png`).
+  - `blender-probe.sh`: `sdlthread: PASS`, every program status 0.
+  - Extras ×3: Alembic, Ocean, smoke and **liquid** bakes all PASS (liquid: 24 cache files).
 
 **Packages** (`artifacts/packages-test/blender-7/`):
 
@@ -997,7 +1011,7 @@ removes the `.PackageInfo` that extraction left in `boot/system/`.
   - "Denoising (OpenImageDenoise) runs on the CPU: about 20 s per denoised 1920×1080 frame with the default
     prefilter's three passes taking ~1 min, and ~1.5 GB of memory; set Prefilter to Fast for a third of that."
   - "No OpenVDB/USD import (volumes, voxel remesh)."
-  - "Python's `aud` can play sound only in a Blender with a window."
+  - (`aud`: none needed; use `aud.Device()`, Blender's own device.)
 
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
