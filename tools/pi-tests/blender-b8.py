@@ -305,8 +305,10 @@ def pdf():
         return False, "no 3D view (run with a window)"
     empty_scene()
     win, area, region = view3d()
-    bpy.ops.object.gpencil_add(type='MONKEY')
-    ob = bpy.context.active_object
+    # (a window run's script context has no active_object: the view layer's)
+    with bpy.context.temp_override(window=win, area=area, region=region):
+        bpy.ops.object.gpencil_add(type='MONKEY')
+    ob = bpy.context.view_layer.objects.active
     path = os.path.join(out, "monkey.pdf")
     with bpy.context.temp_override(window=win, area=area, region=region, object=ob, active_object=ob):
         result = bpy.ops.wm.gpencil_export_pdf(filepath=path, selected_object_type='VISIBLE', frame_mode='ACTIVE')

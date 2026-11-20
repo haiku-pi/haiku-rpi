@@ -1013,6 +1013,176 @@ removes the `.PackageInfo` that extraction left in `boot/system/`.
   - "No OpenVDB/USD import (volumes, voxel remesh)."
   - (`aud`: none needed; use `aud.Device()`, Blender's own device.)
 
+### 7.15 blender -8: OpenVDB, GMP, Quadriflow, Draco, translations, potrace, libharu (2026-11-20 09:56–11:xx; session b8 10:44–10:57, image-2026-11-19b)
+
+Task B8: the next features after -7. Everything is in `scripts/build-blender.sh` and
+`artifacts/packages-test/blender-8/` (not published). Every Pi number is checked against the **official x86-64
+Blender 3.6.23** running the same script (`tools/pi-tests/blender-b8.py`) on the host; its results are in
+`artifacts/blender-tests/ref/b8ref.txt`.
+
+**Results on the Pi** (`tools/pi-tests/blender-b8.sh`, `artifacts/blender-tests/b8/b8.txt`):
+
+| Check | Pi, blender -8 | x86-64 official 3.6.23 |
+|---|---|---|
+| Build options | openvdb, potrace, haru, international all 1 | the same |
+| Voxel remesh, Remesh modifier (Suzanne, voxel 0.05) | 507/500 → **6710/6708** vertices/faces, 0.9 s | 6710/6708 |
+| Voxel Remesh operator (UV sphere, 0.1) | 482/512 → **2000/1998** | 2000/1998 |
+| QuadriFlow Remesh (Suzanne, 1000 faces) | 924 vertices, **918 quads**, 3.1 s | 929/922 |
+| Boolean union of two boxes with coplanar faces: **Exact** | **16/14** | 16/14 |
+| … the same with Fast | 32/11 | 26/6 |
+| Boolean difference, cube − sphere, Exact with self-intersection | 197/184 (Fast: the same) | 197/184 |
+| Smoke bake, OpenVDB cache, Blosc | 12 `.vdb` files, **794 750 bytes** | 12, 794 750 bytes |
+| x86-64's `.vdb` (Blosc) imported, Cycles 320×240, 32 samples | 5 grids; render 2.4 s, peak 176 MB; **max pixel difference 1/255** to x86-64's render | — |
+| The Pi's own `.vdb`, rendered the same way | max pixel difference 1/255 to x86-64's | — |
+| Volume to Mesh (density, threshold 0.1) | **548/544** | 548/544 |
+| glTF export, Suzanne subdivided twice | 69 684 bytes plain, **14 232 bytes with Draco** (`KHR_draco_mesh_compression`), re-import 1966 vertices | the same bytes |
+| Translations | `de_DE`: Delete → "Löschen", Add → "Hinzufügen"; 38 languages | the same |
+| Trace Image (potrace), a 128×128 disc | 1 Grease Pencil object, **45 points** | 45 |
+| Grease Pencil PDF export (libharu) | PDF_RESULT | (needs a window; not run on the host) |
+
+- The **Exact solver runs**: without GMP Blender falls back to the Fast (BMesh) solver silently, and the union
+  test separates the two (Exact 16/14 on both machines; Fast 32/11 on the Pi, 26/6 on x86-64 — the float BMesh
+  solver is not even stable across machines on coplanar faces). The difference test does not separate them.
+- **QuadriFlow differs slightly** from x86-64 (924/918 against 929/922, all quads on both): its solver is
+  floating-point and seeded the same, so the likely cause is arm64's arithmetic (e.g. FMA contraction; not
+  investigated).
+- **Volumes:** the import reads Blender's own Blosc-compressed caches from x86-64 and the Pi; Cycles renders them
+  through NanoVDB (`WITH_NANOVDB`). The cache's default format is now OpenVDB: -7's fluid checks write `.vdb`
+  data files (smoke and liquid PASS, format OPENVDB, 6 `.vdb` each; the `.uni` files beside them are the caches'
+  config files).
+- **Draco:** "Draco mesh compression is available, use library at
+  /boot/system/apps/Blender/3.6/lib/libextern_draco.so"; the compressed file has the same size as x86-64's.
+- Session: 0 debugger entries, 0 PANIC (UART `20261120-104401-session-b8.log`).
+
+**Regression probes with -8 installed** (same session):
+- M3 (`b8/m3.txt`): version, bpy (Python 3.10.22), subsurf 98 vertices, 960×540 cube **9.8 s**, factory 1080p
+  **3 min 31 s**, 1.55 GB peak, Filmic — as -7 (9.7 s, 3 min 30 s, 1.5 GB).
+- M5 (`b8/m5.txt`): EEVEE factory **35.4 s**, scene 57.2 s, Cycles scene 82.0 s, the SSS message once (-7: 34.9,
+  56.4, 82.7 s).
+- M4 on the staged tree (`b8/m4.txt`, frames `b8/m4/`): 3.3 core context; fps default 6.4, edit mode 6.8, 100k
+  triangles 6.3 (-7: 6.4/6.8/6.4); save and reload; Preferences; F12 Cycles 10.1 s; keyinject; **0 "wrong
+  thread" lines**. The splash's Quick Setup now has a Language row (translations). Frames 6-render and 7-key are
+  not taken, as in -7's run (pi-snap-on stops after 5-preferences).
+- `blender-probe.sh`: `sdlthread: PASS`, every program status 0.
+
+**Libraries** (`scripts/build-blender.sh` steps `boost blosc openvdb gmp potrace libharu`; packages in
+`artifacts/packages-test/blender-8/`, not published):
+- **Boost 1.83 revision 2:** once `WITH_BOOST` is on, Blender's `find_package(Boost)` asks for `filesystem regex
+  thread date_time iostreams system` (+ `locale` with i18n); the published -1 has only what OIIO links. -2 adds
+  regex, iostreams (OpenVDB's delayed loading uses only `mapped_file`, so no compression filters: zlib, bzip2,
+  lzma and zstd are switched off explicitly) and locale (iconv backend from libiconv, no ICU, no POSIX backend).
+  The step fails if a library is missing, if iostreams links a compressor or if locale does not link libiconv;
+  the package names `lib:libiconv` (package-port.py only derives requires from `non-packaged/`).
+- **c-blosc 1.21.6** (ours, `tools/recipes/dev-libs/c_blosc`; Blender pins 1.21.1, HaikuPorts has 1.18.1): the
+  system's LZ4, Zstd and zlib, no Snappy. OpenVDB writes LZ4 blocks, so the step fails unless `libblosc` links
+  `liblz4` (a Blosc without it builds and links, then fails on real files); `lz4`/`lz4_devel` (published) are now
+  extracted into the sysroot. GCC 16 defaults to C23, where `shuffle.c`'s `typedef _Bool bool` is an error: C11.
+  Generic shuffle only (its CMake does not recognise `aarch64` for the NEON variant).
+- **OpenVDB 10.1.0** (ours, `tools/recipes/media-gfx/openvdb`; Blender 3.6 pins 10.0.0, 10.1 is the newest release
+  of the same ABI 10; HaikuPorts has 7.1 and 13.0): shared core with Blosc, zlib, delayed loading, oneTBB 2022
+  (supported since 9.x), OpenVDB's own half type; NanoVDB's headers; `vdb_print`. The step fails unless
+  `libopenvdb` links blosc, zlib, TBB and Boost iostreams and `version.h` has `OPENVDB_USE_BLOSC`,
+  `OPENVDB_USE_ZLIB` and `OPENVDB_USE_DELAYED_LOADING`. Explicit instantiation makes big compile jobs: 8 jobs were
+  OOM-killed at 14 GB, 5 jobs (16 GB cap) built it in 11 min; 0 warnings. `libopenvdb.so.10.1` is 56 MB (package
+  10 MB).
+- **GMP 6.3.0** (HaikuPorts recipe; no gmp package existed in our repository or the bootstrap set): gmplib.org
+  refused connections, the GNU mirror has the same file (the recipe's sha256 checks it). Two traps: GCC 16's C23
+  rejects the K&R tests of GMP's configure ("could not find a working compiler": `-std=gnu17`), and libtool links
+  the C++ `libgmpxx` with `-lstdc++` resolved through the cross tools' `libstdc++.la`, whose `libstdc++.a` does not
+  exist (the libtiffxx trap of §7.3) — the generated libtool gets `-l:libstdc++.so` instead. ARM64 assembly
+  (`mpn/arm64`).
+- **potrace 1.16** and **libharu 2.4.3** (HaikuPorts recipes; Blender 3.6 pins libharu 2.3.0, its calls compile
+  against 2.4 unchanged).
+
+**Blender** (`tools/cmake/blender-minimal.cmake`): `WITH_BOOST WITH_OPENVDB WITH_OPENVDB_BLOSC WITH_NANOVDB WITH_GMP
+WITH_POTRACE WITH_HARU WITH_INTERNATIONAL WITH_QUADRIFLOW WITH_DRACO` on. Guards added: each must be ON in the cache
+*and* appear as `-DWITH_…` in `build.ninja` (a find module or `set_and_warn_dependency` can turn one off with a normal
+variable the cache compare cannot see), the `extern_draco` target must exist, `blender` must link libopenvdb,
+libgmp, libgmpxx, libpotrace, libhpdf and libboost_locale, and the package must have `3.6/lib/libextern_draco.so`,
+German `.mo` files and **no `3.6/python`**.
+- **Translations** need the generator `msgfmt` on the host. It links `bf_blenlib`, whose link line names the
+  target's TBB and GMP that the host configure found in the sysroot ("file in wrong format"); the objects it uses
+  need neither, so `hosttools` links it with that line minus the sysroot's libraries. Its German `.mo` is
+  **byte-identical** to the official x86-64 3.6.23 release's (CPython 3.10's `msgfmt.py` was tried first: its
+  catalogue keys differ, 11 371 of its 15 462 entries under another message context). 38 languages, 39 MB.
+- **Draco** (`patches/blender/0014-draco-on-haiku.patch`): Blender turns `WITH_DRACO` off without a bundled Python
+  and installs `libextern_draco.so` into the bundled Python's `site-packages`. A `3.6/python` directory must not
+  exist here — Blender takes it as its bundled Python's home (`bpy_interface.c`) and the system Python's standard
+  library would not be found. On Haiku the library goes to `3.6/lib/`, and the glTF add-on (which knows only
+  win32/linux/darwin; Haiku's `sys.platform` is `haiku1`) looks there.
+- Quadriflow is bundled (Boost.Graph headers).
+- Build: 10 min (10:28–10:38, `-j5`, 2991 steps after the reconfigure of -7's tree), 580 warning lines; `blender`
+  98 MB unstripped. Then a **clean** `BLENDER_CLEAN=1 build-blender.sh configure blender_package` (after a run of the
+  `sysroot` step with its new lz4 lines): 16 min (11:03–11:19, 4960 steps), 867 warning lines, the same binary size;
+  its package has the same provides, requires and 2457 paths as the tested one (which was put back). The patched
+  tree equals a fresh 3.6.23 + `patches/blender/*.patch` (0001–0014).
+
+**Packages** (`artifacts/packages-test/blender-8/`):
+
+| Package | Size | Note |
+|---|---|---|
+| blender-3.6.23-8 | 64.8 MB (-7: 51.0) | +39 MB translations (unpacked) |
+| boost1.83-1.83.0-2 (+ _devel) | 423 kB | replaces the published -1: + regex, iostreams, locale |
+| openvdb-10.1.0-1 (+ _devel) | 10.1 MB | libopenvdb 56 MB unpacked, `vdb_print` |
+| c_blosc-1.21.6-1 (+ _devel) | 20 kB | requires lz4, zstd (published) |
+| gmp-6.3.0-1 (+ _devel) | 223 kB | libgmp + libgmpxx |
+| potrace-1.16-1 (+ _devel) | 78 kB | libpotrace, `potrace`, `mkbitmap` |
+| libharu-2.4.3-1 (+ _devel) | 501 kB | libhpdf |
+
+**blender -8 against -7** (`scripts/package-diff.sh`):
+- requires gain `boost1.83 >= 1.83.0-2`, `lib:libboost_{date_time,filesystem,iostreams,locale,regex,system,thread}`,
+  `lib:libgmp`, `lib:libgmpxx`, `lib:libhpdf`, `lib:libopenvdb`, `lib:libpotrace` and `lib:libtiff` (tiff
+  4.7.0-1 is published; `source/blender/io/gpencil/CMakeLists.txt` links TIFF next to libharu, which a static
+  libharu needs for two fax tables; harmless with ours); none dropped;
+- files 2333 → **2457**, none removed: + `3.6/datafiles/locale/` (38 languages + `languages`, 116 paths),
+  `3.6/lib/libextern_draco.so`, Cycles' `source/nanovdb/` headers (6 paths). No `3.6/python`.
+
+**boost1.83 -2 against the published -1:** provides gain `lib:libboost_{iostreams,locale,regex}`, requires gain
+`lib:libiconv` (published); files 11 → 14 (the three libraries), nothing removed; `_devel` gains the three
+`devel:` provides and their `develop/lib` links.
+
+**Sysroot:** the shared `artifacts/sysroot-arm64` now also holds (in `non-packaged/`) OpenVDB, NanoVDB's headers,
+c-blosc, GMP, potrace, libharu and Boost's regex/iostreams/locale, none of them published; and (in `lib/`) lz4 from
+its published package. Another port whose configure auto-detects one of them (GMP especially: GCC-style and
+crypto ports look for it) would depend on a package that is not in the repository until these are published.
+
+Clean intermediates: the library work trees were deleted after packaging (sources and build directories); the
+official x86-64 Blender used as reference (in the agent's temp directory) is deleted at the end.
+
+**Not done, with effort** (*estimated*):
+- **USD**, 2–4 days, high risk (as §7.14: USD 23.05 uses the TBB 2020 API).
+- Blosc's NEON shuffle (its CMake does not recognise `aarch64`; generic shuffle is used): small, no measured need.
+- Not dependency questions (unchanged): GPU subdivision (no compute shaders), EEVEE SSS (4 colour attachments),
+  tablet pressure (native GHOST, M7).
+- Still off and not attempted: Cycles OSL and Embree, OpenXR, JACK/PulseAudio, OpenImageIO's own OpenVDB and
+  FFmpeg readers (Blender reads `.vdb` and video through its own code).
+
+**Proposed KNOWN-ISSUES F12 text for the publish:**
+- **Gone:** "Built without USD and OpenVDB (no `.usd`/`.vdb`, no voxel remesh or volume nodes)" becomes "Built
+  without USD (no `.usd` import/export)".
+- **New sentence:** "From blender -8: OpenVDB volumes (`.vdb` import, voxel remesh, volume nodes, Cycles volumes),
+  the Exact Boolean solver (GMP), QuadriFlow remesh, Draco glTF compression, Grease Pencil Trace Image and PDF
+  export, and translated interfaces (Preferences ▸ Interface ▸ Translation)."
+- Everything else in F12 stays.
+
+**Proposed USER-GUIDE §11.6 text** (replacing the "Limits are listed …" item's "no USD/OpenVDB" and adding a
+sentence to **Works**):
+> From blender 3.6.23-8: **OpenVDB** — File ▸ Import ▸ OpenVDB (`.vdb`), voxel remesh (Remesh modifier in Voxel
+> mode, Mesh ▸ Remesh), Volume to Mesh and Mesh to Volume, volumes rendered by Cycles, and fluid caches in
+> OpenVDB format (the default); the **Exact** solver of the Boolean modifier (it was silently replaced by Fast);
+> **QuadriFlow** remesh; glTF export with **Draco** mesh compression; Grease Pencil **Trace Image** and **PDF
+> export**; the interface in **38 languages** (Preferences ▸ Interface ▸ Translation, or the splash screen's
+> Language). `pkgman update blender` also updates boost1.83 to -2.
+>
+> Limits: no USD; …(the rest as now).
+
+**Recommendation:** publish blender -8 together with **boost1.83 -2** (blender -8 cannot install against the
+published -1: it requires `boost1.83 >= 1.83.0-2`), openvdb, c_blosc, gmp, potrace and libharu (+ their _devel
+packages). lz4, zstd, tiff and libiconv are already published. Revision bump checklist (AGENTS.md): the
+`.hpkg`s into `artifacts/packages/` (boost1.83 -1 and blender -7 to packages-old), the same files into
+`sources/haiku/generated.arm64/download/` if the image lists them, and the versions in
+`build/jam/repositories/HaikuPorts/arm64`.
+
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
 **USER-GUIDE — Blender 3.6 (3D modelling, animation, Cycles rendering)**
