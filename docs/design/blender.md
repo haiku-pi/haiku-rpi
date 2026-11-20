@@ -1013,7 +1013,7 @@ removes the `.PackageInfo` that extraction left in `boot/system/`.
   - "No OpenVDB/USD import (volumes, voxel remesh)."
   - (`aud`: none needed; use `aud.Device()`, Blender's own device.)
 
-### 7.15 blender -8: OpenVDB, GMP, Quadriflow, Draco, translations, potrace, libharu (2026-11-20 09:56–11:xx; session b8 10:44–10:57, image-2026-11-19b)
+### 7.15 blender -8: OpenVDB, GMP, Quadriflow, Draco, translations, potrace, libharu (2026-11-20 09:56–11:25; sessions b8 10:44–10:57 and 11:21–11:25, image-2026-11-19b)
 
 Task B8: the next features after -7. Everything is in `scripts/build-blender.sh` and
 `artifacts/packages-test/blender-8/` (not published). Every Pi number is checked against the **official x86-64
@@ -1038,7 +1038,7 @@ Blender 3.6.23** running the same script (`tools/pi-tests/blender-b8.py`) on the
 | glTF export, Suzanne subdivided twice | 69 684 bytes plain, **14 232 bytes with Draco** (`KHR_draco_mesh_compression`), re-import 1966 vertices | the same bytes |
 | Translations | `de_DE`: Delete → "Löschen", Add → "Hinzufügen"; 38 languages | the same |
 | Trace Image (potrace), a 128×128 disc | 1 Grease Pencil object, **45 points** | 45 |
-| Grease Pencil PDF export (libharu) | PDF_RESULT | (needs a window; not run on the host) |
+| Grease Pencil PDF export (libharu), Stroke monkey | **72 593-byte PDF 1.4**, 1 page; the monkey drawn (viewed on the host, `b8/monkey.pdf`) | (needs a window; not run on the host) |
 
 - The **Exact solver runs**: without GMP Blender falls back to the Fast (BMesh) solver silently, and the union
   test separates the two (Exact 16/14 on both machines; Fast 32/11 on the Pi, 26/6 on x86-64 — the float BMesh
@@ -1052,7 +1052,11 @@ Blender 3.6.23** running the same script (`tools/pi-tests/blender-b8.py`) on the
   config files).
 - **Draco:** "Draco mesh compression is available, use library at
   /boot/system/apps/Blender/3.6/lib/libextern_draco.so"; the compressed file has the same size as x86-64's.
-- Session: 0 debugger entries, 0 PANIC (UART `20261120-104401-session-b8.log`).
+- The PDF test of the first session was wrong (a window run's script has no `active_object` in its context); the
+  fixed test passed in a second session (11:21–11:25), which also showed the **German interface** on screen
+  (`b8/german-ui.png`: menus, splash, properties translated, umlauts drawn) and a **no-argument start** as from
+  Deskbar (`b8/noargs.png`: the UI with the new Language row; 0 "wrong thread" lines).
+- Sessions: 0 debugger entries, 0 PANIC (UART `20261120-104401-session-b8.log`, `20261120-112151-session-b8.log`).
 
 **Regression probes with -8 installed** (same session):
 - M3 (`b8/m3.txt`): version, bpy (Python 3.10.22), subsurf 98 vertices, 960×540 cube **9.8 s**, factory 1080p
