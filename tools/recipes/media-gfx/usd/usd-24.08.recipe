@@ -1,0 +1,79 @@
+SUMMARY="Universal Scene Description (OpenUSD) libraries"
+DESCRIPTION="Universal Scene Description (USD) is an efficient, scalable system for \
+authoring, reading and streaming time-sampled scene description for interchange \
+between graphics applications. This package has the core USD libraries (Sdf, Pcp, \
+Usd and the UsdGeom, UsdShade, UsdLux, UsdSkel, UsdVol, UsdUtils ... schemas) and \
+usdImaging's scene adapters, built as one shared library, libusd_ms, without \
+Python bindings, OpenGL (Storm) or command-line tools."
+HOMEPAGE="https://openusd.org/"
+COPYRIGHT="2016-2024 Pixar"
+LICENSE="Apache v2"
+REVISION="1"
+SOURCE_URI="https://github.com/PixarAnimationStudios/OpenUSD/archive/refs/tags/v$portVersion.tar.gz"
+CHECKSUM_SHA256="6640bb184bf602c6df14fa4a83af6ac5ae1ab8d1d38cf7bb7decfaa9a7ad5d06"
+SOURCE_FILENAME="OpenUSD-$portVersion.tar.gz"
+SOURCE_DIR="OpenUSD-$portVersion"
+PATCHES="usd-$portVersion.patchset"
+
+ARCHITECTURES="arm64"
+
+# Cross-built by scripts/build-blender.sh (haiku-pi) for Blender 3.6's USD import/export
+# (docs/design/blender.md §7.16). Blender 3.6 pins USD 23.05, which needs the legacy TBB 2020 API;
+# 24.08 is the first release that builds with oneTBB (its 2022 version: the patchset backports
+# OpenUSD PR #3392), and Blender 3.6's io/usd compiles against it unchanged. The patchset also
+# ports the arch library to Haiku (it takes the Linux code paths, except /proc, ptrace and the
+# raw-syscall execve). Monolithic shared library (libusd_ms, the name Blender's FindUSD looks for);
+# usdImaging without GL (Blender meshes UsdGeom gprims with its shape adapters); no Python, no tools.
+# The plug-in descriptions (lib/usd/*/resources/plugInfo.json) are found relative to libusd_ms.
+PROVIDES="
+	usd = $portVersion
+	lib:libusd_ms = $portVersion
+	"
+REQUIRES="
+	haiku
+	lib:libosdCPU
+	lib:libtbb
+	"
+
+PROVIDES_devel="
+	usd_devel = $portVersion
+	devel:libusd_ms = $portVersion
+	"
+REQUIRES_devel="
+	usd == $portVersion base
+	"
+
+BUILD_REQUIRES="
+	haiku_devel
+	devel:libosdCPU
+	devel:libtbb
+	"
+BUILD_PREREQUIRES="
+	cmd:cmake
+	cmd:g++
+	cmd:make
+	cmd:python3
+	"
+
+BUILD()
+{
+	cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
+		$cmakeDirArgs \
+		-DPXR_ENABLE_PYTHON_SUPPORT=OFF \
+		-DPXR_BUILD_IMAGING=ON -DPXR_BUILD_USD_IMAGING=ON \
+		-DPXR_ENABLE_GL_SUPPORT=OFF \
+		-DPXR_BUILD_TESTS=OFF -DPXR_BUILD_EXAMPLES=OFF -DPXR_BUILD_TUTORIALS=OFF \
+		-DPXR_BUILD_USD_TOOLS=OFF -DPXR_BUILD_USDVIEW=OFF \
+		-DPXR_BUILD_MONOLITHIC=ON -DBUILD_SHARED_LIBS=ON \
+		-DPXR_ENABLE_PRECOMPILED_HEADERS=OFF
+	make -C build $jobArgs
+}
+
+INSTALL()
+{
+	make -C build install
+	prepareInstalledDevelLib libusd_ms
+	packageEntries devel \
+		$developDir \
+		$libDir/cmake
+}

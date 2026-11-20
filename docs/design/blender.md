@@ -10,7 +10,9 @@ OpenSubdiv, installed with pkgman and started from the Deskbar entry; the factor
 M5 done: EEVEE Legacy renders on V3D's 4 color attachments (SSS off) — Material Preview and F12, no crash, §7.9.
 B7 (11-20): blender -7 test packages — Cycles denoising with OpenImageDenoise 2.5 (render, viewport, compositor),
 the `aud` module (NumPy 1.26 for Python 3.10), Alembic, the Ocean modifier, fluid simulation, and the Rendered
-viewport fixed (GL context sharing), §7.14.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+viewport fixed (GL context sharing), §7.14. B8: OpenVDB, GMP, QuadriFlow, Draco, translations, §7.15. B9: USD
+import/export (OpenUSD 24.08 against oneTBB, Haiku port of its arch library) and a Haiku crash in Blender's
+recursive delete fixed, test packages blender -9 + usd, §7.16.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -1198,6 +1200,141 @@ packages). lz4, zstd, tiff and libiconv are already published. Revision bump che
 `.hpkg`s into `artifacts/packages/` (boost1.83 -1 and blender -7 to packages-old), the same files into
 `sources/haiku/generated.arm64/download/` if the image lists them, and the versions in
 `build/jam/repositories/HaikuPorts/arm64`.
+
+### 7.16 blender -9: USD import/export (2026-11-20 14:14–15:55; sessions b9 15:09–15:21, b9b, b9c, b9d 15:32–15:34, b9e 15:35–15:47, b9f 15:47–15:50, image-2026-11-19b)
+
+Task B9, time-boxed to one working day: USD (File ▸ Import/Export ▸ Universal Scene Description, `.usd`/`.usda`/
+`.usdc`/`.usdz`). Blender linked with USD after **54 minutes** (15:08); everything below is in
+`scripts/build-blender.sh` (step `usd`, then the Blender steps) and `artifacts/packages-test/blender-9/` (not published).
+
+**Route (feasibility, 14:14–14:24):**
+- **USD version.** Blender 3.6 pins USD 23.05, whose `WorkDispatcher` uses the legacy `tbb::task` API that oneTBB
+  removed. OpenUSD's CHANGELOG: **24.08 is the first release that builds with oneTBB** ("Added support for optionally
+  building with oneTBB", PRs #2457–#2466); 23.11 and 24.05 do not. oneTBB **2022** needs one more change, which came
+  with 25.05 (PR #3392, `m_wait_ctx` → `m_wait_vertex`); our oneTBB is 2022.3, so the patchset backports it. In
+  24.08 every other legacy-TBB use is behind `TBB_INTERFACE_VERSION_MAJOR >= 12` (`work/dispatcher.h`,
+  `threadLimits.cpp`) or only in the precompiled headers (off). 24.08 also makes Boost optional (only for Python).
+- **The API gap is nil.** Before building anything, every `source/blender/io/usd/intern/*.cc` was compiled
+  `-fsyntax-only` with the cross compiler and Blender's flags against the unpacked 24.08 tree (+ a generated
+  `pxr/pxr.h`): **one error**, `SEP_STR` undeclared in `usd_common.cc` — a Blender bug in code that is only compiled
+  when USD has no Python support, which Blender's own library builds never have (`patches/blender/0015`). The
+  `usdImaging` shape adapters' `GetPoints`/`GetTopology` that 3.6's gprim reader calls still exist in 24.08.
+- **Rejected: USD 23.05 against a private legacy TBB 2020.3.** USD's public headers include TBB headers
+  (`work/dispatcher.h`, `tf/…`), so Blender's io/usd translation units would see both TBBs next to the BLI headers
+  that include oneTBB; TBB 2020 has no Haiku port; and two schedulers would share the four cores.
+- **Not optional: usdImaging.** `usd_reader_shape.cc` includes the usdImaging adapters unconditionally
+  (`USD_HAS_IMAGING` only selects a test), so imaging is built, without GL (no Storm/hgiGL/glf).
+
+**USD 24.08** (ours, `tools/recipes/media-gfx/usd/` + `patches/usd-24.08.patchset`, 3 commits):
+- **`arch: Haiku support`:** Haiku takes the Linux code paths (`ARCH_OS_LINUX` + `ARCH_OS_HAIKU`) except for what it
+  lacks: `<sys/statfs.h>`, `<ucontext.h>`, ptrace (a debugger is attached when the team has a debugger nub thread),
+  `mincore`, `sincos` without `_GNU_SOURCE`, `_SC_LEVEL1_DCACHE_LINESIZE` (64), `/proc/self/exe` (the team's
+  `B_APP_IMAGE`), `__libc_fork`, and the "non-locking execve", a raw Linux system call (`svc 0`, x8 = 221: plain
+  `execv`). **And `ArchGetAddressInfo()`**, which used `dladdr()` only `#if defined(_GNU_SOURCE)`: without it Plug
+  could not find its plug-in descriptions beside the library — the first Pi run failed every USD operation with
+  "Failed to find plugin for ArDefaultResolver" and Blender then crashed (`TF_DEBUG=PLUG_*`: "Failed to determine
+  absolute path … using ArchGetExecutablePath()", search under `apps/Blender/usd`). The step now fails unless
+  `libusd_ms` imports `dladdr`.
+- `sdf: remove SdfChildrenProxy::_ValueProxy::operator=` (calls a `_Set` that does not exist; GCC 16 checks
+  template bodies); `work: oneTBB 2022` (PR #3392).
+- Options: monolithic shared (`libusd_ms.so`, the name Blender's FindUSD takes), imaging + usdImaging without GL,
+  no Python, tools, tests, examples, usdview, MaterialX, OpenVDB, OIIO, OCIO, Ptex, Embree, PRMan, Alembic or Draco
+  plug-ins, no precompiled headers.
+- **Plug-ins at run time:** Blender installs `datafiles/usd` only with its own library tree (`LIBDIR`), so
+  `ensure_usd_plugin_path_registered()` finds nothing here; USD finds `lib/usd/*/resources/plugInfo.json`
+  relative to `libusd_ms` (`Plug_InitConfig`). The monolithic build puts usdShaders, sdrGlslfx and hioAvif in
+  `<prefix>/plugin/usd`; the step moves them into `lib/usd` (no top-level `plugin/` in the package). All 27
+  plug-ins have an empty `LibraryPath` (they are inside `libusd_ms`). `pxrConfig.cmake`/`cmake/` name the host's
+  sysroot and are dropped.
+- Checks (the step fails otherwise): oneTBB 2022.3 found; `libusd_ms` links libtbb and libosdCPU and no
+  GL/Python/Boost, no run path, imports `dladdr`; `PXR_VERSION 2408`; no Python (`pyModule.h` absent — else Blender's
+  FindUSD turns `USD_PYTHON_SUPPORT` on — and `PXR_PYTHON_SUPPORT_ENABLED` under `#if 0`); usdImaging headers; the
+  plug-in descriptions Blender's reader/writer need (ar, sdf, usd, usdGeom + `generatedSchema.usda`, usdShade,
+  usdLux, usdSkel, usdVol, usdImaging, usdShaders); each non-empty `LibraryPath` resolves to `libusd_ms`.
+- Build: 2615 steps, **8½ min** at `-j8` (heavy-build, 3 GB/job), 16 warnings (USD's own: array bounds, range-loop
+  copies, …). `libusd_ms.so` 51 MB (42 MB stripped); NEEDED libtbb, libosdCPU, libstdc++, libgcc_s, libroot.
+
+**Blender:**
+- `WITH_USD ON` (`tools/cmake/blender-minimal.cmake`), `USD_ROOT_DIR` for both configures; guards: `WITH_USD` in the
+  cache and `-DWITH_USD` in `build.ninja`, `blender` NEEDED `libusd_ms.so`, no `3.6/datafiles/usd`.
+- `0015-usd-common-include-path-util.patch` (above).
+- **`0016-blenlib-haiku-recursive-operation.patch` — a crash on Haiku in every revision so far.** Haiku's `struct
+  dirent` has no `d_type`, so `recursive_operation()` (`BLI_delete(…, true, …)`, `BLI_copy` of a directory) stats each
+  entry, building its path with `BLI_path_join(…, NULL)`; in 3.6 `BLI_path_join` is a macro that counts its
+  arguments, so the NULL became one more path element and `BLI_path_join_array` dereferenced it. Any recursive
+  delete or copy of a **non-empty** directory crashed. USDZ export (it deletes its temporary directory) hit it:
+  `.usdz` was written, then Blender died (session b9c: debug_server `report` + `addr2line`: `BLI_path_join_array` ←
+  `recursive_operation` ← `export_endjob_usdz_cleanup`). The entry's path is already in `from_path`.
+- Build: incremental 2443 steps in 7 min (15:01–15:08) + the 0016 relink. Then a **clean** `BLENDER_CLEAN=1
+  build-blender.sh configure blender_package`: 17 min (15:36–15:53, 4988 steps), 881 warning lines; its package has
+  the same provides, requires and 2457 paths as the tested one (which was put back). The patched tree equals a fresh
+  3.6.23 + `patches/blender/*.patch` (0001–0016).
+
+**Results on the Pi** (`tools/pi-tests/blender-b9.sh` + `blender-b9.py`; `artifacts/blender-tests/b9d/`, final in
+`b9e/`), against the official x86-64 Blender 3.6.23 (USD 23.05) running the same script
+(`artifacts/blender-tests/ref/b9ref.txt`, its files in `ref/b9/`):
+
+| Check | Pi, blender -9 (USD 24.08) | x86-64 official 3.6.23 |
+|---|---|---|
+| `bpy.app.build_options.usd` | 1 | 1 |
+| Factory scene + Suzanne (Subdivision, render level 2) + a material → `.usdc`, re-imported | 762 705 bytes; **4 objects (camera, light, 2 meshes), 7966 vertices, 7878 faces, 2 materials** | 762 704 bytes; the same counts |
+| … → `.usda`, re-imported | 2 535 574 bytes; the same counts | 2 534 140 bytes; the same |
+| … → `.usdz`, re-imported | 762 870 bytes; the same counts | 762 865 bytes; the same |
+| x86-64's `.usdc`/`.usda`/`.usdz` imported on the Pi | the same counts, all three | — |
+| The Pi's three files imported by x86-64's Blender | — | the same counts, all three |
+| UsdGeom gprims (usdImaging adapters): Capsule, Cone, Cube, Cylinder, Sphere | **82/90, 31/20, 8/6, 42/30, 92/100** vertices/faces | the same |
+| Times (export / import): usdc, usda, usdz | 377/47, 349/211, 231/36 ms | 76/8, 90/70, 64/8 ms |
+
+- The `.usda` text equals x86-64's except for the prim order (`defaultPrim` Suzanne vs Cube) and the last digit of
+  some floats of the subdivided Suzanne (points, normals, UVs, extent: OpenSubdiv's float arithmetic on arm64; the
+  cube, camera, light and materials are identical): 5 lines differ after sorting.
+- 0 debugger entries in the final sessions (b9d, b9e, b9f); USD printed no warnings or coding errors.
+
+**Regression probes with the final -9 installed** (session b9e 15:35–15:47, `artifacts/blender-tests/b9e/`; the
+same probes on the package before 0016, session b9, gave the same within 0.6 s):
+- M3: version, bpy (Python 3.10.22), subsurf 98 vertices, 960×540 cube **9.7 s**, factory 1080p **3 min 29 s**,
+  1.57 GB peak, Filmic (-8: 9.8 s, 3 min 31 s, 1.55 GB).
+- M5: EEVEE factory **35.6 s**, scene 57.2 s, Cycles scene 81.4 s, the SSS message once (-8: 35.4, 57.2, 82.0 s).
+- M4 on the staged tree: 3.3 core context; fps default **6.4**, edit mode 6.8, 100k triangles 6.3 (-8: 6.4/6.8/6.3);
+  save and reload; Preferences; F12 Cycles 9.9 s; keyinject; **0 "wrong thread" lines** (frames `b9e/m4/`).
+- `blender-probe.sh`: `sdlthread: PASS`, every program status 0. 0 debugger entries.
+- **Update path** (session b9f 15:47–15:50): on a fresh image `pkgman install blender` takes the published -8 from
+  the repository (52 s); then -9 + usd from files over it (3 s); the B9 checks pass on that install (the same
+  numbers).
+
+**Packages** (`artifacts/packages-test/blender-9/`):
+
+| Package | Size | Note |
+|---|---|---|
+| blender-3.6.23-9 | 65.0 MB (-8: 64.8) | requires `lib:libusd_ms` |
+| usd-24.08-1 | 12.7 MB | `libusd_ms.so` + `lib/usd` (28 plug-in directories); requires haiku, libtbb, libosdcpu (both published) |
+| usd_devel-24.08-1 | 1.6 MB | headers (`develop/headers/pxr`) |
+
+**blender -9 against the published -8** (`scripts/package-diff.sh`): requires gain `lib:libusd_ms`, nothing dropped;
+files 2457 → 2457, **the same paths** (USD's data is in the usd package).
+
+**Sysroot:** `artifacts/sysroot-arm64` now also holds USD in `non-packaged/` (`lib/libusd_ms.so`, `lib/usd/`,
+`include/pxr/`), unpublished.
+
+**Not done / limits:**
+- No USD Python module (`from pxr import Usd` in Blender's console): the official build has it; ours is built
+  without Python (Blender 3.6's io/usd does not need it; it would bring Boost.Python and a `lib/python` tree).
+- Not probed: USD skeletal animation (UsdSkel) and blend shapes, volumes (UsdVol with OpenVDB assets), instancing,
+  animated (time-sampled) export, the import/export dialogs in the GUI (the operators ran headless).
+- The update was checked from files (`pkgman install` of -9 + usd over -8), not as `pkgman update` from a
+  repository that has -9.
+
+**Proposed KNOWN-ISSUES F12 text:** "Built without USD (no `.usd` import/export)" goes. **New sentence** for the
+USER-GUIDE Blender section: "From blender 3.6.23-9: **USD** — File ▸ Import/Export ▸ Universal Scene Description
+(`.usd`, `.usda`, `.usdc`, `.usdz`), with OpenUSD 24.08 (the usd package). Blender's Python has no `pxr` module."
+Also fixed in -9 for every user: recursive deletes and copies of non-empty directories (0016) no longer crash.
+
+**Recommendation:** publish blender **-9** with **usd 24.08-1** (+ usd_devel): every check equals the official
+x86-64 3.6.23 in both directions, the regression probes are unchanged from -8, and -9 also carries the Haiku
+recursive-delete fix (0016). Revision bump checklist (AGENTS.md): the `.hpkg`s into `artifacts/packages/` (blender
+-8 to packages-old), the same files into `sources/haiku/generated.arm64/download/` if the image lists them, and the
+versions in `build/jam/repositories/HaikuPorts/arm64`; usd's requirements (libtbb, libosdcpu) are published. GitHub
+size: blender -9 is 62.0 MiB (-8 61.8), usd 12.1 MiB.
 
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 

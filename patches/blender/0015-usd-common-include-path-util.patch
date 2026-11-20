@@ -1,0 +1,18 @@
+USD: SEP_STR in a USD build without Python
+
+usd_common.cc uses SEP_STR (BLI_path_util.h) without including it. The code is only compiled
+when USD is built without Python support (#ifndef PXR_PYTHON_SUPPORT_ENABLED), which Blender's
+own library builds never are, so the missing include went unnoticed. Haiku builds USD without
+Python.
+
+--- a/source/blender/io/usd/intern/usd_common.cc
++++ b/source/blender/io/usd/intern/usd_common.cc
+@@ -7,6 +7,8 @@
+ 
+ #include "BKE_appdir.h"
+ 
++#include "BLI_path_util.h"
++
+ namespace blender::io::usd {
+ 
+ void ensure_usd_plugin_path_registered()

@@ -1,0 +1,22 @@
+BLI_delete/BLI_copy recursion on Haiku: no NULL path element
+
+Haiku's struct dirent has no d_type, so recursive_operation() stats each entry. It built the
+entry's path with BLI_path_join(..., NULL), but since BLI_path_join became a macro that counts
+its arguments, the NULL is taken as one more path element and BLI_path_join_array dereferences
+it: every recursive delete or copy of a non-empty directory crashed (USDZ export, which deletes
+its temporary directory, was the first to do it). The entry's path is already in from_path.
+
+--- a/source/blender/blenlib/intern/fileops.c
++++ b/source/blender/blenlib/intern/fileops.c
+@@ -881,10 +881,7 @@
+ #  ifdef __HAIKU__
+       {
+         struct stat st_dir;
+-        char filepath[FILE_MAX];
+-        BLI_path_join(filepath, sizeof(filepath), startfrom, dirent->d_name, NULL);
+-        lstat(filepath, &st_dir);
+-        is_dir = S_ISDIR(st_dir.st_mode);
++        is_dir = lstat(from_path, &st_dir) == 0 && S_ISDIR(st_dir.st_mode);
+       }
+ #  else
+       is_dir = (dirent->d_type == DT_DIR);

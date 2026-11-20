@@ -1,0 +1,320 @@
+From 605fe1969a28506c1fae5736faf18c2aee45d55b Mon Sep 17 00:00:00 2001
+From: haiku-pi <noreply@haiku-pi.invalid>
+Date: Fri, 20 Nov 2026 15:11:58 +0100
+Subject: [PATCH 1/3] arch: Haiku support
+
+Haiku takes the Linux code paths (ARCH_OS_LINUX) with ARCH_OS_HAIKU
+for what it lacks: <sys/statfs.h>, <ucontext.h>, ptrace (a debugger is
+attached when the team has a debugger nub thread), mincore, sincos
+without _GNU_SOURCE, _SC_LEVEL1_DCACHE_LINESIZE, /proc/self/exe (the
+team's application image) and __libc_fork; the non-locking execve is a
+raw Linux system call, so plain execv. dladdr() exists without
+_GNU_SOURCE: ArchGetAddressInfo() uses it, so that Plug finds the
+plug-in descriptions relative to the USD library.
+---
+ pxr/base/arch/assumptions.cpp |  4 +++-
+ pxr/base/arch/debugger.cpp    | 18 ++++++++++++++++--
+ pxr/base/arch/defines.h       |  5 +++++
+ pxr/base/arch/fileSystem.cpp  |  2 +-
+ pxr/base/arch/fileSystem.h    |  5 ++++-
+ pxr/base/arch/math.h          |  4 ++--
+ pxr/base/arch/stackTrace.cpp  | 10 +++++-----
+ pxr/base/arch/symbols.cpp     |  2 +-
+ pxr/base/arch/systemInfo.cpp  | 26 ++++++++++++++++++++++++--
+ 9 files changed, 61 insertions(+), 15 deletions(-)
+
+diff --git a/pxr/base/arch/assumptions.cpp b/pxr/base/arch/assumptions.cpp
+index d17c293..89e0a9e 100644
+--- a/pxr/base/arch/assumptions.cpp
++++ b/pxr/base/arch/assumptions.cpp
+@@ -33,7 +33,9 @@ PXR_NAMESPACE_OPEN_SCOPE
+ static size_t
+ Arch_ObtainCacheLineSize()
+ {
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_HAIKU)
++    return ARCH_CACHE_LINE_SIZE;
++#elif defined(ARCH_OS_LINUX)
+     return sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+ #elif defined(ARCH_OS_DARWIN)
+     size_t cacheLineSize = 0;
+diff --git a/pxr/base/arch/debugger.cpp b/pxr/base/arch/debugger.cpp
+index e1596b3..cd9b921 100644
+--- a/pxr/base/arch/debugger.cpp
++++ b/pxr/base/arch/debugger.cpp
+@@ -17,7 +17,9 @@
+ #if defined(ARCH_OS_LINUX) || defined(ARCH_OS_DARWIN)
+ #include "pxr/base/arch/inttypes.h"
+ #include <sys/types.h>
+-#if !defined(ARCH_OS_IPHONE)
++#if defined(ARCH_OS_HAIKU)
++#include <OS.h>
++#elif !defined(ARCH_OS_IPHONE)
+ #include <sys/ptrace.h>
+ #endif
+ #include <sys/stat.h>
+@@ -325,7 +327,19 @@ Arch_DebuggerAttachExecPosix(void* data)
+ 
+ #endif // defined(ARCH_OS_LINUX) || defined(ARCH_OS_DARWIN)
+ 
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_HAIKU)
++
++static
++bool
++Arch_DebuggerIsAttachedPosix()
++{
++    // A team with a debugger installed has a debugger nub thread.
++    team_info info;
++    return get_team_info(B_CURRENT_TEAM, &info) == B_OK
++        && info.debugger_nub_thread >= 0;
++}
++
++#elif defined(ARCH_OS_LINUX)
+ 
+ static
+ bool
+diff --git a/pxr/base/arch/defines.h b/pxr/base/arch/defines.h
+index 021dd28..3e3425c 100644
+--- a/pxr/base/arch/defines.h
++++ b/pxr/base/arch/defines.h
+@@ -13,6 +13,11 @@
+ 
+ #if defined(__linux__)
+ #define ARCH_OS_LINUX
++#elif defined(__HAIKU__)
++// Haiku is POSIX with a glibc-like userland; it takes the Linux code paths except
++// where ARCH_OS_HAIKU says otherwise (/proc, ptrace, the non-locking execve).
++#define ARCH_OS_LINUX
++#define ARCH_OS_HAIKU
+ #elif defined(__APPLE__)
+ #include "TargetConditionals.h"
+ #define ARCH_OS_DARWIN
+diff --git a/pxr/base/arch/fileSystem.cpp b/pxr/base/arch/fileSystem.cpp
+index 50ce636..d9a77b8 100644
+--- a/pxr/base/arch/fileSystem.cpp
++++ b/pxr/base/arch/fileSystem.cpp
+@@ -904,7 +904,7 @@ bool
+ ArchQueryMappedMemoryResidency(
+     void const *addr, size_t len, unsigned char *pageMap)
+ {
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_LINUX) && !defined(ARCH_OS_HAIKU)
+     int ret = mincore(const_cast<void *>(addr), len, pageMap);
+     return ret == 0;
+ #elif defined (ARCH_OS_DARWIN)
+diff --git a/pxr/base/arch/fileSystem.h b/pxr/base/arch/fileSystem.h
+index 432d6d7..d8d7cd0 100644
+--- a/pxr/base/arch/fileSystem.h
++++ b/pxr/base/arch/fileSystem.h
+@@ -24,7 +24,10 @@
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ 
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_HAIKU)
++#include <unistd.h>
++#include <glob.h>
++#elif defined(ARCH_OS_LINUX)
+ #include <unistd.h>
+ #include <sys/statfs.h>
+ #include <glob.h>
+diff --git a/pxr/base/arch/math.h b/pxr/base/arch/math.h
+index a7191db..0db4d02 100644
+--- a/pxr/base/arch/math.h
++++ b/pxr/base/arch/math.h
+@@ -88,7 +88,7 @@ inline double ArchBitPatternToDouble(uint64_t v) {
+ #error Unknown system architecture.
+ #endif
+ 
+-#if defined(ARCH_OS_LINUX) || defined(doxygen)
++#if (defined(ARCH_OS_LINUX) && !defined(ARCH_OS_HAIKU)) || defined(doxygen)
+ 
+ /// Computes the sine and cosine of the specified value as a float.
+ inline void ArchSinCosf(float v, float *s, float *c) { sincosf(v, s, c); }
+@@ -96,7 +96,7 @@ inline void ArchSinCosf(float v, float *s, float *c) { sincosf(v, s, c); }
+ /// Computes the sine and cosine of the specified value as a double.
+ inline void ArchSinCos(double v, double *s, double *c) { sincos(v, s, c); }
+ 
+-#elif defined(ARCH_OS_DARWIN) || defined(ARCH_OS_WINDOWS)
++#elif defined(ARCH_OS_DARWIN) || defined(ARCH_OS_WINDOWS) || defined(ARCH_OS_HAIKU)
+ 
+ inline void ArchSinCosf(float v, float *s, float *c) {
+     *s = std::sin(v);
+diff --git a/pxr/base/arch/stackTrace.cpp b/pxr/base/arch/stackTrace.cpp
+index 1d1e92b..1b45e9c 100644
+--- a/pxr/base/arch/stackTrace.cpp
++++ b/pxr/base/arch/stackTrace.cpp
+@@ -58,7 +58,7 @@
+ /* Darwin/ppc did not do stack traces.  Darwin/i386 still 
+    needs some work, this has been stubbed out for now.  */
+ 
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_LINUX) && !defined(ARCH_OS_HAIKU)
+ #include <ucontext.h>
+ #endif
+ 
+@@ -93,9 +93,9 @@ using namespace std;
+ // total hack -- no idea if this will work if we die in malloc...
+ typedef int (*ForkFunc)(void);
+ ForkFunc Arch_nonLockingFork =
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_LINUX) && !defined(ARCH_OS_HAIKU)
+     (ForkFunc)dlsym(RTLD_NEXT, "__libc_fork");
+-#elif defined(ARCH_OS_DARWIN)
++#elif defined(ARCH_OS_DARWIN) || defined(ARCH_OS_HAIKU)
+     NULL;
+ #else
+ #error Unknown architecture.
+@@ -570,7 +570,7 @@ nonLockingFork()
+ }
+ #endif
+ 
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_LINUX) && !defined(ARCH_OS_HAIKU)
+ static int
+ nonLockingLinux__execve (const char *file,
+                          char *const argv[],
+@@ -647,7 +647,7 @@ nonLockingLinux__execve (const char *file,
+ static int
+ nonLockingExecv(const char *path, char *const argv[])
+ {
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_LINUX) && !defined(ARCH_OS_HAIKU)
+      return nonLockingLinux__execve (path, argv, __environ);
+ #else
+      return execv(path, argv);
+diff --git a/pxr/base/arch/symbols.cpp b/pxr/base/arch/symbols.cpp
+index ac5b8ad..41d2019 100644
+--- a/pxr/base/arch/symbols.cpp
++++ b/pxr/base/arch/symbols.cpp
+@@ -28,7 +28,7 @@ ArchGetAddressInfo(
+     std::string* objectPath, void** baseAddress,
+     std::string* symbolName, void** symbolAddress)
+ {
+-#if defined(_GNU_SOURCE) || defined(ARCH_OS_DARWIN)
++#if defined(_GNU_SOURCE) || defined(ARCH_OS_DARWIN) || defined(ARCH_OS_HAIKU)
+ 
+     Dl_info info;
+     if (dladdr(address, &info)) {
+diff --git a/pxr/base/arch/systemInfo.cpp b/pxr/base/arch/systemInfo.cpp
+index bc61e3e..b678ba9 100644
+--- a/pxr/base/arch/systemInfo.cpp
++++ b/pxr/base/arch/systemInfo.cpp
+@@ -15,7 +15,13 @@
+ #include <functional>
+ #include <limits>
+ 
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_HAIKU)
++
++    #include <OS.h>
++    #include <image.h>
++    #include <unistd.h>
++
++#elif defined(ARCH_OS_LINUX)
+ 
+     #include <sys/types.h>
+     #include <sys/stat.h>
+@@ -62,6 +68,7 @@ ArchGetCwd()
+     return ".";
+ }
+ 
++#if !defined(ARCH_OS_HAIKU)
+ namespace {
+ 
+ // Getting the executable path requires a dynamically allocated buffer
+@@ -92,11 +99,26 @@ _DynamicSizedRead(
+ }
+ 
+ }
++#endif // !ARCH_OS_HAIKU
+ 
+ std::string
+ ArchGetExecutablePath()
+ {
+-#if defined(ARCH_OS_LINUX)
++#if defined(ARCH_OS_HAIKU)
++
++    // On Haiku the team's application image names the executable.
++    image_info info;
++    int32 cookie = 0;
++    while (get_next_image_info(B_CURRENT_TEAM, &cookie, &info) == B_OK) {
++        if (info.type == B_APP_IMAGE) {
++            return info.name;
++        }
++    }
++    ARCH_WARNING("Unable to find the application image to obtain "
++                 "executable path");
++    return std::string();
++
++#elif defined(ARCH_OS_LINUX)
+ 
+     // On Linux the executable path is retrieved from the /proc/self/exe
+     // symlink.
+-- 
+2.53.0
+
+
+From 77b652051a6b16cd4bc6650b95ef6b77c86af422 Mon Sep 17 00:00:00 2001
+From: haiku-pi <noreply@haiku-pi.invalid>
+Date: Fri, 20 Nov 2026 15:11:58 +0100
+Subject: [PATCH 2/3] sdf: remove SdfChildrenProxy::_ValueProxy::operator=
+
+It calls SdfChildrenProxy::_Set, which does not exist; the template was
+never instantiated. GCC 16 checks template bodies and rejects it.
+---
+ pxr/usd/sdf/childrenProxy.h | 7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/pxr/usd/sdf/childrenProxy.h b/pxr/usd/sdf/childrenProxy.h
+index f515528..c28d8f0 100644
+--- a/pxr/usd/sdf/childrenProxy.h
++++ b/pxr/usd/sdf/childrenProxy.h
+@@ -52,13 +52,6 @@ private:
+             return *_pos;
+         }
+ 
+-        template <class U>
+-        _ValueProxy& operator=(const U& x)
+-        {
+-            _owner->_Set(*_pos, x);
+-            return *this;
+-        }
+-
+         bool operator==(const mapped_type& other) const
+         {
+             return *_pos == other;
+-- 
+2.53.0
+
+
+From b4108c6a79898f5edde7ce75f4448595ebb8549a Mon Sep 17 00:00:00 2001
+From: haiku-pi <noreply@haiku-pi.invalid>
+Date: Fri, 20 Nov 2026 15:11:58 +0100
+Subject: [PATCH 3/3] work: oneTBB 2022 (backport of OpenUSD PR #3392)
+
+oneTBB 2022.0 replaced task_group_base::m_wait_ctx with m_wait_vertex.
+---
+ pxr/base/work/dispatcher.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/pxr/base/work/dispatcher.cpp b/pxr/base/work/dispatcher.cpp
+index 8cc8dbb..63482d8 100644
+--- a/pxr/base/work/dispatcher.cpp
++++ b/pxr/base/work/dispatcher.cpp
+@@ -33,7 +33,11 @@ WorkDispatcher::WorkDispatcher()
+ #if TBB_INTERFACE_VERSION_MAJOR >= 12
+ inline tbb::detail::d1::wait_context& 
+ WorkDispatcher::_TaskGroup::_GetInternalWaitContext() {
++#if TBB_INTERFACE_VERSION_MINOR >= 14
++    return m_wait_vertex.get_context();
++#else
+     return m_wait_ctx;
++#endif
+ }
+ #endif
+ 
+-- 
+2.53.0
+

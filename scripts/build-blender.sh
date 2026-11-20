@@ -22,6 +22,7 @@
 #                recipes and patchsets
 #   blosc openvdb gmp potrace libharu
 #                c-blosc 1.21.6, OpenVDB 10.1.0 (+ NanoVDB), GMP 6.3.0, potrace 1.16, libharu 2.4.3 (-8)
+#   usd          OpenUSD 24.08 (-9: USD import/export): usd + usd_devel, our recipe and patchset
 #   freetype     FreeType with Brotli, static, into Blender's own deps/ (not packaged)
 #   blender_source  artifacts/downloads/blender/blender-3.6.23 + patches/blender/*.patch
 #   hosttools    makesdna, makesrna, datatoc, datatoc_icon, smaa_areatex, msgfmt built for this host
@@ -29,12 +30,12 @@
 #                -DBLENDER_HOST_TOOLS); fails unless its WITH_* options equal the host configure's
 #   build        ninja blender, under scripts/heavy-build.sh (≤ 16 GB)
 #   stage        the install tree + runtime packages for the Pi test, artifacts/blender-tests/
-#   blender_package  blender-3.6.23-8-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender-8
+#   blender_package  blender-3.6.23-9-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender-9
 #
 # Packages: the libraries of revisions 1-6 in artifacts/packages-test/blender/ (unchanged since); what
 # -7 adds (oidn, numpy_python3.10, alembic, fftw) in artifacts/packages-test/blender-7/; what -8 adds (boost1.83
-# -2 with regex, iostreams and locale; c_blosc, openvdb, gmp, potrace, libharu; blender itself) in
-# artifacts/packages-test/blender-8/.
+# -2 with regex, iostreams and locale; c_blosc, openvdb, gmp, potrace, libharu) in
+# artifacts/packages-test/blender-8/; what -9 adds (usd; blender itself) in artifacts/packages-test/blender-9/.
 #
 # Work directories: artifacts/cross-ports/<port>-<version>/ for the libraries,
 # artifacts/cross-ports/blender-3.6.23/{src,deps,host-build,host-tools,build}/ for Blender.
@@ -52,8 +53,9 @@ tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
 out="$root/artifacts/packages-test/blender"
 out7="$root/artifacts/packages-test/blender-7"
 out8="$root/artifacts/packages-test/blender-8"
+out9="$root/artifacts/packages-test/blender-9"
 package() { "$root/scripts/package-port.py" "$@" --out "$out"; }
-mkdir -p "$out" "$out7" "$out8"
+mkdir -p "$out" "$out7" "$out8" "$out9"
 
 # the script-mode builds see pkg-config into the sysroot
 export PKG_CONFIG_SYSROOT_DIR="$sysroot"
@@ -565,6 +567,84 @@ libharu() {
 	need develop/headers/hpdf.h develop/lib/libhpdf.so
 }
 
+# OpenUSD 24.08 (-9: File > Import/Export > Universal Scene Description; blender.md §7.16): ours
+# (tools/recipes). Blender 3.6 pins 23.05, which needs the TBB 2020 API; 24.08 is the first release that
+# builds with oneTBB (2022: the patchset backports OpenUSD PR #3392), and Blender 3.6's io/usd compiles
+# against it unchanged. The patchset also ports the arch library to Haiku. One shared library, libusd_ms
+# (PXR_BUILD_MONOLITHIC, the name Blender's FindUSD takes); usdImaging without GL (Blender's gprim reader
+# meshes Cube/Sphere/... with its shape adapters, so imaging cannot be off); no Python (Blender 3.6's io/usd
+# does not need it, and without it no Boost), no tools, tests, OpenVDB/OIIO/OCIO/MaterialX/Alembic/Draco
+# plug-ins. The plug-in descriptions (lib/usd/<module>/resources/plugInfo.json: schemas, the usda/usdc/usdz
+# file formats) are found at run time relative to libusd_ms (Plug_InitConfig, dladdr), so they go into the
+# runtime package as lib/usd. Compile jobs up to ~1.5 GB: heavy-build.sh.
+usd() {
+	local recipe="$root/tools/recipes/media-gfx/usd/usd-24.08.recipe" w="$root/artifacts/cross-ports/usd-24.08"
+	local inst lib n j rel
+	"$root/scripts/heavy-build.sh" -j 8 --mem-per-job 3 --max 20 -- env CROSS_PORT_JOBS='{JOBS}' \
+		"$cross" "$recipe" cmake -DPXR_ENABLE_PYTHON_SUPPORT=OFF -DPXR_BUILD_IMAGING=ON -DPXR_BUILD_USD_IMAGING=ON \
+		-DPXR_ENABLE_GL_SUPPORT=OFF -DPXR_ENABLE_VULKAN_SUPPORT=OFF -DPXR_ENABLE_METAL_SUPPORT=OFF \
+		-DPXR_BUILD_TESTS=OFF -DPXR_BUILD_EXAMPLES=OFF -DPXR_BUILD_TUTORIALS=OFF -DPXR_BUILD_USD_TOOLS=OFF \
+		-DPXR_BUILD_USDVIEW=OFF -DPXR_BUILD_DOCUMENTATION=OFF -DPXR_ENABLE_PTEX_SUPPORT=OFF \
+		-DPXR_ENABLE_OPENVDB_SUPPORT=OFF -DPXR_ENABLE_OSL_SUPPORT=OFF -DPXR_ENABLE_HDF5_SUPPORT=OFF \
+		-DPXR_ENABLE_MATERIALX_SUPPORT=OFF -DPXR_BUILD_OPENIMAGEIO_PLUGIN=OFF -DPXR_BUILD_OPENCOLORIO_PLUGIN=OFF \
+		-DPXR_BUILD_EMBREE_PLUGIN=OFF -DPXR_BUILD_PRMAN_PLUGIN=OFF -DPXR_BUILD_ALEMBIC_PLUGIN=OFF \
+		-DPXR_BUILD_DRACO_PLUGIN=OFF -DPXR_BUILD_MONOLITHIC=ON -DBUILD_SHARED_LIBS=ON \
+		-DPXR_ENABLE_PRECOMPILED_HEADERS=OFF -DCMAKE_SKIP_RPATH=ON -DTBB_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" \
+		-Wno-dev
+	grep -q 'Found TBB: .*(found version "2022\.3")' "$w/configure.log" \
+		|| { grep -i tbb "$w/configure.log" >&2; echo "build-blender: USD did not find the sysroot's oneTBB 2022.3" >&2; exit 1; }
+	inst="$w/install/boot/system/non-packaged"
+	lib="$inst/lib/libusd_ms.so"
+	# The monolithic build puts three plug-ins (usdShaders, sdrGlslfx, hioAvif: compiled into libusd_ms,
+	# "LibraryPath": "") into <prefix>/plugin/usd, which USD searches as lib/../plugin/usd: moved into lib/usd
+	# (whose plugInfo.json includes */resources/), so that the package has no top-level plugin/ directory.
+	# pxrConfig.cmake and cmake/pxrTargets*.cmake name this host's sysroot: dropped (Blender's FindUSD does not
+	# use them). Both in the work tree and in the sysroot, where cross-port.sh copied the install tree.
+	for d in "$inst/plugin/usd"/*/; do
+		mv "$d" "$inst/lib/usd/"
+		rm -rf "$np/plugin/usd/$(basename "$d")"
+		cp -a "$inst/lib/usd/$(basename "$d")" "$np/lib/usd/"
+	done
+	rm -rf "$inst/plugin" "$inst/pxrConfig.cmake" "$inst/cmake" "$np/plugin" "$np/pxrConfig.cmake" "$np/cmake"
+	"$tools-readelf" -d "$lib" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ' | sed 's/^/build-blender: libusd_ms needs: /'
+	echo
+	for n in libtbb.so.12 libosdCPU.so.3.5.0; do
+		"$tools-readelf" -d "$lib" | grep "NEEDED.*\[$n\]" > /dev/null || { echo "build-blender: USD does not link $n" >&2; exit 1; }
+	done
+	! "$tools-readelf" -d "$lib" | grep -E 'RPATH|RUNPATH|NEEDED.*\[lib(GL|EGL|python|boost)' > /dev/null \
+		|| { echo "build-blender: USD has a run path or links GL/Python/Boost" >&2; exit 1; }
+	# ArchGetAddressInfo() through dladdr() (Haiku has no _GNU_SOURCE; without it Plug cannot find lib/usd
+	# beside the library and every USD file operation fails: "Failed to find plugin for ArDefaultResolver")
+	"$tools-readelf" --dyn-syms -W "$lib" | grep -E ' UND dladdr$' > /dev/null \
+		|| { echo "build-blender: libusd_ms does not use dladdr (ArchGetAddressInfo)" >&2; exit 1; }
+	# no Python support (Blender's FindUSD turns USD_PYTHON_SUPPORT on when pyModule.h exists)
+	[ ! -e "$inst/include/pxr/base/tf/pyModule.h" ] \
+		&& grep -B1 '^#define PXR_PYTHON_SUPPORT_ENABLED' "$inst/include/pxr/pxr.h" | grep -q '^#if 0$' \
+		|| { echo "build-blender: USD built with Python support" >&2; exit 1; }
+	grep -q '^#define PXR_VERSION 2408$' "$inst/include/pxr/pxr.h" || { echo "build-blender: not USD 24.08" >&2; exit 1; }
+	[ -f "$inst/include/pxr/usdImaging/usdImaging/capsuleAdapter.h" ] \
+		|| { echo "build-blender: USD built without usdImaging" >&2; exit 1; }
+	# the plug-in descriptions Blender needs at run time, each pointing at libusd_ms
+	for n in usd/plugInfo.json usd/sdf/resources/plugInfo.json usd/usd/resources/plugInfo.json \
+			usd/usdGeom/resources/plugInfo.json usd/usdGeom/resources/generatedSchema.usda \
+			usd/usdShade/resources/plugInfo.json usd/usdLux/resources/plugInfo.json \
+			usd/usdSkel/resources/plugInfo.json usd/usdVol/resources/plugInfo.json \
+			usd/usdImaging/resources/plugInfo.json usd/ar/resources/plugInfo.json \
+			usd/usdShaders/resources/plugInfo.json; do
+		[ -f "$inst/lib/$n" ] || { echo "build-blender: USD's lib/$n missing" >&2; exit 1; }
+	done
+	# (the plug-ins: */resources/plugInfo.json, as lib/usd/plugInfo.json includes them; usd/resources/
+	# codegenTemplates/ holds usdGenSchema's templates, not a plug-in)
+	for j in "$inst"/lib/usd/*/resources/plugInfo.json; do
+		rel="$(sed -n 's/.*"LibraryPath": *"\([^"]*\)".*/\1/p' "$j" | head -n 1)"
+		[ -z "$rel" ] || [ "$(realpath -m "$(dirname "$j")/$rel")" = "$(realpath "$lib")" ] \
+			|| { echo "build-blender: $j: LibraryPath $rel is not libusd_ms" >&2; exit 1; }
+	done
+	"$root/scripts/package-port.py" "$recipe" --lib-tree usd --out "$out9"
+	need non-packaged/lib/libusd_ms.so non-packaged/lib/usd/plugInfo.json develop/headers/pxr/usd/usd/api.h
+	rm -rf "$w/src" "$w/source" "$w/build"
+}
+
 # --- Blender itself: artifacts/cross-ports/blender-3.6.23/ (kept between runs: src/ is only made
 # when missing; rm -rf it to start over) ---
 bl="$root/artifacts/cross-ports/blender-3.6.23"
@@ -609,13 +689,13 @@ blender_source() {
 	mv "$bl/src.tmp" "$bl/src"
 }
 
-# the libraries -8 adds, for both configures (the host one only finds them so that the options stay on):
+# the libraries -8 adds (and -9's USD), for both configures (the host one only finds them so that the options stay on):
 # OpenVDB + NanoVDB + Blosc, GMP, potrace, libharu, Boost 1.83 (its CMake config, not CMake's removed
 # FindBoost; Boost_NO_SYSTEM_PATHS: never the host's own Boost)
 roots8() {
 	echo -DOPENVDB_ROOT_DIR="$np" -DNANOVDB_ROOT_DIR="$np" -DBLOSC_ROOT_DIR="$np" -DGMP_ROOT_DIR="$np" \
 		-DPOTRACE_ROOT_DIR="$np" -DHARU_ROOT_DIR="$np" -DBoost_ROOT="$np" -DBOOST_ROOT="$np" \
-		-DBoost_NO_SYSTEM_PATHS=ON -DBoost_DIR="$np/lib/cmake/Boost-1.83.0"
+		-DBoost_NO_SYSTEM_PATHS=ON -DBoost_DIR="$np/lib/cmake/Boost-1.83.0" -DUSD_ROOT_DIR="$np"
 }
 
 # the WITH_* values a configured build ended with
@@ -720,14 +800,14 @@ configure() {
 			WITH_OPENCOLORIO WITH_OPENSUBDIV WITH_CODEC_FFMPEG WITH_AUDASPACE WITH_OPENIMAGEDENOISE \
 			WITH_PYTHON_NUMPY WITH_ALEMBIC WITH_FFTW3 WITH_MOD_OCEANSIM WITH_MOD_FLUID WITH_BOOST WITH_OPENVDB \
 			WITH_OPENVDB_BLOSC WITH_NANOVDB WITH_GMP WITH_POTRACE WITH_HARU WITH_INTERNATIONAL WITH_QUADRIFLOW \
-			WITH_DRACO; do
+			WITH_DRACO WITH_USD; do
 		grep -q "^$o:BOOL=ON" "$bl/build/CMakeCache.txt" || { echo "build-blender: $o is off" >&2; exit 1; }
 	done
 	# -8: what set_and_warn_dependency or a find module could still turn off with a normal variable (the
 	# cache keeps ON): the defines the sources get (WITH_DRACO: extern_draco is built; WITH_INTERNATIONAL:
 	# the locale files are made)
 	for o in WITH_OPENVDB WITH_OPENVDB_BLOSC WITH_NANOVDB WITH_GMP WITH_POTRACE WITH_HARU WITH_INTERNATIONAL \
-			WITH_QUADRIFLOW; do
+			WITH_QUADRIFLOW WITH_USD; do
 		grep -q -- "-D$o\b" "$bl/build/build.ninja" || { echo "build-blender: nothing is compiled with -D$o" >&2; exit 1; }
 	done
 	grep -q 'libextern_draco.so' "$bl/build/build.ninja" || { echo "build-blender: no extern_draco target" >&2; exit 1; }
@@ -751,7 +831,7 @@ build() {
 	"$tools-nm" "$bl/build/bin/blender" | grep ' T PyInit_aud$' > /dev/null \
 		|| { echo "build-blender: blender has no aud module (PyInit_aud)" >&2; exit 1; }
 	for n in libAlembic.so.1.8 libfftw3.so.3 libopenvdb.so.10.1 libgmp.so.10 libgmpxx.so.4 libpotrace.so.0 \
-			libhpdf.so.2.4.3 libboost_locale.so.1.83.0; do
+			libhpdf.so.2.4.3 libboost_locale.so.1.83.0 libusd_ms.so; do
 		"$tools-readelf" -d "$bl/build/bin/blender" | grep "NEEDED.*\[$n\]" > /dev/null \
 			|| { echo "build-blender: blender does not link $n" >&2; exit 1; }
 	done
@@ -792,16 +872,18 @@ blender_package() {
 	# (GL contexts shared with the first one, 0013); 8: OpenVDB 10.1 + NanoVDB (voxel remesh, .vdb import, volume
 	# nodes and Cycles volumes, the OpenVDB fluid cache), GMP (the Exact Boolean solver), Quadriflow, Draco
 	# (glTF compression, 0014: libextern_draco.so in 3.6/lib), potrace, libharu, translations (Boost.Locale:
-	# boost1.83 -2, which also has regex and iostreams)
+	# boost1.83 -2, which also has regex and iostreams); 9: USD import/export (usd 24.08, 0015)
 	[ -f "$sys/apps/Blender/3.6/lib/libextern_draco.so" ] || { echo "build-blender: no libextern_draco.so" >&2; exit 1; }
 	[ ! -e "$sys/apps/Blender/3.6/python" ] \
 		|| { echo "build-blender: 3.6/python exists (Blender would take it as its Python home)" >&2; exit 1; }
 	[ -f "$sys/apps/Blender/3.6/datafiles/locale/de/LC_MESSAGES/blender.mo" ] \
 		|| { echo "build-blender: no translations in 3.6/datafiles/locale" >&2; exit 1; }
-	"$root/scripts/package-port.py" "$recipe" --revision 8 --system-prefix --no-devel --provides app:Blender \
+	# (no 3.6/datafiles/usd: USD finds its plug-ins beside libusd_ms, in the usd package)
+	[ ! -e "$sys/apps/Blender/3.6/datafiles/usd" ] || { echo "build-blender: 3.6/datafiles/usd installed" >&2; exit 1; }
+	"$root/scripts/package-port.py" "$recipe" --revision 9 --system-prefix --no-devel --provides app:Blender \
 		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 --requires numpy_python3.10 \
-		--requires "boost1.83 >= 1.83.0-2" "${r[@]}" --out "$out8"
-	"$pkgtool" list -i "$out8/blender-3.6.23-8-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+		--requires "boost1.83 >= 1.83.0-2" "${r[@]}" --out "$out9"
+	"$pkgtool" list -i "$out9/blender-3.6.23-9-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its
@@ -818,11 +900,11 @@ stage() {
 		|| { echo "build-blender: incomplete install tree $t/Blender" >&2; exit 1; }
 	mkdir -p "$t/packages"
 	cp "$out"/*.hpkg "$root"/artifacts/packages-test/libsdl2-8/libsdl2-2.32.10-8-arm64.hpkg "$t/packages/"
-	# -7/-8: blender itself (blender_package runs first) from blender-8/, its libraries from blender-7/ and
-	# blender-8/, not the earlier revisions of blender/ (blender, boost1.83 -1: pkgman would get two
-	# versions of one package)
-	cp "$out7"/*.hpkg "$out8"/*.hpkg "$t/packages/"
-	rm -f "$t/packages"/blender-3.6.23-[1-7]-*.hpkg "$t/packages"/boost1.83*-1.83.0-1-*.hpkg
+	# -7/-8/-9: blender itself (blender_package runs first) from blender-9/, its libraries from blender-7/,
+	# blender-8/ and blender-9/, not the earlier revisions of blender/ (blender, boost1.83 -1: pkgman would
+	# get two versions of one package)
+	cp "$out7"/*.hpkg "$out8"/*.hpkg "$out9"/*.hpkg "$t/packages/"
+	rm -f "$t/packages"/blender-3.6.23-[1-8]-*.hpkg "$t/packages"/boost1.83*-1.83.0-1-*.hpkg
 	# and the run-time libraries of ours an image may not have yet (pkgman skips those it has)
 	# (python3.10's modules link openssl, sqlite, bz2, libedit, expat, which package-port.py does not
 	# turn into requires: they are in the sysroot's lib/, not non-packaged/)
@@ -836,7 +918,7 @@ stage() {
 }
 
 steps=(sysroot python libdeflate imath openexr tiff epoxy boost tbb oiio pugixml yaml_cpp pystring
-	minizip_ng opencolorio opensubdiv sse2neon oidn numpy alembic fftw blosc openvdb gmp potrace libharu freetype blender_source
+	minizip_ng opencolorio opensubdiv sse2neon oidn numpy alembic fftw blosc openvdb gmp potrace libharu usd freetype blender_source
 	hosttools configure build blender_package stage)
 start="${1:-${steps[0]}}" last="${2:-}"
 started=0
