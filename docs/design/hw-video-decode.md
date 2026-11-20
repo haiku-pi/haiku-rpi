@@ -487,7 +487,7 @@ kernel area holds: early boot allocations.)
 The rpivid driver is probed at boot (the syslog has its `block ...` line before the desktop starts), early enough to
 take memory before it is scattered — as the display driver takes its four overlay buffers when app_server starts.
 
-### 10.2 Fix (branch `v7-rpivid-reserve`, 3 commits on `v6-video` 25b4611377)
+### 10.2 Fix (branch `v7-rpivid-reserve` on `v6-video` 25b4611377; the pool's lifetime fix af5e4eaa54 is §10.4)
 
 | Commit | Change |
 |---|---|
@@ -523,14 +523,36 @@ streams at once.
   0` in `~/config/settings/kernel/drivers/rpivid` gives it back (the old behaviour).
 - 0 debugger entries, 0 PANIC in the session.
 
-### 10.4 Merging and what is left
+### 10.4 A defect found after the session, fixed on the host only (af5e4eaa54, **not run on the Pi**)
 
-- Branch `v7-rpivid-reserve` (df33d556ca, b633e5cc13, 8349d5f2db) sits on `v6-video`: merge after series B. The
-  driver change is additive (no API change; ffmpeg6 -7 never asks for scan-out pictures, so the pool stays unused).
+A pool picture is a `map_physical_memory()` area, and a clone of a physical mapping does not keep the memory (a clone
+of v6-video's RAM-backed picture kept its pages). b633e5cc13 handed a released picture's part of the pool out again at
+once, so:
+- a client that cloned its own (cloneable) picture and then deleted it could read the next stream's pictures — another
+  process's video;
+- the display could still be scanning out an imported picture whose memory was being cleared and reused (a glitch,
+  not seen in `v7b`, and nothing there looked for it; the kill -9 check only counted the pool).
+
+af5e4eaa54 keeps a released picture's area until its cache has no other area (the client's, app_server's, the
+display's clone), sweeping on each allocation and report; the report says `N gone but still cloned`. It builds
+(`-Werror`, every kernel symbol the driver uses exported). Test for it: `tools/haiku-tests/rpivid-poolclone.c` (in
+`artifacts/v7/bin`, so `/boot/home/v6/rpivid-poolclone` in a `V6_KIT=artifacts/v7` session; `artifacts/v7/stage/rpivid`
+is af5e4eaa54's now): picture A, a clone of it, A deleted → `1 gone but still cloned`; picture B → `in 2 pictures`;
+clone deleted, picture C → `0 gone`. The 4K/1080p numbers of §10.3 should be repeated on it once (the sweep runs on
+every allocation). The bench was reserved for the owner before this could be run.
+
+### 10.5 Merging and what is left
+
+- Branch `v7-rpivid-reserve` (df33d556ca, b633e5cc13, 8349d5f2db, af5e4eaa54) sits on `v6-video`: merge after series
+  B, **and only after af5e4eaa54 has passed rpivid-poolclone and one 4K/1080p round on the Pi**; without the Pi run,
+  the report (df33d556ca) and the MediaPlayer probe (8349d5f2db) can go alone, the pool cannot. The driver change is
+  additive (no API change; ffmpeg6 -7 never asks for scan-out pictures, so the pool stays unused).
+- Not verified: that rpivid's ordinary buffers now land above 1 GiB (the report lists contiguous areas below 1 GiB by
+  name; a `cat` during a `MEDIAPLAYER_SAND=0` play would show none named "rpivid").
 - Not done: a pool shared with the display driver's own overlay reserve; sizing for 4K Main 10 (255 MiB) by default;
   returning the pool to the system on low memory. The cause of the scattering — the page allocator hands out the
   lowest pages first — is a kernel matter (a "DMA zone"); not changed here.
-- To rebuild: `sources/haiku-v7/generated.arm64` was deleted after the session (2.9 GB). Recreate it as §9's V6 note
+- To rebuild: `sources/haiku-v7/generated.arm64` was deleted after the work (1.7 GB). Recreate it as §9's V6 note
   says, with `haiku-v7` in place of `haiku-v6`; then `scripts/build.sh --generated sources/haiku-v7/generated.arm64
   --light rpivid MediaPlayer` (a light build of just these two works from an empty configured directory: jam builds
   what they need, ~1 minute each) and `V6_KIT=artifacts/v7` for `tools/pi-tests/v6-session.sh`.

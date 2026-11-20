@@ -986,9 +986,24 @@ wide, `v7b`): **on the plane**, bt709, through an ABR switch 1024×436 → 1280�
 | 720p H.264 plain page, Renderer + SwComposite per 10 s | 0.57 s, 0 dropped, 303 plane frames, 0 window frames | 0.90–0.96 s |
 | Realistic page with the translucent caption (`real`) | software throughout (0008), as -10's RE3 | same |
 | Realistic page without caption (`real NOCAP=1`) | plane when wholly visible and still: 237 plane frames, 4 shows / 4 hides while scrolling | RN1: 235 |
-| Two videos | the larger on the plane (571 frames) | works |
+| Two videos | the larger on the plane (571 frames), but **hidden twice** for ~20 composites each in which no planar surface was offered (`not-offered` 77 → 97 → 119), 78 dropped by 24 s | -10's TW3 (same page, ffa5): 1 show, 0 hides, 595 frames. One run each; not investigated; 0006's change does not touch the offering, and the app_server/libbe differed (below) |
 | Quit cycles | 10 single + 6 two-video: quit in 1 s each, 0 left, 0 debugger entries, 0 mmal errors | 0 in 90 |
 | Debugger entries / PANIC, whole sessions | 0 / 0 | 0 |
+
+**What these runs were, exactly:**
+- The image was `v6-base` (rpi4 6a20a50380) with the V6 kit's app_server, libbe, accelerant and display driver, which
+  carry series A **and** B (artifacts/v6-video/stage), not an image built from rpi4 HEAD (series A only).
+- The colour rows marked 601-SD, 709, 601-tagged, 601 untagged, 601 full, 709 full, 2020 H.264, 709-full VP9 come from
+  the **first** -11 build (`v7a`, BT.2020 passed); the final -11 differs only in declining BT.2020, and the four rows
+  rerun on it (`v7b`: both BT.2020 clips, untagged VP9, 601 VP9) gave the same as the first build except BT.2020.
+- The "-10" column is what -10's rule (equal to the height guess) gives for what Firefox said, **not measured** with
+  -10 in these sessions.
+- **Not run:** `Rec601Full` never occurred — no clip made Firefox say `bt601-full` (the H.264 full-range clips came out
+  as bt709), so BT.601 full range through Firefox on the plane (encoding 3) is **untested**; `col-601full-sd.mp4`
+  (yuvj420p) and a VP9 full-range BT.601 clip would be the next try. The four HEVC colour clips were not played in
+  Firefox (Firefox's HEVC support on Haiku was not checked).
+- The objdir, `artifacts/firefox/non-packaged` and `patches/firefox/0006` now hold -11. A rebuild of -10 needs 0006 as
+  of the coordination commit before V7's (`dc9b9de^`).
 
 **Limits:**
 - -11 needs app_server + accelerant with series A (rpi4 ≥ 552c42233d: the 2026-11-21 gate image onwards). On an
@@ -997,5 +1012,7 @@ wide, `v7b`): **on the plane**, bt709, through an ABR switch 1024×436 → 1280�
 - Full-range BT.709 and BT.2020 stay in software; so do all VideoCore H.264 streams' real range/BT.2020 (Firefox does
   not know them; same as -10 on the plane).
 
-**Recommendation:** after Saturday's gate, ship -11 in place of -10 together with that image (it has series A); the
-gate's ffmpeg6 -7 and raspberrypi_userland -4 are what it was tested with.
+**Recommendation:** after Saturday's gate, ship -11 in place of -10 with that image (it has series A), once one Pi run
+on the gate image itself (series A only) repeats M1, the 601-tagged clip and a `two` run (the two hides above); the
+gate's ffmpeg6 -7 and raspberrypi_userland -4 are what it was tested with. The bench was reserved for the owner
+before that run could be made.
