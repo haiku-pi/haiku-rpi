@@ -1,0 +1,40 @@
+From: haiku-pi <noreply@haiku-pi.invalid>
+Subject: core: a no-op ThreadAffinity on systems other than Windows, Linux and macOS
+
+The CPU engine creates a ThreadAffinity on every system except macOS on ARM64, but the class
+exists only for Windows, Linux and macOS, so the core library does not compile elsewhere (Haiku).
+A fallback that detects no threads makes the engine disable thread pinning, as it does when the
+detection fails on Linux.
+
+diff --git a/core/thread.h b/core/thread.h
+--- a/core/thread.h
++++ b/core/thread.h
+@@ -192,6 +192,28 @@ OIDN_NAMESPACE_BEGIN
+     std::vector<thread_affinity_policy> oldAffinities; // original thread affinities
+   };
+
++#else
++
++  // -----------------------------------------------------------------------------------------------
++  // ThreadAffinity: other systems (no thread pinning)
++  // -----------------------------------------------------------------------------------------------
++
++  class ThreadAffinity : public Verbose
++  {
++  public:
++    ThreadAffinity(int maxNumThreadsPerCore = INT_MAX, int verbose = 0)
++      : Verbose(verbose) {}
++
++    // No thread topology: the engine then does not pin its threads
++    int getNumThreads() const { return 0; }
++
++    // Sets the affinity (0..numThreads-1) of the thread after saving the current affinity
++    void set(int threadIndex) {}
++
++    // Restores the affinity of the thread
++    void restore(int threadIndex) {}
++  };
++
+ #endif
+
+ OIDN_NAMESPACE_END

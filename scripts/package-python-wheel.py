@@ -3,10 +3,11 @@
 module package, <module>_python3.14 (as HaikuPorts' dev-python recipes name them).
 
     scripts/package-python-wheel.py WHEEL [--revision N] [--requires R]... [--provides P]...
-        [--replace OLD NEW]... [--name NAME] [--map DIST RESOLVABLE]...
+        [--replace OLD NEW]... [--name NAME] [--map DIST RESOLVABLE]... [--out DIR]
 
-Run it with a Python 3.14 that has the `installer` and `packaging` modules (scripts/build-numpy.sh's
-venv). The wheel is a cross-built one (numpy) or a pure-Python one (py3-none-any: pytest, ...).
+Run it with a Python of the target's version (3.14; 3.10 for Blender's numpy_python3.10) that has
+the `installer` and `packaging` modules (scripts/build-numpy.sh's venv): the package is for that
+version (below, 3.14 stands for it; a non-default version gets no unsuffixed script names). The wheel is a cross-built one (numpy) or a pure-Python one (py3-none-any: pytest, ...).
 What the recipes' INSTALL() does with `python3.14 -m installer -p $prefix`, done on the host:
 
   - installed (`installer` API) under the packaged prefix: the modules in
@@ -22,7 +23,7 @@ What the recipes' INSTALL() does with `python3.14 -m installer -p $prefix`, done
   - ELF objects stripped (--strip-unneeded); their NEEDED entries become requires as in
     package-port.py; a host path in any file fails the packaging
 
-In artifacts/packages/: <module>_python3.14-<version>-<N>-<arch>.hpkg, arch "any" for a pure-Python
+In artifacts/packages/ (--out DIR: there): <module>_python3.14-<version>-<N>-<arch>.hpkg, arch "any" for a pure-Python
 wheel (Root-Is-Purelib and no ELF objects), arm64 otherwise. Provides <module>_python3.14 and
 <module>_python314 (the name other recipes require) and cmd:<script>_3.14 / cmd:<script>; requires
 haiku, cmd:python3.14 and <dep>_python314 for every Requires-Dist that applies on Haiku (markers
@@ -37,6 +38,7 @@ import argparse
 import email.parser
 import importlib.util
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -56,11 +58,14 @@ pp = importlib.util.module_from_spec(spec)
 sys.dont_write_bytecode = True  # no scripts/__pycache__
 spec.loader.exec_module(pp)
 
-pythonVersion = '3.14'
+# the target's Python is the one running this (a venv on the build python of the same version:
+# scripts/build-numpy.sh), 3.14 or 3.10 (Blender's)
+pythonVersion = f'{sys.version_info.major}.{sys.version_info.minor}'
+defaultPython = '3.14'
 prefix = '/boot/system'
 vendor = f'{prefix}/lib/python{pythonVersion}/vendor-packages'
 # what Requires-Dist markers see on Haiku arm64 (python3.14's sys.platform, platform.system())
-markerEnvironment = {'python_version': pythonVersion, 'python_full_version': '3.14.8',
+markerEnvironment = {'python_version': pythonVersion, 'python_full_version': platform.python_version(),
     'sys_platform': 'haiku1', 'platform_system': 'Haiku', 'os_name': 'posix',
     'platform_machine': 'arm64', 'implementation_name': 'cpython',
     'platform_python_implementation': 'CPython', 'extra': ''}
@@ -104,6 +109,12 @@ def main():
             '(meson); its scripts are not version suffixed')
     parser.add_argument('--map', nargs=2, action='append', default=[], metavar=('DIST', 'RESOLVABLE'),
         help='the requirement a Requires-Dist on DIST becomes (meson-python: meson -> cmd:meson)')
+    parser.add_argument('--replace-dir', nargs=2, action='append', default=[], metavar=('OLD', 'NEW'),
+        help='replace the directory OLD by NEW in the ELF objects too, NEW padded with slashes to the '
+            'length of OLD (an equivalent path): Cython 3.0 puts the absolute .pyx path into the code '
+            'objects of a module (numpy 1.26: numpy/random/bit_generator)')
+    parser.add_argument('--out', default=os.path.join(root, 'artifacts/packages'),
+        help='the directory the package goes to (default: artifacts/packages)')
     args = parser.parse_args()
     requirementMap = {canonicalize_name(d): r for d, r in args.map}
 
@@ -145,8 +156,12 @@ def main():
     elif os.path.isdir(binDir):
         for f in sorted(os.listdir(binDir)):
             os.rename(os.path.join(binDir, f), os.path.join(binDir, f'{f}-{pythonVersion}'))
-            os.symlink(f'{f}-{pythonVersion}', os.path.join(binDir, f))
-            commands += [f'{f}_{pythonVersion}', f]
+            commands.append(f'{f}_{pythonVersion}')
+            # the unsuffixed name only for the default python's module (numpy_python3.10 and
+            # numpy_python3.14 would both have bin/f2py)
+            if pythonVersion == defaultPython:
+                os.symlink(f'{f}-{pythonVersion}', os.path.join(binDir, f))
+                commands.append(f)
 
     # ELF objects: stripped, NEEDED -> requires
     needed = []
@@ -159,10 +174,19 @@ def main():
             elf = True
             needed += pp.elf_dynamic(path)[1]
             subprocess.run([pp.tools + 'strip', '--strip-unneeded', path], check=True)
+            data = open(path, 'rb').read()
+            new = data
+            for old, replacement in args.replace_dir:
+                old, replacement = old.rstrip('/') + '/', replacement.rstrip('/')
+                if len(replacement) + 1 > len(old):
+                    sys.exit(f'package-python-wheel: --replace-dir: {replacement} is longer than {old}')
+                new = new.replace(old.encode(), (replacement + '/' * (len(old) - len(replacement))).encode())
+            if new != data:
+                open(path, 'wb').write(new)
 
     # host paths in text files, by their names on Haiku (the wheel's RECORD keeps the old hashes;
     # only pip's uninstall reads it, and a packaged module is not uninstalled with pip)
-    if args.replace:
+    if args.replace or args.replace_dir:
         for dirpath, _, files in os.walk(sys_):
             for f in files:
                 path = os.path.join(dirpath, f)
@@ -172,6 +196,8 @@ def main():
                 new = data
                 for old, replacement in args.replace:
                     new = new.replace(old.encode(), replacement.encode())
+                for old, replacement in args.replace_dir:
+                    new = new.replace(old.rstrip('/').encode(), replacement.rstrip('/').encode())
                 if new != data:
                     open(path, 'wb').write(new)
 
@@ -235,7 +261,8 @@ def main():
                 f.write(f'{meta["Name"]} {version} is licensed under '
                     f'{meta.get("License-Expression") or license}.\nThe license texts are in '
                     f'{vendor}/{distInfo}/ (licenses/, LICENSE*).\n')
-    out = os.path.join(root, 'artifacts/packages', f'{name}-{version}-{args.revision}-{architecture}.hpkg')
+    os.makedirs(args.out, exist_ok=True)
+    out = os.path.join(args.out, f'{name}-{version}-{args.revision}-{architecture}.hpkg')
     pp.create(runtime, info, out)
 
 

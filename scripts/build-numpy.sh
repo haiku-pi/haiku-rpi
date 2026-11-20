@@ -3,8 +3,11 @@
 # numpy_python3.14 (HaikuPorts' dev-python/numpy recipe's package), with the pure-Python packages
 # numpy.test() needs: pytest (+ pluggy, iniconfig, packaging, pygments) and hypothesis
 # (+ sortedcontainers), each as <module>_python3.14. See docs/design/numpy.md.
+# With --python 3.10: NumPy 1.26.4 for Blender's Python 3.10 (numpy_python3.10: Blender 3.6's `aud`
+# module and add-ons; docs/design/blender.md §7.14), numpy only.
 #
-#   scripts/build-numpy.sh [--no-test-deps]   (--no-test-deps: numpy only)
+#   scripts/build-numpy.sh [--no-test-deps] [--python 3.14|3.10] [--out DIR] [--revision N]
+#       (--no-test-deps: numpy only; --out: where the packages go, default artifacts/packages)
 #
 # Steps:
 #   1. the build tools: a uv venv (artifacts/python-build-venv) on the build python
@@ -37,10 +40,15 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 testDeps=1
-revision=2
+revision=""
+py=3.14
+out="$root/artifacts/packages"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--no-test-deps) testDeps=0; shift ;;
+	--python) py="$2"; shift 2 ;;
+	--out) out="$2"; shift 2 ;;
+	--revision) revision="$2"; shift 2 ;;
 	*) echo "build-numpy: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -48,17 +56,37 @@ gen="$root/sources/haiku/generated.arm64"
 sysroot="$root/artifacts/sysroot-arm64"
 tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
 heavy="$root/scripts/heavy-build.sh"
-hostPython="$root/artifacts/python-host/bin/python3.14"
-sysconfigdata="$sysroot/boot/system/lib/python3.14/_sysconfigdata__haiku_.py"
+case "$py" in
+3.14)
+	hostPython="$root/artifacts/python-host/bin/python3.14"
+	venv="$root/artifacts/python-build-venv"
+	version=2.5.4
+	numpySdist="https://files.pythonhosted.org/packages/95/b0/c7453d0b6e2073c3264468b106ee1563750cecc910965e67357e3698c83e/numpy-$version.tar.gz|9a94cf751c9ad8ebaa835bcd3d40dacf8534ad086b88c38029b65123c7999d2a"
+	buildTools=('meson-python>=0.18' 'Cython>=3.1' build installer)
+	: "${revision:=2}"
+	;;
+3.10)
+	# NumPy 1.26.4, the last 1.x (Python 3.9-3.12): Blender 3.6 pins 1.23.5 and finds the C headers
+	# in numpy/core/include, which 2.x moved to numpy/_core; its add-ons were written against 1.x
+	hostPython="$root/artifacts/python-host-3.10/bin/python3.10"
+	venv="$root/artifacts/python-build-venv-3.10"
+	version=1.26.4
+	numpySdist="https://files.pythonhosted.org/packages/source/n/numpy/numpy-$version.tar.gz|2a02aba9ed12e4ac4eb3ea9421c420301a0c6460d9830d74a9df87efa4912010"
+	# (its pyproject.toml's pins: meson-python < 0.16, Cython < 3.1)
+	buildTools=('meson-python>=0.15,<0.16' 'Cython>=3.0,<3.1' build installer)
+	testDeps=0
+	: "${revision:=1}"
+	;;
+*) echo "build-numpy: no python $py (3.14 or 3.10)" >&2; exit 2 ;;
+esac
+pyTag="cp${py/./}"
+sysconfigdata="$sysroot/boot/system/lib/python$py/_sysconfigdata__haiku_.py"
 [ -x "$tools-gcc" ] || { echo "build-numpy: no cross compiler at $tools-gcc" >&2; exit 1; }
-[ -f "$sysconfigdata" ] && [ -f "$sysroot/boot/system/develop/headers/python3.14/Python.h" ] \
-	|| { echo "build-numpy: no python3.14 in the sysroot: run scripts/build-python.sh" >&2; exit 1; }
-"$hostPython" -c "import sys; sys.exit(sys.version_info[:2] != (3, 14))" 2>/dev/null \
-	|| { echo "build-numpy: no build python 3.14 at $hostPython: run scripts/build-python.sh" >&2; exit 1; }
+[ -f "$sysconfigdata" ] && [ -f "$sysroot/boot/system/develop/headers/python$py/Python.h" ] \
+	|| { echo "build-numpy: no python$py in the sysroot: run scripts/build-python.sh" >&2; exit 1; }
+"$hostPython" -c "import sys; sys.exit(sys.version_info[:2] != tuple(map(int, '$py'.split('.'))))" 2>/dev/null \
+	|| { echo "build-numpy: no build python $py at $hostPython: run scripts/build-python.sh" >&2; exit 1; }
 command -v uv > /dev/null || { echo "build-numpy: needs uv (https://docs.astral.sh/uv/)" >&2; exit 1; }
-
-version=2.5.4
-numpySdist="https://files.pythonhosted.org/packages/95/b0/c7453d0b6e2073c3264468b106ee1563750cecc910965e67357e3698c83e/numpy-$version.tar.gz|9a94cf751c9ad8ebaa835bcd3d40dacf8534ad086b88c38029b65123c7999d2a"
 # url|sha256: the newest releases with a pure-Python wheel (hypothesis: later releases ship only
 # compiled wheels; 6.155.7 is newer than the 6.152.1 NumPy pins in requirements/test_requirements.txt)
 testWheels=(
@@ -80,11 +108,10 @@ fetch() {	# url|sha256 -> the file in $dl
 }
 
 # 1. the build tools
-venv="$root/artifacts/python-build-venv"
 if ! "$venv/bin/python" -c "import mesonpy, Cython, build, installer" 2>/dev/null; then
 	rm -rf "$venv"
 	uv venv -q -p "$hostPython" "$venv"
-	uv pip install -q --python "$venv/bin/python" 'meson-python>=0.18' 'Cython>=3.1' build installer
+	uv pip install -q --python "$venv/bin/python" "${buildTools[@]}"
 fi
 echo "build-numpy: build tools: $(uv pip list -q --python "$venv/bin/python" 2>/dev/null \
 	| sed -n 's/^\(meson-python\|cython\|meson\|installer\) *\([^ ]*\)$/\1 \2/p' | tr '\n' ' ')"
@@ -96,12 +123,15 @@ mkdir -p "$work/src" "$work/sysconfig"
 sdist="$(fetch "$numpySdist")"
 tar -xzf "$sdist" -C "$work/src" --strip-components=1
 for p in "$root/patches/numpy-$version"/*.patch; do
+	[ -e "$p" ] || continue
 	echo "build-numpy: applying $(basename "$p")"
 	patch -s -p1 -d "$work/src" < "$p"
 done
 
 # 3. the wheel
 cp "$sysconfigdata" "$work/sysconfig/"
+# the project's cross file with @DIRNAME@ resolved (NumPy 1.26's vendored meson 1.2.99 predates it)
+sed "s|@DIRNAME@|$root/tools/meson|" "$root/tools/meson/haiku-arm64.cross" > "$work/haiku-arm64.cross"
 cat > "$work/numpy.cross" <<EOF
 # generated by scripts/build-numpy.sh: see there
 [binaries]
@@ -118,11 +148,11 @@ df -BG --output=avail / | tail -n 1 | tr -d ' G' | { read -r free; [ "$free" -ge
 	_PYTHON_SYSCONFIGDATA_NAME=_sysconfigdata__haiku_ _PYTHON_HOST_PLATFORM=haiku-1-arm64 \
 	"$heavy" --mem-per-job 1 -- "$venv/bin/python" -m build --wheel --no-isolation \
 	--skip-dependency-check --outdir "$work/dist" -Cbuilddir="$work/build" \
-	-Csetup-args=--cross-file="$root/tools/meson/haiku-arm64.cross" \
+	-Csetup-args=--cross-file="$work/haiku-arm64.cross" \
 	-Csetup-args=--cross-file="$work/numpy.cross" \
 	-Csetup-args=-Dblas=none -Csetup-args=-Dlapack=none -Csetup-args=-Dallow-noblas=true \
 	-Ccompile-args=-j'{JOBS}') > "$work/build.log" 2>&1 || { tail -n 40 "$work/build.log" >&2; exit 1; }
-wheel="$(ls "$work/dist"/numpy-"$version"-cp314-cp314-*.whl)"
+wheel="$(ls "$work/dist"/numpy-"$version"-"$pyTag"-"$pyTag"-*.whl)"
 echo "build-numpy: compiler warnings: $(grep -c 'warning:' "$work/build.log" || true)"
 sed -n '/^CPU Optimization Options/,/^$/p' "$work/build.log" | sed 's/^/build-numpy: /'
 
@@ -133,7 +163,7 @@ rm -rf "$work/check"
 mkdir -p "$work/check"
 (cd "$work/check" && "$venv/bin/python" -m zipfile -e "$wheel" .)
 defined="$work/check/defined.txt"
-for l in libroot.so libstdc++.so.6 libgcc_s.so.1 libpython3.14.so.1.0; do
+for l in libroot.so libstdc++.so.6 libgcc_s.so.1 "libpython$py.so.1.0"; do
 	"$tools-nm" -D --defined-only "$sysroot/boot/system/lib/$l" | awk '{print $NF}'
 done | sed 's/@.*//' | LC_ALL=C sort -u > "$defined"
 missing="$(find "$work/check" -name '*.so' -exec "$tools-nm" -D --undefined-only {} + \
@@ -146,11 +176,12 @@ rm -rf "$work/check"
 "$venv/bin/python" "$root/scripts/package-python-wheel.py" "$wheel" --revision "$revision" \
 	--replace "$tools-gcc, --sysroot=$sysroot" gcc \
 	--replace "$tools-g++, --sysroot=$sysroot" g++ \
-	--replace "--sysroot=$root/tools/meson/../../artifacts/sysroot-arm64" "" \
-	--replace "$venv/bin/python" /boot/system/bin/python3.14
+	--replace "r\"--sysroot=$root/tools/meson/../../artifacts/sysroot-arm64" 'r"' \
+	--replace "$venv/bin/python" "/boot/system/bin/python$py" \
+	--replace-dir "$work/src" "/boot/system/lib/python$py/vendor-packages" --out "$out"
 if [ "$testDeps" = 1 ]; then
 	for w in "${testWheels[@]}"; do
 		file="$(fetch "$w")"
-		"$venv/bin/python" "$root/scripts/package-python-wheel.py" "$file"
+		"$venv/bin/python" "$root/scripts/package-python-wheel.py" "$file" --out "$out"
 	done
 fi

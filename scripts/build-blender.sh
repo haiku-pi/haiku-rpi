@@ -14,6 +14,12 @@
 #   libdeflate imath openexr tiff epoxy boost tbb oiio pugixml sse2neon
 #                the libraries (packages <port> + <port>_devel; Imath, OIIO 2.4.15 and sse2neon from our
 #                recipes in tools/recipes/, the others from HaikuPorts' recipes and patchsets)
+#   oidn         OpenImageDenoise 2.5.1 (Cycles' Denoise; -7): oidn + oidn_devel, our recipe, its NEON
+#                kernels compiled by the host's ISPC
+#   numpy        NumPy 1.26.4 for Python 3.10 (the `aud` module; -7): numpy_python3.10
+#                (scripts/build-numpy.sh --python 3.10)
+#   alembic fftw Alembic 1.8.3 (Alembic import/export) and FFTW 3.3.10 (the Ocean modifier; -7), the
+#                recipes and patchsets
 #   freetype     FreeType with Brotli, static, into Blender's own deps/ (not packaged)
 #   blender_source  artifacts/downloads/blender/blender-3.6.23 + patches/blender/*.patch
 #   hosttools    makesdna, makesrna, datatoc, datatoc_icon, smaa_areatex built for this host
@@ -21,7 +27,10 @@
 #                -DBLENDER_HOST_TOOLS); fails unless its WITH_* options equal the host configure's
 #   build        ninja blender, under scripts/heavy-build.sh (≤ 12 GB)
 #   stage        the install tree + runtime packages for the Pi test, artifacts/blender-tests/
-#   blender_package  blender-3.6.23-1-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender
+#   blender_package  blender-3.6.23-7-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender-7
+#
+# Packages: the libraries of revisions 1-6 in artifacts/packages-test/blender/ (unchanged since); what
+# -7 adds (oidn, numpy_python3.10, blender itself) in artifacts/packages-test/blender-7/.
 #
 # Work directories: artifacts/cross-ports/<port>-<version>/ for the libraries,
 # artifacts/cross-ports/blender-3.6.23/{src,deps,host-build,host-tools,build}/ for Blender.
@@ -37,8 +46,9 @@ pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 hostTools="$gen/objects/linux/x86_64/release/tools"
 tools="$gen/cross-tools-arm64/bin/aarch64-unknown-haiku"
 out="$root/artifacts/packages-test/blender"
+out7="$root/artifacts/packages-test/blender-7"
 package() { "$root/scripts/package-port.py" "$@" --out "$out"; }
-mkdir -p "$out"
+mkdir -p "$out" "$out7"
 
 # the script-mode builds see pkg-config into the sysroot
 export PKG_CONFIG_SYSROOT_DIR="$sysroot"
@@ -243,7 +253,7 @@ oiio() {
 	"$tools-readelf" -d "$lib" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ' | sed 's/^/build-blender: libOpenImageIO needs: /'
 	echo
 	for n in libOpenEXR-3_2 libtiff libpng16 libjpeg libwebp libboost_thread; do
-		"$tools-readelf" -d "$lib" | grep -q "NEEDED.*\[$n" || { echo "build-blender: OIIO does not link $n" >&2; exit 1; }
+		"$tools-readelf" -d "$lib" | grep "NEEDED.*\[$n" > /dev/null || { echo "build-blender: OIIO does not link $n" >&2; exit 1; }
 	done
 	! "$tools-readelf" -d "$lib" | grep -E "NEEDED.*\[(libav|libfreetype|libGL|libOpenColorIO|libraw|libheif|libgif)" \
 		|| { echo "build-blender: OIIO links an optional library it should not" >&2; exit 1; }
@@ -305,7 +315,7 @@ opencolorio() {
 		-Dexpat_LIBRARY="$sysroot/boot/system/develop/lib/libexpat.so" -Wno-dev
 	cmake_relative OpenColorIO
 	for n in libyaml-cpp libpystring libminizip-ng libexpat libImath; do
-		"$tools-readelf" -d "$lib" | grep -q "NEEDED.*\[$n" || { echo "build-blender: OCIO does not link $n" >&2; exit 1; }
+		"$tools-readelf" -d "$lib" | grep "NEEDED.*\[$n" > /dev/null || { echo "build-blender: OCIO does not link $n" >&2; exit 1; }
 	done
 	package "$recipe"
 	need non-packaged/lib/libOpenColorIO.so.2.3 develop/headers/OpenColorIO/OpenColorIO.h
@@ -336,12 +346,94 @@ sse2neon() {
 	need non-packaged/include/sse2neon.h develop/headers/sse2neon.h
 }
 
+# Intel Open Image Denoise 2.5.1 (-7: Cycles' Denoise for final renders and the viewport, the
+# compositor's Denoise node; blender.md §7.14): ours (tools/recipes; one Haiku patch, a no-op thread
+# affinity). The CPU device only, with TBB; its kernels are ISPC programs, compiled on this host by the
+# official ISPC 1.32.0 Linux build (pinned) for aarch64 NEON (neon-i32x8; ISPC's linux target-os gives
+# plain ELF objects); only the RT filter's weights (Blender uses no other filter); oidnDenoise and
+# oidnBenchmark packaged, oidnTest not. OIDN 1.4 (Blender 3.6's pin) is x86-only (oneDNN).
+oidn() {
+	local recipe="$root/tools/recipes/media-libs/oidn/oidn-2.5.1.recipe" w="$root/artifacts/cross-ports/oidn-2.5.1"
+	local ispc="$root/artifacts/cross-ports/ispc-1.32.0" lib o n
+	if [ ! -x "$ispc/bin/ispc" ]; then
+		rm -rf "$ispc"
+		mkdir -p "$ispc"
+		tar -xzf "$(pinned ispc-v1.32.0-linux.tar.gz \
+			https://github.com/ispc/ispc/releases/download/v1.32.0/ispc-v1.32.0-linux.tar.gz \
+			faf266bda2b702d68976ffd26bbd36c1ddba43424cc3c44f25b092cd1aa1f64a)" -C "$ispc" --strip-components=1
+	fi
+	"$root/scripts/heavy-build.sh" -j 12 --mem-per-job 1 --max 12 -- env CROSS_PORT_JOBS='{JOBS}' \
+		"$cross" "$recipe" cmake -DISPC_EXECUTABLE="$ispc/bin/ispc" -DOIDN_DEVICE_CPU=ON \
+		-DOIDN_DEVICE_CUDA=OFF -DOIDN_DEVICE_HIP=OFF -DOIDN_APPS=ON -DOIDN_APPS_OPENIMAGEIO=OFF \
+		-DOIDN_FILTER_RT=ON -DOIDN_FILTER_RTLIGHTMAP=OFF -DOIDN_INSTALL_DEPENDENCIES=OFF \
+		-DCMAKE_SKIP_RPATH=ON -Wno-dev
+	grep -q '^ISPC_VERSION:STRING=1.32.0$' "$w/build/CMakeCache.txt" \
+		|| { echo "build-blender: OIDN did not find ISPC 1.32.0" >&2; exit 1; }
+	# the CPU device with its ISPC kernels (13 objects for ARM64), none of them using Armv8.2 FP16
+	# arithmetic (the Cortex-A72 is Armv8.0: SIGILL), linked to TBB
+	n="$(find "$w/build/devices/cpu" -name '*.dev.o' | wc -l)"
+	[ "$n" -ge 13 ] || { echo "build-blender: only $n ISPC objects in the OIDN CPU device" >&2; exit 1; }
+	for o in $(find "$w/build/devices/cpu" -name '*.dev.o'); do
+		"$tools-readelf" -h "$o" | grep 'Machine:.*AArch64' > /dev/null || { echo "build-blender: $o is not AArch64" >&2; exit 1; }
+		! "$tools-objdump" -d "$o" | grep -E '\sf(add|sub|mul|mla|mls|max|min|maxnm|minnm|div|abs|neg|sqrt|cm[a-z]+|rint[a-z]|cvtz[su])\s+(v[0-9]+\.[48]h|h[0-9]+)' > /dev/null \
+			|| { echo "build-blender: $o uses FP16 arithmetic" >&2; exit 1; }
+	done
+	lib="$w/install/boot/system/non-packaged/lib"
+	"$tools-readelf" -d "$lib/libOpenImageDenoise_device_cpu.so.2.5.1" | grep 'NEEDED.*\[libtbb.so' > /dev/null \
+		|| { echo "build-blender: the OIDN CPU device does not link TBB" >&2; exit 1; }
+	! "$tools-readelf" -d "$lib/libOpenImageDenoise_core.so.2.5.1" | grep -E 'RPATH|RUNPATH' > /dev/null \
+		|| { echo "build-blender: OIDN has a run path" >&2; exit 1; }
+	rm -f "$w/install/boot/system/non-packaged/bin/oidnTest"
+	rm -rf "$w/install/boot/system/non-packaged/share"
+	cmake_relative OpenImageDenoise-2.5.1
+	"$root/scripts/package-port.py" "$recipe" --out "$out7"
+	need non-packaged/lib/libOpenImageDenoise.so.2 non-packaged/lib/libOpenImageDenoise_device_cpu.so.2.5.1 \
+		develop/headers/OpenImageDenoise/oidn.hpp
+}
+
+# NumPy 1.26.4 for Blender's Python 3.10 (-7: audaspace's Python API, the `aud` module, needs it at build
+# and run time; add-ons like the glTF importer use it too): numpy_python3.10, also extracted into the
+# sysroot (lib/python3.10/vendor-packages), where Blender's configure finds its C headers
+numpy() {
+	"$root/scripts/build-numpy.sh" --python 3.10 --out "$out7"
+	need lib/python3.10/vendor-packages/numpy/core/include/numpy/ndarrayobject.h
+}
+
+# Alembic 1.8.3 (-7: File > Import/Export > Alembic; Blender's pin): the recipe + patchset, Ogawa only (no
+# HDF5, as Blender's own builds), the library only (no abc* tools, tests, Python binding)
+alembic() {
+	local recipe="$ports/media-libs/alembic/alembic-1.8.3.recipe" lib
+	"$cross" "$recipe" cmake -DUSE_HDF5=OFF -DUSE_TESTS=OFF -DUSE_BINARIES=OFF -DUSE_PYALEMBIC=OFF \
+		-DUSE_ARNOLD=OFF -DUSE_MAYA=OFF -DUSE_PRMAN=OFF -DALEMBIC_SHARED_LIBS=ON -DCMAKE_SKIP_RPATH=ON \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev
+	lib="$root/artifacts/cross-ports/alembic-1.8.3/install/boot/system/non-packaged/lib/libAlembic.so.1.8.3"
+	"$tools-readelf" -d "$lib" | grep 'NEEDED.*\[libImath-3_1' > /dev/null \
+		|| { echo "build-blender: Alembic does not link Imath 3.1" >&2; exit 1; }
+	cmake_relative Alembic
+	"$root/scripts/package-port.py" "$recipe" --out "$out7"
+	need non-packaged/lib/libAlembic.so.1.8 develop/headers/Alembic/Abc/All.h
+}
+
+# FFTW 3.3.10 (-7: the Ocean modifier needs it; WITH_MOD_OCEANSIM requires WITH_FFTW3): the recipe +
+# patchset, the double-precision library and its threads library only (the one Blender links; the
+# recipe also builds float, long double and quad), no static libraries, no Fortran wrappers
+fftw() {
+	local recipe="$ports/sci-libs/fftw/fftw-3.3.10.recipe"
+	"$cross" "$recipe" autotools --enable-shared --disable-static --enable-threads --disable-fortran --disable-doc
+	rm -rf "$root/artifacts/cross-ports/fftw-3.3.10/install/boot/system/non-packaged/share"
+	"$root/scripts/package-port.py" "$recipe" --out "$out7"
+	need non-packaged/lib/libfftw3.so.3 develop/headers/fftw3.h
+}
+
 # --- Blender itself: artifacts/cross-ports/blender-3.6.23/ (kept between runs: src/ is only made
 # when missing; rm -rf it to start over) ---
 bl="$root/artifacts/cross-ports/blender-3.6.23"
 blDeps="$bl/deps"
 options="$root/tools/cmake/blender-minimal.cmake"
 pyHost="$root/artifacts/python-host-3.10"
+# numpy_python3.10 in the sysroot (the numpy step): its headers for audaspace's Python API; the host
+# configure is pointed at the same tree (the generators do not use NumPy, the options must agree)
+numpyPath="$sysroot/boot/system/lib/python3.10/vendor-packages"
 
 # FreeType 2.14.3 with Brotli, static, Blender's own (as build-stk.sh's): Blender stops at configure
 # without Brotli (WOFF2 fonts), the sysroot's has none, and a newer libfreetype.so.6 in the image would
@@ -403,6 +495,9 @@ hosttools() {
 		-DPYTHON_LIBRARY="$pyHost/lib/libpython3.10.a" -DPYTHON_LIBPATH="$pyHost/lib" \
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DPUGIXML_ROOT_DIR="$np" \
 		-DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" -DFFMPEG_ROOT_DIR="$np" \
+		-DOPENIMAGEDENOISE_ROOT_DIR="$np" -DALEMBIC_ROOT_DIR="$np" -DFFTW3_ROOT_DIR="$np" \
+		-DPYTHON_NUMPY_PATH="$numpyPath" \
+		-DPYTHON_NUMPY_INCLUDE_DIRS="$numpyPath/numpy/core/include" \
 		-DTEST_PYTHON_EXE="$(command -v python3)" \
 		-DWEBP_INCLUDE_DIR="$sysroot/boot/system/develop/headers" -DWEBP_WEBP_LIBRARY="$dl/libwebp.so" \
 		-DWEBP_WEBPMUX_LIBRARY="$dl/libwebpmux.so" -DWEBP_WEBPDEMUX_LIBRARY="$dl/libwebpdemux.so" \
@@ -435,7 +530,9 @@ configure() {
 		-DPYTHON_LIBPATH="$sysroot/boot/system/develop/lib" \
 		-DOPENIMAGEIO_ROOT_DIR="$np" -DOPENEXR_ROOT_DIR="$np" -DTBB_ROOT_DIR="$np" -DSSE2NEON_ROOT_DIR="$np" \
 		-DPUGIXML_ROOT_DIR="$np" -DOPENCOLORIO_ROOT_DIR="$np" -DOPENSUBDIV_ROOT_DIR="$np" \
-		-DFFMPEG_ROOT_DIR="$np" \
+		-DFFMPEG_ROOT_DIR="$np" -DOPENIMAGEDENOISE_ROOT_DIR="$np" -DALEMBIC_ROOT_DIR="$np" -DFFTW3_ROOT_DIR="$np" \
+		-DPYTHON_NUMPY_PATH="$numpyPath" \
+		-DPYTHON_NUMPY_INCLUDE_DIRS="$numpyPath/numpy/core/include" \
 		-DTEST_PYTHON_EXE="$(command -v python3)" \
 		-DFREETYPE_INCLUDE_DIR_ft2build="$blDeps/include/freetype2" \
 		-DFREETYPE_INCLUDE_DIR_freetype2="$blDeps/include/freetype2" \
@@ -460,7 +557,8 @@ configure() {
 	fi
 	# what the minimal build is for, still on after configure
 	for o in WITH_GHOST_SDL WITH_PYTHON WITH_TBB WITH_CYCLES WITH_IMAGE_OPENEXR WITH_IMAGE_WEBP WITH_PUGIXML \
-			WITH_OPENCOLORIO WITH_OPENSUBDIV WITH_CODEC_FFMPEG WITH_AUDASPACE; do
+			WITH_OPENCOLORIO WITH_OPENSUBDIV WITH_CODEC_FFMPEG WITH_AUDASPACE WITH_OPENIMAGEDENOISE \
+			WITH_PYTHON_NUMPY WITH_ALEMBIC WITH_FFTW3 WITH_MOD_OCEANSIM WITH_MOD_FLUID; do
 		grep -q "^$o:BOOL=ON" "$bl/build/CMakeCache.txt" || { echo "build-blender: $o is off" >&2; exit 1; }
 	done
 	grep -q '^SSE2NEON_INCLUDE_DIR:PATH=/' "$bl/build/CMakeCache.txt" \
@@ -477,6 +575,15 @@ build() {
 	echo "build-blender: compiler warnings: $(grep -c 'warning:' "$bl/build.log" || true)"
 	"$tools-readelf" -h -d "$bl/build/bin/blender" | grep -E 'Machine|NEEDED' | sed 's/^/build-blender: /'
 	ls -l "$bl/build/bin/blender"
+	# -7: OIDN linked, audaspace's Python module (PyInit_aud, only built with NumPy) in
+	"$tools-readelf" -d "$bl/build/bin/blender" | grep 'NEEDED.*\[libOpenImageDenoise.so.2\]' > /dev/null \
+		|| { echo "build-blender: blender does not link OpenImageDenoise" >&2; exit 1; }
+	"$tools-nm" "$bl/build/bin/blender" | grep ' T PyInit_aud$' > /dev/null \
+		|| { echo "build-blender: blender has no aud module (PyInit_aud)" >&2; exit 1; }
+	for n in libAlembic.so.1.8 libfftw3.so.3; do
+		"$tools-readelf" -d "$bl/build/bin/blender" | grep "NEEDED.*\[$n\]" > /dev/null \
+			|| { echo "build-blender: blender does not link $n" >&2; exit 1; }
+	done
 }
 
 # the package (M6): blender + its 3.6/ tree in apps/Blender (Blender's portable layout; the program is
@@ -507,10 +614,15 @@ blender_package() {
 	done
 	# revision 2: EEVEE on 4 color attachments (patches/blender/0007); 3: the app icon; 4: the viewport's depth
 	# copy as a GPU blit on V3D (0008); 5: video (FFmpeg), audio (audaspace on SDL), Unicode text input (0009);
-	# 6: a bit rate from the quality setting for encoders without CRF, e.g. h264_mmal (0010)
-	package "$recipe" --revision 6 --system-prefix --no-devel --provides app:Blender \
-		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 "${r[@]}"
-	"$pkgtool" list -i "$out/blender-3.6.23-6-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+	# 6: a bit rate from the quality setting for encoders without CRF, e.g. h264_mmal (0010); 7: denoising
+	# (OpenImageDenoise 2.5: 0011 instead of 0006, Balanced quality 0012), the aud module (NumPy:
+	# numpy_python3.10, a run-time requirement that no NEEDED entry shows: `import aud` imports numpy),
+	# Alembic, the Ocean modifier (FFTW), fluid simulation (Mantaflow), and Cycles' Rendered viewport
+	# (GL contexts shared with the first one, 0013)
+	"$root/scripts/package-port.py" "$recipe" --revision 7 --system-prefix --no-devel --provides app:Blender \
+		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 --requires numpy_python3.10 "${r[@]}" \
+		--out "$out7"
+	"$pkgtool" list -i "$out7/blender-3.6.23-7-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its
@@ -527,6 +639,10 @@ stage() {
 		|| { echo "build-blender: incomplete install tree $t/Blender" >&2; exit 1; }
 	mkdir -p "$t/packages"
 	cp "$out"/*.hpkg "$root"/artifacts/packages-test/libsdl2-8/libsdl2-2.32.10-8-arm64.hpkg "$t/packages/"
+	# -7: blender itself (blender_package runs first) and its new libraries from blender-7/, not the
+	# earlier blender revisions of blender/ (pkgman would get two versions of one package)
+	rm -f "$t/packages"/blender-3.6.23-*.hpkg
+	cp "$out7"/*.hpkg "$t/packages/"
 	# and the run-time libraries of ours an image may not have yet (pkgman skips those it has)
 	# (python3.10's modules link openssl, sqlite, bz2, libedit, expat, which package-port.py does not
 	# turn into requires: they are in the sysroot's lib/, not non-packaged/)
@@ -540,8 +656,8 @@ stage() {
 }
 
 steps=(sysroot python libdeflate imath openexr tiff epoxy boost tbb oiio pugixml yaml_cpp pystring
-	minizip_ng opencolorio opensubdiv sse2neon freetype blender_source
-	hosttools configure build stage blender_package)
+	minizip_ng opencolorio opensubdiv sse2neon oidn numpy alembic fftw freetype blender_source
+	hosttools configure build blender_package stage)
 start="${1:-${steps[0]}}" last="${2:-}"
 started=0
 for s in "${steps[@]}"; do

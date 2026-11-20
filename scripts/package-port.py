@@ -128,6 +128,8 @@ def create(directory, info, out, extract=True):
     if extract:
         subprocess.run([pkgtool, 'extract', '-C', os.path.join(sysroot, 'boot/system'), out],
             check=True)
+        # (the extracted package's own .PackageInfo is not part of a system tree)
+        os.remove(os.path.join(sysroot, 'boot/system/.PackageInfo'))
     print(f'package-port: {out} ({os.path.getsize(out)} bytes)')
 
 

@@ -1,0 +1,61 @@
+Cycles, compositor: OpenImageDenoise on ARM64 CPUs other than Apple's
+
+Blender 3.6 offers OpenImageDenoise only on x86 CPUs with SSE4.1 and on macOS (BNNS). OIDN 2.x has
+an ARM64 CPU device on every system (ISPC-generated NEON kernels), and Blender's use of the OIDN API
+(newDevice, setImage with strides, the "hdr"/"srgb"/"cleanAux" parameters, the progress monitor)
+builds against 2.x unchanged. So
+the Cycles Denoise option (final render and viewport), the compositor's Denoise node and its
+"CPU with SSE4.1 is required" message all treat ARM64 like macOS. Replaces
+0006-cycles-no-oidn-render-without-denoising.patch (Haiku arm64 now has an OIDN 2.5 package).
+
+--- a/intern/cycles/util/openimagedenoise.h
++++ b/intern/cycles/util/openimagedenoise.h
+@@ -15,8 +15,9 @@
+ static inline bool openimagedenoise_supported()
+ {
+ #ifdef WITH_OPENIMAGEDENOISE
+-#  ifdef __APPLE__
+-  /* Always supported through Accelerate framework BNNS. */
++#  if defined(__APPLE__) || defined(__aarch64__) || defined(_M_ARM64)
++  /* Always supported through Accelerate framework BNNS on macOS, and through the NEON kernels of
++   * OpenImageDenoise 2 on other ARM64 systems. */
+   return true;
+ #  else
+   return system_cpu_support_sse41();
+--- a/source/blender/compositor/operations/COM_DenoiseOperation.cc
++++ b/source/blender/compositor/operations/COM_DenoiseOperation.cc
+@@ -14,8 +14,9 @@
+ bool COM_is_denoise_supported()
+ {
+ #ifdef WITH_OPENIMAGEDENOISE
+-  /* Always supported through Accelerate framework BNNS on macOS. */
+-#  ifdef __APPLE__
++  /* Always supported through Accelerate framework BNNS on macOS, and through the NEON kernels of
++   * OpenImageDenoise 2 on other ARM64 systems. */
++#  if defined(__APPLE__) || defined(__aarch64__) || defined(_M_ARM64)
+   return true;
+ #  else
+   return BLI_cpu_support_sse41();
+--- a/source/blender/nodes/composite/nodes/node_composite_denoise.cc
++++ b/source/blender/nodes/composite/nodes/node_composite_denoise.cc
+@@ -60,8 +60,9 @@
+ #ifndef WITH_OPENIMAGEDENOISE
+   uiItemL(layout, IFACE_("Disabled, built without OpenImageDenoise"), ICON_ERROR);
+ #else
+-  /* Always supported through Accelerate framework BNNS on macOS. */
+-#  ifndef __APPLE__
++  /* Always supported through Accelerate framework BNNS on macOS, and through the NEON kernels of
++   * OpenImageDenoise 2 on other ARM64 systems. */
++#  if !defined(__APPLE__) && !defined(__aarch64__) && !defined(_M_ARM64)
+   if (!BLI_cpu_support_sse41()) {
+     uiItemL(layout, IFACE_("Disabled, CPU with SSE4.1 is required"), ICON_ERROR);
+   }
+@@ -202,7 +203,7 @@
+ #ifndef WITH_OPENIMAGEDENOISE
+     return false;
+ #else
+-#  ifdef __APPLE__
++#  if defined(__APPLE__) || defined(__aarch64__) || defined(_M_ARM64)
+     return true;
+ #  else
+     return BLI_cpu_support_sse41();

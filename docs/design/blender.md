@@ -7,7 +7,10 @@ solid viewport, edit mode, save/reload, preferences window, F12 Cycles render in
 GPU patches; injected keyboard and mouse input acts (Tab, middle-drag and numpad orbit, F12), §7.5–7.6; M6
 done as test packages (unpublished): blender-3.6.23-1 + 15 library packages with OpenColorIO (Filmic) and
 OpenSubdiv, installed with pkgman and started from the Deskbar entry; the factory scene renders as it is, §7.7;
-M5 done: EEVEE Legacy renders on V3D's 4 color attachments (SSS off) — Material Preview and F12, no crash, §7.9.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+M5 done: EEVEE Legacy renders on V3D's 4 color attachments (SSS off) — Material Preview and F12, no crash, §7.9.
+B7 (11-20): blender -7 test packages — Cycles denoising with OpenImageDenoise 2.5 (render, viewport, compositor),
+the `aud` module (NumPy 1.26 for Python 3.10), Alembic, the Ocean modifier, fluid simulation, and the Rendered
+viewport fixed (GL context sharing), §7.14.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -835,6 +838,166 @@ invalidated ones (`v3d_invalidate_resource`, reached by `glInvalidateFramebuffer
   carries the WAV (volumedetect: mean −11.8 dB). The testsrc2 bit-rate runs above predate `initial_qp`.
 - **Packages** (unpublished, artifacts/packages-test): blender **-6** (49 MB; requires identical to -5) and
   ffmpeg6 **-6** (`scripts/build-ffmpeg.sh --out DIR`). 0 PANIC, 0 debugger entries.
+
+### 7.14 blender -7: denoising, `aud`, Alembic, Ocean, fluids, and the Rendered viewport (2026-11-20 06:58–08:55; session bb7 07:44–08:51, image-2026-11-19b)
+
+Task B7: close the biggest F12 limits. Everything below is in `scripts/build-blender.sh` (steps `oidn numpy alembic
+fftw`, then the Blender steps) and `artifacts/packages-test/blender-7/` (not published).
+
+**OpenImageDenoise 2.5.1 for Haiku arm64** (`tools/recipes/media-libs/oidn/`, step `oidn`):
+- Version: Blender 3.6 pins OIDN 1.4, which is x86-only (oneDNN). OIDN 2.x has a CPU device on ARM64 whose kernels
+  are ISPC programs (`neon-i32x8`; BNNS is used only on macOS), so 2.5.1, the newest release, was taken.
+- **ISPC on the host:** the official ISPC 1.32.0 Linux x86-64 build (pinned download, sha256 checked) compiles them
+  with `--arch=aarch64`. Its default target-os is linux, which gives plain ELF64 AArch64 relocatable objects; those
+  link into Haiku libraries unchanged. Checks in the step (they fail the build):
+  - ≥ 13 ISPC objects;
+  - every object AArch64;
+  - **no FP16 arithmetic**: the Cortex-A72 is Armv8.0, and the ARM64 `*_f16` kernels use only the base
+    `fcvtl`/`fcvtn` conversions (objdump);
+  - the CPU device links TBB;
+  - no run path.
+
+  The only atomics are libgcc's outline ones (LSE behind a runtime check). Every undefined symbol is in
+  libroot/libstdc++/libgcc_s/TBB.
+- **One Haiku patch** (`oidn-2.5.1.patchset`): `ThreadAffinity` exists only for Windows, Linux and macOS; a no-op
+  fallback makes the engine run unpinned, as when detection fails on Linux. The device module is found from
+  `dladdr()`'s absolute path ("Loaded module: 'libOpenImageDenoise_device_cpu.so.2.5.1'").
+- Build: about 1 min, 0 warnings. Only the RT filter's weights are included (no RTLightmap). The package ships
+  `oidnDenoise` and `oidnBenchmark` (not `oidnTest`).
+- **Blender:** its use of the API (newDevice, setImage with strides, `hdr`/`srgb`/`cleanAux`, the progress monitor)
+  compiles against 2.x unchanged.
+  - `patches/blender/0011-oidn-on-arm64.patch` (**replaces 0006**): Cycles' `openimagedenoise_supported()` and
+    both compositor Denoise checks treat ARM64 like macOS. Before, they required SSE4.1.
+  - `0012-oidn-balanced-quality.patch`: see the timings below.
+- **Timings on the Pi** (4 threads; `tools/pi-tests/blender-b7.sh`, `artifacts/blender-tests/b7/`):
+  - `oidnBenchmark` RT hdr+alb+nrm at 1920×1080: **17.0 s per frame**, 1.33 GB peak.
+  - OIDN 2's default quality, *High*, uses its **large** networks for clean auxiliary passes and for the albedo and
+    normal prefilters. Clean albedo + normal at 1080p: High 43.3 s, Balanced 18.7 s.
+  - Blender's default prefilter, *Accurate*, runs three such filters. The factory cube at 1080p, 8 samples:
+    no denoising 10.4 s, Accurate at High **2 min 19 s** (1.75 GB peak).
+  - Blender 3.6 has no quality setting, so **0012 sets Balanced** (the base networks) in Cycles and in the
+    compositor. Accurate then takes **1 min 4 s** (1.45 GB). Fast prefilter: 31 s.
+- **Results with -7** (run `final`):
+
+  | Render | -6 (no denoising) | -7 (denoised) | Peak memory |
+  |---|---|---|---|
+  | Factory scene as it is (1920×1080, adaptive) | 1 min 37 s | **3 min 30 s** (6 min 5 s before 0012) | 1.5 GB (1.8 GB before 0012) |
+  | `blender-m5-scene.py`, 960×540, 16 samples | 35.0 s noisy | 48.7 s | 467 MB |
+
+  The compositor's Denoise node renders. PNGs are in `b7/renders/`, checked by eye: glass, metal and the shadows
+  are clean where the 16-sample render is grainy.
+- **Viewport:** the Rendered (Cycles) viewport drew **Blender's icon sheet** instead of the render (frame
+  `b7/view/view-denoised.png`). This is not a denoiser problem, and it is in -6 too (same code):
+  - **Cause:** GHOST_SDL creates contexts with `SDL_GL_SHARE_WITH_CURRENT_CONTEXT`, and SDL 2 shares only with the
+    context *current* on the calling thread. Cycles' display context is created right after the draw manager
+    releases its own, with nothing current (a diagnostic print confirmed it). So the new context had its own object
+    namespace, and its texture name meant the icon atlas in the window's context.
+  - **Fix:** `0013-ghost-sdl-share-with-first-context.patch` makes the first context current for the creation when
+    none is. GHOST's other backends name it explicitly.
+  - **After the fix:** the viewport shows the render (`b7/view2`), and with viewport denoising on, a clean image
+    (`b7/view5/view-denoised.png`; OIDN verbose: "Quality: balanced", 140×80 first, then the full size).
+  - **Open:** switching viewport denoising on *from a script* in a viewport that is already rendering did not
+    restart the render with it. Started with it on, it works. The UI checkbox was not tested: the packaged app
+    has B_ARGV_ONLY, so uiinject cannot drive it.
+
+**`aud` (step `numpy`):** Blender builds audaspace's Python module only with NumPy, and `PyInit_aud` imports NumPy
+at run time (`import_array`), so this needs a NumPy package for Python 3.10, not only headers.
+- **NumPy 1.26.4**, not 2.x:
+  - Blender 3.6 pins 1.23.5;
+  - it finds the C headers in `numpy/core/include`, which 2.x moved;
+  - its add-ons were written against 1.x.
+- **`scripts/build-numpy.sh --python 3.10 --out DIR`** (new options) builds it with a separate venv
+  (`meson-python < 0.16`, `Cython < 3.1`, the sdist's pins). Two fixes were needed:
+  - its vendored meson 1.2.99 predates `@DIRNAME@`, so the script resolves our cross file;
+  - Cython 3.0 writes the absolute `.pyx` path into `numpy/random/bit_generator`, which the packager's host-path
+    check refused. `package-python-wheel.py --replace-dir` (new) pads `/boot/system/lib/python3.10/vendor-packages`
+    with slashes to the same length.
+- `package-python-wheel.py` now takes the target version from the Python running it and has `--out`.
+  A non-default version gets no unsuffixed `f2py`.
+- **numpy_python3.10** 1.26.4-1, 9.1 MB:
+  - 19 extension modules, every undefined symbol resolved;
+  - baseline NEON/ASIMD;
+  - 487 warning lines, NumPy's own (as in the native 2.5.4 build).
+- On the Pi:
+  - `aud.Sound.sine(440).limit(0, 1).data()` returns `ndarray (48000, 1) float32`;
+  - `aud.Sound.buffer()` takes the array;
+  - in a GUI Blender, `aud.Device()` plays it, and `handle.position` is **0.6 after 0.6 s**.
+- Headless (`-b`), `aud.Device('SDL')` failed twice ("The audio device couldn't be opened with SDL"); both were the
+  first sound of that boot. It worked in the run after a GUI one. Not investigated further.
+- blender -7 **requires numpy_python3.10**, because no NEEDED entry shows that requirement.
+
+**Cheap F12 items done:**
+- **Alembic 1.8.3** (Blender's pin; HaikuPorts recipe + patchset; Ogawa only, the library only; 33 s): export and
+  re-import of the factory scene PASS.
+- **FFTW 3.3.10**: the double-precision library + its threads library, autotools, 1 min. The recipe also builds
+  float/long/quad; this package is named `fftw` but has only `libfftw3`/`libfftw3_threads`. It enables the
+  **Ocean modifier**: 2500 vertices, displaced.
+- **Fluid simulation** (Mantaflow, bundled in Blender): a smoke domain baked for 6 frames, 36 cache files (UNI
+  format; OpenVDB is off).
+  - The check first failed **4 of 14 runs** (`'NoneType' object has no attribute 'getDataPointer'`), and **10 of
+    10 with `-t 1`**.
+  - The official x86-64 Blender 3.6.23 failed the same script the same way, so it is the test, not the port: the
+    domain was made before its flow object.
+  - With the flow made first: 10/10 on the Pi (`-t 1` and `-t 4`) and 6/6 on x86-64.
+- **M3/M5 probes, -7 installed** (`b7/m3-m5.txt`): every check PASSes.
+  - M3: version, bpy (Python 3.10.22), subsurf (98 vertices), 960×540 cube 9.7 s, factory 3 min 30 s (1.5 GB),
+    Filmic.
+  - M5: EEVEE factory 34.9 s and scene 56.4 s (-2: 35 s and 57 s), the SSS message once; Cycles scene 82.7 s
+    (-2: 69 s; its factory settings denoise now).
+  - Session: 0 debugger entries, 0 PANIC (UART `20261120-074416-session-bb7.log`).
+
+**Packages** (`artifacts/packages-test/blender-7/`):
+
+| Package | Size |
+|---|---|
+| blender-3.6.23-7 | 51.0 MB (-6: 49.1) |
+| oidn-2.5.1-1 | 43.8 MB |
+| oidn_devel | 10 kB |
+| numpy_python3.10-1.26.4-1 | 9.1 MB |
+| alembic-1.8.3-1 | 770 kB |
+| alembic_devel | 129 kB |
+| fftw-3.3.10-1 | 381 kB |
+| fftw_devel | 12 kB |
+
+**blender -7 against -6** (`scripts/package-diff.sh`, new):
+- requires gains `lib:libalembic`, `lib:libfftw3`, `lib:libopenimagedenoise` and `numpy_python3.10`;
+- the 2333 file paths are identical;
+- the rest is in the binary.
+
+Clean Blender build: 15 min (07:19–07:34, `-j6`), 826 warning lines. The pre-existing pipefail trap in the script's
+`readelf | grep -q` checks (grep exits at the first match, the writer gets SIGPIPE, the check fails or, negated,
+passes) was fixed: the checks read all input now. The patched tree was checked equal to a fresh 3.6.23 tree plus
+`patches/blender/*.patch`.
+
+**Sysroot:** it now also holds oidn, alembic and fftw (`non-packaged/`) and numpy_python3.10. The packager now
+removes the `.PackageInfo` that extraction left in `boot/system/`.
+
+**Not done, with effort** (*estimated*):
+- **OpenVDB 10.0** (Blender's pin), 0.5–1 day. It needs c-blosc 1.21 (HaikuPorts has 1.18), Boost iostreams in
+  the boost step, and oneTBB (10.0 supports it). Its compile jobs are 2–3 GB each. It would bring voxel remesh,
+  `.vdb` import, Volume/Mesh conversion nodes, NanoVDB volumes in Cycles and the OpenVDB fluid cache. It is the
+  next one worth doing.
+- **USD**, 2–4 days, high risk. Blender 3.6 pins USD 23.05, which uses the TBB 2020 API (*recalled*: oneTBB
+  support came with USD 24.x), so it needs either an old TBB beside ours or a newer USD against Blender 3.6's
+  io/usd code. Boost too, and a build of an hour or more.
+- **Not a dependency question:**
+  - GPU subdivision: V3D's desktop GL has no compute shaders.
+  - EEVEE SSS: 4 colour attachments.
+  - Tablet pressure: needs a native GHOST, M7.
+- **Cheap, outside F12:**
+  - GMP: without it the Boolean modifier's Exact solver silently falls back to Fast.
+  - Quadriflow and Draco: bundled, only options.
+  - potrace and libharu.
+  - i18n: Boost locale + host msgfmt.
+
+**Proposed KNOWN-ISSUES F12 text for the publish:**
+- **Gone:** "No denoiser", "Built without Alembic", "fluid simulation" and "`aud` module is missing".
+- **Stays:** EEVEE SSS, GPU subdivision, tablet pressure and the slow viewport.
+- **New:**
+  - "Denoising (OpenImageDenoise) runs on the CPU: about 20 s per denoised 1920×1080 frame with the default
+    prefilter's three passes taking ~1 min, and ~1.5 GB of memory; set Prefilter to Fast for a third of that."
+  - "No OpenVDB/USD import (volumes, voxel remesh)."
+  - "Python's `aud` can play sound only in a Blender with a window."
 
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 

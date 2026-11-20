@@ -1,0 +1,61 @@
+Cycles, compositor: OpenImageDenoise 2 at Balanced quality
+
+OpenImageDenoise 2's default quality, High, picks larger networks where it has them: for clean
+(prefiltered) auxiliary passes and for the albedo and normal prefilters themselves. Blender 3.6 has no
+quality setting, so with OIDN 2.5 every denoised render ran those. Measured on a Raspberry Pi 4 (4x
+Cortex-A72, oidnBenchmark, 1920x1080, clean albedo + normal): High 43.3 s per frame, Balanced 18.7 s;
+the default Accurate prefilter runs three filters, so the factory scene's F12 took 6 min 5 s, of which
+about 4 min 20 s was denoising. Balanced uses the base networks.
+
+--- a/intern/cycles/integrator/denoiser_oidn.cpp
++++ b/intern/cycles/integrator/denoiser_oidn.cpp
+@@ -27,6 +27,19 @@
+ }
+ 
+ #ifdef WITH_OPENIMAGEDENOISE
++/* OpenImageDenoise 2's default quality, High, uses larger networks where it has them (clean auxiliary
++ * passes, the albedo and normal prefilters): on a Raspberry Pi 4 (4x Cortex-A72) a 1920x1080 frame takes
++ * 43 s instead of 19 s, and the default Accurate prefilter runs three of them. Balanced uses the base
++ * networks. Blender 3.6 has no quality setting of its own. */
++static void oidn_filter_set_quality(oidn::FilterRef &oidn_filter)
++{
++#  if OIDN_VERSION_MAJOR >= 2
++  oidn_filter.set("quality", oidn::Quality::Balanced);
++#  else
++  (void)oidn_filter;
++#  endif
++}
++
+ static bool oidn_progress_monitor_function(void *user_ptr, double /*n*/)
+ {
+   OIDNDenoiser *oidn_denoiser = reinterpret_cast<OIDNDenoiser *>(user_ptr);
+@@ -157,6 +170,7 @@
+     /* Create a filter for denoising a beauty (color) image using prefiltered auxiliary images too.
+      */
+     oidn::FilterRef oidn_filter = oidn_device.newFilter("RT");
++    oidn_filter_set_quality(oidn_filter);
+     set_input_pass(oidn_filter, oidn_color_access_pass);
+     set_guiding_passes(oidn_filter, oidn_color_pass);
+     set_output_pass(oidn_filter, oidn_output_pass);
+@@ -196,6 +210,7 @@
+     }
+ 
+     oidn::FilterRef oidn_filter = oidn_device.newFilter("RT");
++    oidn_filter_set_quality(oidn_filter);
+     set_pass(oidn_filter, oidn_pass);
+     set_output_pass(oidn_filter, oidn_pass);
+     oidn_filter.commit();
+--- a/source/blender/compositor/operations/COM_DenoiseOperation.cc
++++ b/source/blender/compositor/operations/COM_DenoiseOperation.cc
+@@ -53,6 +53,11 @@
+     device_.set("setAffinity", false);
+     device_.commit();
+     filter_ = device_.newFilter("RT");
++#  if OIDN_VERSION_MAJOR >= 2
++    /* The base networks, as in Cycles (OpenImageDenoise 2's High quality: larger and 2.3x slower on a
++     * Raspberry Pi 4). */
++    filter_.set("quality", oidn::Quality::Balanced);
++#  endif
+     initialized_ = true;
+     set_image("output", output);
+   }
