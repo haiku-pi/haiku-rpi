@@ -12,9 +12,12 @@
  * before the first overlay (not keyed: the probe's pixels as drawn), while it is shown (keyed: no
  * pixel outside the overlay may be other than opaque) and after it was hidden (not keyed again).
  *
- *   overlaytest [-s rgb32|ycbcr422|yuv420] [-f FLIPS] [-h SECONDS] [-x WIDTHxHEIGHT]
+ *   overlaytest [-s rgb32|ycbcr422|yuv420|sand|sand10] [-f FLIPS] [-h SECONDS] [-x WIDTHxHEIGHT]
  *       (default: rgb32 and yuv420, 320x240; from 720 lines on the accelerant takes YCbCr as BT.709)
  *
+ * sand / sand10 (only on request): B_YUV420_SAND128(_10) (0x4028, 0x4029: GraphicsDefs.h of the v6-video branch), the HEVC decoder's layout (luma and chroma in
+ * 128-byte columns, bytes_per_row = the column height; 10 bit: three samples per 32-bit word),
+ * hw-video-decode.md §9.
  * B_YUV420 is planar I420 as the accelerant defines it (docs/design/video-overlay.md): bytes_per_row
  * is the whole picture's (3 bytes per 2 pixels), the luma rows are 2/3 of it, Cb and Cr follow the
  * luma with rows of 1/3 of it. B_YCbCr422 (packed) is not offered any more: its bitmaps must fail.
@@ -66,6 +69,11 @@ rgb_at(int x, int y, int frame, uint8& r, uint8& g, uint8& b)
 }
 
 
+// B_YUV420_SAND128 and _10 (the headers of the sysroot may not have them yet)
+static constexpr color_space kSand = (color_space)0x4028;
+static constexpr color_space kSand10 = (color_space)0x4029;
+
+
 // limited range; BT.601 below 720 lines, BT.709 from 720 on (as the accelerant encodes)
 static void
 to_ycbcr(uint8 r, uint8 g, uint8 b, uint8& y, uint8& cb, uint8& cr)
@@ -91,7 +99,7 @@ fill(BBitmap* bitmap, int frame)
 	}
 	uint8* bits = (uint8*)bitmap->Bits();
 	const int32 bpr = bitmap->BytesPerRow();
-	switch (bitmap->ColorSpace()) {
+	switch ((uint32)bitmap->ColorSpace()) {
 		case B_RGB32:
 			for (int y = 0; y < kHeight; y++) {
 				uint8* row = bits + y * bpr;
@@ -140,6 +148,49 @@ fill(BBitmap* bitmap, int frame)
 					if ((x & 1) == 0 && (y & 1) == 0) {
 						cbPlane[y / 2 * chroma + x / 2] = cb;
 						crPlane[y / 2 * chroma + x / 2] = cr;
+					}
+				}
+			}
+			break;
+		}
+		case kSand:
+		case kSand10:
+		{
+			// columns 128 bytes wide, bpr rows each: the luma rows, then (from the height
+			// rounded to 16) the CbCr rows
+			const bool ten = bitmap->ColorSpace() == kSand10;
+			const size_t column = (size_t)bpr * 128;
+			const int32 chromaRow = ((kHeight + 15) & ~15);
+			for (int y = 0; y < kHeight; y++) {
+				for (int x = 0; x < kWidth; x++) {
+					uint8 r, g, b, lumaValue, cb, cr;
+					rgb_at(x, y, frame, r, g, b);
+					to_ycbcr(r, g, b, lumaValue, cb, cr);
+					if (!ten) {
+						bits[x / 128 * column + y * 128 + x % 128] = lumaValue;
+						if ((x & 1) == 0 && (y & 1) == 0) {
+							uint8* pair = bits + x / 128 * column + (chromaRow + y / 2) * 128
+								+ x % 128;
+							pair[0] = cb;
+							pair[1] = cr;
+						}
+						continue;
+					}
+					// 96 samples per column, sample k in word k / 3 at bit (k % 3) * 10
+					uint32* words = (uint32*)(bits + x / 96 * column + y * 128);
+					const int k = x % 96;
+					words[k / 3] = (words[k / 3] & ~(0x3ffu << (k % 3 * 10)))
+						| (uint32)(lumaValue << 2) << (k % 3 * 10);
+					if ((x & 1) == 0 && (y & 1) == 0) {
+						// chroma sample x is Cb, x + 1 Cr
+						for (int c = 0; c < 2; c++) {
+							const int s = x + c;
+							uint32* chroma = (uint32*)(bits + s / 96 * column
+								+ (chromaRow + y / 2) * 128);
+							const int j = s % 96;
+							chroma[j / 3] = (chroma[j / 3] & ~(0x3ffu << (j % 3 * 10)))
+								| (uint32)((c == 0 ? cb : cr) << 2) << (j % 3 * 10);
+						}
 					}
 				}
 			}
@@ -227,13 +278,17 @@ alpha_census(const char* name, const char* when, BRect overlay, int& outside, in
 static const char*
 space_name(color_space space)
 {
-	switch (space) {
+	switch ((uint32)space) {
 		case B_RGB32:
 			return "rgb32";
 		case B_YCbCr422:
 			return "ycbcr422";
 		case B_YUV420:
 			return "yuv420";
+		case kSand:
+			return "sand";
+		case kSand10:
+			return "sand10";
 		default:
 			return "?";
 	}
@@ -401,6 +456,10 @@ main(int argc, char** argv)
 				only = B_YCbCr422;
 			else if (strcmp(optarg, "yuv420") == 0)
 				only = B_YUV420;
+			else if (strcmp(optarg, "sand") == 0)
+				only = kSand;
+			else if (strcmp(optarg, "sand10") == 0)
+				only = kSand10;
 		} else if (opt == 'f')
 			sFlips = atoi(optarg);
 		else if (opt == 'h')
@@ -408,7 +467,7 @@ main(int argc, char** argv)
 		else if (opt == 'x' && sscanf(optarg, "%dx%d", &kWidth, &kHeight) == 2 && kWidth >= 64
 			&& kHeight >= 64) {
 		} else {
-			fprintf(stderr, "usage: %s [-s rgb32|ycbcr422|yuv420] [-f flips] [-h seconds] "
+			fprintf(stderr, "usage: %s [-s rgb32|ycbcr422|yuv420|sand|sand10] [-f flips] [-h seconds] "
 				"[-x WIDTHxHEIGHT]\n", argv[0]);
 			return 2;
 		}
@@ -416,7 +475,8 @@ main(int argc, char** argv)
 
 	BApplication app("application/x-vnd.haiku-rpi-overlaytest");
 	uint32 support = 0;
-	const color_space spaces[] = { B_RGB32, B_YCbCr422, B_YUV420 };
+	const color_space spaces[] = { B_RGB32, B_YCbCr422, B_YUV420, kSand,
+		kSand10 };
 	for (color_space space : spaces) {
 		bitmaps_support_space(space, &support);
 		SAY("%s: %s", space_name(space),
@@ -424,7 +484,8 @@ main(int argc, char** argv)
 	}
 	for (color_space space : spaces) {
 		// (no packed 4:2:2 on the display: only when asked for, and it must fail)
-		if ((only == B_NO_COLOR_SPACE && space != B_YCbCr422) || only == space)
+		if ((only == B_NO_COLOR_SPACE && (space == B_RGB32 || space == B_YUV420))
+			|| only == space)
 			test_space(space);
 	}
 	SAY("end: %s (%d failure%s)", sFailures == 0 ? "PASS" : "FAIL", sFailures,

@@ -19,6 +19,7 @@
 #                it must fall back to B_RGB32 drawn by app_server (one "video output now B_RGB32" line, the
 #                same decoder)
 #   mode         MediaPlayer on play-1080p30, the screen to 1280x720 and back while it plays (KNOWN-ISSUES F2)
+# CLIP=name (without .mp4): another clip for noplane and mode.
 # MP=PATH runs another MediaPlayer binary (its file name must stay "MediaPlayer"); CLIPS="a b" plays only those
 # (names without .mp4).
 # Lines start with "VOV "; each phase ends with "VOV <phase> result: N problems".
@@ -57,7 +58,7 @@ play_one() {
 	sleep 5
 	./teamstat -i "$3" "$team" | while read -r line; do say "$label $2 $line"; done
 	quit_players
-	grep -a -E "^AVCodecDecoder|rpivid: hardware|MediaTrackVideoSupplier|NodeManager|VideoConsumer|retrying|falling back" \
+	grep -a -E "^AVCodecDecoder|rpivid: hardware|rpivid: [0-9]+ pictures|MediaTrackVideoSupplier|NodeManager|VideoConsumer|retrying|falling back" \
 		"$log" | sort | uniq -c | head -n 12 | while read -r line; do say "$label $2 log: $line"; done
 	say "$label $2 dropped frames (VideoProducer): $(grep -a -c 'VideoProducer: dropped frame' "$log")"
 	tail -n +$((syslogStart + 1)) /var/log/syslog \
@@ -110,13 +111,14 @@ noplane)
 	done
 	sleep 3
 	label=noplane
-	play_one play-1080p30.mp4 play-1080p30 10
+	clip=${CLIP:-play-1080p30}
+	play_one $clip.mp4 $clip 10
 	for t in $pids; do kill $t 2> /dev/null; done
-	grep -a -q "video output now B_RGB32" "$dir/noplane-play-1080p30.log" || fail "no fallback seen"
+	grep -a -q "video output now B_RGB32" "$dir/noplane-$clip.log" || fail "no fallback seen"
 	;;
 mode)
 	label=mode
-	start_player play-1080p30.mp4 "$dir/mode.log"
+	start_player ${CLIP:-play-1080p30}.mp4 "$dir/mode.log"
 	sleep 6
 	screenmode 1280 720 > /dev/null 2>&1
 	say "mode: 1280x720"

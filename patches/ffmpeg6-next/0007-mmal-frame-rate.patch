@@ -1,0 +1,40 @@
+mmaldec: the stream's frame rate, not the VideoCore's echo of 24000/1001
+
+mmaldec told the VideoCore 24000/1001 frames/s for every stream and took
+the rate the VideoCore's output port reported back - the same number - as
+the stream's: `ffmpeg -c:v h264_mmal` showed 23.98 fps for everything. The
+input port now gets the caller's rate when it has one (24000/1001 is kept
+as the stand-in otherwise), and avctx's rate is left alone.
+
+--- a/libavcodec/mmaldec.c
++++ b/libavcodec/mmaldec.c
+@@ -393,10 +393,9 @@
+         avctx->sample_aspect_ratio.num = format_out->es->video.par.num;
+         avctx->sample_aspect_ratio.den = format_out->es->video.par.den;
+     }
+-    if (format_out->es->video.frame_rate.num && format_out->es->video.frame_rate.den) {
+-        avctx->framerate.num = format_out->es->video.frame_rate.num;
+-        avctx->framerate.den = format_out->es->video.frame_rate.den;
+-    }
++    /* The VideoCore's output rate is the one it was told at the input (the
++     * caller's, or a stand-in when unknown), not the stream's: avctx keeps
++     * its own. */
+ 
+     avctx->colorspace = ffmmal_csp_to_av_csp(format_out->es->video.color_space);
+ 
+@@ -476,8 +475,13 @@
+     format_in->es->video.height = FFALIGN(avctx->height, 16);
+     format_in->es->video.crop.width = avctx->width;
+     format_in->es->video.crop.height = avctx->height;
+-    format_in->es->video.frame_rate.num = 24000;
+-    format_in->es->video.frame_rate.den = 1001;
++    if (avctx->framerate.num > 0 && avctx->framerate.den > 0) {
++        format_in->es->video.frame_rate.num = avctx->framerate.num;
++        format_in->es->video.frame_rate.den = avctx->framerate.den;
++    } else {
++        format_in->es->video.frame_rate.num = 24000;
++        format_in->es->video.frame_rate.den = 1001;
++    }
+     format_in->es->video.par.num = avctx->sample_aspect_ratio.num;
+     format_in->es->video.par.den = avctx->sample_aspect_ratio.den;
+     format_in->flags = MMAL_ES_FORMAT_FLAG_FRAMED;

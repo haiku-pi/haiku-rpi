@@ -18,6 +18,11 @@
 #
 #   scripts/build-ffmpeg.sh [--publish | --out DIR]
 #   (--out DIR: the packages to DIR, a test revision not to be published yet, e.g. artifacts/packages-test/ffmpeg6-6)
+#   scripts/build-ffmpeg.sh --next --out DIR
+#       revision 8, a test revision: patches/ffmpeg6 + patches/ffmpeg6-next (its patches after ours, its files
+#       replacing ours: rpivid_out=sand, the SAND pictures for the display, hw-video-decode.md §9; mmaldec's frame
+#       rate), built in its own directory against a copy of the sysroot, so that neither the shared sysroot nor
+#       artifacts/cross-ports/ffmpeg6-6.1.6 (revision 7's) change. Without --next nothing differs from before.
 #
 # The packages go to artifacts/mmal/packages/, not the published artifacts/packages/: revision 4 needs
 # raspberrypi_userland, which stays unpublished while the vchiq driver is on an unmerged branch (Haiku's
@@ -27,12 +32,29 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 recipe="$root/sources/haikuports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
 revision=7
 unpublished=true out=""
+patches="$root/patches/ffmpeg6"
+work="$root/artifacts/cross-ports/ffmpeg6-6.1.6"
+if [ "${1:-}" = --next ]; then
+	shift
+	[ "${1:-}" = --out ] || { echo "build-ffmpeg: --next needs --out DIR" >&2; exit 2; }
+	revision=8
+	next="$root/artifacts/cross-ports/ffmpeg6-next"
+	rm -rf "$next"
+	mkdir -p "$next"
+	cp -a "$root/patches/ffmpeg6" "$next/patches"
+	cp "$root"/patches/ffmpeg6-next/*.patch "$next/patches/"
+	cp -a "$root/patches/ffmpeg6-next/files/." "$next/patches/files/"
+	cp -a "$root/artifacts/sysroot-arm64" "$next/sysroot"
+	patches="$next/patches"
+	work="$next/work"
+	export CROSS_PORT_WORK="$work" CROSS_PORT_SYSROOT="$next/sysroot"
+fi
 [ "${1:-}" = --publish ] && unpublished=false
 [ "${1:-}" = --out ] && { out="$(realpath -m "$2")"; unpublished=false; }
 mmal="/boot/system/develop/headers/raspberrypi_userland"
 # (a recreated sysroot has none: build-mmal.sh --package puts them there)
 [ -f "$root/artifacts/sysroot-arm64$mmal/interface/mmal/mmal.h" ] || "$root/scripts/build-mmal.sh" --package
-"$root/scripts/cross-port.sh" --patches "$root/patches/ffmpeg6" "$recipe" script '
+"$root/scripts/cross-port.sh" --patches "$patches" "$recipe" script '
 ./configure --enable-cross-compile --target-os=haiku --arch=aarch64 \
 	--cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --strip="$STRIP" --pkg-config=pkg-config \
 	--prefix=/boot/system/non-packaged --disable-debug --disable-stripping --disable-static \
@@ -46,7 +68,6 @@ grep -q "^#define CONFIG_H264_VC_DECODER 1$" config_components.h
 grep -q "^#define CONFIG_H264_MMAL_ENCODER 1$" config_components.h
 make -j"$(nproc)"
 make install DESTDIR="${DEST%/boot/system/non-packaged}"'
-work="$root/artifacts/cross-ports/ffmpeg6-6.1.6"
 if grep -E "(rpivid[a-z_]*|mmaldec|mmalenc|h264_vcdec)\.c:[0-9]+:[0-9]+: warning" "$work/build.log"; then
 	echo "build-ffmpeg: warnings in the rpivid or MMAL sources (above)" >&2
 fi

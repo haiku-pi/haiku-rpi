@@ -234,3 +234,74 @@ scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/p
 - Behaviour change for other media-kit users: none that asked for B_RGB32 or nothing (WebPositive, Firefox's FFmpeg
   path does not use the plugin); an app that asks for B_YUV420 now gets it (planar, the BBitmap layout) instead of
   B_RGB32; any renegotiation that changes only the output space or rows keeps the decoder.
+
+## 7. V6: the stream's YCbCr encoding reaches the plane (2026-11-20; branch `v6-video`)
+
+Open item of §5 (and KNOWN-ISSUES F2): the accelerant guessed the encoding (BT.709 from 720 lines, BT.601 below,
+always limited range), so 601-tagged HD, full-range video and our untagged BT.601 test clips showed shifted hues.
+
+### 7.1 What the firmware's plane does (probe, session `v6p1`, 07:10, **measured**)
+
+`tools/haiku-tests/sandprobe enc CODE` shows a planar YUV420 picture (75 % bars in BT.709 limited range and a luma
+ramp) on plane 6 with `color_encoding` = CODE; `tools/pi-tests/colour-probe.sh` takes an HDMI frame per code and
+`colour-probe.py` fits each to BT.601/709/2020 × limited/full:
+
+| `color_encoding` | Firmware name | Applied (best fit, mean error per channel) |
+|---|---|---|
+| 1 | ITUR_BT601 | BT.601 limited (2.1) |
+| 2 | ITUR_BT709 | BT.709 limited (2.2) |
+| 3 | JPEG_JFIF | **BT.601 full range** (2.9) |
+| 9 | REC_2020 | close to BT.709 limited (1.8), not the BT.2020 matrix: probably BT.2020 plus a gamut map to the output; sent for BT.2020 as Linux does, not verified with a BT.2020 source |
+| 0, 4–8, 10–12 | unspecified, FCC, SMPTE 240M, BT.470, JFIF Y16-255, … | all BT.709 limited (2.2): **the firmware default is BT.709**, not BT.601 as `vc_image_types.h` says |
+
+No code gives full-range BT.709 or BT.2020 (Linux's firmware KMS says the same). The same session answered the SAND
+question of gpu-stage6 §5 (`sandprobe layout 1-3`): see hw-video-decode.md §9.
+
+### 7.2 Shape (upstreamable; default = the old guess)
+
+| Layer | Change (haiku-pi/haiku `v6-video`) |
+|---|---|
+| public API | `overlay_options` gain `B_OVERLAY_YCbCr_BT601/_BT709/_BT2020` (a 2-bit matrix field, 0x00300000) and `B_OVERLAY_YCbCr_FULL_RANGE` (0x00400000) for `BView::SetViewOverlay()`; `media_video_display_info.flags` gain `B_YCbCr_BT601/_BT709/_BT2020` (0x30 field) and `B_YCbCr_FULL_RANGE` (0x40). No new struct field anywhere (overlay_buffer is returned by pointer by every accelerant) |
+| app_server (f3243c7287) | the options become `overlay_window.flags` bits `B_OVERLAY_COLOR_*` (video_overlay.h); `SetFlags()` now runs **before** the configuration (it used to apply one `SetViewOverlay()` late) and replaces the encoding; a configuration the accelerant refuses removes the key and `SetViewOverlay()` returns the error (it returned B_OK for everything, and B_OK with no channel) |
+| accelerant (274816191c) | flags → firmware code (1, 2, 3, 9); no matrix → the old guess; full-range BT.709/BT.2020 → `B_NOT_SUPPORTED`; the driver's plane statistics line names `image type N, encoding N` (the marker that the tag arrived) |
+| ffmpeg plugin (9eaa066d36) | the reader fills the display flags from `codecpar` (the old `// TODO`); the decoder takes each picture's tags, else the reader's (h264_mmal's pictures have none), and sets them on B_YUV420 output; **swscale now gets the encoding** (`sws_setColorspaceDetails`): the RGB path converted everything as BT.601 limited before; untagged pictures get the same guess as the accelerant, so plane and RGB path agree; B_YUV420 output passes full range on only with BT.601 (the one full-range plane encoding) and converts other full-range pictures to limited range with an exact table (swscale 6.1 only copies between two 4:2:0 formats when the range changes) |
+| MediaPlayer (552c42233d) | the decoder's display flags → `SetViewOverlay()` options |
+
+### 7.3 Results (session `v6c1`, 07:21–07:40, image `v6-base` = rpi4 6a20a50380 + the branch's driver, accelerant, app_server, plugin and MediaPlayer, ffmpeg6 -7 + raspberrypi_userland -4 installed; **measured**)
+
+Clips: `tools/media-tests/gen-colour-clips.sh` (pal75bars converted from RGB with the named matrix and range, tagged in
+container and stream; 10 s). MediaPlayer, one HDMI frame 7 s after the start, bar centres found and read by
+`tools/pi-tests/colour-bars.py` (9×9 means). **plane**: default (B_YUV420 overlay); **RGB**: `FFMPEG_YUV420=0`
+(the plugin's swscale into B_RGB32, drawn by app_server). "vs ideal": largest channel difference from the clip's
+source RGB (white 255, the others 191/0) — mostly the capture chain's own error (75 % reads 178–189, as in §3).
+
+| Clip | Decoder | Plane encoding (driver line) | plane vs RGB path, max | plane vs ideal | RGB vs ideal |
+|---|---|---|---|---|---|
+| BT.601 SD 720×480 | h264_mmal | 1 | **0** | 9 | 9 |
+| BT.709 HD 1080p | h264_mmal | 2 | **3** | 13 | 11 |
+| BT.601-tagged HD 1080p | h264_mmal | 1 | **0** | 9 | 9 |
+| BT.601 HD **untagged** | h264_mmal | 2 (guess) | 2 | 33 | 33 |
+| full-range BT.601 HD | h264_mmal | 3 | **3** | 11 | 11 |
+| full-range BT.601 SD (yuvj420p) | h264_mmal | 3 | **3** | 11 | 11 |
+| full-range BT.709 HD | h264_mmal | 2 (converted to limited) | **3** (5 with swscale's range conversion: replaced by a table) | 13 | 11 |
+| HEVC BT.709 1080p | hevc_rpivid | 2 | **3** | 13 | 11 |
+| HEVC BT.601 720p | hevc_rpivid | 1 | **0** | 9 | 9 |
+| HEVC Main 10 BT.709 1080p | hevc_rpivid | 2 | **3** | 11 | 13 |
+
+- Every tagged clip is within ±3 of the RGB path, and both within the capture chain's error of the source.
+- The untagged BT.601 HD clip still shows the shift (33 off the source) — on both paths now, since nothing can tell its
+  encoding; that is the guess (BT.709 for HD), which real untagged HD video needs. Before this change the plane showed
+  the same for the *tagged* 601 HD clip, and the RGB path was the one off for every HD clip.
+- overlaytest (rgb32, yuv420 at 320×240): 240 flips each at 60.0/s, 0 failed, PASS on the new app_server. 0 debugger
+  entries, 0 PANIC.
+
+### 7.4 For Firefox (patches/firefox 0006, not rebuilt)
+
+0006 declines the plane (`colour-space`) when `aInfo.color_space` is not the accelerant's guess
+(`HaikuVideoOverlay`'s caller in `RenderCompositorSWGL`, ~line 481 of the patch). With this branch it can pass its
+colour space instead and keep the plane: `Rec601Narrow` → `B_OVERLAY_YCbCr_BT601`, `Rec601Full` → `B_OVERLAY_YCbCr_BT601
+| B_OVERLAY_YCbCr_FULL_RANGE`, `Rec709Narrow` → `B_OVERLAY_YCbCr_BT709`, `Rec2020Narrow` → `B_OVERLAY_YCbCr_BT2020`,
+or'ed into the options of its `SetViewOverlay()` call (~line 845); `Rec709Full`/`Rec2020Full` stay declined (or are
+tried: `SetViewOverlay()` now fails with B_NOT_SUPPORTED, which 0006 already treats as "no plane now"). Needs a Firefox
+rebuild (~1 h, scripts/build-firefox.sh); not done here. The §9.7 M1 stream (untagged VP9 sub-720) would then go to the
+plane with whatever Firefox assumed for it.

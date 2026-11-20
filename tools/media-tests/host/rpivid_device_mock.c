@@ -155,9 +155,16 @@ ff_rpivid_device_create_bitstream(RpividDevice* device, size_t size,
 }
 
 
+#ifdef RPIVID_DEVICE_SCAN_OUT
+int
+ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
+	uint32_t height, uint32_t bitDepth, int motionVectors, int scanOut,
+	RpividPicture* out)
+#else
 int
 ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
 	uint32_t height, uint32_t bitDepth, int motionVectors, RpividPicture* out)
+#endif
 {
 	static long creates;
 	const long failAt = env_long("MOCK_NOMEM_AT", -1);
@@ -182,6 +189,16 @@ ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
 		+ 4095) & ~(size_t)4095;
 	picture->size = picture->chroma_offset
 		+ (size_t)picture->chroma_stride * picture->columns;
+#ifdef RPIVID_DEVICE_SCAN_OUT
+	if (scanOut) {
+		/* the driver's RPIVID_PICTURE_SCAN_OUT layout (NV12_COL128): one
+		   column stride, the chroma rows after the luma rows in each column */
+		picture->luma_stride = height16 * 3 / 2 * 128;
+		picture->chroma_stride = picture->luma_stride;
+		picture->chroma_offset = height16 * 128;
+		picture->size = (size_t)picture->luma_stride * picture->columns;
+	}
+#endif
 	picture->memory = calloc(1, picture->size + 4096);
 	picture->used = 1;
 	picture->poc = -999;
@@ -191,6 +208,11 @@ ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
 	out->chroma = picture->memory + picture->chroma_offset;
 	out->luma_column_stride = picture->luma_stride;
 	out->chroma_column_stride = picture->chroma_stride;
+#ifdef RPIVID_DEVICE_SCAN_OUT
+	out->area = scanOut ? handle : -1;
+	out->address = picture->memory;
+	out->size = picture->size;
+#endif
 	return 0;
 }
 

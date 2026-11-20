@@ -1,0 +1,34 @@
+hevc_rpivid: the option rpivid_out (pictures the display can scan out)
+
+rpivid_out=sand (or 1): the rpivid hwaccel decodes into pictures the
+display can show as they are and hands each frame's picture to the caller
+in the frame's opaque_ref (an RpividSandFrame, rpivid_hevc.h), without
+converting it into the frame's planes while the option stays set. The
+caller may set it back to planar (0) at any time; frames decoded on the CPU
+have no picture. Haiku's media kit plugin uses it to show HEVC on an
+overlay plane without a copy (docs/design/hw-video-decode.md §9).
+
+--- a/libavcodec/hevcdec.h
++++ b/libavcodec/hevcdec.h
+@@ -597,6 +597,7 @@
+     int rpivid_failed;      ///< left the block for the CPU decoder in this stream
+     int rpivid_skip;        ///< left the block: pictures dropped until an IRAP
+     int rpivid_retries;     ///< times the block was taken again in this stream
++    int rpivid_out;         ///< RPIVID_OUT_* (rpivid_hevc.h): the frames' pictures as they are
+ 
+     int nal_length_size;    ///< Number of bytes used for nal length (1, 2 or 4)
+     int nuh_layer_id;
+--- a/libavcodec/hevcdec.c
++++ b/libavcodec/hevcdec.c
+@@ -3815,6 +3815,11 @@
+     { "rpivid", "the rpivid hardware decoder: 0 off, 1 on, 2 also for tools not verified "
+         "on it (-1: 1 for hevc_rpivid unless FFMPEG_RPIVID says otherwise, 0 for hevc)",
+         OFFSET(rpivid), AV_OPT_TYPE_INT, {.i64 = -1}, -1, 2, PAR },
++    { "rpivid_out", "the rpivid block's output: planar frames, or the pictures as the display "
++        "can show them in the frames' opaque_ref (rpivid_hevc.h)",
++        OFFSET(rpivid_out), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 1, PAR, "rpivid_out" },
++    { "planar", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 0}, 0, 0, PAR, "rpivid_out" },
++    { "sand", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = 1}, 0, 0, PAR, "rpivid_out" },
+ #endif
+     { NULL },
+ };

@@ -9,6 +9,10 @@
 #       build in another configured output directory DIR instead (a worktree's generated.arm64, for
 #       an A/B image from a branch without touching the main checkout's build); its images are
 #       DIR/haiku-pi4*.img (PI_IMAGE_OUT, if set, except for @nightly-mmc)
+#
+#   scripts/build.sh [--generated DIR] --light TARGET...
+#       a few small targets (a driver, an add-on, an app) at -j4 without the heavy-build guard, so that
+#       an incremental rebuild need not wait for another project's heavy build; never for images
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 gen="$root/sources/haiku/generated.arm64"
@@ -18,6 +22,13 @@ if [ "${1:-}" = --generated ]; then
 	imgdir="$gen"
 	shift 2
 fi
+light=no
+if [ "${1:-}" = --light ]; then
+	light=yes
+	shift
+	case " $* " in *@*|*mmc*|*image*) echo "build: --light is not for images" >&2; exit 2 ;; esac
+	[ $# -gt 0 ] || { echo "build: --light needs targets" >&2; exit 2; }
+fi
 [ $# -gt 0 ] || set -- @minimum-mmc
 mkdir -p "$root/artifacts/build"
 # the port's build options (tools/build/UserBuildConfig: jam -sHAIKU_PI_DEV=1 ...); no downloads, as
@@ -25,7 +36,11 @@ mkdir -p "$root/artifacts/build"
 ln -sfn "$root/tools/build/UserBuildConfig" "$gen/../build/jam/UserBuildConfig"
 log="$root/artifacts/build/$(date +%Y%m%d-%H%M%S).log"
 rc=0
-(cd "$gen" && "$root/scripts/heavy-build.sh" --mem-per-job 1 -- jam -q "-j{JOBS}" -sHAIKU_NO_DOWNLOADS=1 "-sHAIKU_PI_ROOT=$root" "$@") > "$log" 2>&1 || rc=$?
+if [ $light = yes ]; then
+	(cd "$gen" && jam -q -j4 -sHAIKU_NO_DOWNLOADS=1 "-sHAIKU_PI_ROOT=$root" "$@") > "$log" 2>&1 || rc=$?
+else
+	(cd "$gen" && "$root/scripts/heavy-build.sh" --mem-per-job 1 -- jam -q "-j{JOBS}" -sHAIKU_NO_DOWNLOADS=1 "-sHAIKU_PI_ROOT=$root" "$@") > "$log" 2>&1 || rc=$?
+fi
 grep -a -E 'error:|\.\.\.failed|don.t know how|^problem' "$log" | head -n 20 || true
 echo "build: jam rc=$rc log=$log"
 if [ "$rc" != 0 ]; then

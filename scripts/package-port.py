@@ -51,7 +51,8 @@ root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 gen = os.path.join(root, 'sources/haiku/generated.arm64')
 tools = os.path.join(gen, 'cross-tools-arm64/bin/aarch64-unknown-haiku-')
 pkgtool = os.path.join(gen, 'objects/linux/x86_64/release/tools/package/package')
-sysroot = os.path.join(root, 'artifacts/sysroot-arm64')
+# (CROSS_PORT_SYSROOT: a trial build's copy, as cross-port.sh)
+sysroot = os.environ.get('CROSS_PORT_SYSROOT') or os.path.join(root, 'artifacts/sysroot-arm64')
 nonPackaged = '/boot/system/non-packaged'
 
 
@@ -187,7 +188,10 @@ def main():
     copyrights = [c.strip() for c in recipe_field(text, 'COPYRIGHT').split('\n') if c.strip()] \
         or [f'The {port} authors']
 
-    install = os.path.join(root, 'artifacts/cross-ports', recipeName, 'install') \
+    # (cross-port.sh's build directory; CROSS_PORT_WORK: a trial build's)
+    crossWork = os.environ.get('CROSS_PORT_WORK') \
+        or os.path.join(root, 'artifacts/cross-ports', recipeName)
+    install = os.path.join(crossWork, 'install') \
         + ('/boot/system' if args.system_prefix else nonPackaged)
     if not os.path.isdir(install):
         sys.exit(f'package-port: {install} missing: run scripts/cross-port.sh first')
@@ -393,7 +397,7 @@ def main():
     if args.source_package:
         source = os.path.join(work, 'source')
         revisioned = f'{port}-{version}-{args.revision}'
-        shutil.copytree(os.path.join(root, 'artifacts/cross-ports', recipeName, 'source'),
+        shutil.copytree(os.path.join(crossWork, 'source'),
             os.path.join(source, 'develop/sources', revisioned, 'sources'), symlinks=True)
         info = package_info(port + '_source', version, args.revision, summary
             + ' (source)', licenses, copyrights, [f'{port}_source = {version}-{args.revision}'],
