@@ -853,7 +853,7 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
 ### 11.6 Blender 3.6 (3D modelling, animation, rendering)
 
 From image-2026-11-19b Blender 3.6.23 LTS is in the package repository: `pkgman install blender` (it brings
-Python 3.10 with NumPy, OpenImageIO, OpenColorIO, OpenSubdiv, OpenImageDenoise, OpenVDB, Alembic, FFTW, GMP,
+Python 3.10 with NumPy, OpenImageIO, OpenColorIO, OpenSubdiv, OpenImageDenoise, OpenVDB, OpenUSD, Alembic, FFTW, GMP,
 TBB, Boost and the libraries they need; `pkgman update blender` on an older install) and start it from Deskbar ▸
 Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`. It draws with the desktop OpenGL 3.3 driver
 (§5.1) through SDL2 (libsdl2 2.32.10-8 or newer is required: it gives each thread its own GL context, which
@@ -875,7 +875,9 @@ Blender's renders need).
   remesh in the Remesh modifier and Object Data ▸ Remesh, the Volume to Mesh modifier, volumes in Cycles, fluid
   caches in OpenVDB format), the Boolean modifier's **Exact** solver (it silently fell back to Fast before),
   **QuadriFlow** remesh, glTF export with **Draco** compression, Grease Pencil **Trace Image** and **PDF export**, and
-  the interface in **38 languages** (Preferences ▸ Interface ▸ Translation).
+  the interface in **38 languages** (Preferences ▸ Interface ▸ Translation). From blender 3.6.23-9: **USD** (File ▸ Import/Export ▸ Universal Scene
+  Description: `.usd`, `.usda`, `.usdc`, `.usdz`; OpenUSD 24.08, the usd package; Blender's Python has no `pxr`
+  module), and deleting or copying non-empty folders from Blender no longer crashes (USDZ export hit it).
 - **Speed (measured on the Pi 4, 4 cores):** the factory scene at 1920×1080 renders in about 35 s with EEVEE and
   1 min 37 s with Cycles without denoising. Denoising is on in a new file, and from blender -7 it really runs: the
   same F12 then takes about **3½ minutes and ~1.5 GB of RAM** (Render Properties ▸ Sampling ▸ Denoise; Prefilter
@@ -884,7 +886,7 @@ Blender's renders need).
   off (Preferences ▸ Viewport) about 15. A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
 - **Input:** click into the Blender window once before typing — keys go to the active window, and to the area
   under the mouse pointer.
-- Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, no USD, slow CPU denoising, no
+- Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, slow CPU denoising, no
   GPU subdivision, no tablet pressure.
 
 ## 12. The CPU, clocks and temperature
