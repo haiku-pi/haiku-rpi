@@ -33,9 +33,10 @@ were never reproduced, bugs latent at upstream's default settings or exposed onl
 an archived repository, duplicates of existing upstream reports, and minor items. The summary table's "Form"
 column says which.
 
-**Tracker searches.** Haiku's Trac and Mesa's GitLab put a bot check in front of automated reads during this work,
-and winehq.org was unreachable from our network, so many entries say "not searched" or "blocked". Search for
-duplicates by hand before sending anything.
+**Tracker searches.** Haiku's Trac put a bot check in front of automated reads during most of this work (Mesa's
+GitLab web pages too, though its API answered and the Mesa entries were searched), and winehq.org was unreachable
+from our network, so many Haiku and all Wine entries say "not searched" or "blocked". Search for duplicates by hand
+before sending anything.
 
 **AI-assisted text.** These drafts were compiled by an AI agent from our commits, patches and logs. Several
 projects restrict AI-generated contributions or reports (Mesa, SDL, FEX, Box64, Blender, OpenImageIO; see the
@@ -1855,7 +1856,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **Severity / scope:** crash, possibly remotely triggerable (security); all architectures; **from code reading, not confirmed**.
 - **Our fix:** none; our tree has the same code in the echo-reply and reset paths (our ICMPv6 error reply checks the source).
 - **Upstream status (2026-11-20):** open: unchanged at hrev60450, `src/add-ons/kernel/network/protocols/ipv6/ipv6.cpp:1369-1370`.
-- **Short form because:** unconfirmed, and if real it is a remote kernel crash. Confirm it on a test VM first, then report it privately to the Haiku developers rather than on the public tracker; the trigger is deliberately not described here.
+- **Short form because:** unconfirmed, and if real it is a remote kernel crash. Confirm it on a test VM first, then report it privately to the Haiku developers rather than on the public tracker.
 
 <a id="hk-05"></a>
 
@@ -1864,6 +1865,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** `resize_area()` on an area the team cloned from another team shrinks the shared RAM cache. That unmaps the end of every area of the cache, the owner's included.
 - **Severity / scope:** security (an unprivileged client can crash another team, e.g. app_server, through shared bitmap memory); all architectures; generic VM code
 - **Our fix:** haiku-pi/haiku `rpi4` `2dcb0bb814` — "kernel/vm: don't let a team shrink memory another team maps"
+- **Patch:** not ours. Point to the RenkuOS change: RenkuOS/Source 5c9d81bd5b by Kevin Adams. Our port applies cleanly; we left out its test-file hunk.
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/vm/vm.cpp:4697-4711` (`vm_resize_area()` shrink path). It only checks that the *calling* area belongs to the team (`:4675`), not the other areas of the cache. Trac: searched "resize_area": no matching ticket.
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours; not reproduced by us.
 
@@ -1874,6 +1876,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** The iterator already points past the current page when the cache is unlocked for the write. The next page can leave the cache meanwhile: the page daemon frees it, or the file shrinks.
 - **Severity / scope:** crash (kernel panic in `PageWriteTransfer::Schedule()`, NULL cache); all architectures; generic VM code
 - **Our fix:** haiku-pi/haiku `rpi4` `4d35669d1d` — "kernel/vm: look the next page up again after writing unlocked"
+- **Patch:** not ours. Point to the RenkuOS change: RenkuOS/Source 1afc69569a by atomozero. Our port applies as-is.
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/vm/vm_page_writer.cpp:798-802` (iterator) and `:846-848` (`cache->Unlock(); transfer.Schedule(0); cache->Lock();` without re-seeking). Trac: not searched specifically ("page writer" results show no matching ticket).
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours; not reproduced by us.
 
@@ -1884,6 +1887,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** In power-saving mode a CPU going idle moves its IRQs, one at a time, to the small-task core until its list is empty. If an IRQ stays (`AssignToCpu()` returns the same CPU, or the IRQ is per-CPU), the loop never ends.
 - **Severity / scope:** hang (system freeze when power-saving mode is selected); all architectures where `assign_io_interrupt_to_cpu()` can leave an IRQ in place. That is every ARM/ARM64 interrupt controller without `AssignToCpu()` (GICv3 and the base class return 0), and per-CPU interrupts anywhere.
 - **Our fix:** haiku-pi/haiku `rpi4` `8ed6c7589b` — "kernel/scheduler: do not try forever to pack an IRQ that stays" and `c5be77821f` — "kernel/scheduler: check where the IRQ went, not where it is in the list". Related: `9495514a68` — "kernel/arm: SGIs and PPIs of the GIC are local interrupts". The GICv2 reserves IRQs 0-31 as I/O interrupts, so the scheduler tries to move per-CPU timers and IPIs.
+- **Patch:** not ours. Point to the RenkuOS changes: RenkuOS/Source 5de6fe7fcb and f883abc582 (pack_irqs), and 4a763f815b (GIC local IRQs), all by atomozero. Our two scheduler commits apply in order. `9495514a68` needs rebasing (our GICv2 changes).
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/scheduler/power_saving.cpp:209-220` and `src/system/kernel/arch/arm/arch_int_gicv2.cpp:52` (`reserve_io_interrupt_vectors(32 * lineRegs, 0, INTERRUPT_TYPE_IRQ)`). Trac: searched "pack_irqs" (#18588 closed fixed, older) and "power saving freeze": no matching open ticket.
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours.
 
@@ -1894,6 +1898,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** A weak CAS may fail spuriously on LL/SC machines. It then leaves `testAgainst` equal to the expected value, so the caller cannot tell the failure from success, although nothing was stored.
 - **Severity / scope:** data corruption (two owners of a lock), latent; LL/SC architectures (arm, arm64, riscv64) where the inline builtin is used without outline atomics. x86 is not affected.
 - **Our fix:** haiku-pi/haiku `rpi4` `88be53559b` — "SupportDefs: use a strong compare-and-swap in atomic_test_and_set()"
+- **Patch:** not ours. Point to the RenkuOS change: RenkuOS/Source 8925cbc599 (PR #189) by atomozero. Our port applies as-is.
 - **Upstream status:** open: code unchanged at hrev60450, `headers/os/support/SupportDefs.h:276-281` (`__atomic_compare_exchange_n(value, &testAgainst, newValue, 1, …)`, `weak = 1`, returns `testAgainst`); the 64-bit variant is alike. Trac: searched "atomic_test_and_set": no matching open ticket.
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours; latent in GCC builds with outline atomics.
 
@@ -1904,6 +1909,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** The two `fmov` instructions copy in the wrong direction. The first overwrites the argument in s0 with w0; `rev` then swaps w0, and the last `fmov` copies s0 (the caller's w0) back into w0.
 - **Severity / scope:** wrong output (float byte-order conversions do nothing useful; `B_HOST_TO_BENDIAN_FLOAT/DOUBLE` and friends); arm64 (any board); arm64 code only
 - **Our fix:** haiku-pi/haiku `rpi4` `55671c28c9` — "libroot/arm64: __swap_float and __swap_double return the swapped value"
+- **Patch:** not ours. Point to the RenkuOS change: RenkuOS/Source PR #477 (60be83bacc) by rainygirl, unmerged there. Our port applies as-is.
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/libroot/os/arch/arm64/byteorder.S:13-15` and `:22-24` (`fmov s0, w0` … `fmov w0, s0`; the input is in s0/d0 per AAPCS64, so it is overwritten with w0/x0 before the swap). Trac: searched "B_SWAP_FLOAT": only #18958 (closed, unrelated build failure).
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours.
 
@@ -1914,6 +1920,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** `module_init_post_boot_device()` gives images still in use their full path, but it looks for them only under `kernel/boot`. A file system module in use that has no boot link (fat, when a FAT partition was mounted early) keeps its bare name.
 - **Severity / scope:** wrong output (syslog warning; the module image keeps a relative path); all architectures; generic `module.cpp`
 - **Our fix:** haiku-pi/haiku `rpi4` `93a0d0e23e` — "kernel: find the file system modules the boot loader pre-loaded"
+- **Patch:** not ours. Point to the RenkuOS change: RenkuOS/Source 703ad85b51 by atomozero. Our port applies as-is.
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/module.cpp:1913` (looks only in `kernel/boot`). The boot loader also pre-loads `kernel/file_systems` and `kernel/partitioning_systems`. Trac: not searched.
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours; a log warning.
 
@@ -1924,6 +1931,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** `NetNotificationService::FirstAdded()` calls `get_module()` on its own module from inside the module's generic syscall. If the module is being unloaded at that moment, the following happens: 1.
 - **Severity / scope:** hang (net_server and launch_daemon deadlock at boot); all architectures; generic module/syscall code; reported by RenkuOS on x86 at about 1 boot in 20
 - **Our fix:** haiku-pi/haiku `rpi4` `e24ddebb42` — "net notifications: keep the module loaded, no get_module() from its own syscall" (port of RenkuOS PR #476, d0f1661cdd, by rainygirl, for RenkuOS issue #308)
+- **Patch:** not ours — point to the RenkuOS change (RenkuOS/Source PR #476, d0f1661cdd)
 - **Upstream status:** open: code unchanged at hrev60450, `src/add-ons/kernel/network/notifications/notifications.cpp:81, 89` (module flags 0 at `:172`); Trac: not searched
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours.
 
@@ -1934,6 +1942,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** Since 2f2dd59e16 the destructor locks `fLock` (`:474`), cancels the timers, then calls `wait_for_timer()` for each of them while still holding the lock (`:488-491`), and destroys the lock last (`:493`). The timer thread may already have taken a hook off its list (`sCurrentTimer = timer`); `cancel_timer()` does not stop that hook, and the hook's first action is `MutexLocker locker(endpoint->fLock)` (`:2666/2680/2698/2716`).
 - **Severity / scope:** hang (the single "net timer" thread stops: retransmits, delayed ACKs and TIME_WAIT expiry for the whole stack); all architectures; generic TCP code
 - **Our fix:** haiku-pi/haiku `rpi4` `0c2354bf59` — "tcp: wait for in-flight timers before destroying the endpoint lock" (hand port of RenkuOS/Source bdecbeb5b5, by rainygirl)
+- **Patch:** not ours — point to the RenkuOS change (RenkuOS/Source bdecbeb5b5)
 - **Upstream status:** open: code unchanged at hrev60450, `src/add-ons/kernel/network/protocols/tcp/TCPEndpoint.cpp:474, 488-493`; this is a regression from upstream 2f2dd59e16 ("tcp: destroy the endpoint lock after the timers exited.", 2026-10-10, hrev60232, "should fix #20408"), so it is best reported on #20408; Trac: not searched
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours; code reading, not reproduced.
 
@@ -1944,6 +1953,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** net_server's auto-join starts only on `B_NETWORK_WLAN_SCANNED` (`src/servers/net/AutoconfigLooper.cpp:195`). The FreeBSD wlan layer sends it; the OpenBSD layer's notifier is inside `#if 0`.
 - **Severity / scope:** wrong output (a saved WiFi network is not rejoined after boot); all architectures; affects every openbsd_wlan driver upstream ships (idualwifi7260, iaxwifi200, iprowifi3945)
 - **Our fix:** haiku-pi/haiku `rpi4` `fbd46ca58b` — "openbsd_wlan: tell net_server when a scan is done; list the current AP" (port of RenkuOS/Source PR #471, af7c71aba8 + 9062ad2823, by Dru Satori)
+- **Patch:** not ours — point to the RenkuOS change (RenkuOS/Source PR #471, af7c71aba8)
 - **Upstream status:** open: code unchanged at hrev60450, `src/libs/compat/openbsd_wlan/net80211/ieee80211_haiku.cpp:499-515` (`#if 0` around `ieee80211_notify_scan_done()`); nothing calls it from `ieee80211_end_scan()` (`ieee80211_node.c:1472`); Trac: not searched
 - **Short form because:** found and fixed by RenkuOS developers; point upstream to their change, not ours.
 
@@ -1954,6 +1964,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** `usb_disk_uninit_driver()` takes `device->lock` and then `usb_disk_free_device_and_luns()` deletes each LUN's I/O scheduler. Deleting an `IOSchedulerSimple` waits for its scheduler thread (`IOSchedulerSimple.cpp:153`), and that thread runs `usb_disk_do_io()`, which takes the same lock.
 - **Severity / scope:** hang (USB explore thread; every later driver registration blocks); all architectures; generic driver
 - **Our fix:** haiku-pi/haiku `rpi4` `d3cc8e3fd1` — "usb_disk: delete the I/O schedulers before taking the device lock in uninit"
+- **Patch:** attachable as-is
 - **Upstream status:** open: code unchanged at hrev60450, `src/add-ons/kernel/drivers/disk/usb/usb_disk/usb_disk.cpp:1923, 1932` (lock, then free), `:138` (scheduler deleted), `:1790` (`usb_disk_do_io()` takes the same lock); Trac: not searched
 - **Short form because:** the most consistent explanation of one stalled boot, never reproduced.
 
@@ -1964,6 +1975,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** **Send side.** The ICI message is stored to normal memory and the SGI is a device store, which is not ordered after it, so the target can take the interrupt before the message is visible. **Receive side.** The acknowledge is a device read that does not order the normal loads that follow it. **Targets.** A CPU's GIC interface bit need not equal its Haiku index.
 - **Severity / scope:** hang (a lost or misdirected ICI), by inspection; arm/arm64 with a GICv2 (shared `arch/arm` code). GICv3 already has the barriers.
 - **Our fix:** haiku-pi/haiku `rpi4` `4eb785f652` — "arm/arm64: GICv2: order inter-CPU messages before the SGI" and the barrier and CPU-map parts of `aa7da3b827` — "arm/arm64: GICv2 IPI ordering and CPU map; debug UART on every CPU"
+- **Patch:** with notes: `4eb785f652` applies as-is. `aa7da3b827` also adds KDL commands, `RouteInterrupt()` and debug-UART routing. Extract only the read barrier after acknowledging an SGI and the per-CPU interface mask, read from the banked GICD_ITARGETSR0, as Linux's `gic_cpu_map`.
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/arch/arm/arch_int_gicv2.cpp:136-145` (`SendMulticastIci()`/`SendBroadcastIci()` without `memory_write_barrier()`; targets `cpuSet.Bits(0)`, i.e. `1 << cpu`) and `:119-133` (no read barrier after the IAR read). GICv3: `arch_int_gicv3.cpp:248/284/298` (write barriers present). Trac: not searched.
 - **Short form because:** found by code review against the Arm memory model; no failure attributed to it.
 
@@ -1974,6 +1986,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** The `resume_thread()` that starts every thread leaves `SIGNAL_CONTINUE_THREAD` pending. On arm64 it stays pending until the thread's first exception.
 - **Severity / scope:** hang (a thread's first interruptible wait returns `B_INTERRUPTED` at once; with libroot's `rw_lock_wait()` this became a frozen application). Latent upstream; arm64 (any board); arm64 code only (x86 does this in `x86_return_to_userland()`)
 - **Our fix:** haiku-pi/haiku `rpi4` `5d9132a49c` — "kernel/arm64: kernel exit work when a thread first enters userland"
+- **Patch:** with notes: the context differs; it calls `arm64_init_user_debug_at_kernel_exit()` from our user-debugging work. Upstream needs only the push iframe / `thread_at_kernel_exit()` / pop iframe block before `_eret_with_iframe()`.
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/arch/arm64/arch_thread.cpp:108-136` (`_eret_with_iframe()` at `:134` without exit work). Trac: not searched.
 - **Short form because:** latent upstream; exposed only by stack reuse in our fork.
 
@@ -1984,6 +1997,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** With `ASSERT()` compiled out, the signal handler's address is never fetched, so every signal handler jumps to an uninitialised address. Every FDT device's node number and bus driver are garbage too.
 - **Severity / scope:** crash (latent: only at a non-default `KDEBUG_LEVEL`); arm and arm64 (signal frame), and every FDT platform (fdt bus manager: arm, arm64, riscv64)
 - **Our fix:** haiku-pi/haiku `rpi4` `55348c5c46` — "kernel, fdt: side effects out of ASSERT(); what a KDEBUG_LEVEL below 2 needs"
+- **Patch:** with notes: the `fdt_module.cpp` hunk includes a ninth site in our own `fdt_device_get_dma_window()`; upstream has 8. The `sdhci.cpp`/`gicv3`/`vfs.cpp` hunks are include fixes and a warning fix for that configuration.
 - **Upstream status:** open: code unchanged at hrev60450: `src/system/kernel/arch/arm64/arch_thread.cpp:201-203` and `src/system/kernel/arch/arm/arch_thread.cpp:296-298` (`ASSERT(user_memcpy(&signalHandlerAddr, …) >= B_OK)`); `src/add-ons/kernel/bus_managers/fdt/fdt_module.cpp:317, 361, 374, 423, 509, 549, 563, 580` (`ASSERT(gDeviceManager->get_attr_uint32(…"fdt/node"…))` / `get_driver(…)`); `headers/private/kernel/debug.h:69` defines `ASSERT(x)` as nothing below KDEBUG 2. Trac: not searched.
 - **Short form because:** latent at the default KDEBUG_LEVEL 2.
 
@@ -1994,6 +2008,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** Pages start without AF and read-only, and the first access and first write fault. On a kernel stack, that first access can be the exception entry code storing an iframe.
 - **Severity / scope:** crash (recursive faults in the vector, then a panic); seen only at `KDEBUG_LEVEL` 1; arm64 cores without hardware access-flag/dirty-state management (no FEAT_HAFDBS, e.g. Cortex-A53/A72); arm64 code only
 - **Our fix:** haiku-pi/haiku `rpi4` `dc849a150b` — "arm64: map kernel stacks accessed and dirty from the start"
+- **Patch:** attachable as-is
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/arch/arm64/VMSAv8TranslationMap.cpp:511-545` (`GetMemoryAttr()` gives `B_KERNEL_STACK_AREA` pages no AF and AP read-only, like any other page). Trac: not searched.
 - **Short form because:** seen only at KDEBUG_LEVEL 1.
 
@@ -2004,6 +2019,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** `PrepareToContinue()` replaces a software breakpoint at the continuation PC by a hardware one. If the team had no hardware breakpoint before, its threads' `THREAD_FLAGS_BREAKPOINTS_DEFINED` stays clear.
 - **Severity / scope:** wrong output (the thread runs past every later hit of that breakpoint); generic `BreakpointManager`/`user_debugger.cpp` (all architectures); observed only with the fork's arm64 user-debugging back end
 - **Our fix:** haiku-pi/haiku `rpi4` `40adafebe9` — "kernel/debug: Update the breakpoints flag when continuing installs one."
+- **Patch:** attachable as-is
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/debug/BreakpointManager.cpp:426` (`PrepareToContinue()` returns nothing) and `src/system/kernel/debug/user_debugger.cpp:811` (the caller does not update `THREAD_FLAGS_BREAKPOINTS_DEFINED`). Trac: not searched.
 - **Short form because:** observed only with our arm64 user-debugging back end.
 
@@ -2014,6 +2030,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** `BreakpointManager::_WriteMemory()` copies into the team's code pages but does not make the instruction cache see the change.
 - **Severity / scope:** wrong output (a written breakpoint or patched code may not be executed); architectures with incoherent instruction caches (arm, arm64, riscv64); a no-op on x86. On upstream arm64, user breakpoints are not usable (see HK-01), so the path is mainly `B_DEBUG_MESSAGE_WRITE_MEMORY` into code.
 - **Our fix:** haiku-pi/haiku `rpi4` `09b7e81388` — "kernel/debug: Synchronize the instruction cache after writing team memory."
+- **Patch:** attachable as-is
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/debug/BreakpointManager.cpp:750` (`user_memcpy()` without `arch_cpu_sync_icache()`; no call anywhere in `src/system/kernel/debug/`). Trac: searched "icache": none.
 - **Short form because:** observed only with our arm64 user-debugging back end.
 
@@ -2024,6 +2041,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** `enter_userspace()` writes only TLS slots 0–7 (`TLS_FIRST_FREE_SLOT`). Slots 8–63, which `tls_allocate()` hands out to libraries, rely on the stack area being freshly zeroed.
 - **Severity / scope:** wrong output (stale values from `tls_get()` in a new thread); all architectures; upstream reaches it only with a caller-provided (reused) stack
 - **Our fix:** haiku-pi/haiku `rpi4` `a000d5d6cc` — "kernel/thread: Clear all TLS slots of a new thread."
+- **Patch:** attachable as-is (drop the comment's mention of stack reuse, which refers to a change of ours)
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/kernel/thread.cpp:763`; Trac: not searched
 - **Short form because:** minor; no failure seen.
 
@@ -2034,6 +2052,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** Release builds pass no `-DDEBUG` (build/jam defines it only for a debug level above 0). The private header then defines `DEBUG 3`, so all 67 `CALLED()` sites in libbluetooth print to the stdout of the calling program.
 - **Severity / scope:** wrong output (trace lines mixed into the output of programs that use the Bluetooth Kit); all architectures
 - **Our fix:** haiku-pi/haiku `rpi4` `d226612219` — "bluetooth: the kit traces errors only unless DEBUG is set"
+- **Patch:** attachable as-is
 - **Upstream status:** open: code unchanged at hrev60450, `headers/private/bluetooth/debug.h:5`; Trac: not searched
 - **Short form because:** minor (stray output).
 
@@ -2044,6 +2063,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** There are three problems: **bt_discovery does not compile.** The public header `headers/os/bluetooth/RemoteDevice.h:12` includes the private `<bluetoothserver_p.h>`, which is not on `src/bin`'s include path. **Undefined behaviour and wrong arguments in both tools.** They pass `bdaddrUtils::ToString()` (a `BString`) to `%s`, use `%ld` for a uint32, and read the device number from `argv[0]` instead of `argv[1]`. **bt_discovery waits forever.** It overrides `InquiryCompleted()`, which nothing calls; the kit reports the end of an inquiry through `InquiryResponse()` (`DiscoveryListener.cpp:159-167`).
 - **Severity / scope:** build (bt_discovery), wrong output, hang (bt_discovery waits forever); all architectures; the tools are not in any image, so the default build is not affected
 - **Our fix:** haiku-pi/haiku `rpi4` `02e02d4ba3` — "bt_dev_info, bt_discovery: build and print the device address"; `0c12640aa2` — "bt_discovery: implement InquiryResponse(), so the tool sees its inquiry end"
+- **Patch:** with notes: the upstream `.cpp` files use CRLF line endings and our commits rewrote them with LF; regenerate the diff keeping CRLF. The Jamfile hunk applies as-is.
 - **Upstream status:** open: code unchanged at hrev60450, `src/bin/bt_discovery.cpp:35, 48, 77, 92, 115, 125`, `src/bin/bt_dev_info.cpp:17, 46, 56`, `src/bin/Jamfile:7`; Trac: not searched
 - **Short form because:** small tool fixes.
 
@@ -2054,6 +2074,7 @@ Derived from the code; not run on hrev60450 (seen with Wine's wineserver on our 
 - **What:** The default image names the host "shredder", but the hosts file lists only `localhost`. A lookup of the host's own name therefore goes to the name servers: it fails (NXDOMAIN) with a network, and waits for the resolver's time-outs without one.
 - **Severity / scope:** wrong output / performance (`gethostbyname(hostname)` fails, or waits for name server time-outs); all architectures; generic libnetwork and the default image (`HAIKU_IMAGE_HOST_NAME ?= shredder`, absent from `data/settings/network/hosts`)
 - **Our fix:** haiku-pi/haiku `rpi4` `58022c954a` — "libnetwork: answer the host's own name from the hosts file's localhost entries"
+- **Patch:** attachable as-is (`#ifdef __HAIKU__` hunks in netresolv). An alternative is to write the image's host name into the hosts file.
 - **Upstream status:** open: code unchanged at hrev60450, `src/system/libnetwork/netresolv/net/getaddrinfo.c:2456-2490` (`_files_getaddrinfo()`), `src/system/libnetwork/netresolv/net/sethostent.c:124` (`_hf_gethtbyname()`), `data/settings/network/hosts` (localhost entries only); Trac: searched `q=gethostbyname+hostname+hosts`: blocked by the bot check (no result)
 - **Short form because:** closer to a missing feature (nss-myhostname behaviour) than a defect.
 
@@ -2323,8 +2344,9 @@ Wine 11.21 encodes the usage the other way, with `usage + GL_CLIENT_POINTER_STRE
 #### MESA-08 — v3dv: timestampPeriod is taken from clock_getres(CLOCK_MONOTONIC), but the kernel writes timestamps in nanoseconds
 
 - **What:** V3DV reports `VkPhysicalDeviceLimits::timestampPeriod` as the clock resolution in ns. The values written into query results are nanoseconds regardless of that resolution.
-- **Severity / scope:** wrong output (timestamp queries scaled wrongly). It is latent on a standard Linux setup; all users of V3DV on any OS where `CLOCK_MONOTONIC`'s resolution is not 1 ns
+- **Severity / scope:** wrong output (timestamp queries scaled wrongly). It is latent on a standard Linux setup; all users of V3DV on any OS where `CLOCK_MONOTONIC`'s resolution is not 1 ns: Linux with low-resolution timers (`highres=off`, or a kernel without `CONFIG_HIGH_RES_TIMERS`), where `clock_getres` reports `TICK_NSEC` (for example 4 ms at HZ=250); — Haiku (1 µs).
 - **Our fix:** part of haiku-pi/mesa `rpi4` `640e69292c3` — "v3dv: build and run on Haiku". In that commit it is guarded by `#if DETECT_OS_HAIKU`.
+- **Patch:** no. Our change is Haiku-conditional and sits inside a port commit. The generic fix is one line, written fresh: `timestamp_period = 1.0f` unconditionally.
 - **Upstream status:** open. Code unchanged on main 901c006e67b: `src/broadcom/vulkan/v3dv_device.c:1037-1040`. GitLab: searched "v3dv timestampPeriod": none.
 - **Short form because:** latent on a standard Linux kernel; our fix is a Haiku-only hunk, the generic fix is one line still to write.
 
@@ -2686,6 +2708,7 @@ That is two full-buffer copies per update. Without `GL_MAP_READ_BIT` the mapping
 - **What:** On Windows the front buffer of an exclusive full-screen swapchain is the screen. wined3d's GDI swapchain instead blits it into the swapchain window's DC. Half-Life's launcher takes exclusive mode with its own window.
 - **Severity / scope:** wrong output (white screen; game invisible); any OS with the no-3D adapter: win32u gives every hidden window the dummy surface, whatever the driver. Observed on Haiku only, not reproduced on Linux.
 - **Our fix:** `patches/wine-11.21/0012-wined3d-gdi-fullscreen-hidden-window.patch`
+- **Patch:** with notes. Using the process's foreground window is a heuristic. Maintainers may prefer presenting to the screen, i.e. the desktop DC, which matches Windows' "front buffer is the screen". That alone fails on drivers without a desktop surface (see WINE-11).
 - **Upstream status:** open: the code is unchanged on master, `dlls/wined3d/swapchain.c:1327-1365` (`swapchain_gdi_frontbuffer_updated` blits to `swapchain->dc`). Bugzilla: not searched (unreachable); not web searched.
 - **Short form because:** presentation detail seen with our Wayland-based window path.
 
@@ -2696,6 +2719,7 @@ That is two full-buffer copies per update. Without `GL_MAP_READ_BIT` the mapping
 - **What:** `ddraw_surface_update_frontbuffer()` draws to the screen DC (`GetDC(NULL)`) when the swapchain window is not in front. Half-Life hides that window and plays in its own popup. winewayland has no desktop surface, so drawing on the screen DC shows nothing.
 - **Severity / scope:** wrong output (white screen); any OS with a window driver that has no desktop surface: winewayland is upstream, so Linux Wayland should behave the same. Not reproduced on Linux.
 - **Our fix:** `patches/wine-11.21/0016-ddraw-hidden-swapchain-window-foreground.patch`
+- **Patch:** with notes. It uses the same foreground-window heuristic as WINE-10. Maintainers may prefer a winewayland-side fix, for example a desktop surface.
 - **Upstream status:** open: the code is unchanged on master, `dlls/ddraw/surface.c:180` (`GetDC(NULL)` in `ddraw_surface_update_frontbuffer()`, `:73`). Bugzilla: not searched (unreachable); not web searched.
 - **Short form because:** shows on winewayland only.
 
@@ -2706,6 +2730,7 @@ That is two full-buffer copies per update. Without `GL_MAP_READ_BIT` the mapping
 - **What:** wined3d sets the exclusive window's present rect in `wined3d_swapchain_state_setup_fullscreen()` (`swapchain.c:2377-2390`) using the mode current at that moment. Half-Life calls SetCooperativeLevel at the desktop's 1920x1080 and then SetDisplayMode(640x480).
 - **Severity / scope:** performance (a 4352x2688, 47 MB, surface copied every frame instead of 1536x1152); any OS with win32u's emulated display modes (winewayland always; other drivers when mode setting is emulated). Not reproduced on Linux.
 - **Our fix:** `patches/wine-11.21/0010-ddraw-present-rect-follows-display-mode.patch`
+- **Patch:** with notes. ddraw calls `D3DKMTEscape(D3DKMT_ESCAPE_SET_PRESENT_RECT_WINE)` and `SetWindowPos()` itself. Maintainers may prefer a wined3d helper, matching what wined3d already does for fullscreen→fullscreen mode changes (`dlls/wined3d/swapchain.c:2580`).
 - **Upstream status:** open: master `ddraw7_SetDisplayMode()` (`dlls/ddraw/ddraw.c:1087`) sets the mode at `:1139` and does not update the present rect. Bugzilla: not searched (unreachable); not web searched.
 - **Short form because:** performance under emulated modes.
 
@@ -2716,6 +2741,7 @@ That is two full-buffer copies per update. Without `GL_MAP_READ_BIT` the mapping
 - **What:** For an emulated 640x480 mode on 1920x1080, win32u draws the window's contents into its window rect (240,0)-(1680,1080), at one scale for both axes, and stretches its visible rect over the monitor. winewayland presents the visible rect. The buffer is 1536 px wide (1440 drawn, rounded up to 128) and is scaled to 1920, so the picture is 1800 px wide with its right part cut off.
 - **Severity / scope:** wrong output (picture stretched and cut off); winewayland on any OS (Linux Wayland compositors included). Not reproduced on Linux. It relies on the compositor centring a fullscreen surface smaller than the output, which xdg-shell allows. Haiku's server needed its own patch for that.
 - **Our fix:** `patches/wine-11.21/0008-winewayland-fullscreen-emulated-mode-aspect.patch`
+- **Patch:** with notes. Check the behaviour against mainstream compositors (GNOME, KDE, wlroots) before submitting.
 - **Upstream status:** open: the code is unchanged on master, `dlls/winewayland.drv/window.c:141` (`conf->rect = data->rects.visible`). Bugzilla: not searched (unreachable); not web searched.
 - **Short form because:** winewayland emulated modes only.
 
@@ -2724,8 +2750,9 @@ That is two full-buffer copies per update. Without `GL_MAP_READ_BIT` the mapping
 #### WINE-14 — win32u: framebuffer surfaces attach colour textures with glFramebufferTexture (GL 3.2), so they are incomplete on OpenGL 2.1 drivers
 
 - **What:** `create_framebuffer()` and the swap/blit code attach 2D colour textures with `glFramebufferTexture()`. That entry point is core only in GL 3.2 (or with geometry-shader extensions).
-- **Severity / scope:** wrong output (incomplete framebuffer: `glCheckFramebufferStatus` ERR, nothing rendered); any OS with an OpenGL 2.1 driver that has `ARB_framebuffer_object` but not GL 3.2 / geometry shaders (e.g. Mesa V3D's desktop GL on the Pi 4).
+- **Severity / scope:** wrong output (incomplete framebuffer: `glCheckFramebufferStatus` ERR, nothing rendered); any OS with an OpenGL 2.1 driver that has `ARB_framebuffer_object` but not GL 3.2 / geometry shaders (e.g. Mesa V3D's desktop GL on the Pi 4). — Upstream reaches `framebuffer_surface_create()` for pbuffers the driver cannot create (`opengl.c:2510`) and for emulated mode setting (`:2351`). — We hit it through Haiku's surfaceless window path.
 - **Our fix:** the `glFramebufferTexture` → `glFramebufferTexture2D` hunks of `patches/wine-11.21/0003-win32u-egl-gl21-window.patch`
+- **Patch:** with notes: Extract only those hunks; the rest of 0003, the GDI present path for the surfaceless EGL driver, is Haiku glue. — Upstream also has `glFramebufferTexture` at `opengl.c:1030` and `:3958`, which our patch does not touch (they are not on our path) and which should be converted too.
 - **Upstream status:** open: `dlls/win32u/opengl.c:878`, `:1030`, `:1191-1192`, `:1199-1200`, `:1206-1207`, `:3958`. Bugzilla: not searched (unreachable); not web searched.
 - **Short form because:** OpenGL 2.1 drivers only; extracted from a Haiku glue patch.
 
@@ -2736,6 +2763,7 @@ That is two full-buffer copies per update. Without `GL_MAP_READ_BIT` the mapping
 - **What:** `scaled_surface_flush()` sets `STRETCH_HALFTONE` for every flush, and dibdrv computes it per pixel on the CPU. Each frame of an emulated 640x480 mode is stretched this way to the screen.
 - **Severity / scope:** performance; any OS using win32u's scaled surfaces: emulated display modes, and DPI scaling when enlarging.
 - **Our fix:** `patches/wine-11.21/0015-win32u-scaled-surface-enlarge-replicates.patch`
+- **Patch:** with notes. This is a quality-versus-speed trade-off: nearest-pixel when enlarging, HALFTONE kept when shrinking. Upstream may prefer a faster HALFTONE in dibdrv, or a GPU scale. File it as an enhancement rather than an MR as-is.
 - **Upstream status:** open: the code is unchanged on master, `dlls/win32u/dce.c:188`. Bugzilla: not searched (unreachable); not web searched.
 - **Short form because:** performance.
 
@@ -2746,6 +2774,7 @@ That is two full-buffer copies per update. Without `GL_MAP_READ_BIT` the mapping
 - **What:** `wineboot -u` truncates and rewrites every builtin PE file in system32 and syswow64, about 0.9 GB for arm64 + i386. This happens even though, between two builds of one Wine version, most files are byte-identical (477 of 666 arm64 DLLs).
 - **Severity / scope:** performance (prefix update time, disk wear); any OS; it matters most on slow storage and with large ARM64X builtins.
 - **Our fix:** `patches/wine-11.21/0021-setupapi-skip-identical-fake-dlls.patch`
+- **Patch:** with notes. It adds a read and compare of each existing file. On fast disks this may not pay off for a new Wine version, where most files differ. Measure it on Linux before an MR.
 - **Upstream status:** open: master `install_fake_dll()` (`dlls/setupapi/fakedll.c:941`) and `delay_copy_files()` (`:983`) always call `create_dest_file()` (`:965`, `:1002`). Bugzilla: not searched (unreachable); not web searched.
 - **Short form because:** performance of prefix updates.
 
@@ -2853,7 +2882,8 @@ else if (ret < 0 && !(ret == AVERROR(EAGAIN)))
 - **What:** `ffmmal_init_decoder()` tells the VideoCore 24000/1001 frames/s for every stream. `ffmal_update_format()` then copies the output port's frame rate, which is that same number, into `avctx->framerate`, replacing the rate the caller or the container gave.
 - **Severity / scope:** wrong output (stream metadata). An API user that trusts `avctx->framerate` plays at the wrong speed; Linux too. Platform-independent code.
 - **Our fix:** `patches/ffmpeg6-next/0007-mmal-frame-rate.patch`
-- **Upstream status:** open. The code is unchanged at master `21c81303cb`, `libavcodec/mmaldec.c:334-337` and `:406-407`.
+- **Patch:** attachable as-is after a rebase. The patch's own header says "`ffmpeg -c:v h264_mmal` showed 23.98 fps"; that was **not** reproduced in the CLI (docs/log/WEEK-2026-W47.md, 11-20 entry), so reword the commit message to the API-level effect before sending.
+- **Upstream status:** open. The code is unchanged at master `21c81303cb`, `libavcodec/mmaldec.c:334-337` and `:406-407`. — Tracker: trac searched "h264_mmal 23.98", "mmal framerate": none. code.ffmpeg.org: none.
 - **Short form because:** its test program is not written yet and the patch header overstates the symptom.
 
 ## 5. Blender
@@ -2910,9 +2940,10 @@ Scripted run: `tools/pi-tests/blender-b7-view.sh` / `blender-b7-view.py`.
 #### BLENDER-02 — Movie output: "Output Quality" (CRF) is ignored by encoders without a `crf` option
 
 - **What:** In CRF mode the writer sets `c->bit_rate = 0` and puts `crf` into the options dictionary. An encoder without that option leaves it unused and encodes at its own default (or treats the 0 rate as its own default), whatever the preset.
-- **Severity / scope:** wrong output (every quality preset gives the same file); any platform where the encoder chosen for the codec has no `crf` AVOption
+- **Severity / scope:** wrong output (every quality preset gives the same file); any platform where the encoder chosen for the codec has no `crf` AVOption: `avcodec_find_encoder(AV_CODEC_ID_H264)` in an FFmpeg built without libx264. FFmpeg master's `libopenh264` and `h264_v4l2m2m` have no `crf` option (checked in their option tables). — FFmpeg's native `mpeg4`, which `MOV_codec_supports_crf()` lists (#61708).
 - **Our fix:** `patches/blender/0010-ffmpeg-bitrate-from-crf-for-encoders-without-crf.patch`
-- **Upstream status:** open. In `movie_write.cc:752` and `movie_util.cc:565-573` (main `597ee3aad0`), the decision is per codec id, not per encoder.
+- **Patch:** with notes. It targets 3.6's `writeffmpeg.c`; main moved the logic to `source/blender/imbuf/movie/intern/movie_write.cc:743-810` (`set_quality_rate_options`). The CRF→bit-rate mapping (0.1 bit/pixel at CRF 23, ×2 per 6 steps) is a heuristic for maintainers to accept or replace, e.g. by falling back to the CBR fields.
+- **Upstream status:** open. In `movie_write.cc:752` and `movie_util.cc:565-573` (main `597ee3aad0`), the decision is per codec id, not per encoder. — Tracker: searched "crf bitrate encoder" → #61708 (open, same root cause); "constant rate factor hardware encoder", "openh264 quality": none.
 - **Short form because:** already reported upstream (#61708): comment there.
 
 <a id="blender-03"></a>
@@ -2922,6 +2953,7 @@ Scripted run: `tools/pi-tests/blender-b7-view.sh` / `blender-b7-view.py`.
 - **What:** An unknown vendor leaves `GPG.device = GPU_DEVICE_ANY`, so every `GPU_type_matches(GPU_DEVICE_INTEL…)`, `(…ATI…)` and similar rule is true. On V3D, Blender 3.6 enabled Intel's `clear_viewport_workaround`, turned `GL_ARB_texture_gather` off as for old NVIDIA GPUs, and `gpu.platform.device_type_get()` returned "APPLE".
 - **Severity / scope:** wrong output (vendor workarounds applied to the wrong GPU); any OS, any OpenGL driver whose vendor/renderer string is not in the list. On main this needs a GL 4.3 driver with an unlisted vendor; V3D itself is below main's GL 4.3 minimum (`gl_backend.cc:223`). Not reproduced on main.
 - **Our fix:** `patches/blender/0004-gpu-classify-v3d.patch`
+- **Patch:** no. Ours adds only a V3D rule; the general fix is to use `GPU_DEVICE_UNKNOWN` (and an open-source or unknown driver type) in the final `else` branch.
 - **Upstream status:** open. At main `597ee3aad0`, `source/blender/gpu/opengl/gl_backend.cc:135-137` initialises device and driver to `*_ANY`, and the `else` at `:211-216` only prints "Could not find a matching GPU name". `gpu_platform.cc:180` matches with a bitwise AND, so `ANY` matches every rule. Tracker: not searched beyond the issue search above.
 - **Short form because:** affects only unrecognised GL vendors.
 
@@ -3008,6 +3040,7 @@ for a report written by a person, not as patches to send.
 - **What:** `BTCpuResetToConsistentState()` assumes that any write access violation hit a page the dynarec write-protected, because it holds translated code. It unprotects the page and continues.
 - **Severity / scope:** hang; any OS (WoW64 back end)
 - **Our fix:** the write-fault hunk of `patches/box64/0002-wowbox64-exception-state.patch`
+- **Patch:** with notes: Rebase onto main: #4550 rewrote the rest of this function. — Keep only the `getProtection(addr) & (PROT_DYNAREC | PROT_DYNAREC_R)` condition. The x86-state hunk is already upstream (see section B), and the host-side fault log is optional diagnostics.
 - **Upstream status:** open: `wine/wow64/wowbox64.c:322-329` on main still does `if (addr) { unprotectDB(addr, 1, 1); NtContinue(ctx, FALSE); }` for any write fault. Possibly related: Box64 issue #4380 (open), whose "freeze form" is a store into a PROT_NONE guard page that "loops forever at 100% CPU" under wowbox64.
 - **Short form because:** Box64's AI policy: report only; partly fixed upstream.
 
@@ -3018,6 +3051,7 @@ for a report written by a person, not as patches to send.
 - **What:** Wine's SIGUSR1 suspend handler takes a cooperative path when `teb->ChpeV2CpuAreaInfo` is set and `InSimulation` is true: it rings `*SuspendDoorbell` and lets the emulator stop at a consistent x86 boundary. wowbox64 provides no CPU area. The thread is therefore suspended wherever SIGUSR1 finds it in translated code, and the WoW64 context in the CPU area is the one saved at the thread's last call into Wine.
 - **Severity / scope:** wrong output (debuggers, anti-cheat/profilers, GC suspension and SetThreadContext-based code misbehave); any OS (WoW64 back end on arm64 Wine)
 - **Our fix:** `patches/box64/0003-wowbox64-suspend-doorbell.patch`
+- **Patch:** with notes: It is large (≈575 lines) and touches the arm64 dynarec only. It adds a doorbell check at block entries, secondary entries and loop heads; the RV64/LA64 dynarecs are not covered. — Needs a rebase past #4550 and current main. — Cost: +2.1 % on a CPU benchmark (out-of-line slow path). `BOX64_DYNAREC_PAUSE=3` falls back to yield in the WoW64 build. — Best proposed as a design issue first, pointing at FEX's WoW64 back end as the reference.
 - **Upstream status:** open: no `SuspendDoorbell`/`InSimulation`/`ChpeV2CpuAreaInfo` use anywhere in main's `wine/wow64/wowbox64.c`, `src/emu/x64emu_private.h` or `src/include/emit_signals.h`. GitHub search "wowbox64 GetThreadContext", "wowbox64 suspend": none.
 - **Short form because:** Box64's AI policy: report only.
 
@@ -3028,6 +3062,7 @@ for a report written by a person, not as patches to send.
 - **What:** FEX reserves large ranges, such as code buffers and allocator arenas, and commits them on first touch from its access-violation handler. Under Wine it commits the whole reservation at once.
 - **Severity / scope:** hang; any OS. The failed-commit handling is generic. The Wine branch's whole-reservation commit (512 MiB per reservation) is what exhausts commit on hosts that account for it.
 - **Our fix:** `patches/fex/0001-overcommit-bounded-commit-under-wine.patch`
+- **Patch:** with notes. Split into two parts: **(1)** `return VirtualAlloc(...) != nullptr`. This is generic and MR-ready. — **(2)** Use the bounded 64 KiB commit under Wine too. This is a policy change. Upstream chose the whole-reservation commit deliberately in the Wine path (PR #4057 "Support for emulated overcommit on Windows", 1266a5a5ce3a; then f5decb5f839f "Fix overcommit size logic in the wine path"). Neither commit gives a reason; presumably Linux overcommit makes it free and it saves repeated faults. Offer it as an option, or only when commit accounting is strict.
 - **Upstream status:** open: `Source/Windows/Common/OvercommitTracker.h` `HandleAccessViolation()` on main still ignores both `VirtualAlloc()` results and returns `true`. GitHub search "overcommit", "OvercommitTracker": only #3316 (Transistor OutOfMemoryException on Linux; unrelated).
 - **Short form because:** FEX accepts no AI-assisted code: report only.
 
@@ -3071,6 +3106,7 @@ Checked against haikuports `master` `cc013b4`.
 - **What:** On Haiku the client talks to the in-process server, whose looper enqueues events from its own thread. `wl_display_dispatch_queue()` has its socket-read path `#ifndef __HAIKU__`'d out.
 - **Severity / scope:** performance. A CPU core spins for each dispatching thread, and roundtrips busy-wait; all architectures.
 - **Our fix:** `patches/wayland/wayland-1.21.0~git-dispatch-blocks.patch`. It waits on the display's condition variable, which `display_enqueue()` broadcasts.
+- **Patch:** with notes. It is attachable as a recipe patch for the pinned revision. X547 fixed it differently (fd5a7bff0454 enables the pipe-read path on Haiku). The X547 branch was rebased (149e9d7e is not an ancestor of `inproc-haiku`), so a bump is a re-pin and must go together with HAIKUPORTS-01.
 - **Upstream status:** open in HaikuPorts (cc013b4 pins `149e9d7e1bab…`, REVISION 4). Fixed in X547/wayland fd5a7bff0454 ("wayland-client: fix `wl_display_dispatch` 100% CPU load", 2026-04-18). Tracker: not searched.
 - **Short form because:** upstream (X547) fixed it; HaikuPorts only needs a newer pin.
 
@@ -3081,6 +3117,7 @@ Checked against haikuports `master` `cc013b4`.
 - **What:** gperf 3.1's old gnulib `lib/getopt.c` declares `extern int strncmp ();` and `extern int getopt ();`. In C23, `()` means `(void)`.
 - **Severity / scope:** build; all architectures, with HaikuPorts' `sys-devel/gcc/gcc-15.3.0_2026_10_11.recipe` or newer.
 - **Our fix:** a recipe change in our test build (revision 2): `export CFLAGS="-O2 -std=gnu17"` before `runConfigure ./configure`. It is not carried as a file in this repository. The design note is in `docs/design/native-gcc.md`.
+- **Patch:** with notes. It is a one-line BUILD() change, plus a REVISION bump.
 - **Upstream status:** open. The recipe at cc013b4 has REVISION 1 and no `-std=` (`BUILD()` at line 41). GCC 15.3 is in the tree. Tracker: searched "gperf" in haikuports issues, none.
 - **Short form because:** matters only once HaikuPorts builds with GCC 15 or later.
 
@@ -3091,6 +3128,7 @@ Checked against haikuports `master` `cc013b4`.
 - **What:** GMP 6.3.0's configure probes the compiler with K&R-style test programs, which C23 rejects. Configure therefore decides that the compiler does not work.
 - **Severity / scope:** build; all architectures, with GCC 15 or later (now in the tree).
 - **Our fix:** `scripts/build-blender.sh` (step `gmp`) passes `CFLAGS="-O2 -std=gnu17"` to configure.
+- **Patch:** with notes. Add `CFLAGS="-O2 -std=gnu17"` to `runConfigure`, plus a REVISION bump.
 - **Upstream status:** open. The recipe at cc013b4 (REVISION 1, `runConfigure ./configure --enable-cxx …` at line 66) sets no `-std=`. Tracker: not searched (the GMP side is a known GCC 15 issue).
 - **Short form because:** matters only once HaikuPorts builds with GCC 15 or later.
 
@@ -3101,6 +3139,7 @@ Checked against haikuports `master` `cc013b4`.
 - **What:** With `B_SINGLE_LAUNCH`, starting Blender while one instance runs hands the arguments to the running instance and quits the new one. Blender (through GHOST_SDL) ignores those messages, so nothing happens.
 - **Severity / scope:** wrong output. A second Blender instance quits immediately; Haiku, all architectures. The HaikuPorts package is x86_64; we observed it with that rdef on arm64.
 - **Our fix:** `tools/recipes/media-gfx/blender/additional-files/blender.rdef.in`: `resource app_flags B_MULTIPLE_LAUNCH | B_ARGV_ONLY;`
+- **Patch:** attachable as a one-line change.
 - **Upstream status:** open. `blender.rdef.in:2` has `resource app_flags B_SINGLE_LAUNCH | B_ARGV_ONLY;` at cc013b4. Tracker: not searched.
 - **Short form because:** small recipe fix.
 
@@ -3227,6 +3266,7 @@ Quake II GL1/GL3 (60.0/60.0 and 58.5/58.6 fps), SuperTuxKart and our desktop GL 
 - **What:** `HAIKU_GL_SetSwapInterval()` returns `SDL_Unsupported()` for every interval, and `SDL_BWin::SwapBuffers()` calls `BGLView::SwapBuffers()`, which means "don't wait". Haiku's GL kit API has `BGLView::SwapBuffers(bool vSync)`, so SDL can pass the request on.
 - **Severity / scope:** performance. A vsync request is ignored, so games render unthrottled and app_server copies every frame; Haiku, all architectures.
 - **Our fix:** `patches/libsdl2/libsdl2-2.32.10-haiku-swap-interval.patch`
+- **Patch:** with notes. It applies to the `SDL2` branch (offsets only). It only has an effect with a GL kit whose `BGLView::SwapBuffers(bool vSync)` honours the flag. The upstream libglvnd HGL ignores it, so file LIBGLVND-03 together with this one.
 - **Upstream status:** open. `SDL2` `src/video/haiku/SDL_bopengl.cc:157-165` (`SDL_Unsupported()`, `TODO`) and `src/video/haiku/SDL_BWin.h:221-223` (`SwapBuffers()` with no flag). `main` `src/video/haiku/SDL_bopengl.cc:164-173`. Tracker: searched "haiku swap interval", none.
 - **Short form because:** minor, and SDL forbids AI-assisted reports: notes only.
 
@@ -3322,6 +3362,7 @@ Upstream alone has not been measured.
 - **What:** xdg-shell's `set_fullscreen` says a surface that does not cover the output is centered, and the rest is filled (for example black). The server instead makes the window screen-sized, then shrinks it to the surface's geometry at its next commit.
 - **Severity / scope:** wrong output; Haiku, all architectures.
 - **Our fix:** `patches/wayland_server/wayland_server-0.1.20251004-fullscreen-center.patch`
+- **Patch:** with notes. It applies cleanly to `master`. Known cost: the black border view sits under the surface, and app_server refills it every frame (24 % of app_server's window thread in `FillRectNoClipping` at 1440×1080). A clipped border, or drawing it once, would be better. The window-lock follow-up for the border view lives in our `wl-output-modes` patch.
 - **Upstream status:** open. `HaikuXdgToplevel.cpp:232-245` (`HandleSetFullscreen`) resizes the window to the screen, and the next commit resizes it back to the surface geometry (`HaikuXdgSurface.cpp:62-71`). Tracker: searched "fullscreen", none.
 - **Short form because:** cosmetic.
 
@@ -3332,13 +3373,14 @@ Upstream alone has not been measured.
 - **What:** `meson.build` takes the architecture of Haiku's private `system/arch/<arch>` headers from `build_machine` and the private header directories as absolute paths of the running system. In a cross build, the first names the build host's CPU and the second does not exist.
 - **Severity / scope:** build (cross-compilation only; native builds are unaffected); Haiku, all architectures, when cross-compiled.
 - **Our fix:** `patches/wayland_server/wayland_server-0.1.20251004-cross.patch`
+- **Patch:** attachable as-is. It applies cleanly to `master`.
 - **Upstream status:** open. `meson.build:11` has `arch = build_machine.cpu_family()`, and `:122-125` has absolute `/boot/system/develop/headers/private/...`. Tracker: not searched.
 - **Short form because:** cross builds only.
 
 ## 11. libglvnd (Haiku HGL)
 
-The Haiku OpenGL kit (HGL) lives in X547's libglvnd fork, which HaikuPorts packages. Checked against libglvnd
-`master` `8731041`.
+Upstream libglvnd (freedesktop GitLab) carries the Haiku OpenGL kit (HGL) in `src/HGL`. Checked against
+libglvnd `master` `8731041`; our fixes are on `rpi4` of haiku-pi/libglvnd.
 
 ### 11.1 Full reports
 
@@ -3401,13 +3443,15 @@ The Haiku OpenGL kit (HGL) lives in X547's libglvnd fork, which HaikuPorts packa
 - **What:** The Haiku/BeOS GL kit API offers `BGLView::SwapBuffers(bool vSync)` so that a program can ask for a swap that waits for the vertical blank. HGL drops the flag, and every swap behaves like `SwapBuffers(false)`.
 - **Severity / scope:** performance. Apps that ask for vsync through the BeOS/Haiku API run unthrottled; Haiku, all architectures.
 - **Our fix:** commit be20124 on haiku-pi/libglvnd. `Renderer::SwapBuffers(bool vSync)` calls `eglSwapInterval(dpy, vSync ? 1 : 0)` when the value changes.
+- **Patch:** no, not as-is. That commit also adds overlay-channel presentation that depends on our app_server. The vSync part (about 15 lines: the hook-list entry, an `fSwapInterval` member, `SwapBuffers(bool)`) has to be extracted. The pacing itself also needs the EGL driver to honour `eglSwapInterval` for window surfaces, which our Mesa fork does (1595aba36ec); stock Mesa behaviour is not verified here.
 - **Upstream status:** open. libglvnd `master` 8731041 `src/HGL/GLView.cpp:363-369`: `SwapBuffers(bool vSync)` calls `fRenderer->SwapBuffers()` and never reads `vSync`. Tracker: not searched.
 - **Short form because:** needs SDL-04 or similar callers to matter.
 
 ## 12. U-Boot
 
 Checked against U-Boot `master` `ece349ade2` (through the GitHub mirror) and, for comparison, EDK2 `556dcfb466`.
-The other U-Boot patches we carry are Pi-specific (see the Pi section) or not U-Boot bugs.
+The other U-Boot patches we carry are Pi-specific (see the Pi section) or not U-Boot bugs. "Env": Haiku nightly
+hrev60431, arm64, Raspberry Pi 4 Model B 4 GB, Pi firmware of 2026-10-15.
 
 <a id="uboot-01"></a>
 
@@ -3451,7 +3495,8 @@ The other U-Boot patches we carry are Pi-specific (see the Pi section) or not U-
 
 raspberrypi/userland is **archived** ("Consider this repo closed"; final commit `a54a0dbb2b`): no issue or
 pull request can be opened. These entries are kept for forks, distributions and the HaikuPorts recipe; our fixes
-are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset`.
+are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset`. "Env":
+Haiku nightly hrev60431, arm64, Raspberry Pi 4 Model B 4 GB, Pi firmware of 2026-10-15, `gpu_mem` 76 MB.
 
 <a id="userland-01"></a>
 
@@ -3459,8 +3504,9 @@ are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userla
 
 - **What:** After a decoder failed with `MMAL_ENOSPC` (two H.264 decoders open at once), the VideoCore did not answer the port disable and kept the port's buffers. In a build without `NDEBUG`, `vcos_assert` → `vcos_abort()` aborted the application at close.
 - **Severity / scope:** crash; Linux too (32-bit Raspberry Pi OS with MMAL). Triggered when the firmware component has failed and does not return its buffers before the port disable completes.
-- **Our fix:** `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset` (patch 10).
-- **Upstream status:** open (final state). At `a54a0dbb2b`:
+- **Our fix:** `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset` (patch 10). — Its `NDEBUG` part is our own Haiku Makefile's mistake; upstream's CMake Release build already defines `NDEBUG` via CMake's default flags.
+- **Patch:** no. Patch 10 builds on our patch 5 (32-bit handle table for 64-bit hosts), which upstream does not have. The idea (give the outstanding buffers back empty and invalidate their contexts) would need re-implementing on the pointer-based `client_context`.
+- **Upstream status:** open (final state). At `a54a0dbb2b`: `interface/mmal/vc/mmal_vc_api.c:312` asserts `vcos_blockpool_available_count(&module->pool) == port->buffer_num`, then `:313` deletes the pool. — The callback at `:527-534` later dereferences `msg->drvbuf.client_context`, a pointer into that pool (`:603`, `:617`). — Tracker: GitHub searched "mmal_vc_port_disable" (issues and PRs) → #687 and #639, which are the reply hang (USERLAND-02), not this assert. Nothing about the assert or the freed pool.
 - **Short form because:** the repository is archived; nothing can be filed.
 
 <a id="userland-02"></a>
@@ -3470,6 +3516,7 @@ are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userla
 - **What:** `mmal_vc_sendwait_message()` waits for the VideoCore's reply with no timeout (upstream's own FIXME), so a firmware that stops answering hangs its client.
 - **Severity / scope:** hang; Linux too (the stacks in #687/#639 are from Raspbian).
 - **Our fix:** `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset` (patch 8).
+- **Patch:** with notes. It is written on top of our patch 5's waiter handling; the logic (timeout, abandoned flag, late reply dropped under the client lock) applies to the upstream waiter pool.
 - **Upstream status:** open (final). At `a54a0dbb2b`, `interface/mmal/vc/mmal_vc_client.c:591-595`: "FIXME: we could do with a timeout here" followed by `vcos_semaphore_wait(&waiter->sem)`.
 - **Short form because:** archived; existing issues #687 and #639.
 
@@ -3480,6 +3527,7 @@ are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userla
 - **What:** libvcos creates its current-thread key with a destructor inside libvcos and never deletes the key, so the destructor outlives the library.
 - **Severity / scope:** crash; any POSIX system where libvcos is unloaded with `dlclose()` while threads that ran VCOS code live on, e.g. a plugin that links libavcodec built with MMAL. The pthread key semantics are the same on glibc. Not reproduced on Linux.
 - **Our fix:** `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset` (patch 9).
+- **Patch:** attachable as-is.
 - **Upstream status:** open (final). At `a54a0dbb2b`, `interface/vcos/pthreads/vcos_pthreads.c:114` (`pthread_key_create(…, vcos_dummy_thread_cleanup)`); `vcos_platform_deinit()` at `:426-429` never deletes the key.
 - **Short form because:** archived.
 
@@ -3490,6 +3538,7 @@ are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userla
 - **What:** `mmal_vc_shm_exit()` jumps to its `unlock:` label without ever locking `refcount_lock`, so the counter and the payload list are unprotected and every call unlocks an unlocked mutex.
 - **Severity / scope:** data corruption (race on the refcount and the payload list); any platform. With glibc's default mutexes the unbalanced unlock goes unnoticed; error-checking mutexes refuse it.
 - **Our fix:** `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset` (patch 7).
+- **Patch:** attachable as-is.
 - **Upstream status:** open (final). At `a54a0dbb2b`, `interface/mmal/vc/mmal_vc_shm.c:168-186` (the `unlock:` label unlocks a mutex that was never locked).
 - **Short form because:** archived; code reading.
 
@@ -3500,6 +3549,7 @@ are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userla
 - **What:** `vchiq_lib_init()` declares a function-local `static` `vchiq_lib_mutex` and creates that one. The file-scope mutex of the same name, which the rest of the file locks, is never created.
 - **Severity / scope:** crash on libcs that check mutexes (Haiku's libroot asserted); latent on glibc, where a zeroed `pthread_mutex_t` happens to be a valid unlocked mutex; any platform; visible on libcs whose mutexes need initialisation.
 - **Our fix:** `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset` (patch 2).
+- **Patch:** attachable as-is (deletes one line).
 - **Upstream status:** open (final). At `a54a0dbb2b`, `interface/vchiq_arm/vchiq_lib.c:80` (file scope) vs `:1423` (a function-local `static` of the same name); `:1747` and `:1760` lock the never-created global.
 - **Short form because:** archived; code reading.
 
@@ -3510,6 +3560,7 @@ are in `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userla
 - **What:** `vchiq_dump_phys_mem()` casts its `VCHIQ_SERVICE_HANDLE_T` straight to `VCHIQ_SERVICE_T *` instead of mapping it with `find_service_by_handle()`.
 - **Severity / scope:** crash (an invalid pointer dereference whenever the function is called); any platform. A `VCHIQ_SERVICE_HANDLE_T` is a handle that `find_service_by_handle()` maps (used everywhere else in the file), not a `VCHIQ_SERVICE_T *`.
 - **Our fix:** `tools/recipes/media-libs/raspberrypi_userland/patches/raspberrypi_userland-20241223.patchset` (patch 4; the rest of that patch only fixes 64-bit trace format strings).
+- **Patch:** attachable as-is.
 - **Upstream status:** open (final). At `a54a0dbb2b`, `interface/vchiq_arm/vchiq_lib.c:1399`. It is exported in `vchiq_if.h:190`; no caller in the tree.
 - **Short form because:** archived; code reading.
 
@@ -3560,6 +3611,7 @@ Checked against Haiku buildtools `master` `33d46bf5c3`, haiku `master` `52912f5b
 - **What:** The installed `aarch64-unknown-haiku/lib/libstdc++.la` keeps `old_library='libstdc++.a'` and `library_names=''`. libtool links C++ libraries with `-lstdc++` from `postdeps` and resolves it through this `.la` to a `libstdc++.a` that no longer exists.
 - **Severity / scope:** build; Haiku cross tools, all architectures. Affects libtool-built C++ shared libraries linked with the cross tools.
 - **Our fix:** a workaround only. `scripts/build-blender.sh` (step `gmp`) rewrites the generated libtool's `postdeps` `-lstdc++` → `-l:libstdc++.so`. libtiffxx was left out for the same reason.
+- **Patch:** no. Proposal: after the `mv`, also delete `$installDir/$haikuMachine/lib/libstdc++.la`, or set its `old_library` to `libstdc++-static.a`.
 - **Upstream status:** open. haiku `master` 52912f5be3, `build/scripts/build_cross_tools_gcc4:286-289` (`mv … libstdc++.a … libstdc++-static.a`), with no change to the `.la`. Tracker: not searched.
 - **Short form because:** affects only our cross-toolchain use of libtool C++ links.
 
@@ -3570,6 +3622,7 @@ Checked against Haiku buildtools `master` `33d46bf5c3`, haiku `master` `52912f5b
 - **What:** In GCC 16 the constructor `bitset(const _CharT*, …)` calls `__throw_logic_error` without the `_GLIBCXX_HOSTED` guard GCC 13 had. A freestanding compile does not declare that helper, and the call is non-dependent, so merely including `<bitset>` is an error.
 - **Severity / scope:** build; any platform (any `-ffreestanding` user of `<bitset>`). We hit it with Haiku's kernel add-ons.
 - **Our fix:** buildtools commit c2213226f9 on the haiku-pi fork (`gcc16`). It restores `#if _GLIBCXX_HOSTED` around the null check in `bitset(const _CharT*, …)`, as GCC 13 had it.
+- **Patch:** with notes. It is a two-line guard. The PR's attachment instead declares the function for freestanding. Maintainers pick one.
 - **Upstream status:** open. gcc-mirror `master` 4582d80bb1e8 `libstdc++-v3/include/std/bitset:1112-1113` and `releases/gcc-16` 71b1c265e9ae `:1068-1069` call `__throw_logic_error` unguarded. `bits/stdexcept_throwfwd.h` declares it only `#if _GLIBCXX_HOSTED`. Tracker: searched Bugzilla "bitset freestanding", which found PR 128880.
 - **Short form because:** already reported (PR 128880): comment there.
 
@@ -3585,6 +3638,7 @@ Checked against Kitware/CMake `master` `b3dfac925165`, ioquake/ioq3 `main` `5208
 - **What:** CMake builds its bundled libuv from its own `Utilities/cmlibuv/CMakeLists.txt`, not from libuv's. That file adds per-OS sources for every platform libuv supports except Haiku, so on Haiku the platform functions from `src/unix/haiku.c` and the POSIX helpers are never compiled.
 - **Severity / scope:** build; Haiku, all architectures, when CMake is built with CMake using the bundled libuv (the default without `-DCMAKE_USE_SYSTEM_LIBUV=ON`). HaikuPorts uses the system libuv, so its package does not hit this.
 - **Our fix:** `patches/cmake-4.4.5/0001-cmlibuv-build-the-Haiku-platform-sources.patch`. It adds an `if(CMAKE_SYSTEM_NAME STREQUAL "Haiku")` block with the sources, define (`_BSD_SOURCE`) and libraries (`bsd`, `network`) of upstream libuv's own CMakeLists.
+- **Patch:** attachable as-is (made on 4.4.5; the context is the HP-UX block, which is unchanged on `master`).
 - **Upstream status:** open. CMake `master` b3dfac925165 `Utilities/cmlibuv/CMakeLists.txt:134-340` has branches for AIX, OS400, Cygwin, Darwin, Linux, the BSDs, SunOS, HP-UX and QNX, but none for Haiku. `Utilities/cmlibuv/src/unix/haiku.c`, `posix-hrtime.c`, `posix-poll.c` and `bsd-ifaddrs.c` are all present. Tracker: searched GitLab issues for "haiku": #27186 and older closed ones, none about libuv.
 - **Short form because:** build glue for a platform CMake does not list.
 
@@ -3595,6 +3649,7 @@ Checked against Kitware/CMake `master` `b3dfac925165`, ioquake/ioq3 `main` `5208
 - **What:** `Sys_SigHandler`, installed for SIGTERM and SIGINT among others, calls `CL_Shutdown`, `SV_Shutdown` and the VM unload inside the handler. These tear down the renderer and SDL, allocate memory and take locks.
 - **Severity / scope:** hang; any platform in principle. The handler calls async-signal-unsafe code: `CL_Shutdown` → renderer and SDL teardown, malloc, `va()`. Observed on Haiku arm64.
 - **Our fix:** `patches/ioq3/0002-quit-signal-from-main-loop.patch`. SIGTERM/SIGINT set a `sig_atomic_t` flag, and the main loop runs `quit` between frames through the command buffer. A second request, a request before the main loop starts, or any signal during that quit calls `_Exit()`.
+- **Patch:** with notes. It removes `Q_NO_RETURN` from `Sys_SigHandler`'s declaration (`sys_local.h:64`). Keeping it while making the handler return lets the compiler drop the `ret`, and the handler then runs into the next function. That was a bug in our first version of this patch, not upstream's.
 - **Upstream status:** open. ioq3 `main` 52088b9eae24 `code/sys/sys_main.c:754-778` (shutdown calls in the handler) and `:884-888` (installed for SIGTERM/SIGINT). Tracker: searched "SIGTERM" and "signal handler", none relevant.
 - **Short form because:** evidence confounded with other changes.
 
@@ -3605,6 +3660,7 @@ Checked against Kitware/CMake `master` `b3dfac925165`, ioquake/ioq3 `main` `5208
 - **What:** FitzQuake rewrote `Cmd_StuffCmds_f` to read the `cmdline` cvar instead of `com_argv`. `COM_CheckRegistered` sets that cvar only on the registered path, after the `gfx/pop.lmp` check.
 - **Severity / scope:** wrong output (command-line commands silently ignored); any platform.
 - **Our fix:** `patches/vkquake/0002-shareware-command-line.patch`. It sets the `cmdline` cvar before the `pop.lmp` check.
+- **Patch:** with notes. It is written against 1.35.0 and needs a rebase onto `master`: the same code, at different lines.
 - **Upstream status:** open. vkQuake `master` 1e573d749014 `Quake/common.c:2018-2049`: the shareware branch returns at `:2036` before `Cvar_SetROM ("cmdline", …)` at `:2047`. `Cmd_StuffCmds_f` (`Quake/cmd.c`, "rewritten to read the cmdline cvar") then finds nothing. QuakeSpasm's `COM_CheckRegistered` has the same structure, and QuakeSpasm 0.96.3 shows the same symptom (our games bench passes its shareware timedemo through `id1/autoexec.cfg` for that reason). Tracker: searched "shareware", "timedemo" and "stuffcmds" in vkQuake: only #551 ("Cannot play Shareware version after fresh compilation", closed, a different problem).
 - **Short form because:** shareware data only.
 
@@ -3720,7 +3776,7 @@ Candidates that were read and left out, with the reason: new features, tuning, H
 - **mesa `640e69292c3`** (rest), `95f718e9dbc`, `f2d6a5f9e39`, `c36c62edfc0`, `986628c45fc`, `648f7de69d9`, `2e5fc430445`, `54f4a3f2edc`, `a7a7ee816bc`, `cf4704211f9`, `3f1ab3f8289`, `f56bf64ac2b`, `1595aba36ec`, `0d66dfb91fb`, `b691443f2cd`, `8eca0a3889a`, `99a38801af0`: Haiku v3d/v3dv winsys, the Haiku Vulkan WSI, presentation, the disk-cache location, and headers. These are new platform code with no upstream counterpart.
 - **mesa `4ff42d768c2`** "renderdoc: Add Haiku platform support": an upstream commit that upstream later reverted (f009ee9bfdf); it is carried in the fork.
 - **libdrm `62107104`, `a3ac76e6`, `bd858a24`**: Haiku port glue. `bd858a24` exists because `-errno` is positive on Haiku, where errno values are negative; Linux is unaffected. No generic libdrm defect.
-- **libglvnd `33d3b66`, `9bbfec4`, `ed01b68`, `536f5c1`, `7cc03c3`, `be20124`, `83d9cc2`**: all in `src/HGL`, Haiku-only code. `ed01b68` (a program exiting with BGLViews alive trips BReferenceable's destructor) is a real bug in that code; the fork's `master` (c046a76, 2026-03-19) still has `virtual ~Display() = default`. There is no upstream remote in the fork, so its status on current libglvnd is unknown. It is out of scope here because it is not generic; it belongs in a Haiku-platform report set.
+- **libglvnd `33d3b66`, `9bbfec4`, `ed01b68`, `536f5c1`, `7cc03c3`, `be20124`, `83d9cc2`**: all in `src/HGL`, Haiku-only code. `ed01b68` is reported as [LIBGLVND-02](#libglvnd-02), `33d3b66` as LIBGLVND-01 and the vSync part of `be20124` as LIBGLVND-03; the rest is port glue.
 
 ### Wine
 
@@ -3787,10 +3843,10 @@ Candidates that were read and left out, with the reason: new features, tuning, H
 - `0002-net-bcmgenet-delay-transmit-clock-for-rgmii-rxid.patch` (**Pi-specific**): `ID_MODE_DIS` is set for `rgmii-rxid` too (`drivers/net/bcmgenet.c:464-466` at `ece349ade2`, unchanged). Linux sets it only for `rgmii` (`bcmmii.c:246-263`). Our symptom: no TX at 1000 Mbit/s. Reverses part of the accepted 2020 patch "bcmgenet: Add support for rgmii-rxid", so expect discussion. CC Forissier (NETWORK).
 - `0003-mmc-bcm2835-no-command-wait-on-emmc2.patch` (**Pi-specific**, performance): `SDHCI_QUIRK_WAIT_SEND_CMD` (1 ms per command) is also applied to the BCM2711 EMMC2 (`drivers/mmc/bcm2835_sdhci.c:213-214`, unchanged). Linux's sdhci-iproc has no such quirk for bcm2711. Cost: 2.5 s per 728 block reads. A similar drop for msm_sdhci is pending on patchwork (2026-10-30). CC Brugger/Robinson, Fan/Chung (MMC).
 
-**HaikuPorts recipe candidates** (brief; another agent covers HaikuPorts)
+**HaikuPorts recipe candidates**
 - `media-libs/openimageio/openimageio2.5-2.5.12.0.recipe` + `patches/openimageio-2.5.12.0.patchset`: no `Sysutil::physical_memory()` for Haiku, so every OIIO user prints "Need to implement Sysutil::physical_memory" and gets 0 bytes. Our `tools/recipes/media-libs/openimageio/patches/openimageio2.4-2.4.15.0-physical-memory.patch` (via `get_system_info()`) ports directly.
-- `dev-libs/gmp/gmp-6.3.0.recipe`: GMP 6.3.0's configure fails under a C23-default GCC ("could not find a working compiler"; it needs `-std=gnu17`). This matters only once HaikuPorts builds with GCC ≥ 15 (scripts/build-blender.sh `gmp()`, docs/design/blender.md §7.15).
-- The `libstdc++.la` trap (libgmpxx, libtiffxx: libtool resolves `-lstdc++` through a `libstdc++.la` whose `libstdc++.a` does not exist): this comes from **our** cross tools (`scripts/build-gcc-syslibs.sh:212-213`), not from a HaikuPorts recipe. Not a HaikuPorts report unless the native package's `.la` shows the same (unchecked). References: `scripts/build-blender.sh:523`, docs/design/blender.md §7.3/§7.15.
+- `dev-libs/gmp/gmp-6.3.0.recipe`: reported as [HAIKUPORTS-04](#haikuports-04).
+- The `libstdc++.la` trap (libgmpxx, libtiffxx): reported as [BUILDTOOLS-02](#buildtools-02). Haiku's `build/scripts/build_cross_tools_gcc4:286-289` renames `libstdc++.a` to `libstdc++-static.a` and leaves the `.la` pointing at it.
 
 ### SDL, Vulkan-Loader, Wayland, ports, toolchain
 
@@ -3957,6 +4013,11 @@ Guides: [bug reports](https://developer.blender.org/docs/handbook/bug_reports/),
 
 - [ ] Issues or PRs on <https://github.com/haikuports/haikuports>; PR checklist: recipe builds on your Haiku
   machine, licence correct, recipe follows the haikuporter templates and field order, "You are not a robot".
+
+### wayland_server, libglvnd, CMake, ioquake3, vkQuake
+
+- [ ] Their reporting guidelines were not read for these drafts. wayland_server (X547) and vkQuake take GitHub
+  issues; libglvnd is on freedesktop GitLab; check each project's README/CONTRIBUTING before sending.
 
 ### U-Boot (mailing list)
 
