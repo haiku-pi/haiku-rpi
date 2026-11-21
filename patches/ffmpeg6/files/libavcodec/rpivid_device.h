@@ -17,6 +17,7 @@
 
 
 #define RPIVID_REFERENCE_SLOTS	16
+#define RPIVID_DEVICE_SCAN_OUT	1	/* ff_rpivid_device_create_picture() has scan_out */
 
 typedef struct RpividDevice RpividDevice;
 
@@ -34,6 +35,10 @@ typedef struct RpividPicture {
 	const uint8_t*	chroma;
 	uint32_t		luma_column_stride;
 	uint32_t		chroma_column_stride;
+	/* scan-out pictures: the mapping (an area, Haiku) to hand to the display */
+	int32_t			area;
+	const uint8_t*	address;	/* of the mapping: luma and chroma lie in it */
+	size_t			size;
 } RpividPicture;
 
 /* A picture for the block */
@@ -70,10 +75,13 @@ uint32_t		ff_rpivid_device_clock_rate(const RpividDevice* device);
 
 int				ff_rpivid_device_create_bitstream(RpividDevice* device,
 					size_t size, RpividBitstream* bitstream);
-/* motion_vectors: the picture can keep its motion vectors (TMVP) */
+/* motion_vectors: the picture can keep its motion vectors (TMVP); scan_out:
+   a picture the display can show as it is (luma and chroma in the same
+   columns, below 1 GiB, a cloneable mapping): AVERROR(EINVAL) from a driver
+   that has no such pictures */
 int				ff_rpivid_device_create_picture(RpividDevice* device,
 					uint32_t width, uint32_t height, uint32_t bit_depth,
-					int motion_vectors, RpividPicture* picture);
+					int motion_vectors, int scan_out, RpividPicture* picture);
 void			ff_rpivid_device_delete(RpividDevice* device, uint32_t handle);
 
 /* Queues a picture: 0 and its id, or a negative AVERROR (the picture was

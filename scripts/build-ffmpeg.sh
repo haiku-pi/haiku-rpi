@@ -13,16 +13,14 @@
 # disabled the firmware's rate control, W47 11-19 14:45); 7 = 6b + mmaldec takes a system-wide token (one
 # H.264 decoder on the VideoCore at a time, others do not open: patch 0005) + h264_vc decodes one stream per process
 # on the VideoCore (FFMPEG_H264_VC_STREAMS), the others in software: a second one failed there with ENOSPC, and the
-# failed decoder's teardown aborted Firefox's decoder process (docs/design/firefox-video-overlay.md §9.6).
+# failed decoder's teardown aborted Firefox's decoder process (docs/design/firefox-video-overlay.md §9.6);
+# 8 = 7 + hevc_rpivid's scan-out pictures (option rpivid_out=sand: the SAND pictures handed to the display as
+# they are, patch 0006 and the rpivid files, hw-video-decode.md §9-10) + mmaldec's frame rate (patch 0007,
+# video-overlay.md §7.5).
 # Called by scripts/build-packages.sh; runs on its own too.
 #
 #   scripts/build-ffmpeg.sh [--publish | --out DIR]
 #   (--out DIR: the packages to DIR, a test revision not to be published yet, e.g. artifacts/packages-test/ffmpeg6-6)
-#   scripts/build-ffmpeg.sh --next --out DIR
-#       revision 8, a test revision: patches/ffmpeg6 + patches/ffmpeg6-next (its patches after ours, its files
-#       replacing ours: rpivid_out=sand, the SAND pictures for the display, hw-video-decode.md §9; mmaldec's frame
-#       rate), built in its own directory against a copy of the sysroot, so that neither the shared sysroot nor
-#       artifacts/cross-ports/ffmpeg6-6.1.6 (revision 7's) change. Without --next nothing differs from before.
 #
 # The packages go to artifacts/mmal/packages/, not the published artifacts/packages/: revision 4 needs
 # raspberrypi_userland, which stays unpublished while the vchiq driver is on an unmerged branch (Haiku's
@@ -30,25 +28,10 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 recipe="$root/sources/haikuports/media-video/ffmpeg/ffmpeg6-6.1.6.recipe"
-revision=7
+revision=8
 unpublished=true out=""
 patches="$root/patches/ffmpeg6"
 work="$root/artifacts/cross-ports/ffmpeg6-6.1.6"
-if [ "${1:-}" = --next ]; then
-	shift
-	[ "${1:-}" = --out ] || { echo "build-ffmpeg: --next needs --out DIR" >&2; exit 2; }
-	revision=8
-	next="$root/artifacts/cross-ports/ffmpeg6-next"
-	rm -rf "$next"
-	mkdir -p "$next"
-	cp -a "$root/patches/ffmpeg6" "$next/patches"
-	cp "$root"/patches/ffmpeg6-next/*.patch "$next/patches/"
-	cp -a "$root/patches/ffmpeg6-next/files/." "$next/patches/files/"
-	cp -a "$root/artifacts/sysroot-arm64" "$next/sysroot"
-	patches="$next/patches"
-	work="$next/work"
-	export CROSS_PORT_WORK="$work" CROSS_PORT_SYSROOT="$next/sysroot"
-fi
 [ "${1:-}" = --publish ] && unpublished=false
 [ "${1:-}" = --out ] && { out="$(realpath -m "$2")"; unpublished=false; }
 mmal="/boot/system/develop/headers/raspberrypi_userland"

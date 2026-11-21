@@ -76,6 +76,7 @@ typedef struct RpividPool {
 	uint32_t		height;
 	uint32_t		bit_depth;
 	int				motion_vectors;
+	int				scan_out;	/* pictures the display can show */
 	RpividBuffer*	free;
 	int				count;
 } RpividPool;
@@ -101,6 +102,7 @@ typedef struct RpividContext {
 	RpividDevice*		device;
 	RpividPool*			pool;
 	int					level;
+	int					sand;	/* the frames carry their pictures (rpivid_out) */
 	int					sync;
 	int					convert_threads;
 	RpividBitstream		bitstreams[2];
@@ -127,6 +129,7 @@ typedef struct RpividContext {
 	uint64_t			phase2_time;
 	uint64_t			wait_time;		/* the CPU waited for the block */
 	uint64_t			convert_time;
+	uint64_t			scanned_out;	/* pictures not converted */
 	uint32_t			missing_references;
 	uint32_t			phase1_reruns;
 	uint32_t			late_failures;
@@ -140,7 +143,7 @@ static const FFHWAccel ff_hevc_rpivid_hwaccel;
 
 
 static RpividPool*
-pool_create(RpividDevice* device, const HEVCSPS* sps)
+pool_create(RpividDevice* device, const HEVCSPS* sps, int scan_out)
 {
 	RpividPool* pool = av_mallocz(sizeof(*pool));
 	if (pool == NULL)
@@ -152,6 +155,7 @@ pool_create(RpividDevice* device, const HEVCSPS* sps)
 	pool->height = sps->height;
 	pool->bit_depth = sps->bit_depth;
 	pool->motion_vectors = sps->sps_temporal_mvp_enabled_flag;
+	pool->scan_out = scan_out;
 	return pool;
 }
 
@@ -214,14 +218,75 @@ pool_get(RpividPool* pool)
 		return NULL;
 	buffer->references = 1;
 	if (ff_rpivid_device_create_picture(pool->device, pool->width, pool->height,
-			pool->bit_depth, pool->motion_vectors, &buffer->picture) < 0) {
-		av_free(buffer);
-		return NULL;
+			pool->bit_depth, pool->motion_vectors, pool->scan_out,
+			&buffer->picture) < 0) {
+		/* An older driver has no scan-out pictures, or there is no memory
+		   for them where the display reaches: before the first picture,
+		   the stream goes on with ordinary ones (a stream's pictures all
+		   have one layout). */
+		if (!pool->scan_out || pool->count > 0
+			|| ff_rpivid_device_create_picture(pool->device, pool->width,
+				pool->height, pool->bit_depth, pool->motion_vectors, 0,
+				&buffer->picture) < 0) {
+			av_free(buffer);
+			return NULL;
+		}
+		pool->scan_out = 0;
+		av_log(NULL, AV_LOG_WARNING, "rpivid: no pictures the display can "
+			"show: converted frames only\n");
 	}
 	ff_mutex_lock(&pool->lock);
 	pool->count++;
 	ff_mutex_unlock(&pool->lock);
 	return buffer;
+}
+
+
+/* Scan-out pictures where the display reaches are scarce (below 1 GiB): a
+   stream gets them only if all it may hold at once can be had up front -
+   the DPB, the pictures a caller holds while they may be on the screen
+   (RPIVID_SAND_HOLD), the one being decoded and the pending one. Otherwise
+   it has ordinary pictures and converted frames from its start, instead of
+   running out in the middle (its frames would then have no picture to
+   show). */
+#define RPIVID_SAND_HOLD	8
+
+static void
+pool_reserve(RpividPool* pool, int count)
+{
+	RpividBuffer* taken = NULL;
+	int ok = 1;
+
+	for (int i = 0; i < count && ok; i++) {
+		RpividBuffer* buffer = av_mallocz(sizeof(*buffer));
+		if (buffer == NULL || ff_rpivid_device_create_picture(pool->device,
+				pool->width, pool->height, pool->bit_depth,
+				pool->motion_vectors, 1, &buffer->picture) < 0) {
+			av_free(buffer);
+			ok = 0;
+			break;
+		}
+		buffer->next = taken;
+		taken = buffer;
+	}
+	while (taken != NULL) {
+		RpividBuffer* buffer = taken;
+		taken = buffer->next;
+		if (ok) {
+			buffer->next = pool->free;
+			pool->free = buffer;
+			pool->count++;
+		} else {
+			ff_rpivid_device_delete(pool->device, buffer->picture.handle);
+			av_free(buffer);
+		}
+	}
+	if (!ok) {
+		pool->scan_out = 0;
+		av_log(NULL, AV_LOG_WARNING, "rpivid: no room for %d pictures the "
+			"display can show (%ux%u): converted frames only\n", count,
+			pool->width, pool->height);
+	}
 }
 
 
@@ -246,6 +311,87 @@ buffer_unref(RpividPool* pool, RpividBuffer* buffer)
 		pool->free = buffer;
 	}
 	ff_mutex_unlock(&pool->lock);
+}
+
+
+/* A frame's picture for a caller that shows it as it is (rpivid_out sand):
+   the frame's opaque_ref, which holds the picture buffer as long as the
+   frame lives */
+typedef struct RpividSandRef {
+	RpividSandFrame	frame;
+	RpividPool*		pool;
+	RpividBuffer*	buffer;
+} RpividSandRef;
+
+
+static void
+sand_ref_free(void* opaque, uint8_t* data)
+{
+	RpividSandRef* ref = (RpividSandRef*)data;
+
+	buffer_unref(ref->pool, ref->buffer);
+	pool_unref(ref->pool);
+	av_free(ref);
+}
+
+
+static void
+attach_sand(RpividPool* pool, RpividBuffer* buffer, AVFrame* frame)
+{
+	const RpividPicture* picture = &buffer->picture;
+	RpividSandRef* ref;
+	AVBufferRef* reference;
+	uint32_t columns;
+
+	if (!pool->scan_out || picture->area < 0)
+		return;
+	ref = av_mallocz(sizeof(*ref));
+	if (ref == NULL)
+		return;
+	reference = av_buffer_create((uint8_t*)ref, sizeof(*ref), sand_ref_free,
+		NULL, 0);
+	if (reference == NULL) {
+		av_free(ref);
+		return;
+	}
+	columns = pool->bit_depth == 8 ? (pool->width + 127) / 128
+		: FFALIGN((pool->width + 2) / 3, 32) * 4 / 128;
+	ref->frame.magic = RPIVID_SAND_FRAME_MAGIC;
+	ref->frame.size = sizeof(ref->frame);
+	ref->frame.area = picture->area;
+	ref->frame.offset = picture->luma - picture->address;
+	ref->frame.picture_size = picture->luma_column_stride * columns;
+	ref->frame.width = pool->width;
+	ref->frame.height = pool->height;
+	ref->frame.bit_depth = pool->bit_depth;
+	ref->frame.column_height = picture->luma_column_stride / 128;
+	ref->frame.chroma_offset = picture->chroma - picture->luma;
+	ref->frame.address = picture->luma;
+	ref->pool = pool_ref(pool);
+	ref->buffer = buffer;
+	buffer_ref(pool, buffer);
+	av_buffer_unref(&frame->opaque_ref);
+	frame->opaque_ref = reference;
+}
+
+
+/* Whether the frame's planes are to get the picture: always, unless the
+   caller takes the picture as it is */
+static int
+to_convert(AVCodecContext* avctx, const AVFrame* frame)
+{
+	const HEVCContext* s = avctx->priv_data;
+	RpividSandFrame* sand;
+
+	if (frame->opaque_ref == NULL)
+		return 1;
+	sand = (RpividSandFrame*)frame->opaque_ref->data;
+	if (sand->magic != RPIVID_SAND_FRAME_MAGIC)
+		return 1;
+	if (s->rpivid_out == RPIVID_OUT_SAND)
+		return 0;
+	sand->planar = 1;
+	return 1;
 }
 
 
@@ -410,7 +556,16 @@ ff_rpivid_hevc_attach(AVCodecContext* avctx, int level)
 		av_free(ctx);
 		goto refuse;
 	}
-	ctx->pool = pool_create(ctx->device, sps);
+	ctx->sand = s->rpivid_out == RPIVID_OUT_SAND;
+	/* FFMPEG_RPIVID_SCAN_OUT=1: the scan-out layout for converted frames too
+	   (a test of the layout) */
+	ctx->pool = pool_create(ctx->device, sps, ctx->sand
+		|| (getenv("FFMPEG_RPIVID_SCAN_OUT") != NULL
+			&& !strcmp(getenv("FFMPEG_RPIVID_SCAN_OUT"), "1")));
+	if (ctx->pool != NULL && ctx->pool->scan_out) {
+		pool_reserve(ctx->pool, sps->temporal_layer[sps->max_sub_layers - 1]
+			.max_dec_pic_buffering + RPIVID_SAND_HOLD + 2);
+	}
 	if (ctx->pool == NULL) {
 		ff_rpivid_device_unref(ctx->device);
 		av_free(ctx);
@@ -435,8 +590,9 @@ ff_rpivid_hevc_attach(AVCodecContext* avctx, int level)
 	avctx->internal->hwaccel_priv_data = ctx;
 	avctx->hwaccel = &ff_hevc_rpivid_hwaccel.p;
 	av_log(avctx, AV_LOG_INFO, "rpivid: hardware HEVC decode, %dx%d %d-bit, "
-		"clock %" PRIu32 " MHz\n", sps->width, sps->height, sps->bit_depth,
-		ff_rpivid_device_clock_rate(ctx->device) / 1000000);
+		"clock %" PRIu32 " MHz%s\n", sps->width, sps->height, sps->bit_depth,
+		ff_rpivid_device_clock_rate(ctx->device) / 1000000,
+		ctx->sand ? ", pictures the display can show" : "");
 	return 0;
 
 refuse:
@@ -463,13 +619,16 @@ rpivid_uninit(AVCodecContext* avctx)
 		av_log(avctx, AV_LOG_INFO, "rpivid: %" PRIu64 " pictures on the block, "
 			"phase 1 %.2f ms, phase 2 %.2f ms, the CPU waited %.2f ms, SAND to "
 			"planar %.2f ms (%d threads), %s; %" PRIu32 " phase-1 reruns, %" PRIu32
-			" missing references, %d picture buffers\n", ctx->pictures,
+			" missing references, %d picture buffers; %" PRIu64 " pictures "
+			"handed out as they are\n", ctx->pictures,
 			ctx->phase1_time / 1000.0 / ctx->pictures,
 			ctx->phase2_time / 1000.0 / ctx->pictures,
 			ctx->wait_time / 1000.0 / ctx->pictures,
-			ctx->convert_time / 1000.0 / ctx->pictures, ctx->convert_threads,
-			ctx->sync ? "synchronous" : "pipelined", ctx->phase1_reruns,
-			ctx->missing_references, ctx->pool != NULL ? ctx->pool->count : 0);
+			ctx->pictures > ctx->scanned_out ? ctx->convert_time / 1000.0
+				/ (ctx->pictures - ctx->scanned_out) : 0.0,
+			ctx->convert_threads, ctx->sync ? "synchronous" : "pipelined",
+			ctx->phase1_reruns, ctx->missing_references,
+			ctx->pool != NULL ? ctx->pool->count : 0, ctx->scanned_out);
 	}
 	ff_rpivid_commands_free(&ctx->commands);
 	for (i = 0; i < 2; i++) {
@@ -591,9 +750,12 @@ finish_pending(AVCodecContext* avctx, HEVCContext* s, int threaded)
 	if (ret == 0)
 		ret = result.result;
 	if (ret == 0) {
-		start = av_gettime_relative();
-		convert(avctx, ctx, pending->buffer, pending->frame, threaded);
-		ctx->convert_time += av_gettime_relative() - start;
+		if (to_convert(avctx, pending->frame)) {
+			start = av_gettime_relative();
+			convert(avctx, ctx, pending->buffer, pending->frame, threaded);
+			ctx->convert_time += av_gettime_relative() - start;
+		} else
+			ctx->scanned_out++;
 		ctx->pictures++;
 		ctx->phase1_time += result.phase1_time;
 		ctx->phase2_time += result.phase2_time;
@@ -1024,6 +1186,8 @@ rpivid_end_frame(AVCodecContext* avctx)
 	frame->submitted = 1;
 	frame->has_mv = ctx->write_mv;
 	ctx->bitstream_jobs[ctx->bitstream_index] = id;
+	if (ctx->sand)
+		attach_sand(ctx->pool, frame->buffer, out);
 
 	/* the picture before this one, while the block decodes this one */
 	finish_pending(avctx, s, 1);
@@ -1035,9 +1199,10 @@ rpivid_end_frame(AVCodecContext* avctx)
 
 		av_frame_free(&ctx->pending.frame);
 		ret = ff_rpivid_device_wait(ctx->device, id, -1, &result);
-		if (ret == 0 && result.result == 0)
-			convert(avctx, ctx, frame->buffer, out, 1);
-		else
+		if (ret == 0 && result.result == 0) {
+			if (to_convert(avctx, out))
+				convert(avctx, ctx, frame->buffer, out, 1);
+		} else
 			ctx->failed = 1;
 		return 0;
 	}

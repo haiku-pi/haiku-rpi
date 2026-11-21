@@ -17,6 +17,7 @@
 
 #ifdef __HAIKU__
 
+#include <OS.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -127,7 +128,7 @@ ff_rpivid_device_create_bitstream(RpividDevice* device, size_t size,
 
 int
 ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
-	uint32_t height, uint32_t bit_depth, int motion_vectors,
+	uint32_t height, uint32_t bit_depth, int motion_vectors, int scan_out,
 	RpividPicture* picture)
 {
 	rpivid_create_picture args;
@@ -139,6 +140,8 @@ ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
 	args.height = height;
 	args.bit_depth = bit_depth;
 	args.flags = motion_vectors ? RPIVID_PICTURE_MOTION_VECTORS : 0;
+	if (scan_out)
+		args.flags |= RPIVID_PICTURE_SCAN_OUT;
 	if (uncached != NULL && uncached[0] == '1')
 		args.flags |= RPIVID_PICTURE_UNCACHED;
 	ret = control(device, RPIVID_CREATE_PICTURE, &args, sizeof(args));
@@ -151,6 +154,9 @@ ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
 		+ args.chroma_offset);
 	picture->luma_column_stride = args.luma_column_stride;
 	picture->chroma_column_stride = args.chroma_column_stride;
+	picture->address = (const uint8_t*)(uintptr_t)args.address;
+	picture->size = args.size;
+	picture->area = scan_out ? area_for((void*)(uintptr_t)args.address) : -1;
 	return 0;
 }
 
@@ -266,7 +272,7 @@ ff_rpivid_device_create_bitstream(RpividDevice* device, size_t size,
 
 int
 ff_rpivid_device_create_picture(RpividDevice* device, uint32_t width,
-	uint32_t height, uint32_t bit_depth, int motion_vectors,
+	uint32_t height, uint32_t bit_depth, int motion_vectors, int scan_out,
 	RpividPicture* picture)
 {
 	return AVERROR(ENOSYS);

@@ -117,6 +117,13 @@ typedef struct rpivid_create_picture {
 #define RPIVID_PICTURE_UNCACHED			0x02
 	// mapped write-combining instead of cached (no cache maintenance;
 	// slower to read)
+#define RPIVID_PICTURE_SCAN_OUT			0x04
+	// for the display to show as it is: below 1 GiB, and luma and chroma in
+	// the same columns (DRM's NV12_COL128 layout): both column strides are
+	// the column height, ROUNDUP(height, 16) * 3 / 2 rows, the chroma after
+	// the luma's ROUNDUP(height, 16) rows; the mapping in the caller's team
+	// is cloneable (B_CLONEABLE_AREA: area_for() finds it). A driver
+	// without it fails RPIVID_CREATE_PICTURE with B_BAD_VALUE.
 
 
 // RPIVID_DELETE_BUFFER: either kind; also unmaps it from the caller's team

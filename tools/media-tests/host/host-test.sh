@@ -17,9 +17,9 @@
 #
 # Work directory: $RPIVID_HOST_WORK (default /tmp/rpivid-host); the builds go through
 # scripts/heavy-build.sh.
-# HOST_NEXT=1: with patches/ffmpeg6-next too (ffmpeg6 revision 8, scripts/build-ffmpeg.sh --next); with
-# FFMPEG_RPIVID_SCAN_OUT=1 in the environment the pictures have the scan-out layout (one column stride,
-# hw-video-decode.md §9) and must still be bit-exact.
+# Patches 0001 and 0006 (rpivid_out, ffmpeg6 revision 8) are applied; with FFMPEG_RPIVID_SCAN_OUT=1 in the
+# environment the pictures have the scan-out layout (one column stride, hw-video-decode.md §9) and must still
+# be bit-exact.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 here="$root/tools/media-tests/host"
@@ -41,11 +41,8 @@ prepare() {
 	mkdir -p "$tree"
 	tar -xf "$tarball" -C "$tree" --strip-components=1
 	(cd "$tree" && patch -s -p1 < "$root/patches/ffmpeg6/0001-hevc-rpivid.patch")
+	(cd "$tree" && patch -s -p1 < "$root/patches/ffmpeg6/0006-rpivid-out.patch")
 	cp "$root"/patches/ffmpeg6/files/libavcodec/* "$tree/libavcodec/"
-	if [ "${HOST_NEXT:-0}" = 1 ]; then
-		(cd "$tree" && patch -s -p1 < "$root/patches/ffmpeg6-next/0006-rpivid-out.patch")
-		cp "$root"/patches/ffmpeg6-next/files/libavcodec/* "$tree/libavcodec/"
-	fi
 }
 build() {
 	local name="$1"; shift
@@ -63,7 +60,7 @@ build() {
 stale() {	# a build older than one of its inputs
 	local stamp="$work/build-$1/ffmpeg"
 	[ "$rebuild" = 1 ] || [ ! -f "$stamp" ] && return 0
-	[ -n "$(find "$root/patches/ffmpeg6" "$root/patches/ffmpeg6-next" "$here/rpivid_device_mock.c" -newer "$stamp" \
+	[ -n "$(find "$root/patches/ffmpeg6" "$here/rpivid_device_mock.c" -newer "$stamp" \
 		-type f)" ]
 }
 if stale plain; then build plain; fi

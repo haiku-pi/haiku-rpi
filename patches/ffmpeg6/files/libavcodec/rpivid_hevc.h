@@ -26,6 +26,36 @@
 #define RPIVID_ON		1	/* the block, for the coding tools verified on it */
 #define RPIVID_ALL		2	/* the block, for every tool its programming has */
 
+/* The decoder option "rpivid_out" (a caller may change it at any time):
+   0 the pictures are converted into the frames (yuv420p, yuv420p10le), as a
+   software decoder's; 1 (sand) the block decodes into pictures the display can
+   scan out, and each frame it decoded carries its picture in opaque_ref (an
+   RpividSandFrame) - and is converted only while the option is 0 again
+   (RpividSandFrame.planar says whether it was). The frames decoded on the
+   CPU (a picture or stream the block does not take) have no picture. A
+   picture is not written again while a frame holding it lives. A caller
+   that sets AV_CODEC_FLAG_COPY_OPAQUE must not ask for it. */
+#define RPIVID_OUT_PLANAR	0
+#define RPIVID_OUT_SAND		1
+
+#define RPIVID_SAND_FRAME_MAGIC	0x52534e44	/* 'RSND' */
+
+typedef struct RpividSandFrame {
+	uint32_t		magic;			/* RPIVID_SAND_FRAME_MAGIC */
+	uint32_t		size;			/* of this structure */
+	int32_t			area;			/* the picture's mapping, in the caller's team */
+	uint32_t		offset;			/* of the picture in it */
+	uint32_t		picture_size;	/* from offset: luma and chroma */
+	uint32_t		width;			/* the picture's (coded) size */
+	uint32_t		height;
+	uint32_t		bit_depth;		/* 8 or 10 (three samples in 32 bits) */
+	uint32_t		column_height;	/* rows of 128 bytes in each column */
+	uint32_t		chroma_offset;	/* the chroma's first row in a column, bytes */
+	int32_t			planar;			/* the frame's planes hold the picture too */
+	uint32_t		_reserved;
+	const uint8_t*	address;		/* the picture (read-only, cached) */
+} RpividSandFrame;
+
 
 /* From get_format(), once the software format is chosen and the SPS active:
    attaches the hwaccel if the block takes the stream. 0 if attached, else
