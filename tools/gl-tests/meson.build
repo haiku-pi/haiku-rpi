@@ -6,6 +6,8 @@ dep_egl = dependency('egl')
 dep_glesv2 = dependency('glesv2')
 
 executable('gltri', 'gltri.c', dependencies : [dep_egl, dep_glesv2], install : true)
+# glGenerateMipmap on non-power-of-two textures, every level read back (docs/design/gpu-v3d.md §6)
+executable('glmipnpot', 'glmipnpot.c', dependencies : [dep_egl, dep_glesv2], install : true)
 
 # GL_MESA_map_buffer_client_pointer the way Wine's WoW64 OpenGL uses it (docs/design/gl-client-pointer.md);
 # desktop GL through EGL (libglvnd's libOpenGL)

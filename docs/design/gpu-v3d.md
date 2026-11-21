@@ -120,8 +120,9 @@ Citation keys (file:line):
   a permissive description of exactly the kernel driver's job ([PR]:338-342).
 - **No Haiku Vulkan WSI** in `src/vulkan/wsi`; headless WSI is always built; `wsi_common_display` needs
   `system_has_kms_drm`.
-- **Phoenix Mesa fixes worth carrying** (fork commits): NPOT mip generation via TFU mistiles → fall back to
-  render-based mipmaps (`e4be1163240`, [PN] `project_v3d_npot_mip_fix.md`). Phoenix's `should_tile`
+- **Phoenix Mesa fixes** (fork commits): NPOT mip generation via TFU mistiles → fall back to render-based
+  mipmaps (`e4be1163240`, [PN] `project_v3d_npot_mip_fix.md`) — **checked 2026-11-21: does not occur on our
+  driver, not carried** (§6). Phoenix's `should_tile`
   RASTER hack and its SAMPLER_VIEW follow-up were Phoenix-present workarounds and caused two regressions
   ([PN] `project_quake3_lightmap_uif_xor.md`) — **do not carry**.
 
@@ -379,3 +380,74 @@ included a KMS server, a libdrm rewrite, Xorg and Wayland — none of which H12 
 agent-driven pace (PCIe + USB, GENET and thermal/GPIO each took hours, `docs/log/WEEK-2026-W42.md`), stages
 0–3 are plausibly days of calendar time; the risk is concentrated in stages 0b and 1, where only the bench
 can answer.
+
+## 6. Non-power-of-two mipmaps from the TFU (task G1, 2026-11-21)
+
+**Claim (Phoenix port):** the TFU's multi-level mipmap generation takes OPAD for the first level only and
+infers the tiling of the levels after it. That matches `v3d_setup_slices` only for power-of-two bases, so the
+small levels of NPOT textures (all of Quake II's model skins: soldier 288×195, banner 260×195, blaster 296×164)
+would come out scrambled and distant objects would draw garbage. Phoenix's fix: `v3d_generate_mipmap()`
+declines NPOT and `st_generate_mipmap()` falls back to `util_gen_mipmap()`.
+
+**Result: the defect does not occur with our Mesa (26.2.7, mesa rpi4 1986798cb22 = package -3).** The fix was
+built (mesa a4516893497, test package `artifacts/packages-test/mesa-4/mesa{,_devel}-26.2.7-4`, not published),
+measured, and reverted (7ecda74bc02).
+
+### 6.1 Measurement
+
+Session `g1` (2026-11-21 00:37–01:15), network boot of `haiku-pi4-pregate-1120.img`, mesa -3 and -4 swapped with
+`pkgman` in the session; each phase's library confirmed by gltri's `git-1986798cb2` / `git-a451689349`.
+
+- **Texel check, `tools/gl-tests/glmipnpot`** (new). Level 0 is a smooth gradient: red along x, green along y.
+  The program calls `glGenerateMipmap` and reads every level back two ways: through the sampler (`texelFetch`)
+  and through a framebuffer with the level attached (`glReadPixels`). It covers RGBA8 and RGB8 (Quake II's solid
+  format), at 3 POT and 10 NPOT sizes, including 1000×1 and 3×300.
+  - **-3 (TFU): PASS, 0 bad levels.** The worst errors at levels 2–5 are 4–7 of 255.
+  - A level laid out wrongly would be off by about 28 or more: a 4-texel utile or a UIF block in the wrong place
+    breaks the gradient.
+  - The only errors larger than that are at the 1–2 texel levels: 25 at 4×3 and 44 at 2×1 for 288×195. They are
+    exactly what a box filter gives when it drops the odd row or column at each halving: 9→4 loses x 256..287, and
+    3→1 keeps rows 0..127 of 195.
+  - -4 (render path) is within 1 at every level.
+  - The POT rows are byte-identical between -3 and -4, and the NPOT rows differ, so the TFU really ran on -3.
+  - Both read paths agree on both builds.
+  - Logs: `artifacts/g1-npot/glmipnpot-m{3,4}.txt` (not in git).
+- **Quake II, `tools/pi-tests/g1-npot.sh scene`** (new).
+  - The demo's map `demo1` from its start, with `notarget` and soldiers + gunners spawned 100–1500 units ahead.
+  - Quake II's own screenshot (glReadPixels) is taken, and an HDMI frame with it.
+  - GL1 at 1280×720, 320×180 and 160×90, plus GL3 at 1280×720 and 320×180, on both builds. The small windows
+    stand in for distance: their monsters are 25 px or less tall and sample mip levels 2–4.
+  - The room ends at about 450 units, so only the two near pairs and one farther gunner are visible.
+  - **No scrambled skin on -3** at any size. -3 against -4 differs only where models animate.
+  - Orange speckles near the ceiling in 2 of 4 small -3 shots (0 of 3 on -4) differ in shape and position between
+    runs: a particle effect, not a texture.
+  - Shots: `artifacts/g1-npot/g1-m{3,4}-gl{1,3}*.png` (Quake II's) and `m{3,4}-*.png` (HDMI).
+- **Cost of -4:**
+  - Timedemo q2demo1, 1280×720, uncapped, 3 runs each after a warm-up:
+    - GL1: 106.3 / 106.0 fps.
+    - GL3: 69.4 / 69.3 fps.
+  - Wall time including loading:
+    - GL1: 6815 → 6866 ms (+0.7 %).
+    - GL3: 10278 → 10314 ms (+0.3 %); the first GL3 run on -4 took 10510 ms, the blit shaders' first compile.
+  - glmark2-es2 subset (texture mipmap/linear, build, phong, blur; 800×600, one run each): 378 (-3) / 373 (-4),
+    within run-to-run spread.
+- **Regression set on -4:**
+  - gltri, glview, glview-es, glview-core (3.3 core) and glcore: PASS.
+  - vktest: PASS.
+  - photocraft-gpu-it: **97 + 12 of 109**, the -3 baseline.
+  - V3DV does not use the TFU's multi-level mode (it never sets `NUMMM`), so Vulkan is not affected either way.
+
+### 6.2 Why Phoenix saw it
+
+Not determined. Phoenix's Mesa (26.2.0 + its port) changes `v3d_resource.c`'s tiling choices: RASTER forcing in
+`should_tile` and scan-out BOs. It also has its own kernel TFU submit. Our tree has neither, and the upstream
+TFU path is right here.
+
+### 6.3 Decision
+
+Not carried. The change only buys a more exact filter on the 1–2 texel levels of NPOT textures, at the price of
+render-based generation on every upload. mesa -4 stays an unpublished test package.
+
+If a scrambled-at-distance texture is ever reported, run `glmipnpot` first: it settles the layout question in a
+second, without a game.
+
