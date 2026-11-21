@@ -701,7 +701,8 @@ the four touched sources compile with the arm64 flags (-Werror).
 
 Image `artifacts/images/s1-readback.img`: `scripts/build.sh --generated sources/haiku-s1/generated.arm64
 -sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc` (PI_IMAGE_OUT; full build in the worktree 6 min, jam rc 0, the
-usual 11 "not available" packages). Kit and runner: `tools/pi-tests/s1-readback.sh OUTDIR [CASE...]` (screenshot
+usual 11 "not available" packages; image and build directory deleted after the test — reconfigure the worktree as
+in §7 to rebuild). Kit and runner: `tools/pi-tests/s1-readback.sh OUTDIR [CASE...]` (screenshot
 with the `screenshot` command, HDMI snapshot right after, `tools/pi-tests/shot-vs-hdmi.py` and `colour-bars.py`;
 the pointer moved to the corner first), `tools/haiku-tests/screenread.cpp` (GetBitmap of a rectangle, timed),
 `glflip -b` (new: still colour bars, full screen), `overlaytest -p` (new: longer cover/off-screen phases).
