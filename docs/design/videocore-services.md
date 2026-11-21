@@ -1,6 +1,7 @@
 # VideoCore services beyond H.264 decoding (owner 2026-11-18, item 4)
 
-Status: **done (2026-11-19)**: (a) works on the Pi, (b) measured and decided (no VideoCore JPEG; a CPU-side
+Status: **done (2026-11-19)**; image-2026-11-21 ships ffmpeg6 6.1.6-7 + raspberrypi_userland 20241223-4 (one VideoCore H.264
+stream system-wide, the decoder abort at Firefox quit fixed; [firefox-video-overlay.md](firefox-video-overlay.md) §9.6); V8 (§7, rate rule) not merged yet. (a) works on the Pi, (b) measured and decided (no VideoCore JPEG; a CPU-side
 translator fix instead), (c) works (ffmpeg, media kit), (d) no camera on the bench Pi: design only. Builds on VCHIQ + MMAL ([vchiq.md](vchiq.md) §6–§8: `/dev/vchiq`, Broadcom's
 libmmal in `raspberrypi_userland`, `h264_mmal` in the media kit) and on the YUV overlay work
 ([video-overlay.md](video-overlay.md), branch `v1-overlay`). In priority order:

@@ -1,6 +1,6 @@
 # Decoded video on a YCbCr display plane (KNOWN-ISSUES F2, P2)
 
-Status: **done, released in image-2026-11-19** (merged into `rpi4` at 92db783ffc; release gate 11-19: 1080p30 H.264
+Status: **done, released in image-2026-11-19; the stream's encoding (§7, series A) in image-2026-11-21** (merged into `rpi4` at 92db783ffc; release gate 11-19: 1080p30 H.264
 25.1 %, the mode change 0 problems with the video back on the plane, HDMI-recorded). Was branch `v1-overlay` of haiku-pi/haiku (from `rpi4` 2753face8e). Numbers are
 marked **measured** (with the source) or **estimated**.
 
@@ -238,6 +238,10 @@ scripts/pi-ssh.sh "grep -a -c 'entered the debugger' /var/log/syslog"; scripts/p
   B_RGB32; any renegotiation that changes only the output space or rows keeps the decoder.
 
 ## 7. V6: the stream's YCbCr encoding reaches the plane (2026-11-20; branch `v6-video`)
+
+**Status: series A (the encoding, §7.2–7.3) merged into `rpi4` 552c42233d and released in image-2026-11-21**
+(with Firefox -11 using it); series B (HEVC scanned out from rpivid's SAND pictures) and the rpivid pool are not
+merged yet.
 
 Open item of §5 (and KNOWN-ISSUES F2): the accelerant guessed the encoding (BT.709 from 720 lines, BT.601 below,
 always limited range), so 601-tagged HD, full-range video and our untagged BT.601 test clips showed shifted hues.
