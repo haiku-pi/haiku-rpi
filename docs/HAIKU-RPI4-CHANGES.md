@@ -9,7 +9,7 @@ The fork is [haiku-pi/haiku](https://github.com/haiku-pi/haiku), branch `rpi4` (
 haiku-pi/haiku. The branch starts from upstream **hrev60262** (committed 2026-10-17). Upstream was
 merged into it on 2026-10-19 (`29b623181d`, 21 upstream commits), on 2026-10-24 (`2a0cb4ac45`, 20 more)
 on 2026-10-31 (`e500bbf968`, 22 more) and on 2026-11-17 (`fcce01cf3e`, 164 more), so the merge base is now
-**hrev60337 + 133** (`ae995ad339`, 2026-11-17).
+**hrev60431** (`ae995ad339`, 2026-11-17).
 Upstream is merged again every weekend; see [log/](log/).
 
 On top of that base the fork carries **327 commits of its own** (2026-10-18 to 2026-11-19; counted
@@ -139,7 +139,7 @@ section for its area gives the detail.
 | 68 | **The JPEG translator converted every decoded picture once more on the CPU** | `ea305c7a9c` | libjpeg-turbo can write B_RGB32 (BGRA) itself; the translator decoded to RGB and swizzled. Now it asks for BGRA directly: 1080p JPEG decode 94 → 63 ms on the Pi, the same pixels. Every architecture. |
 | 69 | **The image's package list: desktop OpenGL 3.3, VideoCore encode, SDL2 threads** | `6ebce0574f`, `6a20a50380` | Version bumps of our arm64 repository list, no code: mesa 26.2.7-3 (OpenGL 3.3 core / 3.1 compatibility, design/desktop-gl.md), libsdl2 2.32.10-7 → -8 (core profile through BGL_CONTEXT_CORE; a per-thread current GL context), supertuxkart 1.5-3 (legacy renderer by default), ffmpeg6 6.1.6-5 (`h264_vc` for Firefox, the `h264_mmal` encoder). |
 | 55 | **A page fault on a file read one 4 KiB page per disk request** | `a38b19efab` | Programs fault their pages in scattered over their files, so a cold start from a plain file system was bound by per-request cost (0.59 ms per 4 KiB on the Pi's card: 8–10 MB/s). A fault that misses the cache of a file on a disk partition now reads the run of missing pages around it within its 64 KiB cluster in one request (as FreeBSD's `vm_fault`), only with pages reservable without waiting, and re-reads the faulting page alone on error; packagefs keeps its own chunked read. Firefox from a BFS folder, cold: 14.05 → 8.36 s; x86-64 (KVM): a 108 MiB library 560 → 80 ms. Every architecture. |
-| 56 | **The system launch_daemon restarted services during a shutdown** | `f49813a540` | Its "shutdown in progress?" check went through a BRoster, which finds the registrar by asking the launch_daemon — refused on its own main thread — so the check always failed and every service that ended during a shutdown was started again. When a shutdown waits (a crash alert), package_daemon was restarted, refused by the registrar and restarted again every 25–110 ms. Now the system launch_daemon asks its registrar job's port directly (1 s timeout). KVM: guard test 4/4 relaunched → 0/2, loop 5/8 → 0/6. Upstream since 0749734769 (2019). |
+| 56 | **The system launch_daemon restarted services during a shutdown** | `f49813a540` | Its "shutdown in progress?" check went through a BRoster, which finds the registrar by asking the launch_daemon — refused on its own main thread — so the check always failed and every service that ended during a shutdown was started again. When a shutdown waits (a crash alert), package_daemon was restarted, refused by the registrar and restarted again every 25–110 ms. Now the system launch_daemon asks its registrar job's port directly (1 s timeout). KVM: guard test 4/4 relaunched → 0/2, loop 5/8 → 0/6. Upstream has the same bug: 0749734769 (2019) added the check, through a BRoster, and it has never worked in the system launch_daemon. |
 | 57 | **`rm -rf` could deadlock BFS against a running `sync`** | `44cc183c0c` | `bfs_io()`'s finished hook dropped the I/O's vnode reference with `put_vnode()` in the I/O scheduler's notifier thread; for a file unlinked meanwhile that deleted the inode there and started a transaction, waiting for the journal held by `rm`, which waited for an inode lock only the notifier could release. Now `vfs_put_vnode()` hands the deletion to the vnode undertaker. KVM: 6/25 hangs → 0/50 (p ≈ 9·10⁻⁴). Upstream since 551a9b9a01 (2024) ([design/bfs-rmrf-hang.md](design/bfs-rmrf-hang.md)). |
 
 Also generally useful, though new code or speed-ups rather than fixes: serial-console emergency keys
@@ -636,7 +636,8 @@ the table below.
 
 Mesa fixes found on the Pi that are bugs upstream too (haiku-pi/mesa `rpi4`, upstream-ready messages):
 `be833ed6d67` (V3DV: a render pass's supertiles stored over pixels outside its area — tiled texture uploads
-lost data), `dee7e96cb04` (V3D compiler: a vector `mov` copied only its first channel), `f55f89ccad9`,
+lost data), `dee7e96cb04` (V3D compiler: a vector `mov` copied only its first channel; fixed on Mesa main since 2026-11-18
+by `ec71bd60285`, which scalarizes every phi, but not in a release yet: 26.3.1 does not have it), `f55f89ccad9`,
 `baaaeaef308`, `76543fafdfc` (V3D compiler: liveness and copy propagation in linear passes — large shaders
 compile 3.6× faster, identical code).
 
