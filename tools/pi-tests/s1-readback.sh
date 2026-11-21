@@ -14,6 +14,8 @@
 #   mp-CLIP                    MediaPlayer plays col-CLIP.mp4 (709-hd 601-sd 601full-hd 709-hevc 709-hevc10):
 #                              windowed, -alert (an alert window over the video), -full (full screen, scaled)
 #   pause-FILE                 MediaPlayer plays $h/FILE (copy it there first), paused after 6 s
+#   mode-FILE                  MediaPlayer plays $h/FILE; screen mode 1280x720 and back, read-backs racing the change
+#   oa                         OpenArena full screen (its packages installed): a GL game on a plane, its menu
 #   ff                         Firefox plays col-709-hd.mp4 in a page (the video on the plane: firefox -11)
 #   gl                         glflip -b: full-screen GL on a plane, still colour bars; gl-cover: with a window over it
 # Default CASEs: all of them. The mouse pointer is put at the bottom right corner first (HDMI shows it, a screenshot
@@ -103,6 +105,34 @@ case_pause() {
 	{ ssh_ "grep -a -E '^AVCodecDecoder' $h/out/$name.log | sort | uniq -c | head -n 6" || true; planes; } | tee -a "$out/$name.txt"
 }
 
+# screen mode changes while MediaPlayer shows FILE on a plane (overlays suspended and resumed: their buffers are
+# freed and allocated again), with read-backs racing the change and after it
+case_mode() {
+	local clip=$1 name=mode-${1%.*}
+	mark_syslog
+	ssh_ "(/boot/system/apps/MediaPlayer $h/$clip > $h/out/$name.log 2>&1 &); sleep 6"
+	snap $name-1080
+	ssh_ "(screenmode 1280 720 &); for i in 1 2 3 4 5 6 7 8; do $h/screenread $h/out/$name-race\$i.ppm; done; sleep 3" \
+		| tee -a "$out/$name.txt"
+	snap $name-720
+	ssh_ "(screenmode 1920 1080 &); for i in 1 2 3 4 5 6 7 8; do $h/screenread $h/out/$name-back\$i.ppm; done; sleep 3" \
+		| tee -a "$out/$name.txt"
+	snap $name-back
+	ssh_ "hey MediaPlayer quit > /dev/null 2>&1; sleep 2" || true
+	kill_named MediaPlayer
+	{ ssh_ "ps | grep -c app_server; grep -a -E '^AVCodecDecoder' $h/out/$name.log | sort | uniq -c | head -n 6" || true
+	  planes; } | tee -a "$out/$name.txt"
+}
+
+# OpenArena (its packages installed) full screen at the desktop's size: a GL game on a plane, its menu
+case_oa() {
+	mark_syslog
+	ssh_ "cd /boot/system/apps/OpenArena && (HAIKU_EGL_FPS=1 ./OpenArena +set net_enabled 0 +set s_initsound 0 +set com_hunkmegs 256 +set r_mode -2 +set r_fullscreen 1 > $h/out/oa.log 2>&1 &); sleep 25"
+	snap oa
+	kill_named OpenArena
+	{ ssh_ "grep -a -E 'overlay|GL_RENDERER' $h/out/oa.log | tail -n 4" || true; planes; } | tee -a "$out/oa.txt"
+}
+
 case_ff() {
 	mark_syslog
 	ssh_ "mkdir -p /boot/home/s1-ffx; printf 'user_pref(\"browser.aboutwelcome.enabled\", false);\nuser_pref(\"browser.shell.checkDefaultBrowser\", false);\nuser_pref(\"media.autoplay.default\", 0);\nuser_pref(\"datareporting.policy.firstRunURL\", \"\");\n' > /boot/home/s1-ffx/user.js; printf '<!DOCTYPE html><html><body style=\"margin:0;background:#404040\"><video src=\"file://$h/col-709-hd.mp4\" width=\"960\" height=\"540\" autoplay loop muted></video></body></html>' > $h/video.html; (MOZ_CRASHREPORTER_DISABLE=1 /boot/system/apps/Firefox/Firefox --no-remote --profile /boot/home/s1-ffx file://$h/video.html > $h/out/ff.log 2>&1 &); sleep 40"
@@ -135,6 +165,8 @@ run() {
 	mp-*) case_mp "${1#mp-}" ;;
 	ff) case_ff ;;
 	pause-*) case_pause "${1#pause-}" ;;
+	mode-*) case_mode "${1#mode-}" ;;
+	oa) case_oa ;;
 	gl|gl-cover) case_gl "$1" ;;
 	*) echo "s1: unknown case $1" >&2 ;;
 	esac

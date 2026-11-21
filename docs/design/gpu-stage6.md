@@ -724,17 +724,22 @@ bars from 75 % bars (white 100 %), "vs HDMI" = largest per-channel difference be
 | MediaPlayer col-601full-hd (JPEG range) | type 3, enc 3 | 2 | 11 | windowed, alert, full screen |
 | MediaPlayer col-709-hevc (rpivid, zero copy SAND) | type 19, enc 2 | 4 | 10 | windowed, alert, full screen |
 | MediaPlayer col-709-hevc10 (SAND 10 bit) | type 59, enc 2 | 2 | 11 | windowed, alert, full screen |
-| Firefox 157.0.1-11, col-709-hd in a page | type 3, enc 2 | 4 | 10 | video in the page at 960×540 |
-| glflip -b, full-screen GL (BGLView, Mesa plane) | type 44 | 0 | 9 | whole screen; `gl-cover`: the yellow window over it intact |
+| Firefox 157.0.1-11 (the repository list the image was built from), col-709-hd in a page | type 3, enc 2 | 4 | 10 | video in the page at 960×540 |
+| glflip -b, full-screen GL (a test program on the games' path: BGLView, Mesa's plane) | type 44 | 0 | 9 | whole screen; `gl-cover`: the yellow window over it intact |
 | MediaPlayer play-1080p30.mp4 paused (real picture) | type 3, enc 2 | — | median 7, p95 14 | whole screen |
 
 - **Colours:** every screenshot's bars are within 0–4 of the ideal values; against HDMI they differ by 9–11, which
   is the capture chain's own offset (the same 9 for the GL plane, which is RGB and involves no YCbCr conversion at
   all). So the read-back is within a few code values of what the plane shows.
-- **Position:** the overlay rectangles' edges (window borders next to the picture) land on the same pixel in both;
-  across colour edges *inside* YCbCr pictures the HDMI's chroma transitions lie 1–2 output pixels further right
-  than ours at 2× scaling (shot-vs-hdmi "shift -2,0" over those rectangles; RGB planes and 1:1 show -1 or 0): the
-  HVS's chroma filter/siting, which is not documented; the read-back uses the codecs' standard siting.
+- **Position:** the overlay rectangle is exact — its edges (the window border next to the picture) land on the same
+  pixel in screenshot and HDMI at every scale, and at 1:1 an RGB plane (glflip) matches with shift 0,0. *Inside* a
+  scaled picture the content's edges are not: at 2× an RGB plane's bar edge (no chroma involved; `ovl-rgb32-hold`
+  row 400) is a 50 % mix at x 179.5 in the screenshot and at ~180.5 on HDMI — the HVS's scaler phase is about one
+  output pixel later than the centre-to-centre mapping used here; colour (chroma) edges of YCbCr pictures are 1–2
+  pixels later on HDMI (also at 1:1, `ovl-yuv420-720-hold`: 259 vs 260–261), where the capture card adds its own
+  4:2:2 pairing (equal values in pairs of HDMI pixels at every chroma edge, the desktop's included). So: rectangle
+  exact, content up to 1 px (luma/RGB, scaled) or 2 px (chroma) off at sharp edges; not tuned, since the HVS's
+  filter is undocumented and every change needs a Pi run to check.
 - **Windows over the video** (overlaytest's cover window, an `alert` over MediaPlayer, glflip's cover window) stay
   in the screenshot; the part of a window moved off screen is cut as on HDMI; `screenread -r 60 150 400 300` (a
   rectangle across an overlay's edge) matches the HDMI crop (median 6).
@@ -745,6 +750,15 @@ bars from 75 % bars (white 100 %), "vs HDMI" = largest per-channel difference be
   ~160–175 ms with a 1280×720 one and 280–390 ms with a 1080p video (B_YUV420 or SAND). The exclusive lock is held
   meanwhile: glflip counted 2–3 stalls up to 0.3 s in runs with three read-backs (screenread, screenshot,
   screenread); a screenshot is rare, so this was not optimised.
+- **A GL game and mode changes** (session `s1b` 07:57–07:59: `haiku-pi4-integ-1121.img` with the branch's
+  app_server non-packaged (`build.sh --generated … --light app_server`, user_launch override, as v6-session.sh does)
+  and the openarena 0.8.8-4 packages added; `artifacts/s1/run3/`): **OpenArena** full screen at 1920×1080 on plane 1
+  (type 44; `egl_haiku: overlay: 189 flips … 0 dropped`), its animated main menu: screenshot vs HDMI median 3,
+  shift 0,0, the menu complete (GetBitmap 357 ms). **Mode changes under a playing video** (MediaPlayer,
+  long-720p30.mp4 on the plane): `screenmode 1280 720` with eight read-backs racing it (the first still 1920×1080,
+  the next seven 1280×720, 114–120 ms each, the video in them after the overlay's resume), then the mode's
+  10-second revert to 1920×1080 with eight more racing read-backs (184–219 ms): app_server stayed up, every
+  read-back returned, the video back on the plane and in the screenshot; 0 PANIC, 0 debugger entries.
 - **Before** (session `s1base` 07:49–07:50 on `artifacts/images/haiku-pi4-integ-1121.img` = `rpi4` 59a8080cce, same
   runner, `artifacts/s1/base/`): `mp-709-hd` screenshots are black where the video is — 1 443 540 "holes" (black in
   the screenshot, not on HDMI) against 963–968 with the branch (those are the bars' colour edges, where HDMI's chroma
@@ -759,7 +773,8 @@ bars from 75 % bars (white 100 %), "vs HDMI" = largest per-channel difference be
 
 Merge `s1-overlay-readback` into `rpi4` (one commit, app_server only: `HWInterface`, `AccelerantHWInterface`,
 `DrawingEngine::ReadBitmap()`, new `OverlayReadBack.{h,cpp}`). It changes nothing while no overlay is shown and
-was checked on the Pi in every plane path (RGB GL plane, B_YUV420, SAND 8/10 accelerant and imported, Firefox).
+was checked on the Pi in every plane path (RGB GL plane with a test program and with OpenArena, B_YUV420, SAND 8/10
+from the accelerant and imported from rpivid, Firefox), and across mode changes with read-backs racing them.
 Then KNOWN-ISSUES F2/G2 and firefox-video-overlay.md lose "screenshots show black where the plane is" with the next
 release. Tools that read the screen back to check the *front buffer's keying* now see the composed picture
 (overlaytest's census was updated for that).
