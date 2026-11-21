@@ -7,7 +7,7 @@
  * Mesa's HAIKU_EGL_FPS=1 adds its overlay line (flips, missed, starved, late, dropped), the display
  * driver logs its own per-plane counts on the serial console when the plane goes.
  *
- *   glflip [-n FRAMES] [-i INTERVAL] [-W WIDTH -H HEIGHT] [-o] [-w]   exit status 0 = PASS
+ *   glflip [-n FRAMES] [-i INTERVAL] [-W WIDTH -H HEIGHT] [-o] [-w] [-b]   exit status 0 = PASS
  *
  *   -n  frames to draw (default 1200)
  *   -i  swap interval: 1 (default) waits for the vertical blank (BGLView::SwapBuffers(true)), 0 not
@@ -15,6 +15,9 @@
  *   -o  from a third to two thirds of the frames, a small window lies over the GL window (the overlay
  *       must be keyed: the small window stays visible over the plane)
  *   -w  warm up: 60 frames before the counted ones (the first frames allocate the overlay buffers)
+ *   -b  still colour bars instead (white, then 75 %: yellow, cyan, green, magenta, red, blue, black; the
+ *       same picture every frame), for comparing a screenshot of the plane with an HDMI snapshot
+ *       (tools/pi-tests/colour-bars.py, gpu-stage6.md §11)
  */
 
 #include <Application.h>
@@ -39,12 +42,45 @@ static int sInterval = 1;
 static int sWidth = 0, sHeight = 0;
 static bool sCover = false;
 static bool sWarmUp = false;
+static bool sBars = false;
 static int sFailures = 0;
+
+
+static void
+draw_bars(int width, int height)
+{
+	static const float kBars[8][3] = {
+		{1, 1, 1}, {.75f, .75f, 0}, {0, .75f, .75f}, {0, .75f, 0}, {.75f, 0, .75f}, {.75f, 0, 0},
+		{0, 0, .75f}, {0, 0, 0}
+	};
+	glViewport(0, 0, width, height);
+	glClearColor(0.25f, 0.25f, 0.25f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	// the upper three quarters; the rest stays gray
+	glBegin(GL_QUADS);
+	for (int i = 0; i < 8; i++) {
+		const float x0 = -1.0f + i * 0.25f;
+		glColor3fv(kBars[i]);
+		glVertex2f(x0, -0.5f);
+		glVertex2f(x0 + 0.25f, -0.5f);
+		glVertex2f(x0 + 0.25f, 1.0f);
+		glVertex2f(x0, 1.0f);
+	}
+	glEnd();
+}
 
 
 static void
 draw_frame(int frame, int width, int height)
 {
+	if (sBars) {
+		draw_bars(width, height);
+		return;
+	}
 	glViewport(0, 0, width, height);
 	glClearColor(0.0f, 0.0f, 0.25f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -182,7 +218,7 @@ int
 main(int argc, char** argv)
 {
 	int opt;
-	while ((opt = getopt(argc, argv, "n:i:W:H:ow")) != -1) {
+	while ((opt = getopt(argc, argv, "n:i:W:H:owb")) != -1) {
 		if (opt == 'n')
 			sFrames = atoi(optarg);
 		else if (opt == 'i')
@@ -195,8 +231,10 @@ main(int argc, char** argv)
 			sCover = true;
 		else if (opt == 'w')
 			sWarmUp = true;
+		else if (opt == 'b')
+			sBars = true;
 		else {
-			fprintf(stderr, "usage: %s [-n frames] [-i interval] [-W width -H height] [-o] [-w]\n",
+			fprintf(stderr, "usage: %s [-n frames] [-i interval] [-W width -H height] [-o] [-w] [-b]\n",
 				argv[0]);
 			return 2;
 		}

@@ -11,8 +11,13 @@
  * shown) is read back (BScreen::ReadBitmap()) next to a probe window that draws pixels with alpha 0:
  * before the first overlay (not keyed: the probe's pixels as drawn), while it is shown (keyed: no
  * pixel outside the overlay may be other than opaque) and after it was hidden (not keyed again).
+ * Inside the overlay the read-back has the key's transparent pixels, or, with an app_server that reads
+ * overlays back (gpu-stage6.md §11), the bars ("N bar-coloured").
+ * -p SECONDS: how long the cover window and the move partly off the screen last (default 2), to take
+ * screenshots and HDMI snapshots of them (tools/pi-tests/s1-readback.sh).
  *
- *   overlaytest [-s rgb32|ycbcr422|yuv420|sand|sand10] [-f FLIPS] [-h SECONDS] [-x WIDTHxHEIGHT]
+ *   overlaytest [-s rgb32|ycbcr422|yuv420|sand|sand10] [-f FLIPS] [-h SECONDS] [-p SECONDS]
+ *       [-x WIDTHxHEIGHT]
  *       (default: rgb32 and yuv420, 320x240; from 720 lines on the accelerant takes YCbCr as BT.709)
  *
  * sand / sand10 (only on request): B_YUV420_SAND128(_10) (0x4028, 0x4029: GraphicsDefs.h of the v6-video branch), the HEVC decoder's layout (luma and chroma in
@@ -45,6 +50,7 @@ static int kWidth = 320;
 static int kHeight = 240;
 static int sFlips = 240;
 static double sHold = 5;
+static double sPhase = 2;
 static int sFailures = 0;
 
 // the bars: white, yellow, cyan, green, magenta, red, blue, black (75 %)
@@ -241,9 +247,22 @@ static const int kProbePixels = 64 * 64;
 	transparent ones (0x00000000: keyed) in it; \a probe: those not opaque in the probe window.
 	-1 if the screen cannot be read.
 */
+static bool
+bar_coloured(uint32 pixel)
+{
+	const int r = (pixel >> 16) & 0xff, g = (pixel >> 8) & 0xff, b = pixel & 0xff;
+	for (int i = 0; i < 8; i++) {
+		if (abs(r - kBars[i][0]) <= 16 && abs(g - kBars[i][1]) <= 16 && abs(b - kBars[i][2]) <= 16)
+			return true;
+	}
+	return r >= 239 && g >= 239 && b >= 239;
+		// the square
+}
+
+
 static void
 alpha_census(const char* name, const char* when, BRect overlay, int& outside, int& keyed,
-	int& probe)
+	int& probe, int* barPixels = NULL)
 {
 	BScreen screen;
 	BBitmap shot(screen.Frame(), B_RGB32);
@@ -253,6 +272,7 @@ alpha_census(const char* name, const char* when, BRect overlay, int& outside, in
 		return;
 	}
 	outside = keyed = probe = 0;
+	int bars = 0;
 	const uint8* bits = (const uint8*)shot.Bits();
 	const int32 bpr = shot.BytesPerRow();
 	const int32 width = shot.Bounds().IntegerWidth() + 1;
@@ -263,6 +283,8 @@ alpha_census(const char* name, const char* when, BRect overlay, int& outside, in
 			if (overlay.Contains(BPoint(x, y))) {
 				if (row[x] == 0)
 					keyed++;
+				else if ((row[x] >> 24) == 0xff && bar_coloured(row[x]))
+					bars++;
 			} else if ((row[x] >> 24) != 0xff) {
 				outside++;
 				if (kProbeFrame.Contains(BPoint(x, y)))
@@ -271,7 +293,9 @@ alpha_census(const char* name, const char* when, BRect overlay, int& outside, in
 		}
 	}
 	SAY("%s alpha %s: %d pixels not opaque outside the overlay (%d of the probe's %d), %d "
-		"transparent in it", name, when, outside, probe, kProbePixels, keyed);
+		"transparent in it, %d bar-coloured", name, when, outside, probe, kProbePixels, keyed, bars);
+	if (barPixels != NULL)
+		*barPixels = bars;
 }
 
 
@@ -366,9 +390,11 @@ test_space(color_space space)
 
 	// keyed: the front buffer was made opaque before the overlay showed, the key is transparent
 	snooze(300000);
-	int probed;
-	alpha_census(name, "shown", overlayRect, outside, keyed, probed);
-	const bool keyedOk = outside == 0 && keyed > 0;
+	int probed, bars;
+	alpha_census(name, "shown", overlayRect, outside, keyed, probed, &bars);
+	// the key's transparent pixels, or, read back, the overlay's picture
+	const int overlayPixels = overlayRect.IntegerWidth() * overlayRect.IntegerHeight();
+	const bool keyedOk = outside == 0 && (keyed > 0 || bars > overlayPixels * 3 / 4);
 	SAY("%s keyed front buffer %s", name, keyedOk ? "ok" : "BAD");
 	if (!keyedOk)
 		sFailures++;
@@ -403,7 +429,7 @@ test_space(color_space space)
 	cover->AddChild(label);
 	cover->Show();
 	SAY("%s cover window shown (HDMI: the yellow window over the bars)", name);
-	snooze(2000000);
+	snooze((bigtime_t)(sPhase * 1e6));
 	cover->Lock();
 	cover->Quit();
 
@@ -412,7 +438,7 @@ test_space(color_space space)
 	window->MoveTo(-200, 100);
 	window->Unlock();
 	SAY("%s window moved to -200,100 (HDMI: the bars cut at the left edge)", name);
-	snooze(2000000);
+	snooze((bigtime_t)(sPhase * 1e6));
 	window->Lock();
 	window->MoveTo(100, 100);
 	window->Unlock();
@@ -448,7 +474,7 @@ main(int argc, char** argv)
 {
 	color_space only = B_NO_COLOR_SPACE;
 	int opt;
-	while ((opt = getopt(argc, argv, "s:f:h:x:")) != -1) {
+	while ((opt = getopt(argc, argv, "s:f:h:p:x:")) != -1) {
 		if (opt == 's') {
 			if (strcmp(optarg, "rgb32") == 0)
 				only = B_RGB32;
@@ -464,11 +490,13 @@ main(int argc, char** argv)
 			sFlips = atoi(optarg);
 		else if (opt == 'h')
 			sHold = atof(optarg);
+		else if (opt == 'p')
+			sPhase = atof(optarg);
 		else if (opt == 'x' && sscanf(optarg, "%dx%d", &kWidth, &kHeight) == 2 && kWidth >= 64
 			&& kHeight >= 64) {
 		} else {
 			fprintf(stderr, "usage: %s [-s rgb32|ycbcr422|yuv420|sand|sand10] [-f flips] [-h seconds] "
-				"[-x WIDTHxHEIGHT]\n", argv[0]);
+				"[-p seconds] [-x WIDTHxHEIGHT]\n", argv[0]);
 			return 2;
 		}
 	}
