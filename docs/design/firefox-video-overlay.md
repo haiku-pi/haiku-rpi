@@ -1,6 +1,7 @@
 # Firefox `<video>` on the YUV overlay plane (KNOWN-ISSUES G2)
 
-Status: **A1 and A1b implemented and Pi-tested (2026-11-19), unpublished test packages**:
+Status: **released in image-2026-11-21 as firefox 157.0.1-11** (A1 + A1b + 0008 + the stream's encoding, §9.8),
+with ffmpeg6 6.1.6-7 and raspberrypi_userland 20241223-4; all three in the package repository. History:
 - Step 0 (§9.1): the video *is* a promoted compositor surface, and its software composite costs ≈1.1 cores.
 - GCC 16.2 baseline rebuild (§9.2): it works.
 - Option 0, SWGL with clang (§9.3): −14 % composite CPU at 720p, −25 % at 1080p, and 1080p drops from ~33 % to 5 %.
@@ -11,7 +12,7 @@ Status: **A1 and A1b implemented and Pi-tested (2026-11-19), unpublished test pa
 - **0008 + the decoder fix** (§9.6): translucent content over the video keeps it in software (firefox -10); the
   decoder process's abort at quit with two videos (option 0 too) fixed in raspberrypi_userland 4 + ffmpeg6 7 (one
   VideoCore H.264 decoder system-wide).
-  **Recommended for the 11-21 gate: firefox -10 and the two decoder packages.**
+  Recommended for the 11-21 gate: firefox -10 and the two decoder packages; -11 (§9.8) took -10's place.
 
 One host-side compile probe (§1.4). Numbers are marked **measured** (with their source) or **estimated**. Builds on
 [video-overlay.md](video-overlay.md) (B_YUV420 overlays, MediaPlayer), [gpu-stage6.md](gpu-stage6.md) (planes,

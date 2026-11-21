@@ -409,10 +409,16 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
   From image-2026-11-19b Firefox decodes H.264 on the VideoCore too (`h264_vc`: its decode process 58 % of a core
   at 1080p30 instead of 123 %), and H.264 can be **encoded** on it: MediaConverter's "H.264 video", or
   `ffmpeg -i in.mp4 -c:v h264_mmal -b:v 8M out.mp4` (KNOWN-ISSUES P2 for the limits).
+  From image-2026-11-21 the VideoCore decodes **one H.264 stream at a time in the whole system**: a second player,
+  a second video in Firefox or an `ffmpeg` run while a player has it decodes on the CPU (it starts after a 0.5-s
+  wait for the VideoCore). This is what fixed Firefox's decoder process aborting when a page with two H.264
+  videos was closed.
 - From image-2026-11-19 MediaPlayer shows decoded video as planar YUV (B_YUV420) on a display plane: the display
   hardware converts and scales it, no CPU colour conversion (`FFMPEG_YUV420=0` brings back RGB). 720p30 H.264
   13 % of a core, 1080p30 25 %, HEVC 1080p30 24 %; 10-bit HEVC 1080p plays. Left: one copy of each frame out of
   the VideoCore, and rpivid's SAND→planar conversion ([design/video-overlay.md](design/video-overlay.md) §5).
+  From image-2026-11-21 the plane shows each video in its own colour encoding (the stream's BT.601/BT.709 tag and
+  range), not a guess from its height; untagged video is BT.709 from 720 lines on, BT.601 below.
 
 ### 7.3 Audio: HDMI and the 3.5 mm jack
 
@@ -476,6 +482,16 @@ Video playback, 10-second test clips in a window (2026-10-20; frames dropped of 
 | H.264 1080p | the system ffmpeg, on the CPU (before image-2026-11-19b) | 148–271 of 300 (149 with a test setting, below) |
 | H.264 1080p | the **VideoCore** (`h264_vc`, from image-2026-11-19b) | 304 of 719 in 25 s (CPU: 284 of 732) — the drops are Firefox's own drawing (G2) |
 
+**Video on the display plane (from image-2026-11-21, firefox 157.0.1-11).** Firefox hands a playing `<video>` to
+the display's YUV overlay plane, as MediaPlayer does: the display scales and converts it, and Firefox stops
+drawing it. 720p H.264 then costs about 0.6–0.9 s of CPU per 10 s for drawing instead of 8 s, 1080p 2.3–2.8 s, and
+1080p drops ~33 frames in the first 38 s instead of 120. It works for H.264, VP9 and AV1, local files and web
+video (also through MSE). Firefox draws the video itself again whenever the plane cannot show it correctly: with
+captions, controls or any translucent content over it, while the page scrolls, when it is partly outside the
+window, for the smaller of two videos, for BT.2020 and full-range BT.709 streams, and during a screen mode change.
+`MOZ_HAIKU_VIDEO_OVERLAY=0` (set before starting Firefox) turns the plane off. Side effects: a tooltip over a
+playing video has a dark green fringe, and screenshots show black where the video is.
+
 **Limits:**
 
 - **The first video after Firefox starts drops frames.** The table above is from first plays on
@@ -483,6 +499,8 @@ Video playback, 10-second test clips in a window (2026-10-20; frames dropped of 
   300 from the SD card** (2026-10-21); VP9 played first drops as much as H.264. Firefox's decoder
   process stalls for up to 1.8 s at a time while it warms up, and the frames it delivers late are
   discarded. If a video stutters at first, play it again.
+- **H.264 1080p60 web video does not play** (about 1 frame in 90 shown; the VideoCore decoder path, KNOWN-ISSUES
+  P2). 1080p30 and 720p play.
 - WebRTC is untested.
 - Firefox is in the public package repository too (`pkgman install firefox`, 102 MB).
 - Its user agent says "Haiku aarch64".
