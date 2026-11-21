@@ -380,7 +380,7 @@ V6_SAND=1 tools/pi-tests/v6-session.sh stage
   MediaPlayer's smaller overlay probe. `overlaytest -s sand|yuv420 -x 3840x2160` pass (the display scales 4K
   overlays down to the 1920×1080 mode).
 
-## 10. MP1 (2026-11-21): MediaPlayer's full-screen toggle moves the plane (merged b7eb4b0084 + f814da3263, released in image-2026-11-21b)
+## 10. MP1 (2026-11-21): MediaPlayer's full-screen toggle moves the plane (merged b7eb4b0084 + f814da3263, released in image-2026-11-21b; app_server d0531402e0 merged after MP2, §10.5)
 
 Symptom (KNOWN-ISSUES F2's last sentence, seen on rpi4 and the S1 branch): MediaPlayer switched to full screen after
 its clip had ended shows the picture where the window was and paints the rest of the screen dark green, the key
@@ -410,7 +410,7 @@ colour `{0, 80, 0}`.
 |---|---|
 | b7eb4b0084 MediaPlayer | `SetVideoFrame()` → `_MoveOverlay()`: in overlay mode with a bitmap shown (under the bitmap lock; the consumer sets the bitmap to NULL before it deletes one, imported SAND pictures included), `SetViewOverlay()` with the same bitmap, the new frame and `B_OVERLAY_TRANSFER_CHANNEL` (app_server: `TakeOverToken()` of itself is a no-op, `Configure()` moves the plane), then `Invalidate(fVideoFrame)`: the key is drawn after the plane is there |
 | f814da3263 MediaPlayer | the `ToggleFullscreen` scripting command replied `B_BAD_SCRIPT_SYNTAX` although it toggled (`hey` printed an error; test scripts must ignore it on older images) |
-| d0531402e0 app_server | `AS_VIEW_SET_VIEW_BITMAP`: a transfer that changes the overlay's rectangle invalidates the view, as the first `SetViewOverlay()` does (generic: any client moving its overlay with its next frame; MediaPlayer's own invalidate makes it redundant there). A transfer to the same rectangle (every frame) does not. **Not shown to fix anything yet**: every case below was already fixed by b7eb4b0084 (§10.4) |
+| d0531402e0 app_server | `AS_VIEW_SET_VIEW_BITMAP`: a transfer that changes the overlay's rectangle invalidates the view, as the first `SetViewOverlay()` does (generic: any client moving its overlay with its next frame; MediaPlayer's own invalidate makes it redundant there). A transfer to the same rectangle (every frame) does not. **Merged into rpi4 after MP2** (§10.5): with the old MediaPlayer it alone fixes the playing case |
 
 Not changed: app_server still does not reconfigure an overlay when its view is moved or resized by the client
 (`AS_VIEW_MOVE_TO`/`RESIZE_TO`). Doing it there alone would not fix MediaPlayer (the `B_FOLLOW_ALL`-grown rectangle
@@ -468,4 +468,63 @@ and the worktree's build directory were deleted after the runs (rebuild: §8's r
   `SetViewOverlay()` per frame, has not run with it (a rectangle that changes during a scroll or resize now invalidates
   the view each time). It needs an image with it and the old MediaPlayer, playing → full screen with play-854x480
   (expected ~0 key pixels where rpi4 had 1.48 M; paused/ended still green there), and one Firefox video run.
-- Done with image-2026-11-21b: the sentence left KNOWN-ISSUES F2, HAIKU-RPI4-CHANGES row 75. d0531402e0 stays held.
+- Done with image-2026-11-21b: the sentence left KNOWN-ISSUES F2, HAIKU-RPI4-CHANGES row 75. d0531402e0 held then;
+  **merged after MP2** (§10.5: rpi4 fast-forwarded f814da3263 → d0531402e0, pushed 2026-11-21 14:50; not in a release yet).
+
+### 10.5 MP2 (2026-11-21): the app_server commit on its own, and with Firefox (**measured**; merged)
+
+Setup: the release image `haiku-pi4-2026-11-21b.img` (rpi4 f814da3263, GL, firefox -11, ffmpeg6 -8) on network
+sessions, the card untouched. d0531402e0's app_server (built in `sources/haiku-mp1` = rpi4 + d0531402e0; its MediaPlayer
+there came out byte-identical to rpi4's, so the build matches the release's) in `system/non-packaged/servers` with a
+`user_launch` override (checked: the non-packaged one ran, md5 equal to the staged file). The "old" MediaPlayer is
+rpi4's with b7eb4b0084 reverse-applied (f814da3263 kept), run from `/boot/home/mp2old` (`MP=` of mp1-fullscreen.sh).
+
+- control `mp2ctl` (14:23–14:31): release app_server + old MediaPlayer;
+- **B** `mp2a` (14:32–14:49): d0531402e0 app_server + old MediaPlayer;
+- **A** same session: d0531402e0 app_server + the release's (fixed) MediaPlayer.
+
+Key-colour pixels in full screen (HDMI, key-census.py; the window baseline 21–80):
+
+| Case | control (old MP, old app_server) | **B** (old MP, new app_server) | **A** (new MP, new app_server) | MP1 (new MP, old app_server) |
+|---|---|---|---|---|
+| H.264 854×480, playing → full | 1 482 711, 1 482 710, 1 482 710 | **11, 11, 11** | 11 | 11 |
+| HEVC 720p, playing → full | 970 160 (race lost this time) | **1** | 2 | 1 |
+| H.264 3:2, ended → full | 1 326 998 | 1 326 998 | 38 | 38 |
+| HEVC SAND, ended → full | — | 975 388 | 38 | 38 |
+| H.264 3:2, paused → full | — | 1 326 998 | 38 | 38 |
+| H.264 854×480, paused → full | — | 1 486 620 | 42 | 42 |
+| HEVC 720p, paused → full | — | 974 726 | 41 | 39 |
+
+- **B: app_server alone fixes the playing case**, 4 of 4 runs (control: 4 of 4 green, HEVC too this time). Paused and
+  ended stay green with the old MediaPlayer, as expected: no frame comes, so no transfer, so nothing for app_server to
+  act on — only the client knows its view moved (that part is b7eb4b0084's). Back to the window: 16–79 key pixels in
+  every case of both variants (the window baseline).
+- **A: no regression**: every case as MP1's; back to the window identical to the window before (ended/paused cases).
+  `video-overlay.sh play`: H.264 720p30 15.3 % of a CPU (MP1 13.4–14.4, M1 13.7–14.9; one play), 0 dropped, 1 late
+  update; HEVC 720p 3.0 % (2.9), SAND image type 19, 0 dropped, 0 late. S1 `mp-709-hevc` windowed/-alert/-full:
+  screenshot bars within 4 of ideal, 10 of HDMI (as R2).
+- **Firefox -11 on A** (ffv-a1-run.sh; control = the release app_server, same day, same clips):
+
+| Mode | control | A | R2 gate |
+|---|---|---|---|
+| measure 1080p30: plane frames in the 10 s window / total at the end | 303 / 1272 | 303 / 1379 | 300 / 1527 |
+| measure: dropped (whole run) | 35 | 16 | 17 |
+| measure: Renderer thread per 10 s; app_server team | 2102 ms; 83 ms | 1687 ms; 87 ms | 2232 ms; 98 ms |
+| fullscreen (script + double-click, the rectangle changes 4×): plane frames, shows/hides, dropped | 796, 3/2, 24 | 808, 3/2, 19 (rerun 791, 28) | — |
+| fullscreen, 5 s in full screen: Renderer; app_server's Firefox window thread | 363 ms; 79 ms | 327 ms; 93 ms | — |
+| scroll (640×360, glides): plane frames, shows/hides, dropped | 827, 8/7, 9 | 821, 8/7, 16 | — |
+| real without caption (glide 200 px and back): plane, shows/hides | 238, 4/4 | 236, 4/4 | — |
+| real (caption: software by design) | plane 0 | plane 0 | plane 0 |
+| quit | 1–2 s, 0 left | 1 s, 0 left | 1 s |
+
+  The numbers vary run to run as much as between the variants (fullscreen dropped 19 and 28 on A, 24 on control;
+  measure 35 on control, 16 on A). Firefox goes to software while its video moves (`unstable`), so it does not move the
+  plane per frame; the rectangle changes only at a show and a full-screen switch. HDMI snapshots of a full-screen Firefox
+  run on A (in, out, in by double-click, out by Esc): 0–57 key pixels. 0 debugger entries, 0 PANIC in both sessions.
+- Decision (14:50): **merged** — rpi4 fast-forwarded to d0531402e0 and pushed. With the next release: a
+  HAIKU-RPI4-CHANGES row (section 7, app_server).
+
+Outputs: `artifacts/mp2/{ctl,a,b}/` (census.txt per run, *-hdmi.png, *-shot.png, ff-*.txt, vov-play.txt, s1/),
+`artifacts/ffa1/MP2*`; UART `artifacts/uart/20261121-14{2303,3155}-session-mp2{ctl,a}.log`. The worktree's build
+directory was deleted.
+

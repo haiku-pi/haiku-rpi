@@ -11,13 +11,15 @@
 #   play-CLIP        CLIP playing: full screen after 5 s, back 4 s later
 # CLIP: col-601-sd (H.264 720x480, 3:2: B_YUV420 plane), col-601-hevc (HEVC 1280x720: SAND plane), play-854x480
 # (H.264, 2 min), play-hevc-720p30 (HEVC, 2 min). Default CASEs: setup and all of end/pause/play for the two codecs.
-# PI_SESSION_LABEL as for scripts/pi-ssh.sh.
+# PI_SESSION_LABEL as for scripts/pi-ssh.sh. MP=PATH (on the Pi): another MediaPlayer binary (its file name must stay
+# "MediaPlayer": hey and the kill below find it by name).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-[ $# -ge 1 ] || { sed -n 2,14p "$0" >&2; exit 2; }
+[ $# -ge 1 ] || { sed -n 2,15p "$0" >&2; exit 2; }
 out=$1; shift
 mkdir -p "$out"
 h=/boot/home/mp1
+mp=${MP:-/boot/system/apps/MediaPlayer}
 ssh_() { "$root/scripts/pi-ssh.sh" "$@"; }
 
 clip_file() {
@@ -39,7 +41,7 @@ snap() {
 
 # player NAME CLIP: a new MediaPlayer on CLIP from its start (the remembered position forgotten)
 player() {
-	ssh_ "rmattr Media:Frame $h/$2.mp4 2> /dev/null; (/boot/system/apps/MediaPlayer $h/$2.mp4 > $h/out/$1.log 2>&1 &); true"
+	ssh_ "rmattr Media:Frame $h/$2.mp4 2> /dev/null; ($mp $h/$2.mp4 > $h/out/$1.log 2>&1 &); true"
 }
 # (an unfixed MediaPlayer toggles but replies B_BAD_SCRIPT_SYNTAX: hey fails)
 toggle() { ssh_ "hey MediaPlayer do ToggleFullscreen of Window 0 > /dev/null 2>&1" || true; }
