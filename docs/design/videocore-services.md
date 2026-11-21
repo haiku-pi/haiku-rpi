@@ -368,6 +368,8 @@ whole run (~25 s), shown = the overlay plane's updates per 10 s. Three `rate` ru
 
 ### 7.5 Merging (for the main session, after the 2026-11-21 gate)
 
+**Merged 2026-11-21** as 289a46c68b (cherry-pick of f83e9d129b) on rpi4; KNOWN-ISSUES P2 updated (W47 11-21 06:19).
+
 - Merge `v8-h264-rate` into rpi4 (the ffmpeg add-on only; no package changes), **squashed into one commit with a
   corrected message**: a5011fe1cc's message says 1080p60 on the VideoCore dropped "216 of ~1200 frames in 20 s, the
   rest shown after seeks to key frames" — the runs show 216–538 dropped, 210–826 frames decoded of ~1500 in a ~25 s

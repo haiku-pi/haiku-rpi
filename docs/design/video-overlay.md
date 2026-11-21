@@ -324,6 +324,10 @@ removes the wrong value at the API level; nothing that used to work changed (`h2
 
 ## 8. V6: merging (for the main session)
 
+**Merged 2026-11-21** (M1): series B as 8efdb08ecf and the V7 pool as fd21dfd821 on rpi4 (pushed, head 59a8080cce);
+`patches/ffmpeg6-next` is folded into `patches/ffmpeg6` and ffmpeg6 6.1.6-8 is the image's (scripts/build-ffmpeg.sh, no
+`--next` any more; package not yet published). Pi results on the integration image: W47 2026-11-21 06:19.
+
 Branch `v6-video` of haiku-pi/haiku (from `rpi4` 6a20a50380), two series that merge separately:
 
 | Series | Commits | Needs |
