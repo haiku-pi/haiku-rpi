@@ -386,7 +386,7 @@ Symptom (KNOWN-ISSUES F2's last sentence, seen on rpi4 and the S1 branch): Media
 its clip had ended shows the picture where the window was and paints the rest of the screen dark green, the key
 colour `{0, 80, 0}`.
 
-### 10.1 Cause (two parts; **measured**, session `mp1before`)
+### 10.1 Cause (two parts; the symptoms **measured** in session `mp1before`, the paths from reading the code)
 
 1. **The plane does not move without a new frame.** `MainWin::_ToggleFullscreen()` moves and resizes the window;
    `FrameResized()` → `_ResizeVideoView()` moves and resizes the `B_FOLLOW_NONE` VideoView (`AS_VIEW_MOVE_TO`/
@@ -410,7 +410,7 @@ colour `{0, 80, 0}`.
 |---|---|
 | b7eb4b0084 MediaPlayer | `SetVideoFrame()` → `_MoveOverlay()`: in overlay mode with a bitmap shown (under the bitmap lock; the consumer sets the bitmap to NULL before it deletes one, imported SAND pictures included), `SetViewOverlay()` with the same bitmap, the new frame and `B_OVERLAY_TRANSFER_CHANNEL` (app_server: `TakeOverToken()` of itself is a no-op, `Configure()` moves the plane), then `Invalidate(fVideoFrame)`: the key is drawn after the plane is there |
 | f814da3263 MediaPlayer | the `ToggleFullscreen` scripting command replied `B_BAD_SCRIPT_SYNTAX` although it toggled (`hey` printed an error; test scripts must ignore it on older images) |
-| d0531402e0 app_server | `AS_VIEW_SET_VIEW_BITMAP`: a transfer that changes the overlay's rectangle invalidates the view, as the first `SetViewOverlay()` does (generic: any client moving its overlay with its next frame; MediaPlayer's own invalidate makes it redundant there). A transfer to the same rectangle (every frame) does not |
+| d0531402e0 app_server | `AS_VIEW_SET_VIEW_BITMAP`: a transfer that changes the overlay's rectangle invalidates the view, as the first `SetViewOverlay()` does (generic: any client moving its overlay with its next frame; MediaPlayer's own invalidate makes it redundant there). A transfer to the same rectangle (every frame) does not. **Not shown to fix anything yet**: every case below was already fixed by b7eb4b0084 (§10.4) |
 
 Not changed: app_server still does not reconfigure an overlay when its view is moved or resized by the client
 (`AS_VIEW_MOVE_TO`/`RESIZE_TO`). Doing it there alone would not fix MediaPlayer (the `B_FOLLOW_ALL`-grown rectangle
@@ -442,16 +442,19 @@ Key-colour pixels in full screen (HDMI; a window baseline is 21–80: window dec
 - Full screen: the bars fill the letterboxed frame (3:2 clip: x 150–1769 on the 1920×1080 mode; the census box of the
   coloured bars 354–1565 = the white and black bars excluded, as computed); before, the picture stayed at the
   window's place (151,22–629,501) at the window's scale.
-- Back to the window: snapshot identical to the window before the toggle in every case after the fix (same key and
-  bar counts); before, the window showed a crop of the full-screen-scaled picture.
+- Back to the window (ended and paused cases, the ones with a snapshot before the toggle): identical to the window
+  before the toggle after the fix (same key and bar counts); before, the window showed a crop of the full-screen-scaled
+  picture. Playing cases: the window back with 23–45 key pixels (the window baseline range).
 - Second tool: S1's screenshot read-back (branch images only) — 0–13 key pixels in every full-screen screenshot, the
-  bars where HDMI has them (after-mp/census-shots.txt). The before image has no read-back (its screenshots show
+  bars where HDMI has them (after-mp/ and after-final/census-shots.txt). The before image has no read-back (its screenshots show
   the key where the plane is: 1.3–1.5 M).
 - Regression check of the app_server change (`video-overlay.sh play`, session `mp1final`): H.264 720p30 13.4–14.4 %
   of one CPU (M1: 13.7–14.9 %), HEVC 720p 2.9 % (M1: 3.0 %), 0 dropped. One of three H.264 plays had nearly every
   plane update "late" (296 of 302), the other two 0–1; one HEVC play of the full-screen cases 141–164 late per 10 s, the
-  next 0; the before session had 5–12 in one HEVC play — a phase effect between 30 fps and the 60 Hz vblank, seen on
-  both images, not a cost of the change (it adds no invalidation per frame).
+  next 0. Such streaks (more than half of a play's updates late, the next play none) are older than this branch:
+  sessions `r1g` (image-2026-11-21's gate: 297 of 302), `m1-integ` (the before image: 285 of 301), `v8rate` (296 of
+  302), v1a, v6c1, v7b — a phase effect between 30 fps and the 60 Hz vblank, not caused by the change (by the code, it
+  adds no invalidation per frame; not measured separately).
 
 Outputs: `artifacts/mp1/{before,after-mp,after-final}/` (census.txt, *-hdmi.png, *-shot.png, MediaPlayer log lines;
 after-final/vov-play.txt). UART: `artifacts/uart/20261121-08*-session-mp1{before,after,final}.log`. The test images
@@ -459,5 +462,10 @@ and the worktree's build directory were deleted after the runs (rebuild: §8's r
 
 ### 10.4 Merging
 
-`mp1-fullscreen-overlay` (3 commits on rpi4 4edd36b41a) merges cleanly (fast-forward today). With the next release
-drop the sentence from KNOWN-ISSUES F2 and add a HAIKU-RPI4-CHANGES line (MediaPlayer + app_server).
+- **Merge up to f814da3263** (the two MediaPlayer commits; a fast-forward of rpi4 4edd36b41a today): session `mp1after`
+  (b7eb4b0084 alone) shows the whole fix, and `hey … ToggleFullscreen` answers rc 0 on the final image.
+- **d0531402e0 (app_server) not recommended yet**: nothing here exercises it positively, and Firefox, which calls
+  `SetViewOverlay()` per frame, has not run with it (a rectangle that changes during a scroll or resize now invalidates
+  the view each time). It needs an image with it and the old MediaPlayer, playing → full screen with play-854x480
+  (expected ~0 key pixels where rpi4 had 1.48 M; paused/ended still green there), and one Firefox video run.
+- With the next release: drop the sentence from KNOWN-ISSUES F2 and add a HAIKU-RPI4-CHANGES line (MediaPlayer).
