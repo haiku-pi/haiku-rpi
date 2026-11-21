@@ -178,7 +178,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [WINE-16](#wine-16) | Wine | setupapi | prefix update rewrites identical DLLs | performance | general | patches/wine-11.21/0021 | open | notes | short |
 | [FFMPEG-01](#ffmpeg-01) | FFmpeg | avcodec/mmaldec | Drain never sends EOS; last frames lost | wrong output | general | `patches/ffmpeg6/0002-mmal-haiku.patch` | open | notes | full |
 | [FFMPEG-02](#ffmpeg-02) | FFmpeg | avcodec/mmaldec | MMAL_EVENT_ERROR only logged; blank frames / loop | wrong output | general | `patches/ffmpeg6/0002-mmal-haiku.patch` | open | notes | full |
-| [FFMPEG-03](#ffmpeg-03) | FFmpeg | avcodec/mmaldec | framerate overwritten with 24000/1001 echo | wrong output | general | `patches/ffmpeg6-next/0007-mmal-frame-rate.patch` | open | notes | short |
+| [FFMPEG-03](#ffmpeg-03) | FFmpeg | avcodec/mmaldec | framerate overwritten with 24000/1001 echo | wrong output | general | `patches/ffmpeg6/0007-mmal-frame-rate.patch` | open | notes | short |
 | [BLENDER-01](#blender-01) | Blender | GHOST_SDL | Contexts made with none current don't share objects | wrong output | general | `patches/blender/0013-ghost-sdl-share-with-first-context.patch` | open | notes | full |
 | [BLENDER-02](#blender-02) | Blender | Movie output | CRF ignored by encoders without `crf` (#61708) | wrong output | general | `patches/blender/0010-ffmpeg-bitrate-from-crf-for-encoders-without-crf.patch` | open | notes | short |
 | [BLENDER-03](#blender-03) | Blender | GPU/OpenGL | Unknown GL vendor matches every vendor's workarounds | wrong output | general | `patches/blender/0004-gpu-classify-v3d.patch` | open | no | short |
@@ -2880,7 +2880,7 @@ else if (ret < 0 && !(ret == AVERROR(EAGAIN)))
 
 - **What:** `ffmmal_init_decoder()` tells the VideoCore 24000/1001 frames/s for every stream. `ffmal_update_format()` then copies the output port's frame rate, which is that same number, into `avctx->framerate`, replacing the rate the caller or the container gave.
 - **Severity / scope:** wrong output (stream metadata). An API user that trusts `avctx->framerate` plays at the wrong speed; Linux too. Platform-independent code.
-- **Our fix:** `patches/ffmpeg6-next/0007-mmal-frame-rate.patch`
+- **Our fix:** `patches/ffmpeg6/0007-mmal-frame-rate.patch`
 - **Patch:** attachable as-is after a rebase. The patch's own header says "`ffmpeg -c:v h264_mmal` showed 23.98 fps"; that was **not** reproduced in the CLI (docs/log/WEEK-2026-W47.md, 11-20 entry), so reword the commit message to the API-level effect before sending.
 - **Upstream status:** open. The code is unchanged at master `21c81303cb`, `libavcodec/mmaldec.c:334-337` and `:406-407`. — Tracker: trac searched "h264_mmal 23.98", "mmal framerate": none. code.ffmpeg.org: none.
 - **Short form because:** its test program is not written yet and the patch header overstates the symptom.
@@ -3800,7 +3800,7 @@ Candidates that were read and left out, with the reason: new features, tuning, H
 ### FFmpeg, Firefox, Blender, OpenUSD, OpenImageIO, raspberrypi/userland, U-Boot
 
 **FFmpeg**
-- `patches/ffmpeg6/0001-hevc-rpivid.patch`, `patches/ffmpeg6-next/0006-rpivid-out.patch`: Pi-only HEVC hwaccel, not upstream code.
+- `patches/ffmpeg6/0001-hevc-rpivid.patch`, `patches/ffmpeg6/0006-rpivid-out.patch`: Pi-only HEVC hwaccel, not upstream code.
 - `patches/ffmpeg6/0003-h264-vc.patch`: our own wrapper decoder (h264_vc).
 - `patches/ffmpeg6/0004-h264-mmal-encoder.patch`: new encoder. Upstream has no `mmalenc.c` (404 on master).
 - `patches/ffmpeg6/0002-mmal-haiku.patch`, parts not covered by FFMPEG-01/02:

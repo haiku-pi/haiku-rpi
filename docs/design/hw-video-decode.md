@@ -555,7 +555,7 @@ every allocation). The bench was reserved for the owner before this could be run
 ### 10.5 Merging and what is left
 
 **Merged 2026-11-21** (fd21dfd821 on rpi4, after series B 8efdb08ecf; ffmpeg6 -8 is the image's). On the integration
-image: 4K 7.1–8.2 %, SAND, 0/0/8 dropped in three plays, 1080p after each 4.3–4.5 % SAND; poolclone 6/6 (W47 11-21 06:19).
+image: 8-bit 4K 7.1–8.2 %, SAND, 0/0/8 dropped in three plays, 1080p after each 4.3–4.5 % SAND; poolclone 6/6 (W47 11-21 06:19).
 
 - Branch `v7-rpivid-reserve` (df33d556ca, b633e5cc13, 8349d5f2db, af5e4eaa54) sits on `v6-video`: **go — merge after
   series B** (af5e4eaa54 passed on the Pi, above). The driver change is additive (no API change; ffmpeg6 -7 never asks
