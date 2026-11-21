@@ -426,8 +426,8 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
   `scan_out_pool 0` in `~/config/settings/kernel/drivers/rpivid` and reboot. 4K Main 10 needs more than the pool and
   is converted as before.
 - From image-2026-11-21b the media kit **chooses the H.264 decoder by the stream's rate**: above 1080p at 45 fps
-  (1080p50/60) the VideoCore cannot keep up, so those streams decode on the CPU (1080p60: about 2 cores, every frame
-  shown); 1080p30 and below stay on the VideoCore. `FFMPEG_H264_MMAL=1` forces the VideoCore, `=0` the CPU.
+  (1080p50/60) the VideoCore cannot keep up, so those streams decode on the CPU (1080p60 in MediaPlayer: about 2 cores, every frame
+  shown; with RGB output, as in WebPositive, the CPU cannot keep up; Firefox's 1080p60 is unchanged, §8.2); 1080p30 and below stay on the VideoCore. `FFMPEG_H264_MMAL=1` forces the VideoCore, `=0` the CPU.
 - MediaPlayer's full screen (from image-2026-11-21b) keeps the video on the plane when switched paused or after the
   clip has ended; screenshots (the Screenshot app, `screenshot`) include what the display planes show.
 

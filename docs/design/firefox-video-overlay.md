@@ -845,8 +845,9 @@ decoder libraries, A1b builds abort on the two-video page more often than -7: 20
 **Known and accepted:**
 - A Firefox tooltip or popup window over a playing video has a dark green fringe (window-level translucency over the
   key).
-- Screenshots showed black where the plane is (fixed in image-2026-11-21b, gpu-stage6 §11).
 - The 1080p plane copy runs at ~670 MB/s (~0.14 core).
+
+(Screenshots showing black where the plane is, accepted here at first, was fixed in image-2026-11-21b: gpu-stage6 §11.)
 - -10 has less Pi time than -9: about 60 runs in ffa5–ffa7, against more than 100 for -9 and A1.
 - **A fullscreen stall, not explained:** FS1 (-9, ffa3, during the screen-saver session) lost ~12 s of video. By
   build: 1 stall in 15 A1b fullscreen runs (FS1; FS2, FX1–3 and ffa8's 10 clean), 0 of 3 on -7.
