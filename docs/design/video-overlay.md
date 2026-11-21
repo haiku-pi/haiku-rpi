@@ -326,7 +326,7 @@ removes the wrong value at the API level; nothing that used to work changed (`h2
 
 **Merged 2026-11-21** (M1): series B as 8efdb08ecf and the V7 pool as fd21dfd821 on rpi4 (pushed, head 59a8080cce);
 `patches/ffmpeg6-next` is folded into `patches/ffmpeg6` and ffmpeg6 6.1.6-8 is the image's (scripts/build-ffmpeg.sh, no
-`--next` any more; package not yet published). Pi results on the integration image: W47 2026-11-21 06:19.
+`--next` any more; published with image-2026-11-21b). Pi results on the integration image: W47 2026-11-21 06:19.
 
 Branch `v6-video` of haiku-pi/haiku (from `rpi4` 6a20a50380), two series that merge separately:
 
@@ -380,7 +380,7 @@ V6_SAND=1 tools/pi-tests/v6-session.sh stage
   MediaPlayer's smaller overlay probe. `overlaytest -s sand|yuv420 -x 3840x2160` pass (the display scales 4K
   overlays down to the 1920×1080 mode).
 
-## 10. MP1 (2026-11-21): MediaPlayer's full-screen toggle moves the plane (branch `mp1-fullscreen-overlay`, not merged)
+## 10. MP1 (2026-11-21): MediaPlayer's full-screen toggle moves the plane (merged b7eb4b0084 + f814da3263, released in image-2026-11-21b)
 
 Symptom (KNOWN-ISSUES F2's last sentence, seen on rpi4 and the S1 branch): MediaPlayer switched to full screen after
 its clip had ended shows the picture where the window was and paints the rest of the screen dark green, the key
@@ -468,4 +468,4 @@ and the worktree's build directory were deleted after the runs (rebuild: §8's r
   `SetViewOverlay()` per frame, has not run with it (a rectangle that changes during a scroll or resize now invalidates
   the view each time). It needs an image with it and the old MediaPlayer, playing → full screen with play-854x480
   (expected ~0 key pixels where rpi4 had 1.48 M; paused/ended still green there), and one Firefox video run.
-- With the next release: drop the sentence from KNOWN-ISSUES F2 and add a HAIKU-RPI4-CHANGES line (MediaPlayer).
+- Done with image-2026-11-21b: the sentence left KNOWN-ISSUES F2, HAIKU-RPI4-CHANGES row 75. d0531402e0 stays held.

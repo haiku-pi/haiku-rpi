@@ -262,8 +262,8 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
 
 - BDirectWindow/BWindowScreen clients that write the frame buffer with X = 0 while an overlay is
   visible get transparent pixels (black, or the overlay showing through).
-- Screenshots (`ReadBitmap` reads the front buffer) show black where a plane is — up to `rpi4` 59a8080cce;
-  branch `s1-overlay-readback` reads the planes back (§11).
+- Screenshots (`ReadBitmap` reads the front buffer) showed black where a plane is up to image-2026-11-21; from
+  image-2026-11-21b (`4edd36b41a`) app_server composes the shown overlays into the read-back (§11).
 - The key `{0, 80, 0}` drawn by anything inside an overlay's rectangle shows the overlay.
 
 ## 4. Video overlays (MediaPlayer)
@@ -649,7 +649,7 @@ app_server commits (a fast-forward), so the merge branch takes it with `git merg
 merge of `stage6-keying` into `rpi4`); Mesa, libglvnd and the mesa -2 packages are unchanged. With it, the
 A/B above has no non-plane case worse than −1 %; the plane cases at < 60 fps (QuakeSpasm −2 %) are Mesa's.
 
-## 11. Screenshots show what the planes show (S1, 2026-11-21; branch `s1-overlay-readback`, not merged)
+## 11. Screenshots show what the planes show (S1, 2026-11-21; merged 4edd36b41a, released in image-2026-11-21b)
 
 Problem (§3.4, KNOWN-ISSUES F2/G2): the HVS composes a plane into the picture on its way to HDMI, so the front
 buffer holds only the key; `BScreen::GetBitmap()` (the Screenshot app, `screenshot`) read black (alpha 0) where
@@ -778,3 +778,6 @@ from the accelerant and imported from rpivid, Firefox), and across mode changes 
 Then KNOWN-ISSUES F2/G2 and firefox-video-overlay.md lose "screenshots show black where the plane is" with the next
 release. Tools that read the screen back to check the *front buffer's keying* now see the composed picture
 (overlaytest's census was updated for that).
+
+**Done:** merged as 4edd36b41a (fast-forward) and released in image-2026-11-21b; KNOWN-ISSUES F2/G2,
+firefox-video-overlay.md and USER-GUIDE no longer list black screenshots (HAIKU-RPI4-CHANGES row 74).

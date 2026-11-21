@@ -1,7 +1,7 @@
 # VideoCore services beyond H.264 decoding (owner 2026-11-18, item 4)
 
 Status: **done (2026-11-19)**; image-2026-11-21 ships ffmpeg6 6.1.6-7 + raspberrypi_userland 20241223-4 (one VideoCore H.264
-stream system-wide, the decoder abort at Firefox quit fixed; [firefox-video-overlay.md](firefox-video-overlay.md) §9.6); V8 (§7, rate rule) not merged yet. (a) works on the Pi, (b) measured and decided (no VideoCore JPEG; a CPU-side
+stream system-wide, the decoder abort at Firefox quit fixed; [firefox-video-overlay.md](firefox-video-overlay.md) §9.6); V8 (§7, rate rule) released in image-2026-11-21b. (a) works on the Pi, (b) measured and decided (no VideoCore JPEG; a CPU-side
 translator fix instead), (c) works (ffmpeg, media kit), (d) no camera on the bench Pi: design only. Builds on VCHIQ + MMAL ([vchiq.md](vchiq.md) §6–§8: `/dev/vchiq`, Broadcom's
 libmmal in `raspberrypi_userland`, `h264_mmal` in the media kit) and on the YUV overlay work
 ([video-overlay.md](video-overlay.md), branch `v1-overlay`). In priority order:
@@ -285,7 +285,7 @@ Binaries of the tested builds and raw session output (not in git): `artifacts/v4
 
 ## 7. (V8) H.264: the decoder chosen by the stream's rate (2026-11-20)
 
-Haiku branch **`v8-h264-rate`** (haiku-pi, off rpi4 552c42233d, **not merged**): a5011fe1cc `ffmpeg: keep H.264 on
+Haiku branch **`v8-h264-rate`** (haiku-pi, off rpi4 552c42233d; squashed and merged as 289a46c68b, **released in image-2026-11-21b**): a5011fe1cc `ffmpeg: keep H.264 on
 the CPU when the VideoCore cannot keep up`, 0807f116bb `ffmpeg: name the hardware decoder's failure as the decoder
 choice`. Test: `tools/pi-tests/h264.sh rate` (new phase). Raw output: `artifacts/v8-rate/results/` (not in git).
 

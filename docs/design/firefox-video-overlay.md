@@ -256,7 +256,7 @@ Copies per 720p frame:
 | 10-bit HEVC (`hevc_rpivid` yuv420p10le), 4:2:2/4:4:4, RGB video | Software (MediaPlayer converts 10-bit with swscale; Firefox gets no such step) |
 | Colour space | The accelerant picks BT.709 from 720 lines, BT.601 below, limited range (video-overlay §5); Firefox knows the stream's (`GetYUVColorSpace()`, range). Use the plane only when they agree; software otherwise until a colour-space field reaches the accelerant (open in video-overlay §5). **-11 (§9.8):** the encoding goes with `SetViewOverlay()`; BT.601/BT.709 limited and BT.601 full range on the plane, the rest in software |
 | Fullscreen | The plane scales; the window's bitmap is the key only. The best case |
-| Screenshots | Black where the plane is (gpu-stage6 §3.4), as for MediaPlayer |
+| Screenshots | Black where the plane is up to image-2026-11-21; from image-2026-11-21b app_server composes the plane into the read-back (gpu-stage6 §11) |
 
 ## 3. GPU compositing: WebRender on V3D (Q3)
 
@@ -845,7 +845,7 @@ decoder libraries, A1b builds abort on the two-video page more often than -7: 20
 **Known and accepted:**
 - A Firefox tooltip or popup window over a playing video has a dark green fringe (window-level translucency over the
   key).
-- Screenshots show black where the plane is.
+- Screenshots showed black where the plane is (fixed in image-2026-11-21b, gpu-stage6 §11).
 - The 1080p plane copy runs at ~670 MB/s (~0.14 core).
 - -10 has less Pi time than -9: about 60 runs in ffa5–ffa7, against more than 100 for -9 and A1.
 - **A fullscreen stall, not explained:** FS1 (-9, ffa3, during the screen-saver session) lost ~12 s of video. By

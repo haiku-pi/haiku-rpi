@@ -419,6 +419,17 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
   the VideoCore, and rpivid's SAND→planar conversion ([design/video-overlay.md](design/video-overlay.md) §5).
   From image-2026-11-21 the plane shows each video in its own colour encoding (the stream's BT.601/BT.709 tag and
   range), not a guess from its height; untagged video is BT.709 from 720 lines on, BT.601 below.
+- From image-2026-11-21b **HEVC goes from the decoder to the plane without a copy**: the plane scans out the decoder's
+  own tiled (SAND) pictures. MediaPlayer at 1080p30 takes ~4 % of a core (was 24 %), 10-bit 1080p ~5 % (was 44 %),
+  and **8-bit 4K HEVC plays on the plane** at ~8 % of a core with no frames dropped (it was converted to RGB at 78 %).
+  The HEVC driver keeps 192 MiB of display-reachable memory for this from boot; to give it back, put
+  `scan_out_pool 0` in `~/config/settings/kernel/drivers/rpivid` and reboot. 4K Main 10 needs more than the pool and
+  is converted as before.
+- From image-2026-11-21b the media kit **chooses the H.264 decoder by the stream's rate**: above 1080p at 45 fps
+  (1080p50/60) the VideoCore cannot keep up, so those streams decode on the CPU (1080p60: about 2 cores, every frame
+  shown); 1080p30 and below stay on the VideoCore. `FFMPEG_H264_MMAL=1` forces the VideoCore, `=0` the CPU.
+- MediaPlayer's full screen (from image-2026-11-21b) keeps the video on the plane when switched paused or after the
+  clip has ended; screenshots (the Screenshot app, `screenshot`) include what the display planes show.
 
 ### 7.3 Audio: HDMI and the 3.5 mm jack
 
@@ -490,7 +501,8 @@ video (also through MSE). Firefox draws the video itself again whenever the plan
 captions, controls or any translucent content over it, while the page scrolls, when it is partly outside the
 window, for the smaller of two videos, for BT.2020 and full-range BT.709 streams, and during a screen mode change.
 `MOZ_HAIKU_VIDEO_OVERLAY=0` (set before starting Firefox) turns the plane off. Side effects: a tooltip over a
-playing video has a dark green fringe, and screenshots show black where the video is.
+playing video has a dark green fringe. Screenshots show the video (from image-2026-11-21b; before, black where the
+video was).
 
 **Limits:**
 
