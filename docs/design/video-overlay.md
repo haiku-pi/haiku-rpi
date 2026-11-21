@@ -464,7 +464,7 @@ and the worktree's build directory were deleted after the runs (rebuild: §8's r
 
 - **Merge up to f814da3263** (the two MediaPlayer commits; a fast-forward of rpi4 4edd36b41a today): session `mp1after`
   (b7eb4b0084 alone) shows the whole fix, and `hey … ToggleFullscreen` answers rc 0 on the final image.
-- **d0531402e0 (app_server) not recommended yet**: nothing here exercises it positively, and Firefox, which calls
+- *(Superseded by §10.5: merged after MP2.)* **d0531402e0 (app_server) not recommended yet**: nothing here exercises it positively, and Firefox, which calls
   `SetViewOverlay()` per frame, has not run with it (a rectangle that changes during a scroll or resize now invalidates
   the view each time). It needs an image with it and the old MediaPlayer, playing → full screen with play-854x480
   (expected ~0 key pixels where rpi4 had 1.48 M; paused/ended still green there), and one Firefox video run.
@@ -500,8 +500,9 @@ Key-colour pixels in full screen (HDMI, key-census.py; the window baseline 21–
   act on — only the client knows its view moved (that part is b7eb4b0084's). Back to the window: 16–79 key pixels in
   every case of both variants (the window baseline).
 - **A: no regression**: every case as MP1's; back to the window identical to the window before (ended/paused cases).
-  `video-overlay.sh play`: H.264 720p30 15.3 % of a CPU (MP1 13.4–14.4, M1 13.7–14.9; one play), 0 dropped, 1 late
-  update; HEVC 720p 3.0 % (2.9), SAND image type 19, 0 dropped, 0 late. S1 `mp-709-hevc` windowed/-alert/-full:
+  `video-overlay.sh play`: H.264 720p30 15.3 % of a CPU in one play, 0 dropped, 1 late update — above the earlier
+  13.4–14.9 % (M1), but MP1's `mp1final` ran this same app_server commit for three plays at 13.4–14.4 %, and the change
+  adds no work per frame (same rectangle: no invalidate); HEVC 720p 3.0 % (2.9), SAND image type 19, 0 dropped, 0 late. S1 `mp-709-hevc` windowed/-alert/-full:
   screenshot bars within 4 of ideal, 10 of HDMI (as R2).
 - **Firefox -11 on A** (ffv-a1-run.sh; control = the release app_server, same day, same clips):
 
@@ -511,7 +512,7 @@ Key-colour pixels in full screen (HDMI, key-census.py; the window baseline 21–
 | measure: dropped (whole run) | 35 | 16 | 17 |
 | measure: Renderer thread per 10 s; app_server team | 2102 ms; 83 ms | 1687 ms; 87 ms | 2232 ms; 98 ms |
 | fullscreen (script + double-click, the rectangle changes 4×): plane frames, shows/hides, dropped | 796, 3/2, 24 | 808, 3/2, 19 (rerun 791, 28) | — |
-| fullscreen, 5 s in full screen: Renderer; app_server's Firefox window thread | 363 ms; 79 ms | 327 ms; 93 ms | — |
+| fullscreen, 5 s in full screen: Renderer; app_server's Firefox window thread | 363 ms; 79 ms | 327, 259 ms; 93, 77 ms | — |
 | scroll (640×360, glides): plane frames, shows/hides, dropped | 827, 8/7, 9 | 821, 8/7, 16 | — |
 | real without caption (glide 200 px and back): plane, shows/hides | 238, 4/4 | 236, 4/4 | — |
 | real (caption: software by design) | plane 0 | plane 0 | plane 0 |
