@@ -379,3 +379,85 @@ V6_SAND=1 tools/pi-tests/v6-session.sh stage
 - **4K on the plane**: 4K HEVC now plays on the SAND plane (hw-video-decode.md §10): the rpivid scan-out pool and
   MediaPlayer's smaller overlay probe. `overlaytest -s sand|yuv420 -x 3840x2160` pass (the display scales 4K
   overlays down to the 1920×1080 mode).
+
+## 10. MP1 (2026-11-21): MediaPlayer's full-screen toggle moves the plane (branch `mp1-fullscreen-overlay`, not merged)
+
+Symptom (KNOWN-ISSUES F2's last sentence, seen on rpi4 and the S1 branch): MediaPlayer switched to full screen after
+its clip had ended shows the picture where the window was and paints the rest of the screen dark green, the key
+colour `{0, 80, 0}`.
+
+### 10.1 Cause (two parts; **measured**, session `mp1before`)
+
+1. **The plane does not move without a new frame.** `MainWin::_ToggleFullscreen()` moves and resizes the window;
+   `FrameResized()` → `_ResizeVideoView()` moves and resizes the `B_FOLLOW_NONE` VideoView (`AS_VIEW_MOVE_TO`/
+   `AS_VIEW_RESIZE_TO`: app_server moves the view's bitmap rectangle but never reconfigures its overlay; only a
+   window move/resize and show/hide do) and calls `VideoView::SetVideoFrame()`, which only invalidated. The overlay
+   was put into `fVideoFrame` by `SetBitmap()`, i.e. by the next video frame. Paused or ended, none comes: the plane
+   stays at the old place and scale while `Draw()` fills the new frame with the key colour. Back from full screen the
+   same: the window shows a crop of the full-screen-scaled picture (before/end-col-601-hevc-3back-hdmi.png).
+2. **Key pixels written before the plane got there stay opaque.** With keying (gpu-stage6.md, `HWInterface::
+   _ShowOverlayKey()`), the frame buffer is blended over the plane, and a key pixel is transparent only if it is
+   written while it lies inside a configured overlay rectangle. `SetViewOverlay(… B_OVERLAY_TRANSFER_CHANNEL)` (each
+   new frame) did not invalidate the view. So **during playback** too, when `Draw()` ran before the next frame moved
+   the plane, the new frame's key stayed opaque green: H.264 854×480 playing, toggled to full screen, 1.48 M green
+   pixels 2 s later with the plane already full-screen behind them (only the old window rectangle and a strip
+   repainted later let it through: before/play-play-854x480-2full-hdmi.png). HEVC 720p playing happened to win the race
+   (0 green).
+
+### 10.2 Change (haiku-pi/haiku `mp1-fullscreen-overlay`, on `rpi4` 4edd36b41a)
+
+| Commit | Change |
+|---|---|
+| b7eb4b0084 MediaPlayer | `SetVideoFrame()` → `_MoveOverlay()`: in overlay mode with a bitmap shown (under the bitmap lock; the consumer sets the bitmap to NULL before it deletes one, imported SAND pictures included), `SetViewOverlay()` with the same bitmap, the new frame and `B_OVERLAY_TRANSFER_CHANNEL` (app_server: `TakeOverToken()` of itself is a no-op, `Configure()` moves the plane), then `Invalidate(fVideoFrame)`: the key is drawn after the plane is there |
+| f814da3263 MediaPlayer | the `ToggleFullscreen` scripting command replied `B_BAD_SCRIPT_SYNTAX` although it toggled (`hey` printed an error; test scripts must ignore it on older images) |
+| d0531402e0 app_server | `AS_VIEW_SET_VIEW_BITMAP`: a transfer that changes the overlay's rectangle invalidates the view, as the first `SetViewOverlay()` does (generic: any client moving its overlay with its next frame; MediaPlayer's own invalidate makes it redundant there). A transfer to the same rectangle (every frame) does not |
+
+Not changed: app_server still does not reconfigure an overlay when its view is moved or resized by the client
+(`AS_VIEW_MOVE_TO`/`RESIZE_TO`). Doing it there alone would not fix MediaPlayer (the `B_FOLLOW_ALL`-grown rectangle
+is not the letterboxed video frame for a 3:2 clip), and it would add two plane configurations at a wrong rectangle per
+toggle; left as a possible upstream improvement.
+
+### 10.3 Pi results (network sessions, the card untouched, 0 PANIC / debugger entries; **measured**)
+
+`tools/pi-tests/mp1-fullscreen.sh` (MediaPlayer per case, HDMI snapshot + screenshot per state) and
+`tools/pi-tests/key-census.py` (key-colour pixels in the HDMI snapshot; where the colour bars are). Images: before =
+`haiku-pi4-integ-1121.img` (rpi4 59a8080cce, one commit before the branch's base: S1's screenshot read-back missing,
+nothing else in this path), session `mp1before` 08:31–08:35; MediaPlayer fix only (b7eb4b0084 image), `mp1after`
+08:44–08:47; the whole branch (d0531402e0 tree), `mp1final` 08:56–09:03. Clips: col-601-sd (H.264 720×480, 3:2,
+`B_YUV420` plane, h264_mmal), col-601-hevc (HEVC 1280×720, SAND plane zero copy, image type 19), play-854x480 (H.264),
+play-hevc-720p30.
+
+Key-colour pixels in full screen (HDMI; a window baseline is 21–80: window decorations and controls):
+
+| Case | before | MediaPlayer fix | whole branch |
+|---|---|---|---|
+| H.264 3:2, ended → full | 1 326 998 | 38 | 38 |
+| HEVC SAND, ended → full | 975 388 | 38 | 38 |
+| H.264 3:2, paused → full | 1 326 998 | 38 | 38 |
+| H.264 854×480, paused → full | 1 486 620 | 42 | 42 |
+| HEVC 720p, paused → full | 974 727 | 39 | 41 |
+| H.264 854×480, playing → full | 1 482 710 | 11 | 12, 10 |
+| HEVC 720p, playing → full | 0 | 1 | 1, 1 |
+
+- Full screen: the bars fill the letterboxed frame (3:2 clip: x 150–1769 on the 1920×1080 mode; the census box of the
+  coloured bars 354–1565 = the white and black bars excluded, as computed); before, the picture stayed at the
+  window's place (151,22–629,501) at the window's scale.
+- Back to the window: snapshot identical to the window before the toggle in every case after the fix (same key and
+  bar counts); before, the window showed a crop of the full-screen-scaled picture.
+- Second tool: S1's screenshot read-back (branch images only) — 0–13 key pixels in every full-screen screenshot, the
+  bars where HDMI has them (after-mp/census-shots.txt). The before image has no read-back (its screenshots show
+  the key where the plane is: 1.3–1.5 M).
+- Regression check of the app_server change (`video-overlay.sh play`, session `mp1final`): H.264 720p30 13.4–14.4 %
+  of one CPU (M1: 13.7–14.9 %), HEVC 720p 2.9 % (M1: 3.0 %), 0 dropped. One of three H.264 plays had nearly every
+  plane update "late" (296 of 302), the other two 0–1; one HEVC play of the full-screen cases 141–164 late per 10 s, the
+  next 0; the before session had 5–12 in one HEVC play — a phase effect between 30 fps and the 60 Hz vblank, seen on
+  both images, not a cost of the change (it adds no invalidation per frame).
+
+Outputs: `artifacts/mp1/{before,after-mp,after-final}/` (census.txt, *-hdmi.png, *-shot.png, MediaPlayer log lines;
+after-final/vov-play.txt). UART: `artifacts/uart/20261121-08*-session-mp1{before,after,final}.log`. The test images
+and the worktree's build directory were deleted after the runs (rebuild: §8's recipe with `sources/haiku-mp1`).
+
+### 10.4 Merging
+
+`mp1-fullscreen-overlay` (3 commits on rpi4 4edd36b41a) merges cleanly (fast-forward today). With the next release
+drop the sentence from KNOWN-ISSUES F2 and add a HAIKU-RPI4-CHANGES line (MediaPlayer + app_server).
