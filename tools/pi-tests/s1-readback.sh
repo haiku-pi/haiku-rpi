@@ -13,6 +13,7 @@
 #                              (a rectangle of the screen: screenread -r)
 #   mp-CLIP                    MediaPlayer plays col-CLIP.mp4 (709-hd 601-sd 601full-hd 709-hevc 709-hevc10):
 #                              windowed, -alert (an alert window over the video), -full (full screen, scaled)
+#   pause-FILE                 MediaPlayer plays $h/FILE (copy it there first), paused after 6 s
 #   ff                         Firefox plays col-709-hd.mp4 in a page (the video on the plane: firefox -11)
 #   gl                         glflip -b: full-screen GL on a plane, still colour bars; gl-cover: with a window over it
 # Default CASEs: all of them. The mouse pointer is put at the bottom right corner first (HDMI shows it, a screenshot
@@ -91,6 +92,17 @@ case_mp() {
 	  planes; } | tee -a "$out/$name.txt"
 }
 
+# a real clip (copied to $h first), paused after 6 s: moving content, still for the comparison
+case_pause() {
+	local clip=$1 name=pause-${1%.*}
+	mark_syslog
+	ssh_ "(/boot/system/apps/MediaPlayer $h/$clip > $h/out/$name.log 2>&1 &); sleep 6; hey MediaPlayer do TogglePlaying of Window 0 > /dev/null; sleep 2"
+	snap $name
+	ssh_ "hey MediaPlayer quit > /dev/null 2>&1; sleep 2" || true
+	kill_named MediaPlayer
+	{ ssh_ "grep -a -E '^AVCodecDecoder' $h/out/$name.log | sort | uniq -c | head -n 6" || true; planes; } | tee -a "$out/$name.txt"
+}
+
 case_ff() {
 	mark_syslog
 	ssh_ "mkdir -p /boot/home/s1-ffx; printf 'user_pref(\"browser.aboutwelcome.enabled\", false);\nuser_pref(\"browser.shell.checkDefaultBrowser\", false);\nuser_pref(\"media.autoplay.default\", 0);\nuser_pref(\"datareporting.policy.firstRunURL\", \"\");\n' > /boot/home/s1-ffx/user.js; printf '<!DOCTYPE html><html><body style=\"margin:0;background:#404040\"><video src=\"file://$h/col-709-hd.mp4\" width=\"960\" height=\"540\" autoplay loop muted></video></body></html>' > $h/video.html; (MOZ_CRASHREPORTER_DISABLE=1 /boot/system/apps/Firefox/Firefox --no-remote --profile /boot/home/s1-ffx file://$h/video.html > $h/out/ff.log 2>&1 &); sleep 40"
@@ -122,6 +134,7 @@ run() {
 	ovl-*) case_ovl "${1#ovl-}" ;;
 	mp-*) case_mp "${1#mp-}" ;;
 	ff) case_ff ;;
+	pause-*) case_pause "${1#pause-}" ;;
 	gl|gl-cover) case_gl "$1" ;;
 	*) echo "s1: unknown case $1" >&2 ;;
 	esac

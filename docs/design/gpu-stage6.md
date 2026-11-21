@@ -262,7 +262,8 @@ bitmap; app_server copies nothing — the view is a key-coloured rectangle that 
 
 - BDirectWindow/BWindowScreen clients that write the frame buffer with X = 0 while an overlay is
   visible get transparent pixels (black, or the overlay showing through).
-- Screenshots (`ReadBitmap` reads the front buffer) show black where a plane is.
+- Screenshots (`ReadBitmap` reads the front buffer) show black where a plane is — up to `rpi4` 59a8080cce;
+  branch `s1-overlay-readback` reads the planes back (§11).
 - The key `{0, 80, 0}` drawn by anything inside an overlay's rectangle shows the overlay.
 
 ## 4. Video overlays (MediaPlayer)
@@ -647,3 +648,117 @@ scripts/build.sh -sHAIKU_PI_GL=1 @pi-mmc && grep -a 'mesa.*not available' artifa
 app_server commits (a fast-forward), so the merge branch takes it with `git merge stage6-keying` (or a new
 merge of `stage6-keying` into `rpi4`); Mesa, libglvnd and the mesa -2 packages are unchanged. With it, the
 A/B above has no non-plane case worse than −1 %; the plane cases at < 60 fps (QuakeSpasm −2 %) are Mesa's.
+
+## 11. Screenshots show what the planes show (S1, 2026-11-21; branch `s1-overlay-readback`, not merged)
+
+Problem (§3.4, KNOWN-ISSUES F2/G2): the HVS composes a plane into the picture on its way to HDMI, so the front
+buffer holds only the key; `BScreen::GetBitmap()` (the Screenshot app, `screenshot`) read black (alpha 0) where
+MediaPlayer's video, Firefox's video or a full-screen GL program was.
+
+### 11.1 Change (haiku `s1-overlay-readback` 4edd36b41a on `rpi4` 59a8080cce, pushed)
+
+Generic app_server code, no accelerant or driver change:
+
+- `HWInterface` keeps a list of the overlays shown (token, buffer, view, window — a copy taken under
+  `fOverlayChangeLock` when the accelerant accepted `configure_overlay`), in the order they were first shown;
+  an entry goes when the overlay is hidden, its channel released, or its buffer freed (`AccelerantHWInterface::
+  FreeOverlayBuffer()` takes the lock and drops it *before* the accelerant frees the buffer: a mode change suspends
+  overlays by freeing their buffers while the channel lives).
+- `DrawingEngine::ReadBitmap()` (AS_READ_BITMAP, exclusive lock held): while an overlay is shown and the frame
+  buffer is 32-bit, it copies the requested rectangle of the front buffer into a B_RGB32 temporary,
+  `HWInterface::ReadBackOverlays()` draws each overlay into it, and the temporary is imported into the client's
+  bitmap instead of the front buffer (so other bitmap spaces and sub-rectangles work as before); the cursor is
+  blended afterwards as before. With no overlay shown the path is byte-for-byte the old one.
+- `OverlayReadBack.cpp` (`read_back_overlay()`, no app_server dependencies): unpacks the buffer (B_RGB32/RGBA32,
+  B_RGB16, B_RGB15, B_YCbCr422, B_YUV420 planar with the accelerant's/ffmpeg's layout, B_YUV420_SAND128 and
+  _SAND128_10 by GraphicsDefs.h's definition, column heights taller than the minimum included) into 16-bit planes,
+  reading write-combining memory in whole rows or 128-byte column rows; maps every destination pixel of the
+  window (offsets and mirroring honoured, clipped to the read rectangle) to the view bilinearly (chroma sited
+  as MPEG-2/H.264/HEVC: with the even luma samples horizontally, between two rows vertically); converts YCbCr with
+  the window's encoding flags (BT.601/709/2020, limited or full range, 8 or 10 bit; without a matrix BT.709 from
+  720 lines on, BT.601 below — the rule the accelerant applies); writes it only where the key lets the overlay
+  show: front-buffer alpha 0 when the accelerant keys by alpha (`B_OVERLAY_KEYING_USES_ALPHA`), else the
+  window's colour key (RGB, value and mask), else the whole window.
+- Limits: z-order between overlapping overlays is "shown later = above" (the Pi's accelerant hands out the lowest
+  free plane, layer 16 + plane, so that matches unless a plane was freed and reused); the `overlay_above_desktop`
+  debug setting (overlays above an opaque desktop) is read back as keyed; frame buffers other than 32-bit are read
+  as before (no overlays drawn); at most 8 overlays (the key list's size; the Pi has 6 planes).
+
+### 11.2 Host test
+
+`tools/haiku-tests/host-overlay-readback/run.sh sources/haiku-s1` → `READBACK 74147017 geometry and 30720 color
+pixels checked, 0 failures: PASS` (~3 s). Random pictures in all eight colour spaces packed by the layouts'
+definitions, random views/windows (partly outside, offsets, mirrored, ×2, ×½, arbitrary scale), read rectangles
+and keys (alpha, colour, none), SAND widths not multiples of 128/96 and taller columns, every pixel against a
+reference from the sample planes (±1); and 75 % bars plus a grey ramp encoded in BT.601/709/2020, limited and full,
+8 and 10 bit, which must come back as the RGB they were made from (±1). Mutation check: 11 of 12 deliberate
+defects (SAND chroma offset, 10-bit shift, Cb/Cr swap, mirroring, default matrix, alpha test, chroma siting, window
+offsets, RGB15 shift, YCbCr422 byte order, Cr plane offset) fail it; the twelfth (Kb 0.0722 → 0.0723) is below one
+code value. `scripts/arm64-compile-check.sh` (new: `SRC@OTHER.cpp` for a file the main build has no line for):
+the four touched sources compile with the arm64 flags (-Werror).
+
+### 11.3 Pi test (session `s1`, 07:23–07:37, network boot, SD card untouched)
+
+Image `artifacts/images/s1-readback.img`: `scripts/build.sh --generated sources/haiku-s1/generated.arm64
+-sHAIKU_PI_GL=1 -sHAIKU_IMAGE_SIZE=4500 @pi-mmc` (PI_IMAGE_OUT; full build in the worktree 6 min, jam rc 0, the
+usual 11 "not available" packages). Kit and runner: `tools/pi-tests/s1-readback.sh OUTDIR [CASE...]` (screenshot
+with the `screenshot` command, HDMI snapshot right after, `tools/pi-tests/shot-vs-hdmi.py` and `colour-bars.py`;
+the pointer moved to the corner first), `tools/haiku-tests/screenread.cpp` (GetBitmap of a rectangle, timed),
+`glflip -b` (new: still colour bars, full screen), `overlaytest -p` (new: longer cover/off-screen phases).
+Outputs: `artifacts/s1/run1/<case>-shot.png`, `<case>-hdmi.png`, `<case>.txt` (repeat: `artifacts/s1/run2/`).
+
+The capture chain's own error first (`desk`, `desk-after`, no overlay): median 7 per pixel (the capture card reads
+75 % bars as 178–186 instead of 191), edges ring by up to ~50 at sharp colour edges, shift 0,0. "Bars" below =
+`colour-bars.py`'s 9×9 means at the eight bar centres; "shot vs ideal" = largest deviation of the screenshot's
+bars from 75 % bars (white 100 %), "vs HDMI" = largest per-channel difference between screenshot and HDMI bars.
+
+| Case | Plane (driver line) | Shot vs ideal | Shot vs HDMI | Geometry |
+|---|---|---|---|---|
+| overlaytest rgb32 (cover / off / hold) | type 44 | — (bars 191 white) | 9 | window over it intact, cut at the left edge, rect median 6–9 |
+| overlaytest yuv420 320×240 → 640×480 | type 3, enc 1 | — | 10 | as above |
+| overlaytest yuv420 1280×720 (BT.709 by default) | type 3, enc 2 | — | 10 | as above, 1:1 |
+| overlaytest sand / sand10 (accelerant buffers) | type 19 / 59, enc 1 | — | 10 / 10 | as above |
+| MediaPlayer col-709-hd (H.264, h264_mmal, B_YUV420) | type 3, enc 2 | 4 | 10 | windowed, alert over it, full screen |
+| MediaPlayer col-601-sd (720×480) | type 3, enc 1 | 1 | 10 | windowed, alert |
+| MediaPlayer col-601full-hd (JPEG range) | type 3, enc 3 | 2 | 11 | windowed, alert, full screen |
+| MediaPlayer col-709-hevc (rpivid, zero copy SAND) | type 19, enc 2 | 4 | 10 | windowed, alert, full screen |
+| MediaPlayer col-709-hevc10 (SAND 10 bit) | type 59, enc 2 | 2 | 11 | windowed, alert, full screen |
+| Firefox 157.0.1-11, col-709-hd in a page | type 3, enc 2 | 4 | 10 | video in the page at 960×540 |
+| glflip -b, full-screen GL (BGLView, Mesa plane) | type 44 | 0 | 9 | whole screen; `gl-cover`: the yellow window over it intact |
+| MediaPlayer play-1080p30.mp4 paused (real picture) | type 3, enc 2 | — | median 7, p95 14 | whole screen |
+
+- **Colours:** every screenshot's bars are within 0–4 of the ideal values; against HDMI they differ by 9–11, which
+  is the capture chain's own offset (the same 9 for the GL plane, which is RGB and involves no YCbCr conversion at
+  all). So the read-back is within a few code values of what the plane shows.
+- **Position:** the overlay rectangles' edges (window borders next to the picture) land on the same pixel in both;
+  across colour edges *inside* YCbCr pictures the HDMI's chroma transitions lie 1–2 output pixels further right
+  than ours at 2× scaling (shot-vs-hdmi "shift -2,0" over those rectangles; RGB planes and 1:1 show -1 or 0): the
+  HVS's chroma filter/siting, which is not documented; the read-back uses the codecs' standard siting.
+- **Windows over the video** (overlaytest's cover window, an `alert` over MediaPlayer, glflip's cover window) stay
+  in the screenshot; the part of a window moved off screen is cut as on HDMI; `screenread -r 60 150 400 300` (a
+  rectangle across an overlay's edge) matches the HDMI crop (median 6).
+- **No regression:** with no overlay shown the read-back takes the old path (`desk-after`: median 7, 0.07 % > 24,
+  as `desk`); overlaytest's front-buffer census now finds the bars where the key was ("293760 bar-coloured",
+  PASS); 0 PANIC, 0 debugger entries.
+- **Cost:** GetBitmap of the whole 1080p screen 30 ms without overlays, 80–95 ms with a 320×240 overlay,
+  ~160–175 ms with a 1280×720 one and 280–390 ms with a 1080p video (B_YUV420 or SAND). The exclusive lock is held
+  meanwhile: glflip counted 2–3 stalls up to 0.3 s in runs with three read-backs (screenread, screenshot,
+  screenread); a screenshot is rare, so this was not optimised.
+- **Before** (session `s1base` 07:49–07:50 on `artifacts/images/haiku-pi4-integ-1121.img` = `rpi4` 59a8080cce, same
+  runner, `artifacts/s1/base/`): `mp-709-hd` screenshots are black where the video is — 1 443 540 "holes" (black in
+  the screenshot, not on HDMI) against 963–968 with the branch (those are the bars' colour edges, where HDMI's chroma
+  smears into the black bar).
+- Seen on the display itself, not caused by the read-back (the screenshot shows the same, and `rpi4` without the
+  change shows it on HDMI too, `base/mp-709-hd-full-hdmi.png`): MediaPlayer toggled to full screen (`hey MediaPlayer
+  do ToggleFullscreen`) after its 10-s clip has ended leaves the plane where the window was and the rest of the
+  screen in the key colour (dark green). One HDMI snapshot (`run1/ovl-sand-off`) showed the SAND plane with other
+  colours (more green, less red: as if decoded with another matrix), not repeated in `run2`. Both open, not S1's.
+
+### 11.4 Merge recommendation
+
+Merge `s1-overlay-readback` into `rpi4` (one commit, app_server only: `HWInterface`, `AccelerantHWInterface`,
+`DrawingEngine::ReadBitmap()`, new `OverlayReadBack.{h,cpp}`). It changes nothing while no overlay is shown and
+was checked on the Pi in every plane path (RGB GL plane, B_YUV420, SAND 8/10 accelerant and imported, Firefox).
+Then KNOWN-ISSUES F2/G2 and firefox-video-overlay.md lose "screenshots show black where the plane is" with the next
+release. Tools that read the screen back to check the *front buffer's keying* now see the composed picture
+(overlaytest's census was updated for that).
