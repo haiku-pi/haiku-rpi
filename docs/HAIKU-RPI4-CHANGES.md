@@ -13,7 +13,8 @@ on 2026-10-31 (`e500bbf968`, 22 more), on 2026-11-17 (`fcce01cf3e`, 164 more) an
 Upstream is merged again every weekend; see [log/](log/).
 
 On top of that base the fork carries **359 commits of its own** (2026-10-18 to 2026-11-22; counted
-2026-11-22 at `rpi4` eaeb21e6e6). Since the 11-17 merge, two of them are upstream's: their
+2026-11-22 at `rpi4` eaeb21e6e6). The newest release image, **image-2026-11-22**, is built from `eaeb21e6e6`, so
+every change below is in it (rows 76–79 of "Start here" are new in it). Since the 11-17 merge, two of them are upstream's: their
 `send_signal_to_thread_forced()` (4197d30fc1) replaced our `send_fault_signal()` (`6e517bb52c`), and their area
 protection masks (af99ec6c14) the protection half of `894c4abe7f`. To list them, in `sources/haiku`:
 

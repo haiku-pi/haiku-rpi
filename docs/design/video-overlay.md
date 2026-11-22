@@ -522,8 +522,8 @@ Key-colour pixels in full screen (HDMI, key-census.py; the window baseline 21–
   measure 35 on control, 16 on A). Firefox goes to software while its video moves (`unstable`), so it does not move the
   plane per frame; the rectangle changes only at a show and a full-screen switch. HDMI snapshots of a full-screen Firefox
   run on A (in, out, in by double-click, out by Esc): 0–57 key pixels. 0 debugger entries, 0 PANIC in both sessions.
-- Decision (14:50): **merged** — rpi4 fast-forwarded to d0531402e0 and pushed. With the next release: a
-  HAIKU-RPI4-CHANGES row (section 7, app_server).
+- Decision (14:50): **merged** — rpi4 fast-forwarded to d0531402e0 and pushed. Released in image-2026-11-22
+  (HAIKU-RPI4-CHANGES "Start here" row 76, section 7 app_server row).
 
 Outputs: `artifacts/mp2/{ctl,a,b}/` (census.txt per run, *-hdmi.png, *-shot.png, ff-*.txt, vov-play.txt, s1/),
 `artifacts/ffa1/MP2*`; UART `artifacts/uart/20261121-14{2303,3155}-session-mp2{ctl,a}.log`. The worktree's build

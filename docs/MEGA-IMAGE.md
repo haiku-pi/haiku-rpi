@@ -42,6 +42,10 @@ first boot creates that folder and sets Wine up (about two minutes, a notificati
 `scripts/pi-test.sh` boots the card with a DHCP server on the Pi LAN (the host is the gateway and DNS
 server; the firmware's network boot requests are ignored), so the network, `pkgman` and the browsers work.
 
+The bench card holds **mega36** (2026-11-22): release image-2026-11-22 plus the content above, Blender 3.6.23-10;
+smoke test 34 of 34. The mega images are numbered in the weekly logs, one per card write; what the owner should try
+on it: [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
+
 ## Check it
 
 `scripts/mega-smoke.sh` boots the image from the network on the bench Pi (the card is not touched), sets it up

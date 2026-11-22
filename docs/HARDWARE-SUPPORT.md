@@ -174,7 +174,7 @@ in our repository, [haiku-pi.github.io/packages](https://github.com/haiku-pi/pac
 | ICU | icu74 74.1 (-1) | built properly (data in `libicudata`); replaces the bootstrap package |
 | OpenSSL, curl | 3.5.9, 8.22.0 | TLS for the network kit and pkgman |
 | NetSurf | 3.11 | in the image |
-| WebPositive / HaikuWebKit | 1.10.0 | in the image; JavaScriptCore JIT (baseline/DFG/FTL/wasm) on |
+| WebPositive / HaikuWebKit | 1.10.0-3 | in the image; JavaScriptCore JIT (baseline/DFG/FTL/wasm) on; `<video>` on the YUV display plane (from image-2026-11-22: 1080p30 H.264 26 % of a core, was 45 %) |
 | Wine, Box64, FEX | Wine 11.21 (-2; 11.20-24 before), Box64 v0.4.4, FEX-2610 | in our repository (`wine`, `wine_x86`, `wine_x86_64`): ARM64X build; Windows programs in Wayland windows over Haiku's (X547's in-process server); DirectDraw/Direct3D 9 through wined3d on the V3D |
 | Firefox | 157.0.1 (-11) | in the image and published (zstd, 102 MB); `<video>` on the YUV display plane from image-2026-11-21; its window in 3.1 s warm, 10.2 s the first time after a network boot (11-03), 8.2 s the first time after a card boot (10-25); WebGL 1 and 2 on an OpenGL ES 3.1 context; plays H.264, VP8/9, AV1, HEVC |
 | SpiderMonkey `js` shell | 157.0.1 | 11/11 tests on the Pi, JIT on (10-20) |

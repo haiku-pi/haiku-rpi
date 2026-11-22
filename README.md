@@ -27,11 +27,11 @@ work went is told in [docs/AI-DRIVEN-PORT-JOURNEY.md](docs/AI-DRIVEN-PORT-JOURNE
 ## Quick start
 
 **Download** the SD card image (unofficial, built from these sources):
-[releases/image-2026-11-21b](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-21b) — 335 MB,
-`haiku-pi4-2026-11-21b.img.xz`, for an 8 GB or larger card:
+[releases/image-2026-11-22](https://github.com/haiku-pi/haiku-rpi/releases/tag/image-2026-11-22) — 335 MB,
+`haiku-pi4-2026-11-22.img.xz`, for an 8 GB or larger card:
 
 ```sh
-xz -dc haiku-pi4-2026-11-21b.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dc haiku-pi4-2026-11-22.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
 Or build the image yourself on an x86-64 Linux host and write it to a microSD card:
@@ -74,12 +74,12 @@ These numbers were measured on the bench Pi (4 GB) between 2026-10-18 and 2026-1
 | Display | HDMI at the monitor's native mode (1920×1080 on the bench), with lower modes scaled by the firmware. Hardware cursor and 60 Hz retrace |
 | GPU | V3D 4.2 through Mesa 26.2: OpenGL 3.3 core / 3.1 compatibility (from image-2026-11-19; was 2.1), OpenGL ES 3.1 and **Vulkan 1.3** (V3DV), drawing into ordinary Haiku windows; the GPU's binning, rendering, texture and compute queues run concurrently (from image-2026-11-03b); full-screen GL and MediaPlayer's video are shown on display planes, flipped without tearing (from image-2026-11-03c); video as YUV on the plane, no CPU colour conversion (from image-2026-11-19) |
 | Games | Timedemos in a 1280×720 window (2026-11-03): QuakeSpasm 80 fps · Yamagi Quake II 102 fps · vkQuake (Vulkan) 55 fps · OpenArena 53 fps · SuperTuxKart 1.5 about 38 fps in a race |
-| Video | ffmpeg 6.1 codecs in the media kit. **HEVC is decoded by the SoC's decoder block**: 1080p at about 115 fps (bit-exact), 4K at about 38 fps. **H.264 is decoded by the VideoCore** (VCHIQ + MMAL, from image-2026-11-05c): 1080p about 79 fps at ~8 % of a core, used by MediaPlayer, WebPositive and (from image-2026-11-19b) Firefox, one stream at a time system-wide. Decoded video is shown on a YUV display plane in its own colour encoding (MediaPlayer; Firefox from image-2026-11-21); from image-2026-11-21b HEVC goes from the decoder to the plane without a copy (1080p30 at ~4 % of a core, 8-bit 4K on the plane) and H.264 above 1080p45 (1080p60) is decoded on the CPU, every frame shown in MediaPlayer |
+| Video | ffmpeg 6.1 codecs in the media kit. **HEVC is decoded by the SoC's decoder block**: 1080p at about 115 fps (bit-exact), 4K at about 38 fps. **H.264 is decoded by the VideoCore** (VCHIQ + MMAL, from image-2026-11-05c): 1080p about 79 fps at ~8 % of a core, used by MediaPlayer, WebPositive and (from image-2026-11-19b) Firefox, one stream at a time system-wide. Decoded video is shown on a YUV display plane in its own colour encoding (MediaPlayer; Firefox from image-2026-11-21; WebPositive from image-2026-11-22); from image-2026-11-21b HEVC goes from the decoder to the plane without a copy (1080p30 at ~4 % of a core, 8-bit 4K on the plane) and H.264 above 1080p45 (1080p60) is decoded on the CPU, every frame shown in MediaPlayer |
 | Audio | HDMI (48 kHz stereo, from image-2026-10-24e) and the 3.5 mm headphone jack (44.1 kHz stereo), through the media kit |
 | Storage | SD card at UHS-I DDR50 (about 43 MB/s read, 35 MB/s write from image-2026-11-05c); USB 3 storage through the VL805 (reads 60–81 MB/s, writes 49 MB/s; correct data from image-2026-11-04b — older images corrupt USB disks, KNOWN-ISSUES C13) |
 | Network | Gigabit Ethernet (GENET), TCP about 915 Mbit/s each way; WiFi (BCM43455, WPA2); NFSv4 client |
 | Bluetooth | The on-board controller works through Haiku's Bluetooth stack: firmware patching, discovery and pairing by PIN. Bluetooth keyboards, mice and audio are untested |
-| Web | WebPositive (HaikuWebKit, JavaScript JIT) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback (video on the YUV display plane from image-2026-11-21: 720p drawn at about a tenth of the CPU it took) |
+| Web | WebPositive (HaikuWebKit, JavaScript JIT; `<video>` on the YUV display plane with working seeks from image-2026-11-22) and NetSurf; **Firefox 157** with WebGL 1/2 and H.264, VP9, AV1 and HEVC playback (video on the YUV display plane from image-2026-11-21: 720p drawn at about a tenth of the CPU it took) |
 | Windows programs | **Wine 11.21** with x86 translation: 32-bit x86 programs through Box64, x86-64 programs through FEX (`pkgman install wine wine_x86 wine_x86_64`). Heroes III, StarCraft, SimCity 3000, Half-Life (also full screen; a game's display mode becomes the screen's, scaled by the display hardware), Chocolate Doom and OpenTTD (x86-64) play; Direct3D 9 on the V3D |
 | Software | The system is built with **GCC 16.2**; the same compiler runs on the Pi (`pkgman install gcc gcc_fortran binutils`: C, C++, Fortran) with make, CMake, Ninja and Meson. Python 3.14 with pip and numpy, Rust 1.90 (cross-compiled), SQLite, llama2.c, **Blender 3.6** (`pkgman install blender`: Cycles and EEVEE on the Pi, from image-2026-11-21), and the published arm64 package repository |
 

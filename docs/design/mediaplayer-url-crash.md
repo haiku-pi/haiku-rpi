@@ -1,6 +1,6 @@
 # MediaPlayer crashes opening a URL (KNOWN-ISSUES C16, MP3)
 
-Status: **merged into `rpi4` at fb3d9ac1bd** (fast-forward from 519adfacb3, 2026-11-22 after the WebPositive check of §3.1; ships in the next image). Was branch `mp3-url-crash` of haiku-pi/haiku.
+Status: **merged into `rpi4` at fb3d9ac1bd** (fast-forward from 519adfacb3, 2026-11-22 after the WebPositive check of §3.1; **released in image-2026-11-22**; was KNOWN-ISSUES C16). Was branch `mp3-url-crash` of haiku-pi/haiku.
 Two commits, pushed: 2d4241482f (BUrl, support kit, libbe) and fb3d9ac1bd (MediaPlayer's Controller). Numbers are
 **measured** unless marked. Pi: 15 of 114 URL opens crashed before the fix, 0 of 120 after; the seek or Play after a
 failed open crashed 10 of 10 before; after the fix every such command got its reply (9 runs).

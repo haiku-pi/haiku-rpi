@@ -581,7 +581,7 @@ haiku packages hrev60450_373 swapped into a copy of the mega image, `artifacts/v
 Not run: `git clone` (no git in the mega image). The WoW64 Wine A/B with client pointers (`clientptr-ab.sh`,
 Warcraft III) was not repeated; Warcraft III ran in the smoke, `clientptr` covers the placed maps.
 
-**Merged** into rpi4 as **eaeb21e6e6** (fast-forward of rpi4 to the merge commit, pushed to haiku-pi); ships in the
-next image. QEMU and Pi re-tests: `tools/pi-tests/vq1-gate-run.sh IMAGE [ITEM...]`, `vq1-c-run.sh`, `vq1-run.sh`
+**Merged** into rpi4 as **eaeb21e6e6** (fast-forward of rpi4 to the merge commit, pushed to haiku-pi); **released in
+image-2026-11-22** (KNOWN-ISSUES C17 left the register). QEMU and Pi re-tests: `tools/pi-tests/vq1-gate-run.sh IMAGE [ITEM...]`, `vq1-c-run.sh`, `vq1-run.sh`
 (with `wp4-httpd.py artifacts/wp3/clips` for the MediaPlayer reproduction), `vq1-wiredcut-boot.sh` as a QEMU
 UserBootscript.

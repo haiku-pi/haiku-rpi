@@ -1,6 +1,6 @@
 # WebPositive `<video>` on the YUV overlay plane (WP1)
 
-Status: **published as haikuwebkit 1.10.0-2**; seeking fixed in a third patch + a Haiku branch, measured, not published (WP3, §6) (2026-11-22, WP2: full GCC 16.2 build, Pi checks §3.2; in the image list from haiku rpi `86e23ad36a`). Measured first on a test build (2026-11-22, sessions `wp1a`, `wp1b`, §3). A change to HaikuWebKit's media player
+Status: **in the image from image-2026-11-22 as haikuwebkit 1.10.0-3** (published 2026-11-22: the plane and the quit fix in 1.10.0-2, seeking in -3; the BUrl reader's end of stream in haiku `d5da656a29`, also in image-2026-11-22; WP2–WP4, §6) (2026-11-22, WP2: full GCC 16.2 build, Pi checks §3.2; in the image list from haiku rpi `86e23ad36a`). Measured first on a test build (2026-11-22, sessions `wp1a`, `wp1b`, §3). A change to HaikuWebKit's media player
 (`patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch`). Numbers are
 marked **measured** (with the source) or **estimated**. Builds on [video-overlay.md](video-overlay.md) (B_YUV420
 overlays, colour encodings §7, MediaPlayer's full-screen fix §10) and

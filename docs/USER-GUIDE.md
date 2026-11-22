@@ -429,7 +429,13 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
   (1080p50/60) the VideoCore cannot keep up, so those streams decode on the CPU (1080p60 in MediaPlayer: about 2 cores, every frame
   shown; with RGB output, as in WebPositive before haikuwebkit 1.10.0-2, the CPU cannot keep up; Firefox's 1080p60 is unchanged, §8.2); 1080p30 and below stay on the VideoCore. `FFMPEG_H264_MMAL=1` forces the VideoCore, `=0` the CPU.
 - MediaPlayer's full screen (from image-2026-11-21b) keeps the video on the plane when switched paused or after the
-  clip has ended; screenshots (the Screenshot app, `screenshot`) include what the display planes show.
+  clip has ended, and (from image-2026-11-22) while it plays; screenshots (the Screenshot app, `screenshot`) include
+  what the display planes show.
+- From image-2026-11-22 MediaPlayer **opens URLs** (an `http://`/`https://` argument, or File ▸ Open network stream) without
+  crashing (about 1 in 8 opens entered the debugger before), MP4 files with their index at the end open from a URL,
+  and a URL's video plays to its end without a 10 s freeze (a server that sends no length still stops it about a
+  second before the end). A URL that does not open shows "could not be opened" after the request times out (~20 s
+  for a missing file); the window waits meanwhile.
 
 ### 7.3 Audio: HDMI and the 3.5 mm jack
 
@@ -527,8 +533,8 @@ the rebuilt ICU on 2026-10-20). A JavaScript loop that takes 7 s without the JIT
 
 ![WebPositive](screenshots/05-webpositive.png)
 
-**Video** (`<video>`, haikuwebkit 1.10.0-2, published 2026-11-22: `pkgman update haikuwebkit` on images up to
-image-2026-11-21b, in the image from the next release): WebPositive shows the video on the display's YUV overlay
+**Video** (`<video>`, in the image from image-2026-11-22 with haikuwebkit 1.10.0-3; on image-2026-11-21b and older
+`pkgman update haikuwebkit`): WebPositive shows the video on the display's YUV overlay
 plane, like MediaPlayer, instead of converting each frame to RGB and redrawing the page. The display hardware scales
 and converts the picture, and app_server no longer copies it. Measured on the Pi (a muted, looped clip filling a
 1600×900 window; CPU over 10 s, % of one core; "system" is of all four cores):
@@ -543,14 +549,15 @@ and converts the picture, and app_server no longer copies it. Measured on the Pi
 - While something else changes over the video (its controls, a menu, a hover effect), while the page scrolls and for
   half a second after, and when a second video plays on the same page, that video is drawn in software as before;
   it returns to the plane by itself. A video in a hidden tab gives the plane back.
-- Quitting WebPositive while a video plays no longer crashes it (it did at 10 of 17 quits; KNOWN-ISSUES F11).
-- **Seeking** (haikuwebkit 1.10.0-3, published 2026-11-22: `pkgman update haikuwebkit`): a seek, paused or playing,
+- Quitting WebPositive while a video plays no longer crashes it (from haikuwebkit 1.10.0-2; 1.10.0-1 crashed at 10 of
+  17 quits).
+- **Seeking** (from haikuwebkit 1.10.0-3, in image-2026-11-22): a seek, paused or playing,
   lands on its time (the picture is decoded on from the key frame before it, 0.1–0.4 s at 720p/1080p30, ~1 s for
   1080p60 on the CPU); `loop` and the end of a video without sound work. 1.10.0-2 sent every seek of a video without
   an audio track to its first frame, and seeks of videos with sound landed up to a key-frame interval early.
-- **MP4 files with the index at the end** ("non-faststart") and **the end of a video from the web** need the image
-  after image-2026-11-21b (haiku `d5da656a29`, the media kit's URL reader): with it such files open, from disk or
-  http(s), and a video plays to its last frame. Older images do not open them at all, and freeze for 10 s about a
+- **MP4 files with the index at the end** ("non-faststart") and **the end of a video from the web** need image-2026-11-22
+  or later (haiku `d5da656a29`, the media kit's URL reader): such files open, from disk or http(s), and a video plays
+  to its last frame. image-2026-11-21b and older do not open them at all, and freeze for 10 s about a
   second before the end of any video read by URL. On those images, re-mux with
   `ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4`.
 - A seek forward past what has arrived over the network waits for the data, and the page stops responding meanwhile
