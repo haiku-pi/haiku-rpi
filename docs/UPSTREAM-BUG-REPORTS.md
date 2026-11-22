@@ -27,7 +27,7 @@ authors, and marked "not ours to attach".
 *arm64* (any arm64 board); *non-snooping DMA* (platforms whose devices do not snoop CPU caches); *Pi 4* (BCM2711
 hardware only).
 
-**Two forms.** 84 entries are full reports in the project's format. 55 are in **short form** (what, severity,
+**Two forms.** 85 entries are full reports in the project's format. 55 are in **short form** (what, severity,
 our fix, upstream status, and why it is short): fixes found by others (RenkuOS), findings from code reading that
 were never reproduced, bugs latent at upstream's default settings or exposed only by our fork's code, entries for
 an archived repository, duplicates of existing upstream reports, and minor items. The summary table's "Form"
@@ -78,7 +78,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 
 ## Summary
 
-137 entries: 82 full reports and 55 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
+140 entries: 85 full reports and 55 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
 
 | ID | Project | Component | Title | Severity | Scope | Our fix | Upstream | Patch | Form |
 |---|---|---|---|---|---|---|---|---|---|
@@ -109,6 +109,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [HK-87](#hk-87) | Haiku | Kits/Media Kit | BAdapterIO: a read across the end of a stream waits 10 s and fails (BUrl media lose their end; moov-at-end MP4s do not open) | hang / wrong output | general | haiku d5da656a29 | open | yes | full |
 | [HK-88](#hk-88) | Haiku | Kits/Support Kit | BUrl const getters build strings lazily: two threads reading one BUrl corrupt the heap (MediaPlayer URL-open crash) | crash | general | haiku 2d4241482f | open | yes | full |
 | [HK-89](#hk-89) | Haiku | Applications/MediaPlayer | Seek or Play before any file opened crashes in PlaybackManager (no playing state) | crash | general | haiku fb3d9ac1bd | open | yes | full |
+| [HK-90](#hk-90) | Haiku | System/Kernel | vm: a cut out of the middle of an area unmaps the lock_memory()-wired pages above it ("Failed to unwire page", "get_memory_map() called on unmapped memory!") | crash | general | haiku 02813adf89, 66a920ff23 | open | yes | full |
 | [HK-78](#hk-78) | Haiku | Drivers/USB/XHCI | Physical transfers >384 KiB built over all vectors | wrong output | general | haiku e1d69f100f | open | yes | full |
 | [HK-62](#hk-62) | Haiku | System/Boot Loader/EFI | Any load option key not 2 characters long hangs the loader | hang | general | haiku d8dfb51d8d | open | notes | full |
 | [HK-74](#hk-74) | Haiku | System/Kernel | Net boot: no link wait; module unload deadlock | hang | general | haiku cea07d5468 | open | yes | full |
@@ -1183,6 +1184,75 @@ Fixed: every scripted command was handled and replied in 9 runs (`set Position`,
 `do Stop`), with 0 debugger entries.
 
 [design/mediaplayer-url-crash.md](design/mediaplayer-url-crash.md) §2, §3.
+
+<a id="hk-90"></a>
+
+#### HK-90 — kernel/vm: a cut out of the middle of an area unmaps the pages above it even while lock_memory() keeps them wired ("Failed to unwire page" / "get_memory_map() called on unmapped memory!")
+
+- **Trac fields:** Component: `System/Kernel` · Version: R1/beta5 (nightly hrev60450) · Platform: All · Type: bug
+- **Severity:** crash (kernel panic)
+- **Scope:** all architectures; generic `src/system/kernel/vm/vm.cpp`. Any driver or kernel path that keeps user memory wired with `lock_memory_etc()` while another thread of the same team unmaps a range lower in the same area (libroot's allocator does that when it frees a large block in the middle of its heap area)
+- **Our fix:** haiku-pi/haiku `rpi4` `02813adf89` — "kernel/vm: don't unmap wired pages above a cut out of an area's middle", narrowed by `66a920ff23` — "kernel/vm: above a cut, wait only for lock_memory_etc()'s wired ranges" (merged as `eaeb21e6e6`)
+- **Patch:** attachable as-is (the two commits; the second adds a flag to `VMArea::AddWaiterIfWired()`/`IsWired()`). One hunk is for `vm_clone_area_etc()` with `CREATE_AREA_UNMAP_ADDRESS_RANGE`, which only our tree has: drop it upstream
+- **Upstream status (2026-11-22):** open: code unchanged at hrev60450, `vm.cpp:914` (`cut_area()`, middle case: `unmap_pages(area, address, area->Size() - firstNewSize)`), `:1456` (`wait_if_address_range_is_wired()`, called by `_user_unmap_memory()` `:5984` and the `CREATE_AREA_UNMAP_ADDRESS_RANGE` paths with the cut range only); Trac: not searched
+
+**Environment.** Haiku nightly at hrev60450 (merge base), arm64, Raspberry Pi 4 Model B 4 GB; also in QEMU `virt`
+(arm64) with virtio-blk. Found with our VCHIQ driver (VideoCore bulk transfers into MMAL buffers, MediaPlayer
+decoding H.264 on the VideoCore); reproduced with nothing but a disk read.
+
+**Description.** `cut_area()`, when the range is in the middle of an area, unmaps not only the range but the whole
+part of the area above it (`unmap_pages(area, address, area->Size() - firstNewSize)`), then shrinks the area and
+creates a new area for the upper part, whose pages move to a new cache (`Adopt()`) and are mapped again only when
+they are touched. Its callers (`munmap()`, and area creation with `B_EXACT_ADDRESS` +
+`CREATE_AREA_UNMAP_ADDRESS_RANGE`) wait only until the *cut range* is not wired
+(`wait_if_address_range_is_wired(addressSpace, base, size, ...)`); the comment of `cut_area()` asks for no more. So
+pages above the range that `lock_memory_etc()` keeps wired lose their mappings, and their `VMAreaWiredRange` stays
+with the first area, beyond its new end. A device writing them by DMA never faults them back in. The next
+`unlock_memory_etc()` on that range finds the new area and no page → panic "Failed to unwire page"; a
+`get_memory_map_etc()` between the cut and the transfer → panic "get_memory_map() called on unmapped memory!".
+
+libroot's allocator does such cuts by itself: `PagesAllocator::_UnlockingUnmap()` ("Cut the middle and get the new
+ID", `PagesAllocator.cpp:453`) `munmap()`s a freed large chunk in the middle of its last heap area. So any
+`free()` in one thread can break the I/O of another thread of the same team into a buffer higher in the heap.
+
+**Steps to reproduce.** One thread `pread()`s 8 MB from a raw disk device (`/dev/disk/virtual/virtio_block/0/raw` in
+QEMU) into the upper half of a 16 MB anonymous mapping — the I/O scheduler wires the buffer — while the main thread
+`munmap()`s one page near the mapping's start after a random delay of a few milliseconds; repeat
+(`tools/haiku-tests/wiredcut.c` in our repository, run as a boot script in QEMU `virt`).
+
+**Expected.** The `munmap()` returns (or waits for the I/O); the read completes.
+**Actual.** The first round panics: "unlock_memory_etc(): Failed to unwire page: address space …, address: <the
+buffer's first page>" from `IOSchedulerSimple::_Finisher` → `IORequest::NotifyFinished` → `IOBuffer::UnlockMemory`,
+or, with a shorter delay, "get_memory_map() called on unmapped memory!" from `DMAResource::TranslateNext`. On the
+Pi the same panics came from the VCHIQ driver's bulk-transfer unlock, a fraction of a second after MediaPlayer
+started decoding (its decoder frees frame-sized blocks then).
+
+**Root cause.** The middle case of `cut_area()` unmaps more than its callers check for wired ranges.
+
+**Fix.** A helper says how much an unmap of a range unmaps of an area (`size_to_unmap()`: for a cut out of the
+middle, up to the area's end), and `wait_if_address_range_to_unmap_is_wired()` replaces
+`wait_if_address_range_is_wired()` before the unmapping callers: the cut range waits for any wired range, as before;
+the part above it waits for ranges of `lock_memory_etc()` (implicit ranges) only. `vm_wire_page()` ranges there are
+exempt: the page stays wired in its cache, `vm_unwire_page()` works from the page and area it recorded, and the user
+mutex code keys shared mutexes on the physical address — and such a range lasts as long as a thread waits on a
+mutex shared between teams, so waiting for it would block a `free()` below a process-shared mutex in the heap for as
+long as the mutex is held. `MADV_FREE` keeps its check (it discards without cutting).
+
+A fix without any new waiting would keep the wired pages of the upper part mapped in `cut_area()` (move their page
+mappings and the wired ranges to the new area); that is more code in the VM (mapping lists, page-table pages) and was
+not done here.
+
+**Evidence.**
+- QEMU `virt`, `wiredcut` (200 rounds): unpatched, the first round panics (both messages, with two delays); patched,
+  200 of 200 rounds, 3 runs, every read complete. A process-shared mutex waited on above the cut: `munmap()` below it
+  returns at once unpatched and with both commits; with the first commit alone it blocked until the mutex was
+  released, 10 of 10.
+- Pi 4, MediaPlayer started 120 times on one H.264 clip over http, unpatched: 3 panics, each right after a
+  diagnostic line for a middle cut of the new player's heap area with wired pages above it. Patched: 0 in 90 starts,
+  the diagnostic showing 4 such cuts waiting instead; a bulk-transfer stress test with cuts below the buffers: 4 of 4
+  sessions panicked unpatched, 0 in 15 runs patched (also with `kill -9` during the waits).
+
+[design/videocore-services.md](design/videocore-services.md) §8 (our tree; the VCHIQ driver there is ours, the bug is not).
 
 <a id="hk-78"></a>
 

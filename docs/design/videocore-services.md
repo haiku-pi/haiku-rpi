@@ -16,8 +16,8 @@ libmmal in `raspberrypi_userland`, `h264_mmal` in the media kit) and on the YUV 
 Numbers are **measured** (with the session) unless marked **estimated**.
 
 §8 (VQ1, 2026-11-22): the kernel PANIC "Failed to unwire page" in `VCHIQ-0` after MediaPlayer starts an H.264 decode
-is a kernel VM bug (a cut out of the middle of the heap area unmapped the wired bulk buffer above it); fix on haiku
-branch `vq1-vchiq-unwire`, not merged.
+is a kernel VM bug (a cut out of the middle of the heap area unmapped the wired bulk buffer above it); fixed in rpi4
+eaeb21e6e6 (branch `vq1-vchiq-unwire`).
 
 ## 1. (a) H.264 in Firefox without rebuilding Firefox
 
@@ -387,10 +387,10 @@ whole run (~25 s), shown = the overlay plane's updates per 10 s. Three `rate` ru
 
 ## 8. (VQ1) The kernel PANIC "Failed to unwire page" in VCHIQ-0 (2026-11-22)
 
-Haiku branch **`vq1-vchiq-unwire`** (haiku-pi, off rpi4 519adfacb3; **not merged**; rpi4 has since moved to
-fb3d9ac1bd with MP3): 02813adf89 `kernel/vm: don't unmap wired pages above a cut out of an area's middle` (the fix),
+Haiku branch **`vq1-vchiq-unwire`** (haiku-pi, off rpi4 519adfacb3), **merged into rpi4 as eaeb21e6e6**
+(2026-11-22, §8.6): 02813adf89 `kernel/vm: don't unmap wired pages above a cut out of an area's middle` (the fix),
 d0361ca9e1 `vchiq: find a bulk buffer's area once the buffer is locked` (a driver race the tests exposed; it relies on
-the first). Tools: `tools/haiku-tests/wiredcut.c`, `tools/haiku-tests/vq1-cut.c` (+ `vchiq_test_cut` in
+the first), 66a920ff23 `kernel/vm: above a cut, wait only for lock_memory_etc()'s wired ranges` (§8.4). Tools: `tools/haiku-tests/wiredcut.c`, `tools/haiku-tests/vq1-cut.c` (+ `vchiq_test_cut` in
 `scripts/build-vchiq-test.sh`), `tools/pi-tests/vq1-*.sh`. Images, binaries and the diagnostic patches:
 `artifacts/vq1/` (not in git).
 
@@ -513,12 +513,23 @@ by MP3, not in these images): A 5 in 120 starts, C 12 in 90 (WP4 measured ~3 in 
 ### 8.4 The fix
 
 `kernel/vm` (02813adf89): `size_to_unmap(area, base, size)` says how much of an area unmapping a range unmaps from
-`base` on — for a cut out of the middle, up to the area's end. `wait_if_address_range_to_unmap_is_wired()` waits for
-a wired range anywhere in that, and replaces `wait_if_address_range_is_wired()` before the four
-`vm_unmap_address_range()` callers (`munmap()`, and `B_EXACT_ADDRESS` + `CREATE_AREA_UNMAP_ADDRESS_RANGE` in
-anonymous, null and file areas); rpi4's `vm_clone_area_etc()` with the same flag refuses (`B_BUSY`) on the same
-range. `MADV_FREE` keeps the old check: it discards without cutting. Waiting is what Haiku already does for the cut
-range itself, for `resize_area()` and, for the whole area, `delete_area()` and `set_area_protection()`.
+`base` on — for a cut out of the middle, up to the area's end. `wait_if_address_range_to_unmap_is_wired()` replaces
+`wait_if_address_range_is_wired()` before the four `vm_unmap_address_range()` callers (`munmap()`, and
+`B_EXACT_ADDRESS` + `CREATE_AREA_UNMAP_ADDRESS_RANGE` in anonymous, null and file areas); rpi4's
+`vm_clone_area_etc()` with the same flag refuses (`B_BUSY`) on the same range. `MADV_FREE` keeps the old check: it
+discards without cutting.
+
+`kernel/vm` (66a920ff23, the owner's decision of 11-22, below): the cut range itself waits for any wired range, as
+upstream always did; the part above a middle cut waits only for ranges of `lock_memory_etc()` (implicit ranges; new
+`VMArea` flag `IGNORE_EXPLICIT_WIRED_RANGES` for `AddWaiterIfWired()` and `IsWired()`). Those are the ones that
+break: their memory is looked up by address again (`unlock_memory_etc()`, `get_memory_map_etc()`) while a device
+transfers. `vm_wire_page()` ranges (explicit) are not hurt by losing the mapping — the page stays wired in its cache,
+`vm_unwire_page()` works from the page and area it recorded, the user mutex code keys a shared mutex on the physical
+address — but they last as long as a thread waits on a mutex shared between teams (`B_USER_MUTEX_SHARED`: libroot's
+process-shared mutexes, condition variables, barriers and unnamed semaphores). With 02813adf89 alone, a `free()`
+that cut below such a mutex in the heap blocked until the mutex was released (`tools/haiku-tests/pshcut.c` in QEMU:
+10 of 10 `munmap()`s blocked until the holder unlocked; with 66a920ff23 and on the unfixed kernel 10 of 10 returned
+at once).
 
 `vchiq` (d0361ca9e1): `vchiq_haiku_buffer_lock()` takes the buffer's area id after `lock_memory_etc()`. With the
 kernel fix a locked buffer stays in that area for the whole transfer (a cut below it waits, a cut above leaves it in
@@ -526,35 +537,51 @@ the area that keeps the id), which the `TEAM_REMOVED` rescue relies on: with the
 between refused a valid buffer (seen), and an id that later named only the part below the buffer would have made the
 rescue clone the wrong range.
 
-### 8.5 Limits, risks and what is unchecked
+### 8.5 Decision, limits and what is unchecked
 
-- **A cut now waits for I/O above it, uninterruptibly, with libroot's allocator lock held.** A `free()` that cuts
-  below a buffer under transfer blocks the team's large allocations until the transfer ends, and `kill -9` of that
-  thread takes effect only then. MMAL's transfers end within milliseconds; but in `vchiq_test_cut` on the branch's
-  own build (transfers back to back, 7.5 ms per iteration) the cutter got only 7–12 cuts in a ~3 s run: a cut waits as
-  long as the transfers above it keep the range wired without a gap.
-- **Long-lived wires turn into long waits** where the old code silently unmapped: a thread waiting on a
-  process-shared `pthread` mutex or condition variable (`B_USER_MUTEX_SHARED`: `vm_wire_page()` for the whole wait)
-  that lives in heap memory blocks a `free()` that cuts below it until the wait ends — if the waiter needs the freeing
-  thread, a deadlock; and the lock leaked by an aborted bulk that the VideoCore never acknowledged (vchiq.md §2: the
-  core's dummy bulk drops `remote_data`, as in FreeBSD and Linux) would block such a `free()` for good. Not seen;
-  the v3d import and the debugger/profiler wire kernel clones, not the user area, and are not affected.
-- **Option for the owner:** a fix without waiting — `cut_area()` keeps the wired pages of the part above the cut mapped
-  (moves their page mappings and the wired ranges to the second area) — keeps "wired means mapped" (which
-  `get_memory_map_etc()` relies on, also with interrupts off) without any new blocking; it is more VM code (mapping
-  lists, page-table pages for x86/arm64). A kill-interruptible wait would only soften the first point.
-- Upstream Haiku has the same `cut_area()`; no upstream report drafted yet (a candidate for UPSTREAM-BUG-REPORTS).
-- Unchecked: the branch's own build (H, without the diagnostic) did not run MP3's clip nor the Firefox / `h264.sh`
-  checks (those ran on C, which differs only by the diagnostic lines); how long a cut waits in MediaPlayer was not
-  measured; whether the wait changes C16's rate (above) is not known.
-- Unchecked: a 1080p decode + 1080p encode in one ffmpeg (`h264_vc` → `h264_mmal`) failed with VideoCore `ENOMEM` on C
-  (`mmal_vc_port_enable … video_encode:in:0 … ENOMEM`), 10 of 10; not tried on A, so not known to be new or related.
-  The encode checks above use `testsrc2` instead.
+- **Decision (owner, 2026-11-22):** keep the waiting fix, narrowed to `lock_memory_etc()` ranges above the cut
+  (66a920ff23), gate it on the Pi and merge it (§8.6). A fix **without** any new waiting — `cut_area()` keeps the
+  wired pages of the upper part mapped (moves their page mappings and wired ranges to the new area), keeping "wired
+  means mapped", which `get_memory_map_etc()` relies on even with interrupts off — is more VM code (mapping lists,
+  page-table pages) and is left as a possible upstream follow-up (UPSTREAM-BUG-REPORTS HK-90 mentions it).
+- **What still waits:** a `free()` that cuts below a buffer under `lock_memory_etc()` I/O waits for that I/O,
+  uninterruptibly and with libroot's allocator lock held, and `kill -9` of that thread takes effect only then. MMAL's
+  transfers end within milliseconds, but back-to-back transfers starve the cut (`vchiq_test_cut` on the branch's
+  build, 7.5 ms per iteration: the cutter got only 7–12 cuts in ~3 s). The lock leaked by an aborted bulk the
+  VideoCore never acknowledged (vchiq.md §2: the core's dummy bulk drops `remote_data`, as in FreeBSD and Linux) is
+  an implicit range: a `free()` that cut below it would wait for good. Not seen. The v3d import and the
+  debugger/profiler lock kernel clones, not the user area, and are not affected.
+- **Explicit ranges above a cut keep upstream's behaviour:** their pages lose the mapping and the range stays on the
+  lower area beyond its end (harmless for `vm_unwire_page()`; deleting that lower area waits for it).
+- Unchecked: how long a cut waits in MediaPlayer (not measured); whether the wait changes C16's rate (§8.3); a 1080p
+  decode + 1080p encode in one ffmpeg (`h264_vc` → `h264_mmal`) failed with VideoCore `ENOMEM` on C
+  (`mmal_vc_port_enable … video_encode:in:0 … ENOMEM`), 10 of 10, not tried on A (the encode checks use `testsrc2`).
 - `exec()` with transfers queued (vchiq.md §2) is unchanged.
 
-### 8.6 Merging (for the main session)
+### 8.6 Gate and merge (2026-11-22)
 
-The two commits on top of rpi4 (the driver commit needs the kernel one); no package changes — the next image carries
-them; KNOWN-ISSUES C17 then says "fixed in image-…". `tools/pi-tests/vq1-c-run.sh IMAGE TAG [PHASE...]` re-checks an
-image in one session (~20 min); `URL=http://10.42.0.1:PORT/f tools/pi-tests/vq1-run.sh IMAGE kill 60 15 LABEL
-play-720p30-aac.mp4` with `wp4-httpd.py artifacts/wp3/clips 10.42.0.1 PORT` is the MediaPlayer reproduction.
+Gate (owner's plan): rpi4 fb3d9ac1bd merged with the branch, without diagnostics (merge commit **eaeb21e6e6**, the
+haiku packages hrev60450_373 swapped into a copy of the mega image, `artifacts/vq1/mega-I.img`); network sessions
+`vq1b` 17:23–17:51 and 18:12–18:20 and `mega-smoke` 17:51–18:12, the card and USB untouched;
+`tools/pi-tests/vq1-gate-run.sh` / `vq1-gate.sh`:
+
+| Check | Result |
+|---|---|
+| MediaPlayer on MP3's trigger clip over http, 60 starts, kill -9 / `hey quit` alternating | 60 of 60 on the VideoCore decoder, 0 debugger entries, 0 PANIC |
+| `pshcut` (a cut below a waiter on a process-shared mutex in heap memory) | 10 of 10 `munmap()`s returned at once |
+| `vchiq_test_cut` ×5, and ×3 killed during the waits | 0 of 5 and 0 of 3 failed (team gone, no kept buffer, next run fine) |
+| `clientptr` (GL_MESA_map_buffer_client_pointer: placed maps, the clone-replaces-range path) | GCP PASS |
+| Firefox, h264-1080p (`ffv0.sh`, 12 s window) | 360 frames, 6 dropped |
+| Blender: open, Cycles viewport with and without denoising, Material Preview, EEVEE F12 (`blender-b7-view.sh`) | 4 of 4 exit 0, 0 wrong-thread lines |
+| `pkgman install` (xxhash from a file; plus the session's openssh install) | exit 0 |
+| tar of /boot/system/apps + lib (2.8 GB, 18 596 entries) and back | complete, same count |
+| mega smoke: 34 Test Apps (Wine x86 and x86-64 programs and games — Notepad++, PuTTY, SumatraPDF, 7-Zip, Warcraft III, StarCraft, …; vkQuake, QuakeSpasm, Quake II/III, SuperTuxKart, OpenArena, glmark2, vkcube, Firefox, WebPositive, Blender, MediaPlayer) | 34 of 34 running (or exited 0 by design) |
+| serial logs | 0 PANIC, 0 debugger entries, no hang (every item within its limit) |
+
+Not run: `git clone` (no git in the mega image). The WoW64 Wine A/B with client pointers (`clientptr-ab.sh`,
+Warcraft III) was not repeated; Warcraft III ran in the smoke, `clientptr` covers the placed maps.
+
+**Merged** into rpi4 as **eaeb21e6e6** (fast-forward of rpi4 to the merge commit, pushed to haiku-pi); ships in the
+next image. QEMU and Pi re-tests: `tools/pi-tests/vq1-gate-run.sh IMAGE [ITEM...]`, `vq1-c-run.sh`, `vq1-run.sh`
+(with `wp4-httpd.py artifacts/wp3/clips` for the MediaPlayer reproduction), `vq1-wiredcut-boot.sh` as a QEMU
+UserBootscript.
