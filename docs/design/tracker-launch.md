@@ -31,15 +31,17 @@ so its 34 of 34 never saw them):
 2. **B (an exit, no hang): `argv[0]` is the link's path.** The roster passes the link it was given as
    `argv[0]` (`*appRef = originalRef`, upstream 4eaa1f35e5 "in case its name or attributes are relevant").
    Blender (`where_am_i()` takes `argv[0]` on Haiku) and SuperTuxKart (`FileManager` looks next to the
-   executable's path) then look for their data in `/boot/system/data/deskbar/menu/Applications/`: Blender prints
+   executable's path) then look for their data next to the link — `/boot/system/data/deskbar/menu/Applications/`, or
+   `~/Desktop/Test Apps/` for SuperTuxKart's Test Apps entry (a link to the program too): Blender prints
    `No module named 'bpy'` and aborts within 2 s, SuperTuxKart exits 1 ("Could not find file
-   'supertuxkart.1.5'"). This is what the Deskbar's Blender and SuperTuxKart entries (links) did.
+   'supertuxkart.1.5'"). This is what the Deskbar's Blender and SuperTuxKart entries and the Test Apps SuperTuxKart link did.
 
 ## Evidence (session ta1, mega36, 2026-11-22 20:15–20:50 Pi time)
 
 - Roster launch the way a double-click does it: `tools/haiku-tests/trackeropen.cpp` sends Tracker a
   `B_REFS_RECEIVED` with the entry's ref (Tracker launches it with its own environment), then waits for a shown
-  window in a new team. (`hey Tracker load with refs=file(...)` did nothing.)
+  window in a new team. The Deskbar's menu items send the same message to Tracker (`TDeskbarMenu::DefaultTarget()`
+  is Tracker's messenger; `BNavMenu(..., B_REFS_RECEIVED, ...)`). (`hey Tracker load with refs=file(...)` did nothing.)
 - Test Apps "Blender 3.6": no window in 60 s; `ps -s`: main thread `zzz` (SDL's 10 ms poll), "SDLApplication"
   `run` with 39 s of CPU. `roster` lists the team under the **launcher's** path with port 1138; `listport` of the
   team has no port 1138 (only 1141–1146).
@@ -79,25 +81,47 @@ every Test Apps entry and the Deskbar entries the mega image adds (plus Firefox 
 Before: mega36 (session ta1, 20:29–21:52 CET; 60 s per entry). After: the test image (90 s, then 10–20 s more:
 the team still running with a window shown; then a quit). Raw lines: `artifacts/ta1/{before,after,shots}/`.
 
-| Entry | Before (mega36) | After (test image) | Quit after |
+| Entry | Before (mega36) | After (test image; "kept": still running with a window 10–20 s later) | Quit (after): B_QUIT_REQUESTED to the application ("app") or to its shown windows ("window close") |
 |---|---|---|---|
-| Test Apps: Blender 3.6 | **no window** (hang) | window 1.0–3.1 s, Blender's UI + splash | window close: gone 0.6 s |
-| Test Apps: OpenArena | **no window** (hang) | window 0.3–0.4 s, menu | B_QUIT_REQUESTED: gone 0.1 s |
-| Test Apps: Quake (QuakeSpasm) | **no window** (hang) | window 0.1 s, demo playing | gone 0.1 s |
-| Test Apps: Quake (vkQuake) | **no window** (hang) | window 0.1–0.2 s, demo playing | gone 0.1 s |
-| Test Apps: Quake II (demo) | **no window** (hang) | window 0.2 s, demo playing | gone 0.2 s |
-| Test Apps: Quake III Arena (demo) | **no window** (hang) | window 0.2 s, the demo's CD-key screen | gone 0.1 s |
-| Test Apps: SuperTuxKart | **no window** (exit 1, no data) | window 0.3–0.7 s, the game's first-start notice | gone 0.5 s |
-| Test Apps: glmark2 (window) | **no window** (Terminal hangs) | Terminal + glmark2 running | Terminal asks (its process still runs) |
-| Test Apps: glmark2 (full screen) | **no window** (Terminal hangs) | Terminal + glmark2 running | Terminal asks |
-| Test Apps: 7-Zip (console, x86) | **no window** (Terminal hangs) | Terminal 0.1–0.2 s, 7-Zip's output | Terminal asks (`read` waits) |
-| Deskbar: Blender | window 0.9 s, **gone** within 10 s (abort, no data) | window 1.0 s, stays | window close: gone 0.6 s |
-| Deskbar: OpenArena | **no window** (hang) | window 0.3 s | gone 0.1 s |
-| Deskbar: SuperTuxKart | **no window** (exit 1, no data) | window 0.3 s | gone 0.5 s |
-| Deskbar: PhotoCraft | window 0.2 s | window 0.2 s | window close: gone 0.1 s |
-| Deskbar: Firefox (control) | window 3.5 s | window 3.0 s | gone 0.9 s |
-| Test Apps: Firefox, WebPositive, MediaPlayer, GLTeapot, PhotoCraft, vkcube | window 0.1–8.7 s | window 0.1–6.6 s | gone (vkcube ends by itself) |
-| Test Apps: 18 Wine entries (programs and games) | window 2.3–8.9 s | window 2.3–8.9 s | Minesweeper, Notepad, Notepad++ ×2, PuTTY ×2, Diablo II, AoE II, Heroes III, Warcraft III, StarCraft, SumatraPDF x86-64, UT: gone; Fallout (its registration dialog), Half-Life ×2, SimCity 3000, SumatraPDF x86: not by a window close (unchanged path, not this defect) |
+| Test Apps/7-Zip (console, x86) | **no window** in 60 s (Terminal hangs) | window 0.2 s, kept | app: still running 60 s; window close: still running 60 s (Terminal asks: its `read` waits) |
+| Test Apps/Age of Empires II (demo) | window 2.9 s | window 3.2 s, kept | app: gone 0.1 s |
+| Test Apps/Blender 3.6 | **no window** in 60 s (hang) | window 3.1 s, kept | app: no app messenger; window close: gone 0.6 s |
+| Test Apps/Diablo II (demo) | window 4.7 s | window 4.7 s, kept | app: gone 0.5 s |
+| Test Apps/Fallout (demo) | window 3.3 s | window 3.3 s, kept | app: still running 60 s; window close: still running 60 s (its registration dialog) |
+| Test Apps/Firefox | window 8.7 s | window 6.6 s, kept | app: gone 2.4 s |
+| Test Apps/GLTeapot | window 0.1 s | window 0.1 s, kept | app: gone 0.1 s |
+| Test Apps/Half-Life Uplink (demo, full screen) | window 4.9 s | window 4.8 s, kept | app: still running 60 s; window close: still running 60 s |
+| Test Apps/Half-Life Uplink (demo, window) | window 4.2 s | window 4.1 s, kept | app: still running 60 s; window close: still running 60 s |
+| Test Apps/Heroes of Might and Magic III (demo) | window 8.9 s | window 8.9 s, kept | app: gone 0.3 s |
+| Test Apps/MediaPlayer | window 0.1 s | window 0.1 s, kept | app: gone 0.0 s |
+| Test Apps/Minesweeper (Wine) | window 2.3 s | window 2.3 s, kept | app: gone 0.0 s |
+| Test Apps/Notepad (Wine) | window 2.3 s | window 2.3 s, kept | app: gone 0.0 s |
+| Test Apps/Notepad++ (x86) | window 6.2 s | window 6.2 s, kept | app: gone 0.3 s |
+| Test Apps/Notepad++ (x86-64) | window 7.1 s | window 5.7 s, kept | app: gone 0.3 s |
+| Test Apps/OpenArena | **no window** in 60 s (hang) | window 0.4 s, kept | app: gone 0.1 s |
+| Test Apps/PhotoCraft | window 0.5 s | window 0.4 s, kept | app: no app messenger; window close: gone 0.2 s |
+| Test Apps/PuTTY (x86) | window 3.6 s | window 3.2 s, kept | app: gone 0.1 s |
+| Test Apps/PuTTY (x86-64) | window 2.8 s | window 2.7 s, kept | app: gone 0.1 s |
+| Test Apps/Quake (QuakeSpasm, OpenGL) | **no window** in 60 s (hang) | window 0.1 s, kept | app: gone 0.1 s |
+| Test Apps/Quake (vkQuake, Vulkan) | **no window** in 60 s (hang) | window 0.2 s, kept | app: gone 0.1 s |
+| Test Apps/Quake II (demo) | **no window** in 60 s (hang) | window 0.2 s, kept | app: gone 0.2 s |
+| Test Apps/Quake III Arena (demo) | **no window** in 60 s (hang) | window 0.2 s, kept | app: gone 0.1 s |
+| Test Apps/SimCity 3000 (demo) | window 5.0 s | window 4.3 s, kept | app: still running 60 s; window close: still running 60 s |
+| Test Apps/StarCraft (shareware) | window 2.9 s | window 2.8 s, kept | app: still running 60 s; window close: gone 2.0 s |
+| Test Apps/SumatraPDF (x86) | window 3.2 s | window 3.1 s, kept | app: still running 60 s; window close: still running 60 s |
+| Test Apps/SumatraPDF (x86-64) | window 2.9 s | window 2.9 s, kept | app: still running 60 s; window close: gone 0.1 s |
+| Test Apps/SuperTuxKart | **no window** in 60 s (exit 1, no data (link)) | window 0.7 s, kept | app: gone 0.5 s |
+| Test Apps/Unreal Tournament (demo, OpenGL) | window 3.0 s | window 2.9 s, kept | app: still running 60 s; window close: gone 0.1 s |
+| Test Apps/Warcraft III (demo) | window 4.0 s | window 3.8 s, kept | app: gone 1.4 s |
+| Test Apps/WebPositive | window 1.8 s | window 1.7 s, kept | app: gone 0.1 s |
+| Test Apps/glmark2 (full screen) | **no window** in 60 s (Terminal hangs) | window 0.1 s, kept | app: still running 60 s; window close: still running 60 s (Terminal asks: glmark2 runs) |
+| Test Apps/glmark2 (window) | **no window** in 60 s (Terminal hangs) | window 0.1 s, kept | app: still running 60 s; window close: still running 60 s (Terminal asks: glmark2 runs) |
+| Test Apps/vkcube (Vulkan) | window 0.1 s | window 0.1 s, kept | app: ends by itself |
+| Deskbar/Blender | window 0.9 s, **gone** within 10 s (abort, no data) | window 1.0 s, kept | app: no app messenger; window close: gone 0.6 s |
+| Deskbar/OpenArena | **no window** in 60 s (hang) | window 0.3 s, kept | app: gone 0.1 s |
+| Deskbar/PhotoCraft | window 0.2 s | window 0.2 s, kept | app: no app messenger; window close: gone 0.1 s |
+| Deskbar/SuperTuxKart | **no window** in 60 s (exit 1, no data (link)) | window 0.3 s, kept | app: gone 0.5 s |
+| Deskbar/Firefox | window 3.5 s | window 3.0 s, kept | app: gone 0.9 s |
 
 - **The shell path is unchanged:** `tools/mega/smoke-pi.sh 15` (each entry by exec, as `mega-smoke` does) on the test
   image: 32 running, PhotoCraft and vkcube "exited 0" — as in R1–R3.
@@ -117,5 +141,11 @@ the team still running with a window shown; then a quit). Raw lines: `artifacts/
 - Other wrappers outside the mega image (a HaikuPorts package whose Deskbar entry is a script that execs a
   BApplication program): covered by the same libbe path, not run.
 - The x86-64 build of the libbe change; an upstream bug report (none drafted).
-- The Wine entries that do not end on a window close (Fallout's registration dialog, Half-Life ×2, SimCity 3000,
-  SumatraPDF x86): unchanged by the fix, their own behaviour, not investigated.
+- The five Wine entries that did not end on an application quit nor on a window close (Fallout's registration
+  dialog, Half-Life ×2, SimCity 3000, SumatraPDF x86): no before data (the mega36 sweep had no quit step) and no
+  shell-launched control; the fix does not touch their path (they showed windows before it); not investigated.
+- SuperTuxKart-GLES (rebuilt with the patch, in -4) was not run; `release-check.sh` was not run on the libbe change
+  (it touches every application's start; only the 39 entries and the shell smoke ran).
+- A roster send that comes after the program has re-registered (the launcher exec'd before the roster's
+  `_SendToRunning()`) would reach the new port: a second `B_READY_TO_RUN` is ignored, a launcher started with
+  arguments would give the program a second `B_ARGV_RECEIVED`. Not seen; not tested.
