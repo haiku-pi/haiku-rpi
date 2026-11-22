@@ -8,6 +8,9 @@
 #            SNAP lines at 13, 16, 20 and 26 s (page time)
 #   playing  currentTime = 40 at 8 s and 3 s at 16 s while playing; SNAP lines at 11, 19 s
 #   end      LOOP=1 (default) or 0: played to the end and on (CLIP of 30 s or less); SNAP at 33 s
+#   teardown every 1.5 s currentTime = 20, and 150 ms later (while the player decodes on to 20 s) the player dropped
+#            (src removed + load(), then src again) or reloaded (src set again), alternately: "teardown N" counts them;
+#            a WebPositive that hangs stops counting
 # LIB=DIR: DIR first in LIBRARY_PATH (a test libWebKitLegacy.so.1); OVL=0: WEBKIT_VIDEO_OVERLAY=0.
 # Run over ssh in a bench session (scripts/pi-session.sh); tools/pi-tests/wp3-run.sh from the host takes the HDMI
 # frames at the SNAP lines.
@@ -32,6 +35,11 @@ playing) script='at(8000, () => { v.currentTime = 40; }); at(16000, () => { v.cu
 	snaps="11:fwd40 19:back3" ;;
 end) script=''
 	snaps="33:end" ;;
+teardown) script='let k = 0; const SRC = v.src;
+setInterval(() => { v.currentTime = 20; setTimeout(() => { k++;
+	if (k % 2) { v.removeAttribute("src"); v.load(); v.src = SRC; } else v.src = SRC;
+	log("teardown " + k); }, 150); }, 1500);'
+	snaps="30:end" ;;
 *) say "unknown mode $mode"; exit 2 ;;
 esac
 cat > "$page" << EOF

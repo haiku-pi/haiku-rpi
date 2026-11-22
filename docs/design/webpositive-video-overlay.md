@@ -289,13 +289,15 @@ freezes ~0.5 s before its end for 10 s. And an MP4 with `moov` at the end does n
    track is decoded on to the target (`skipAudioTo()`); a failed seek rejects the promise; a track that ends stays (a loop
    seeks it again; it was set to null), the end of a video-only file is the end (`timeChanged()`, `currentTime()` exactly
    the duration — `m_currentTime` is a float and fell short, so the loop never came); `WVO seek` lines with
-   `WEBKIT_VIDEO_OVERLAY_LOG=1`. Built by ninja in the WP2 tree (~20 s), test library `artifacts/wp3/t4`.
+   `WEBKIT_VIDEO_OVERLAY_LOG=1`; the destructor and `load()` no longer hold the media lock while `cancelLoad()` waits for
+   the video thread (its own rule — see "Teardown" below). Built by ninja in the WP2 tree (~20 s), test library
+   `artifacts/wp3/t5` (t4 = without the teardown change).
 2. Haiku branch **`wp3-adapterio-eof`** (haiku-pi, off rpi4 86e23ad36a, **not merged**): d5da656a29 `BAdapterIO`: a read
    across the end of a stream of known size waits for what is left. Test `libmedia.so` (`artifacts/wp3/libmedia`: the rpi4
    build's objects relinked with the new `AdapterIO.o`, the image's libmedia otherwise byte-identical), loaded by
    `LIBRARY_PATH`.
 
-**Pi results** (t4 unless noted; `F5-*`, `F4-*`, `FM*-*` in `artifacts/wp3/runs`; HDMI time stamps `ts-final.png`):
+**Pi results** (t4 unless noted, t5 = final; `F5-*`, `F4-*`, `FM*-*` in `artifacts/wp3/runs`; HDMI time stamps `ts-final.png`):
 
 | Clip (decoder) | Paused at ~11.5: seek 5, seek 20, play | Playing: seek 40, later 3 |
 |---|---|---|
@@ -306,13 +308,20 @@ freezes ~0.5 s before its end for 10 s. And an MP4 with `moov` at the end does n
 | H.264 1080p60 (CPU) | 5.00 / 20.00 (t2); the picture after 0.8–1.0 s (63–73 pictures decoded) | 40 → end (30) → loop → 0, then 3.00 (t2) |
 | HEVC 720p **moov at end** + libmedia fix | ct 5.00 / 20.00 (t2); HDMI 5.000 / 20.000 | — |
 | H.264 854×480 **moov at end** + libmedia fix | — | 40 → 30 → loop → 0, then 3.00 (key frames 8.3 s apart: 91 pictures, 0.4 s) |
-| `WEBKIT_VIDEO_OVERLAY=0` (software path), H.264 720p | 5.00 / 20.00 (t2) | 40.00 / 3.00 (t2) |
+| `WEBKIT_VIDEO_OVERLAY=0` (software path), H.264 720p | 5.00 / 20.00 (t2, CPU decoder) | 40.00 / 3.00 (t5, h264_mmal) |
+| H.264 720p video only, t5 (h264_mmal) | 5.00 / 20.00 | — |
+| AAC only, 15 s (t5) | 5.00; 20 → the end (15.02) → loop → 0 with the libmedia fix; **stock libmedia: the seek near the end blocks the page (no title update for the rest of the run): `SeekToTime()`/the audio skip read the last 32 kB, the 10 s `BAdapterIO` stall, on the main thread** | end of file: loops (stock: after the 10 s stall) |
 
 - Decoding on from the key frame: 17–40 pictures in 0.13–0.44 s (720p/1080p30 on the VideoCore or rpivid), 0.8–1.0 s for
   1080p60 on the CPU.
 - End of a 15 s clip, `loop`: video only + libmedia fix: loops at 15.07 s, twice in 35 s; with AAC: the same; without
   `loop`: `pause` + `ended` at 15.07; video only with the **stock** libmedia: loops, but only after the 10 s stall at 14.54
   (1.10.0-2: frozen at 13.77, never loops).
+- **Teardown during a seek's decoding** (`wp3-seek.sh teardown`, H.264 1080p60: every 1.5 s `currentTime = 20` and 150 ms
+  later the player dropped or reloaded): **1.10.0-2 and t4 hang at the first one** (WebPositive does not quit: the
+  destructor/`load()` hold `m_mediaLock` while `cancelLoad()` waits for the video thread, which waits for the lock — in
+  -2 already, t4 made the window wider); **t5: 21 teardowns in 32 s, quit in 1 s**.
+- t5 again: 1080p30 28.4 / 0.6 / 8.8 %; 6 more quits during playback (720p30), 0 crashes.
 - **WP2's checks, t4, stock libmedia:** WebPositive / app_server / system 1080p30 H.264 **27.0 / 0.6 / 8.4 %** (WP2 26.1 /
   0.7 / 8.2), 720p30 **15.7 / 0.7 / 5.2** (14.6 / 0.7 / 4.9), HEVC 1080p **23.6 / 0.4 / 6.8** (24.3 / 0.5 / 6.9); 300 plane
   updates per 10 s; key census 52–61 (window baseline). **12 quits during 1080p30 playback: 12 × "quit in 1 s", 0
@@ -324,7 +333,11 @@ freezes ~0.5 s before its end for 10 s. And an MP4 with `moov` at the end does n
   runs `R-*`) fell back to the software decoder (their logs say so). Seeks were right on that path too; the CPU and the
   H.264 seek runs were repeated once the probe was killed (`R2-*`, `F5-*`, `FM5-*`).
 
-Not checked: seeking over `http(s)://` (forward beyond what has arrived waits in `BAdapterIO`, up to 10 s per read, on the
+Not checked: the `BAdapterIO` change with http(s) streams (only `file://` was run; it changes every media-kit client's
+BUrl reading); the test `libmedia.so` is a relink of rpi4's objects, not a jam build of the branch; no test package
+was built (the libraries went in by `LIBRARY_PATH`), and the WP2 build tree now holds the revision-3 code
+(`build-webkit.sh` defaults to 3: a plain `haikuwebkit` step would package -3); 1080p60's CPU was not re-measured;
+seeking over `http(s)://` (forward beyond what has arrived waits in `BAdapterIO`, up to 10 s per read, on the
 video thread — the main thread only seeks to the key frame, which may itself wait); the real media controls' slider
 (injected mouse events do not reach them, §3); audio *heard* after a seek (the clips are muted; the positions are the
 track's); a non-faststart file in the browser without the libmedia fix still does not open.

@@ -12,6 +12,8 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
 - The end of a track keeps the track (it was set to null, so a loop's seek to 0 found no track): without an audio
   track the video's end is the end (timeChanged(), and currentTime() is then exactly the duration), so loop and
   "ended" work for video-only files.
+- The destructor and load() no longer hold the media lock while cancelLoad() waits for the threads (its own rule):
+  the video thread takes it once per picture while it decodes on to a seek's target, and would wait for it forever.
 - WEBKIT_VIDEO_OVERLAY_LOG=1 also prints a "WVO seek" line per seek and per picture shown after it.
 
 --- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.h
@@ -65,7 +67,33 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
      , m_paused(true)
      , m_abort(false)
      , m_loadingThread(-1)
-@@ -375,6 +380,10 @@
+@@ -313,10 +318,12 @@
+         BAutolock lock(planeLock());
+         livePlayers().remove(this);
+     }
+-    m_mediaLock.Lock();
+-
++    // not with m_mediaLock held: cancelLoad() waits for the video thread,
++    // which takes it (a seek's decoding takes it once per picture)
+     cancelLoad();
++    m_mediaLock.Lock();
+     delete m_frameBuffer;
++    m_frameBuffer = nullptr;
+     m_mediaLock.Unlock();
+ }
+ 
+@@ -329,8 +336,9 @@
+ 
+ void MediaPlayerPrivate::load(const String& url)
+ {
+-    m_mediaLock.Lock();
++    // before the lock: it waits for the threads (see the destructor)
+     cancelLoad();
++    m_mediaLock.Lock();
+     m_abort = false;
+     m_url = url;
+ 
+@@ -375,6 +383,10 @@
      m_mediaFile = nullptr;
      m_audioTrack = nullptr;
      m_videoTrack = nullptr;
@@ -76,7 +104,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
      m_mediaLock.Unlock();
  }
  
-@@ -385,19 +394,20 @@
+@@ -385,19 +397,20 @@
  }
  
  void MediaPlayerPrivate::playCallback(void* cookie, void* buffer,
@@ -99,7 +127,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
              player->m_currentTime = player->m_audioTrack->Duration() / 1000000.f;
              player->m_soundPlayer->Stop(false);
  
-@@ -406,9 +416,11 @@
+@@ -406,9 +419,11 @@
                      p->m_player.timeChanged();
              });
  
@@ -113,7 +141,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
      player->m_mediaLock.Unlock();
  }
  
-@@ -449,15 +461,25 @@
+@@ -449,15 +464,25 @@
      MediaPlayerPrivate* player = (MediaPlayerPrivate*)cookie;
      bigtime_t startTime = system_time();
      bigtime_t startMediaTime = 0;
@@ -142,13 +170,13 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
              if (player->m_yuv)
                  player->serviceOverlay();
              continue;
-@@ -465,28 +487,37 @@
+@@ -465,28 +490,37 @@
  
          if (!player->m_mediaLock.Lock())
              continue;
-+        if (player->m_seekTarget >= 0) {
-+            // a seek came meanwhile: decodeToSeekTarget(), and its time
-+            // stays the clock's
++        if (player->m_abort || player->m_seekTarget >= 0) {
++            // the player stops, or a seek came meanwhile: decodeToSeekTarget(),
++            // and its time stays the clock's
 +            player->m_mediaLock.Unlock();
 +            continue;
 +        }
@@ -188,7 +216,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
                  int64 count;
                  void* buffer = player->m_yuv ? player->m_yuvBuffer : player->m_frameBuffer->Bits();
                  if (player->m_videoTrack->ReadFrames(buffer, &count) == B_OK) {
-@@ -496,7 +527,11 @@
+@@ -496,7 +530,11 @@
                          player->m_statLate++;
                      atomic_add(&player->m_frameSerial, 1);
                  } else {
@@ -201,7 +229,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
                  }
              } else {
                  snooze(5000);
-@@ -504,6 +539,9 @@
+@@ -504,6 +542,9 @@
          }
          player->m_mediaLock.Unlock();
  
@@ -211,7 +239,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
          if (player->m_yuv)
              player->serviceOverlay();
          else if (decoded)
-@@ -515,6 +553,86 @@
+@@ -515,6 +556,86 @@
      return B_OK;
  }
  
@@ -251,7 +279,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
 +    const bigtime_t start = system_time();
 +    while (!m_abort && m_mediaLock.Lock()) {
 +        void* buffer = m_yuv ? m_yuvBuffer : (m_frameBuffer ? m_frameBuffer->Bits() : nullptr);
-+        if (m_seekTarget < 0 || !m_videoTrack || !buffer) {
++        if (m_abort || m_seekTarget < 0 || !m_videoTrack || !buffer) {
 +            m_seekTarget = -1;
 +            m_mediaLock.Unlock();
 +            break;
@@ -298,7 +326,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
  
  
  
-@@ -558,44 +676,70 @@
+@@ -558,44 +679,70 @@
  
  WTF::MediaTime MediaPlayerPrivate::duration() const
  {
@@ -396,7 +424,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
      return MediaTimePromise::createAndResolve(MediaTime::createWithDouble(m_currentTime));
  }
  
-@@ -1208,6 +1352,7 @@
+@@ -1208,6 +1355,7 @@
                  if (m_audioTrack)
                      continue;
                  m_audioTrack = track;
@@ -404,7 +432,7 @@ Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
  
                  m_soundPlayer = new BSoundPlayer(&format.u.raw_audio,
                      "HTML5 Audio", playCallback, NULL, this);
-@@ -1221,6 +1366,11 @@
+@@ -1221,6 +1369,11 @@
  
          }
  
