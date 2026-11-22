@@ -78,7 +78,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 
 ## Summary
 
-140 entries: 85 full reports and 55 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
+141 entries: 86 full reports and 55 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
 
 | ID | Project | Component | Title | Severity | Scope | Our fix | Upstream | Patch | Form |
 |---|---|---|---|---|---|---|---|---|---|
@@ -110,6 +110,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [HK-88](#hk-88) | Haiku | Kits/Support Kit | BUrl const getters build strings lazily: two threads reading one BUrl corrupt the heap (MediaPlayer URL-open crash) | crash | general | haiku 2d4241482f | open | yes | full |
 | [HK-89](#hk-89) | Haiku | Applications/MediaPlayer | Seek or Play before any file opened crashes in PlaybackManager (no playing state) | crash | general | haiku fb3d9ac1bd | open | yes | full |
 | [HK-90](#hk-90) | Haiku | System/Kernel | vm: a cut out of the middle of an area unmaps the lock_memory()-wired pages above it ("Failed to unwire page", "get_memory_map() called on unmapped memory!") | crash | general | haiku 02813adf89, 66a920ff23 | open | yes | full |
+| [HK-91](#hk-91) | Haiku | Kits/Application Kit | A program the roster launched that exec()s a BApplication program (launcher, wrapper script, a link to a script) leaves it a deleted looper port: no ReadyToRun(), no window, a busy loop | hang | general | haiku 2c33b68742 | open | yes | full |
 | [HK-78](#hk-78) | Haiku | Drivers/USB/XHCI | Physical transfers >384 KiB built over all vectors | wrong output | general | haiku e1d69f100f | open | yes | full |
 | [HK-62](#hk-62) | Haiku | System/Boot Loader/EFI | Any load option key not 2 characters long hangs the loader | hang | general | haiku d8dfb51d8d | open | notes | full |
 | [HK-74](#hk-74) | Haiku | System/Kernel | Net boot: no link wait; module unload deadlock | hang | general | haiku cea07d5468 | open | yes | full |
@@ -1253,6 +1254,67 @@ not done here.
   sessions panicked unpatched, 0 in 15 runs patched (also with `kill -9` during the waits).
 
 [design/videocore-services.md](design/videocore-services.md) §8 (our tree; the VCHIQ driver there is ours, the bug is not).
+
+<a id="hk-91"></a>
+
+#### HK-91 — libbe: a program the roster launched that exec()s another BApplication program leaves that program with a deleted looper port (no window, busy loop)
+
+- **Trac fields:** Component: `Kits/Application Kit` · Version: R1/beta5 (nightly hrev60450) · Platform: All · Type: bug
+- **Severity:** hang (the application never becomes ready; its looper thread spins)
+- **Scope:** all architectures; generic `src/kits/app/Application.cpp` (`BApplication::_InitData()`), with
+  `src/kits/app/Roster.cpp` (`BRoster::_LaunchApp()`), `src/servers/registrar/TRoster.cpp`
+  (`HandleSetThreadAndTeam()`) and the kernel's `exec_team()` (`delete_owned_ports()`). Any launcher, wrapper or
+  shell script started from Tracker or the Deskbar that `exec`s a BApplication program
+- **Our fix:** haiku-pi/haiku `rpi4` `2c33b68742` — "libbe: register anew when a pre-registered team exec()ed another program"
+- **Patch:** attachable as-is (12 lines in `_InitData()`)
+- **Upstream status (2026-11-22):** open: code unchanged at hrev60450 (`Application.cpp:425–433`: a pre-registered
+  team's registration is used as found; `team.cpp` `exec_team()` calls `delete_owned_ports()`); Trac: not searched
+
+**Environment.** Haiku nightly at hrev60450 (merge base), arm64, Raspberry Pi 4 Model B 4 GB. The code involved is
+not architecture-specific.
+
+**Description.** When the roster launches an executable (a double-click in Tracker, a Deskbar menu item, which sends
+Tracker the same `B_REFS_RECEIVED`, `BRoster::Launch()`), it pre-registers the new team, and the registrar creates the
+application's looper port and gives it to the team; the roster then queues `B_ARGV_RECEIVED` (or
+`B_REFS_RECEIVED`) and `B_READY_TO_RUN` in it. If the launched program is a launcher or a shell script that `exec()`s
+the real application, the kernel deletes every port the team owns in `exec_team()`, with those messages. The new
+image's `BApplication::_InitData()` still finds its team pre-registered, deletes the port it made itself, adopts the
+registration's port, which no longer exists, and completes the registration with it. Its looper's `read_port()` then
+returns `B_BAD_PORT_ID` in a busy loop, `ReadyToRun()` never comes, and a program that waits for it (SDL2's
+`StartBeLooper()` waits until `!be_app->IsLaunching()`) never shows a window. Only `kill` ends it.
+
+A shell script reached through a **link** is pre-registered too: `_TranslateRef()` resolves the document ref but
+keeps the link as the application ref, so `isScript` (`*docRef == appRef`) is false. A script opened directly is not
+pre-registered, so its program registers itself — that is why the same script "works" when opened directly.
+
+**Steps to reproduce.** A script `wrap.sh` (`#!/bin/sh` and `exec PROGRAM "$@"`, PROGRAM any SDL2 program, e.g.
+a game from HaikuPorts — it shows the hang plainly; any BApplication program never gets `ReadyToRun()`), a link to it
+on the Desktop, and a double-click on the link. Or an executable launcher (`execl("/bin/sh", "sh", "-c", "exec
+PROGRAM", NULL)`) double-clicked in Tracker.
+
+**Expected.** The application's window appears.
+**Actual.** No window; the application's looper thread uses CPU; `roster` lists the team under the launcher's path
+with a port the team no longer has (`listport TEAM`); the Debugger's report of the looper thread shows `read_port()`
+returning `0x80001200` under `BLooper::task_looper()`.
+
+**Root cause.** `_InitData()` trusts a pre-registration without checking that its port still exists and belongs to the
+team; after an exec it describes the previous program.
+
+**Fix.** If the pre-registration's port is gone, or no longer the team's, drop the registration
+(`BRoster::Private().RemoveApp(team)`) and register the application as one started from a shell: its own port,
+signature, entry_ref and flags, and its own `B_ARGV_RECEIVED` (from its argv) and `B_READY_TO_RUN`. A message the
+roster queued for the launcher is lost either way (before, the application hung); the arguments reach the program as
+its argv.
+
+**Evidence.** Pi 4, the test (mega) image: 13 of 39 Tracker/Deskbar entries showed no window (10 hung this way; the
+other 3 were a packaging issue: programs looking for their data next to the link that `argv[0]` names); with the fix
+39 of 39 show a window within 0.1–9 s and keep it. A launcher changed to fork and exec in the child (the launched team
+keeps its port) showed Blender's window in 1.05 s on the unfixed libbe. Arguments through a wrapper (`exec program
+"$@"`, launched with `BRoster::Launch(ref, argc, argv)`, directly and through a link): the program's `ArgvReceived()`
+runs once with the arguments once; `release-check` (24 launch cycles of GLTeapot and Firefox, 0 problems) and the
+shell-started smoke test unchanged.
+
+[design/tracker-launch.md](design/tracker-launch.md) (our tree).
 
 <a id="hk-78"></a>
 

@@ -312,8 +312,9 @@ cd /boot/system/apps/SuperTuxKart
   `--profile-time=60 --track=hacienda --numkarts=4 --kart=tux --difficulty=0`; its benchmark is
   `--benchmark`. The test runs pass `--disable-texture-compression`, which keeps the texture
   compression off the CPU at load time.
-- The plain `SuperTuxKart` starts with its legacy renderer (supertuxkart 1.5-3: `force_legacy_device` defaults to
-  true), the faster one here. For its shader renderer (lighting, shadows) use `SuperTuxKart-GLES`, or set
+- The plain `SuperTuxKart` starts with its legacy renderer (from supertuxkart 1.5-3: `force_legacy_device` defaults to
+  true), the faster one here. From 1.5-4 both start from a link too (the Deskbar's Applications entry, a link on the
+  Desktop): before, they looked for their data next to the link and exited. For its shader renderer (lighting, shadows) use `SuperTuxKart-GLES`, or set
   `force_legacy_device` to `"false"` in `~/config/settings/SuperTuxKart/config-0.10/config.xml`: with the libsdl2
   package (2.32.10-7 or newer) the desktop build then gets OpenGL 3.3 core and runs its shader renderer at ~16 fps
   at 720p. (A libSDL2 copy in `/boot/system/non-packaged/lib` older than 2.32.10-7 gives it 3.1 instead, and STK
@@ -506,7 +507,9 @@ drawing it. 720p H.264 then costs about 0.6–0.9 s of CPU per 10 s for drawing 
 video (also through MSE). Firefox draws the video itself again whenever the plane cannot show it correctly: with
 captions, controls or any translucent content over it, while the page scrolls, when it is partly outside the
 window, for the smaller of two videos, for BT.2020 and full-range BT.709 streams, and during a screen mode change.
-`MOZ_HAIKU_VIDEO_OVERLAY=0` (set before starting Firefox) turns the plane off. Side effects: a tooltip over a
+`MOZ_HAIKU_VIDEO_OVERLAY=0` (set before starting Firefox) turns the plane off. By hand (owner, 2026-11-22, mega36:
+image-2026-11-22): **YouTube in a window and full screen plays smoothly**; typing in Firefox, downloads (Blender demo
+scenes, unpacked with Expander in ~/Downloads) passed too. Side effects: a tooltip over a
 playing video has a dark green fringe. Screenshots show the video (from image-2026-11-21b; before, black where the
 video was).
 
@@ -923,7 +926,10 @@ After that, a program anywhere under `/boot` (your home folder included) runs fr
 From image-2026-11-19b Blender 3.6.23 LTS is in the package repository: `pkgman install blender` (it brings
 Python 3.10 with NumPy, OpenImageIO, OpenColorIO, OpenSubdiv, OpenImageDenoise, OpenVDB, OpenUSD, Alembic, FFTW, GMP,
 TBB, Boost and the libraries they need; `pkgman update blender` on an older install) and start it from Deskbar ▸
-Applications ▸ Blender, or `/boot/system/apps/Blender/Blender`. It draws with the desktop OpenGL 3.3 driver
+Applications ▸ Blender, or `/boot/system/apps/Blender/Blender` (from the Deskbar it needs blender 3.6.23-11, which
+finds its data when started through the Deskbar's link: older revisions quit at once that way). By hand (owner, 2026-11-22,
+started from a Terminal): Blender's "Classroom" demo scene, downloaded with Firefox and unpacked with Expander, loads
+quickly, its viewport preview is correct, and an F12 render runs (the first iterations looked right). It draws with the desktop OpenGL 3.3 driver
 (§5.1) through SDL2 (libsdl2 2.32.10-8 or newer is required: it gives each thread its own GL context, which
 Blender's renders need).
 
@@ -1057,6 +1063,7 @@ work that way, which also lets you run things on a Pi without a keyboard.
 | Firefox takes long to start | The very first start creates the profile and the font cache (16 s, 2026-10-20). The first start after a boot reads Firefox from disk: 8.2 s from the card, 10.2 s on a network boot; later starts open the window in 3.1 s (§8.2). |
 | Firefox drops frames in the first video after it starts | Known: a cold start (§8.2). Play it again; booting from the SD card helps. |
 | Quake II: the GL3 renderer does not start | It needs desktop OpenGL 3.2; use `+set vid_renderer gl1` (§6.3). |
+| A program started from the Desktop (a link, a launcher like the test image's Test Apps) or from the Deskbar's Applications menu shows no window: the process runs and uses some CPU, only `kill` ends it; or Blender / SuperTuxKart from the Deskbar quit at once | Images before image-2026-11-23: a program that a launcher or script `exec`s lost the message port Tracker's launch gave it (was KNOWN-ISSUES C18, fixed in image-2026-11-23: [design/tracker-launch.md](design/tracker-launch.md)), and Blender before 3.6.23-11 and SuperTuxKart before 1.5-4 looked for their data next to the link (`pkgman update blender supertuxkart`). On an older image, start the program from a Terminal (`/boot/system/apps/Blender/Blender`). |
 | SuperTuxKart says "OpenGL version is too old" | That is about its shader renderer; it falls back to the legacy one. For shaders, start `SuperTuxKart-GLES`. |
 | An SDL game crashed at a full-screen start with "double free" | Fixed in libsdl2 2.32.10-5 (2026-10-20). On an older image: `pkgman update libsdl2`. |
 | ioquake3/OpenArena stays alive after `kill` | From openarena 0.8.8-3 about 1 in 10 (was 1 in 4) needs `kill -9` after a plain `kill`: it hangs in the GL teardown at exit. Quitting from the game's menu is not affected. |

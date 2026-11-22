@@ -4,6 +4,11 @@ Owner report on mega36 (image-2026-11-22 + Test Apps): Blender from the Desktop'
 Deskbar's Applications menu never shows a window (the process stays, uses some CPU, only `kill` ends it); the
 same from a Terminal works; OpenArena and some other Test Apps entries do the same; Firefox works.
 
+**Status (2026-11-23, R4): shipped.** The libbe fix is on `rpi4` (2c33b68742, fast-forward; the list bump 06377149a5)
+and in **image-2026-11-23**; blender 3.6.23-11 and supertuxkart 1.5-4 are in the package repository; the card holds
+mega37. `scripts/mega-smoke.sh` now opens every entry through Tracker too (§"R4 gate"). Upstream report draft:
+[UPSTREAM-BUG-REPORTS.md](../UPSTREAM-BUG-REPORTS.md) HK-91 (not submitted).
+
 ## Verdict
 
 **Two defects, both only on the Tracker / Deskbar path** (`mega-smoke` starts every entry by exec from a shell,
@@ -134,18 +139,36 @@ the team still running with a window shown; then a quit). Raw lines: `artifacts/
 - Tools: `tools/haiku-tests/trackeropen.cpp` (`-q`: B_QUIT_REQUESTED to the application; `-w`: to its shown
   windows, as their close buttons — the only way for Blender, which is `B_ARGV_ONLY`), `tools/pi-tests/ta1-sweep.sh`.
 
+## R4 gate (2026-11-22/23)
+
+- `release-check.sh` on an image of the branch (r4gate, hrev60450+374) and on the release image (hrev60450+375):
+  0 problems each, 24 launch cycles, 0 debugger entries, 0 PANIC.
+- `mega-smoke.sh` (with the new Tracker step) on the TA1 test image: shell 34 of 34 (PhotoCraft and vkcube "exited 0"
+  as always), **Tracker 39 of 39** windows shown and kept; 0 PANIC. On mega37: see the W47 R4 entry.
+- **SuperTuxKart-GLES** (from -4): opened through Tracker via a link to it, window after 0.8 s, still shown 10 s later,
+  gone 0.4 s after a quit request; from a shell it runs and renders (the first-start notice).
+- **Arguments through a wrapper** (`tools/haiku-tests/argcount.cpp`: a BApplication that logs its argv,
+  `ArgvReceived()` and `RefsReceived()`; a script `exec /boot/home/argcount "$@"`, launched by `BRoster::Launch(ref,
+  argc, argv)` directly and through a link): `ArgvReceived()` ran **once**, with each argument once — no second
+  `B_ARGV_RECEIVED` from the roster. The roster appends the script's own path to a script's argv (`argcount one two
+  /…/wrap.sh`), with or without the fix (upstream behaviour). Files handed to the wrapper as `B_REFS_RECEIVED`
+  (`BRoster::Launch(ref, &refsMessage)`, as a drop onto it) do not reach the program — neither argv nor
+  `RefsReceived()`; the message went to the launcher's port (before the fix the program hung). The mega image has no
+  wrapper-launched program that opens files, so this was not tried with a real application.
+
 ## Not checked
 
 - Started by a real mouse double-click on the desktop (the checks send Tracker the same message a double-click and a
   Deskbar menu item make Tracker act on).
 - Other wrappers outside the mega image (a HaikuPorts package whose Deskbar entry is a script that execs a
   BApplication program): covered by the same libbe path, not run.
-- The x86-64 build of the libbe change; an upstream bug report (none drafted).
+- The x86-64 build of the libbe change.
 - The five Wine entries that did not end on an application quit nor on a window close (Fallout's registration
   dialog, Half-Life ×2, SimCity 3000, SumatraPDF x86): no before data (the mega36 sweep had no quit step) and no
   shell-launched control; the fix does not touch their path (they showed windows before it); not investigated.
-- SuperTuxKart-GLES (rebuilt with the patch, in -4) was not run; `release-check.sh` was not run on the libbe change
-  (it touches every application's start; only the 39 entries and the shell smoke ran).
 - A roster send that comes after the program has re-registered (the launcher exec'd before the roster's
   `_SendToRunning()`) would reach the new port: a second `B_READY_TO_RUN` is ignored, a launcher started with
-  arguments would give the program a second `B_ARGV_RECEIVED`. Not seen; not tested.
+  arguments would give the program a second `B_ARGV_RECEIVED`. Not seen in R4's wrapper test (two launches with
+  arguments, the script and a link to it: one `ArgvReceived()` each); a race, so not excluded.
+- Documents dropped onto a wrapper (refs) are lost (R4 gate above): a possible follow-up would turn refs into argv
+  for an executable without app flags; not done.

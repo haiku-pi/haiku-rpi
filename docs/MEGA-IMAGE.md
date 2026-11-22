@@ -42,14 +42,17 @@ first boot creates that folder and sets Wine up (about two minutes, a notificati
 `scripts/pi-test.sh` boots the card with a DHCP server on the Pi LAN (the host is the gateway and DNS
 server; the firmware's network boot requests are ignored), so the network, `pkgman` and the browsers work.
 
-The bench card holds **mega36** (2026-11-22): release image-2026-11-22 plus the content above, Blender 3.6.23-10;
-smoke test 34 of 34. The mega images are numbered in the weekly logs, one per card write; what the owner should try
+The bench card holds **mega37** (2026-11-23): release image-2026-11-23 plus the content above, Blender 3.6.23-11,
+SuperTuxKart 1.5-4; smoke test 34 of 34, and 39 of 39 entries with a window through Tracker. The mega images are numbered in the weekly logs, one per card write; what the owner should try
 on it: [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 ## Check it
 
 `scripts/mega-smoke.sh` boots the image from the network on the bench Pi (the card is not touched), sets it up
 as its first boot would, then starts every Test Apps entry for 25 s and screenshots it: one line per entry with
-whether it still runs and how much of the screen it changed (artifacts/mega-smoke/, with the programs' logs). It starts each program by exec from a shell; the
-way a double-click starts it (through Tracker and the roster) is checked by `tools/pi-tests/ta1-sweep.sh` in a
-network session: on mega36, 13 entries never showed a window that way (KNOWN-ISSUES C18; fix on test packages).
+whether it still runs and how much of the screen it changed (artifacts/mega-smoke/, with the programs' logs). That part starts each program by exec from a shell; then it
+opens every Test Apps entry and the Deskbar entries the image adds the way a double-click does (through Tracker and the
+roster: `tools/pi-tests/ta1-sweep.sh` with `tools/haiku-tests/trackeropen.cpp`) and requires each to show a window and
+keep it 10 s ("TRACKER result", exit 3 otherwise; `--no-tracker` leaves it out). On mega36, 13 of those entries never
+showed a window (fixed in image-2026-11-23, blender 3.6.23-11 and supertuxkart 1.5-4: design/tracker-launch.md);
+the exec-only smoke test had passed 34 of 34.

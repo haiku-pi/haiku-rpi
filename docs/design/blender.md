@@ -1572,6 +1572,10 @@ with a relinked binary; deleted) and publish it.
 - The `B_ARGV_ONLY` flag of -5 (§7.12) is why a `B_QUIT_REQUESTED` from another program cannot reach Blender
   (the roster gives no messenger to an argv-only application): the TA1 checks quit it by sending its windows
   B_QUIT_REQUESTED, as their close buttons do (`trackeropen -w`): gone after 0.6 s from both entries.
+- **Published (R4, 2026-11-23):** blender 3.6.23-11 in the package repository (the test package's bytes, sha256
+  9128674b…; -10 to packages-old); the libbe fix ships in image-2026-11-23; mega37 has both. Owner by hand on mega36
+  (2026-11-22, started from a Terminal): the "Classroom" demo scene loads quickly, the viewport preview is correct, an
+  F12 render starts and its first iterations look right.
 
 ## 8. Files
 
