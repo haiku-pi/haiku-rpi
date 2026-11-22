@@ -1,0 +1,418 @@
+haikuwebkit 1.10.0: seeking a <video> lands where it is asked to (docs/design/webpositive-video-overlay.md §6, WP3)
+
+Applies after haikuwebkit-1.10.0-video-overlay.patch. MediaPlayerPrivateHaiku:
+- duration() is the longest track's. It was the audio track's, and MediaTime() (a valid zero) for a file without an
+  audio track: HTMLMediaElement::seekTask() clamps the target to the duration, so every seek of such a video went to 0.
+- maxTimeSeekable() is the duration (it was currentTime(): seekTask() moves a target into the seekable range, so a
+  seek forward stopped at the current position).
+- seekToTarget() puts the video track on the key frame before the target and the video thread decodes on from there
+  to the picture at the target, without showing the ones between (paused or playing; a new seek meanwhile takes
+  over). The audio track, which the ffmpeg reader also seeks to the video's key frame, is decoded on to the target.
+  A failed seek rejects the promise.
+- The end of a track keeps the track (it was set to null, so a loop's seek to 0 found no track): without an audio
+  track the video's end is the end (timeChanged(), and currentTime() is then exactly the duration), so loop and
+  "ended" work for video-only files.
+- WEBKIT_VIDEO_OVERLAY_LOG=1 also prints a "WVO seek" line per seek and per picture shown after it.
+
+--- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.h
++++ b/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.h
+@@ -92,7 +92,8 @@
+         MediaPlayer::NetworkState networkState() const override;
+         MediaPlayer::ReadyState readyState() const override;
+ 
+-        WTF::MediaTime maxTimeSeekable() const override { return currentTime(); }
++        // the whole file (BMediaFile reads it to the end; seeking forward waits for the data)
++        WTF::MediaTime maxTimeSeekable() const override { return m_duration > 0 ? duration() : currentTime(); }
+ 
+         PlatformTimeRanges& buffered() const override;
+         bool didLoadingProgress() const override;
+@@ -128,6 +129,9 @@
+         void releasePlane();
+         void dropPlaneClaim();
+         void requestRepaint(bool own);
++        bool decodeToSeekTarget();
++        void skipAudioTo(bigtime_t time);
++        void notifyVideoEnded();
+         void logStats(const char* what);
+ 
+         // engine support
+@@ -148,6 +152,14 @@
+ 
+         float m_volume;
+         float m_currentTime;
++        bigtime_t m_duration;       // the longest track's (0: unknown)
++        // a seek: the video track is at the key frame before m_seekTarget, the
++        // video thread decodes on to it (-1: none); the end of a track (the
++        // track stays, for a seek back)
++        bigtime_t m_seekTarget;
++        bool m_videoEnded;
++        bool m_audioEnded;
++        size_t m_audioBufferSize;   // of the decoded audio (ReadFrames()), for skipping it after a seek
+         bool m_paused;
+         bool m_abort;
+ 
+--- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
++++ b/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
+@@ -268,6 +268,11 @@
+     , m_readyState(MediaPlayer::ReadyState::HaveNothing)
+     , m_volume(1.0)
+     , m_currentTime(0.f)
++    , m_duration(0)
++    , m_seekTarget(-1)
++    , m_videoEnded(false)
++    , m_audioEnded(false)
++    , m_audioBufferSize(0)
+     , m_paused(true)
+     , m_abort(false)
+     , m_loadingThread(-1)
+@@ -375,6 +380,10 @@
+     m_mediaFile = nullptr;
+     m_audioTrack = nullptr;
+     m_videoTrack = nullptr;
++    m_duration = 0;
++    m_seekTarget = -1;
++    m_videoEnded = false;
++    m_audioEnded = false;
+     m_mediaLock.Unlock();
+ }
+ 
+@@ -385,19 +394,20 @@
+ }
+ 
+ void MediaPlayerPrivate::playCallback(void* cookie, void* buffer,
+-    size_t /*size*/, const media_raw_audio_format& /*format*/)
++    size_t size, const media_raw_audio_format& /*format*/)
+ {
+     MediaPlayerPrivate* player = (MediaPlayerPrivate*)cookie;
+ 
+     if (!player->m_mediaLock.Lock())
+         return;
+ 
+-    if (player->m_audioTrack) {
++    if (player->m_audioTrack && !player->m_audioEnded) {
+         player->m_currentTime = player->m_audioTrack->CurrentTime() / 1000000.f;
+ 
+         int64 size64;
+         if (player->m_audioTrack->ReadFrames(buffer, &size64) != B_OK)
+         {
++            memset(buffer, 0, size);
+             player->m_currentTime = player->m_audioTrack->Duration() / 1000000.f;
+             player->m_soundPlayer->Stop(false);
+ 
+@@ -406,9 +416,11 @@
+                     p->m_player.timeChanged();
+             });
+ 
+-            player->m_audioTrack = nullptr;
++            // the track stays: a seek (a loop) plays it again
++            player->m_audioEnded = true;
+         }
+-    }
++    } else
++        memset(buffer, 0, size);
+     player->m_mediaLock.Unlock();
+ }
+ 
+@@ -449,15 +461,25 @@
+     MediaPlayerPrivate* player = (MediaPlayerPrivate*)cookie;
+     bigtime_t startTime = system_time();
+     bigtime_t startMediaTime = 0;
+-    float lastObservedTime = 0;
+ 
+     while (!player->m_abort) {
++        // a seek (paused or not): the picture at its time is shown, and
++        // without an audio track the clock goes on from there
++        if (player->decodeToSeekTarget()) {
++            startTime = system_time();
++            startMediaTime = (bigtime_t)(player->m_currentTime * 1000000);
++            if (player->m_yuv)
++                player->serviceOverlay();
++            else
++                player->requestRepaint(false);
++            continue;
++        }
++
+         if (player->m_paused) {
+             snooze(10000);
+             startTime = system_time();
+             startMediaTime = (bigtime_t)(player->m_currentTime * 1000000);
+-            lastObservedTime = player->m_currentTime;
+-            // a picture of a seek, a move of the video, the end of a software period
++            // a move of the video, the end of a software period
+             if (player->m_yuv)
+                 player->serviceOverlay();
+             continue;
+@@ -465,28 +487,37 @@
+ 
+         if (!player->m_mediaLock.Lock())
+             continue;
++        if (player->m_seekTarget >= 0) {
++            // a seek came meanwhile: decodeToSeekTarget(), and its time
++            // stays the clock's
++            player->m_mediaLock.Unlock();
++            continue;
++        }
+ 
+         bool decoded = false;
++        bool ended = false;
+         if (player->m_videoTrack) {
+-            // Detect seek or external time update
+-            if (std::abs(player->m_currentTime - lastObservedTime) > 0.5f) {
+-                startTime = system_time();
+-                startMediaTime = (bigtime_t)(player->m_currentTime * 1000000);
+-            }
+-
+             bigtime_t videoTime = player->m_videoTrack->CurrentTime();
+             bigtime_t audioTime;
+ 
+             if (player->m_audioTrack) {
+                 audioTime = player->m_audioTrack->CurrentTime();
++            } else if (player->m_videoEnded && player->m_duration > 0) {
++                // the end: the media element loops or stops at the duration
++                audioTime = player->m_duration;
+             } else {
+                 audioTime = startMediaTime + (system_time() - startTime);
++                if (player->m_duration > 0)
++                    audioTime = std::min(audioTime, player->m_duration);
+             }
+ 
+             player->m_currentTime = audioTime / 1000000.f;
+-            lastObservedTime = player->m_currentTime;
++            // the clock at the duration: the next read tells whether that is
++            // the end (the last picture's time is the duration's or later)
++            const bool clockAtEnd = !player->m_audioTrack && player->m_duration > 0
++                && audioTime >= player->m_duration;
+ 
+-            if (videoTime < audioTime) {
++            if (!player->m_videoEnded && (videoTime < audioTime || clockAtEnd)) {
+                 int64 count;
+                 void* buffer = player->m_yuv ? player->m_yuvBuffer : player->m_frameBuffer->Bits();
+                 if (player->m_videoTrack->ReadFrames(buffer, &count) == B_OK) {
+@@ -496,7 +527,11 @@
+                         player->m_statLate++;
+                     atomic_add(&player->m_frameSerial, 1);
+                 } else {
+-                    player->m_videoTrack = nullptr;
++                    // the track stays: a seek (a loop) plays it again
++                    player->m_videoEnded = true;
++                    ended = !player->m_audioTrack;
++                    if (ended && player->m_duration > 0)
++                        player->m_currentTime = player->m_duration / 1000000.f;
+                 }
+             } else {
+                 snooze(5000);
+@@ -504,6 +539,9 @@
+         }
+         player->m_mediaLock.Unlock();
+ 
++        // without an audio track, the end of the video is the end
++        if (ended)
++            player->notifyVideoEnded();
+         if (player->m_yuv)
+             player->serviceOverlay();
+         else if (decoded)
+@@ -515,6 +553,86 @@
+     return B_OK;
+ }
+ 
++// The ffmpeg reader seeks all of a file's tracks by the first video track's
++// index: the audio track lands at the video's key frame before the time, up
++// to a key frame interval early. Decodes (and drops) the audio up to the
++// time, a few milliseconds of CPU; with m_mediaLock held.
++void MediaPlayerPrivate::skipAudioTo(bigtime_t time)
++{
++    if (!m_audioBufferSize || m_audioTrack->CurrentTime() >= time)
++        return;
++    void* scratch = malloc(m_audioBufferSize);
++    if (!scratch)
++        return;
++    // at most a minute of audio
++    for (int i = 0; i < 6000 && m_audioTrack->CurrentTime() < time; i++) {
++        int64 frames;
++        if (m_audioTrack->ReadFrames(scratch, &frames) != B_OK) {
++            m_audioEnded = true;
++            break;
++        }
++    }
++    free(scratch);
++}
++
++// The video thread, after a seek: the video track is at the key frame at or
++// before the time asked for; decodes on to the picture that shows that time,
++// without showing the ones before it. The lock is taken per picture, so that a
++// seek that comes meanwhile (dragging the slider) is not held up; it sets the
++// new target, and the decoding goes on to that. Returns whether there was a
++// seek.
++bool MediaPlayerPrivate::decodeToSeekTarget()
++{
++    bool seek = false;
++    int32 pictures = 0;
++    bigtime_t shown = -1;
++    const bigtime_t start = system_time();
++    while (!m_abort && m_mediaLock.Lock()) {
++        void* buffer = m_yuv ? m_yuvBuffer : (m_frameBuffer ? m_frameBuffer->Bits() : nullptr);
++        if (m_seekTarget < 0 || !m_videoTrack || !buffer) {
++            m_seekTarget = -1;
++            m_mediaLock.Unlock();
++            break;
++        }
++        seek = true;
++        int64 count;
++        media_header header;
++        if (m_videoTrack->ReadFrames(buffer, &count, &header) == B_OK) {
++            pictures++;
++            m_statDecoded++;
++            shown = header.start_time;
++            // CurrentTime(): the end of this picture
++            if (m_videoTrack->CurrentTime() > m_seekTarget)
++                m_seekTarget = -1;
++        } else {
++            // a seek to the end
++            m_videoEnded = true;
++            m_seekTarget = -1;
++        }
++        const bool done = m_seekTarget < 0;
++        m_mediaLock.Unlock();
++        if (done)
++            break;
++    }
++    if (pictures)
++        atomic_add(&m_frameSerial, 1);
++    if (seek && overlayLog()) {
++        fprintf(stderr, "WVO seek: showing %.3f s, %d pictures decoded in %.0f ms\n", shown / 1000000.0,
++            (int)pictures, (system_time() - start) / 1000.0);
++    }
++    return seek;
++}
++
++// The video of a file without an audio track has ended: the media element
++// loops (a seek to 0) or stops.
++void MediaPlayerPrivate::notifyVideoEnded()
++{
++    callOnMainThread([p = WeakPtr(this)] {
++        if (p)
++            p->m_player.timeChanged();
++    });
++}
++
+ 
+ 
+ 
+@@ -558,44 +676,70 @@
+ 
+ WTF::MediaTime MediaPlayerPrivate::duration() const
+ {
+-    // TODO handle the case where there is a video, but no audio track.
+-    if (!m_audioTrack)
+-        return WTF::MediaTime();
+-    return WTF::MediaTime::createWithDouble(m_audioTrack->Duration() / 1000000.f);
++    // the longest track's (a file without an audio track had 0, which the
++    // media element clamps every seek to); unknown: an endless stream
++    if (m_duration <= 0)
++        return WTF::MediaTime::positiveInfiniteTime();
++    return WTF::MediaTime::createWithDouble(m_duration / 1000000.0);
+ }
+ 
+ WTF::MediaTime MediaPlayerPrivate::currentTime() const
+ {
++    // at the end exactly the duration (m_currentTime, a float, falls short of
++    // it), so that the media element loops or stops
++    if (m_duration > 0 && (m_audioTrack ? m_audioEnded : m_videoEnded))
++        return duration();
+     return WTF::MediaTime::createWithDouble(m_currentTime);
+ }
+ 
+-Ref<MediaTimePromise> MediaPlayerPrivate::seekToTarget(const SeekTarget& time)
+-{
+-    m_mediaLock.Lock();
+-    bigtime_t newTime = (bigtime_t)(time.time.toDouble() * 1000000);
+-    if (m_videoTrack)
+-        m_videoTrack->SeekToTime(&newTime);
+-    if (m_audioTrack)
+-        m_audioTrack->SeekToTime(&newTime);
++// The video track goes to the key frame at or before the time, and the video
++// thread decodes on from there to the picture at the time (decodeToSeekTarget());
++// the audio track goes to the time. Before, the first picture after the key
++// frame was shown, up to a key frame interval early, by the main thread.
++Ref<MediaTimePromise> MediaPlayerPrivate::seekToTarget(const SeekTarget& target)
++{
++    bigtime_t time = std::max<bigtime_t>(0, (bigtime_t)(target.time.toDouble() * 1000000));
++    if (m_duration > 0)
++        time = std::min(time, m_duration);
+ 
+-    m_currentTime = newTime / 1000000.f;
++    m_mediaLock.Lock();
++    bigtime_t keyFrame = time;
++    status_t videoStatus = B_OK;
++    if (m_videoTrack) {
++        videoStatus = m_videoTrack->SeekToTime(&keyFrame);
++        if (videoStatus == B_OK) {
++            m_seekTarget = time;
++            m_videoEnded = false;
++        }
++    }
++    bigtime_t audioTime = time;
++    status_t audioStatus = B_OK;
++    bool restartAudio = false;
++    if (m_audioTrack) {
++        audioStatus = m_audioTrack->SeekToTime(&audioTime);
++        if (audioStatus == B_OK) {
++            // it stopped at the end
++            restartAudio = m_audioEnded && !m_paused;
++            m_audioEnded = false;
++            skipAudioTo(time);
++            audioTime = m_audioTrack->CurrentTime();
++        }
++    }
++    const bool sought = (m_videoTrack || m_audioTrack) && videoStatus == B_OK && audioStatus == B_OK;
++    if (sought)
++        m_currentTime = (m_audioTrack ? audioTime : time) / 1000000.f;
++    m_mediaLock.Unlock();
+ 
+-    if (m_paused && m_videoTrack && m_frameBuffer) {
+-        int64 count;
+-        void* buffer = m_yuv ? m_yuvBuffer : m_frameBuffer->Bits();
+-        if (m_videoTrack->ReadFrames(buffer, &count) == B_OK) {
+-            atomic_add(&m_frameSerial, 1);
+-            // on the plane, the video thread shows it
+-            if (!m_yuv) {
+-                callOnMainThread([p = WeakPtr(this)] {
+-                    if (p)
+-                        p->m_player.repaint();
+-                });
+-            }
+-        }
++    if (overlayLog()) {
++        fprintf(stderr, "WVO seek: to %.3f s%s: video key frame %.3f s (%s), audio %.3f s (%s)\n", time / 1000000.0,
++            m_paused ? " (paused)" : "", keyFrame / 1000000.0, strerror(videoStatus), audioTime / 1000000.0,
++            strerror(audioStatus));
+     }
++    if (restartAudio && m_soundPlayer)
++        m_soundPlayer->Start();
++    if (!sought)
++        return MediaTimePromise::createAndReject(PlatformMediaError::NotSupportedError);
+     m_player.timeChanged();
+-    m_mediaLock.Unlock();
+     return MediaTimePromise::createAndResolve(MediaTime::createWithDouble(m_currentTime));
+ }
+ 
+@@ -1208,6 +1352,7 @@
+                 if (m_audioTrack)
+                     continue;
+                 m_audioTrack = track;
++                m_audioBufferSize = format.u.raw_audio.buffer_size;
+ 
+                 m_soundPlayer = new BSoundPlayer(&format.u.raw_audio,
+                     "HTML5 Audio", playCallback, NULL, this);
+@@ -1221,6 +1366,11 @@
+ 
+         }
+ 
++        if (m_videoTrack)
++            m_duration = m_videoTrack->Duration();
++        if (m_audioTrack)
++            m_duration = std::max(m_duration, m_audioTrack->Duration());
++
+         if (m_videoTrack) {
+             m_videoThread = spawn_thread(videoThread, "video decoder", B_NORMAL_PRIORITY, this);
+             if (m_videoThread >= 0)

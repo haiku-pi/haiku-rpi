@@ -204,8 +204,9 @@ rm -rf "$DEST/share"'
 # --- HaikuWebKit ---------------------------------------------------------------------------------
 wkRecipe="$ports/haiku-libs/haikuwebkit/haikuwebkit-1.10.0.recipe"
 wk="$root/artifacts/cross-ports/haikuwebkit-1.10.0"
-# 2: patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch (WP1/WP2)
-wkRevision="${WEBKIT_REVISION:-2}"
+# 2: patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch (WP1/WP2, published)
+# 3: + haikuwebkit-1.10.0-video-seek.patch (WP3: seeks land on their time; not published yet)
+wkRevision="${WEBKIT_REVISION:-3}"
 
 # the recipe's source and patches (1.10.0 has none for gcc builds), then ours
 # (patches/haikuwebkit/: JavaScriptCore on arm64); only when src/ does not exist yet

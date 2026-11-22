@@ -39,12 +39,18 @@ quit_wp() {
 start_wp() {	# URL
 	for t in $(wpteams); do kill -9 "$t"; done
 	rm -f /boot/home/config/settings/WebPositive/Session
-	/boot/system/apps/WebPositive "$1" > "$log" 2>&1 &
+	# LIB=DIR: DIR first in LIBRARY_PATH (a test libWebKitLegacy.so.1, as wp1-video.sh)
+	if [ -n "${LIB:-}" ]; then
+		LIBRARY_PATH="$LIB:${LIBRARY_PATH:-%A/lib:/boot/home/config/non-packaged/lib:/boot/home/config/lib:/boot/system/non-packaged/lib:/boot/system/lib}" \
+			/boot/system/apps/WebPositive "$1" > "$log" 2>&1 &
+	else
+		/boot/system/apps/WebPositive "$1" > "$log" 2>&1 &
+	fi
 	team=$!
 	sleep 3
 	w=$(wpwin)
 	[ -n "$w" ] && timeout 5 hey WebPositive set Frame of Window "$w" to "BRect(40,40,1639,939)" > /dev/null 2>&1
-	say "started team $team: $1"
+	say "started team $team: $1 (LIB=${LIB:-system})"
 }
 
 dbgStart=$(grep -a -c "entered the debugger" /var/log/syslog)

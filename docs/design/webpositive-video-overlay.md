@@ -1,6 +1,6 @@
 # WebPositive `<video>` on the YUV overlay plane (WP1)
 
-Status: **published as haikuwebkit 1.10.0-2** (2026-11-22, WP2: full GCC 16.2 build, Pi checks §3.2; in the image list from haiku rpi `86e23ad36a`). Measured first on a test build (2026-11-22, sessions `wp1a`, `wp1b`, §3). A change to HaikuWebKit's media player
+Status: **published as haikuwebkit 1.10.0-2**; seeking fixed in a third patch + a Haiku branch, measured, not published (WP3, §6) (2026-11-22, WP2: full GCC 16.2 build, Pi checks §3.2; in the image list from haiku rpi `86e23ad36a`). Measured first on a test build (2026-11-22, sessions `wp1a`, `wp1b`, §3). A change to HaikuWebKit's media player
 (`patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch`). Numbers are
 marked **measured** (with the source) or **estimated**. Builds on [video-overlay.md](video-overlay.md) (B_YUV420
 overlays, colour encodings §7, MediaPlayer's full-screen fix §10) and
@@ -235,9 +235,94 @@ Not run: a canvas `drawImage()` of a video, the real media controls (they never 
   heavy-build lock), then the `wp1-run.sh` set again on the installed package (measure, scroll, controls, two, tab, mode,
   cycle), and the image's repository bump (AGENTS.md's three parts). KNOWN-ISSUES F11 would lose the quit crash, P2's
   WebPositive line ("RGB output … 1 frame in 3") would change to the plane numbers above.
-- Follow-ups: rpivid's SAND pictures imported without the CPU copy (MediaPlayer's path, hw-video-decode §9); a
-  `BPositionIO` (file) reader for `file://` media so non-faststart MP4s play and seeks are exact; a NEON or table
-  converter for the software frames (9 ms at 720p, 23 ms at 1080p in C).
+- Follow-ups: rpivid's SAND pictures imported without the CPU copy (MediaPlayer's path, hw-video-decode §9); a NEON or
+  table converter for the software frames (9 ms at 720p, 23 ms at 1080p in C). (The `BPositionIO` reader once listed
+  here is not needed: non-faststart MP4s and the seeks are §6.)
 
 Outputs: `artifacts/wp1/runs/` (per run `.out`, HDMI `.png`), UART `artifacts/uart/20261122-041231-session-wp1a.log`,
 `20261122-051151-session-wp1b.log`. Libraries: `artifacts/wp1/t2` (final), `t1` (before the plane claim), `control`.
+
+## 6. Seeking (WP3, 2026-11-22; session `wp3` 08:50–10:14, image-2026-11-21b, kept disk with 1.10.0-2, card untouched)
+
+**Root cause (WebKit, not the media kit): the media player told WebCore the wrong duration and seekable range.**
+
+- `MediaPlayerPrivate::duration()` was the *audio* track's, and `WTF::MediaTime()` without one — a **valid zero**
+  ([W] `WTF/wtf/MediaTime.h:142`). `HTMLMediaElement::seekTask()` clamps the target to the duration
+  (`time = std::min(time, durationMediaTime())`, [W] `WebCore/html/HTMLMediaElement.cpp:4058`): every seek of a video
+  without an audio track went to 0. All WP1/WP2 clips are video-only.
+- `maxTimeSeekable()` was `currentTime()`, and `seekTask()` moves the target into the seekable range
+  (`seekableRanges->ranges().nearest(time)`, :4111): with audio, a seek forward stopped at the current position; and at
+  position 0 the range is empty and the seek is dropped.
+- `seekToTarget()` passed one variable to both tracks: the video's `SeekToTime()` moved it to the key frame before the
+  target, the audio track was then sought there, and that became the position — each seek landed up to a key frame
+  interval early, and a second seek could only go further back.
+- WP1's "paused at frame 0 already" HDMI frames were a timing artefact of the snapshots (taken after the first seek).
+
+Evidence (`tools/pi-tests/wp3-seek.sh`: the page's `duration`, `seekable.end()` and `currentTime` at each media event, in
+its title, read with `hey`; second tool: the clip's burned-in time on the HDMI frame, `artifacts/wp3/runs/ts-*.png`):
+
+| 1.10.0-2 (`B-*`) | duration / seekable end | pause at 11.7 → seek 5 → seek 20 → play | playing: seek 40, later 3 |
+|---|---|---|---|
+| H.264 720p, video only | **0.00** / = currentTime | ct 0.00, frame 0; second seek dropped (range empty); plays from 0 | 0.00 both |
+| same + AAC (control clip) | 60.00 / = currentTime | ct **3.63** (key frame 3.7, audio there), then **1.62** (20 clamped to 3.63, its key frame 1.7) | — |
+
+**The media kit seeks right** (`tools/media-tests/seekprobe.cpp`: `BMediaFile(BUrl("file://…"))` as WebKit opens it, or a
+`BFile`; decode to 12 s, `SeekToTime()`, `ReadFrames()`, the luma of the time stamp dumped): H.264 720p (h264_mmal),
+H.264 1080p60 (CPU), HEVC 720p/1080p (rpivid): every seek to the key frame at or before the target (5 → 3.700 / 4.000 /
+3.967; 20 → 19.467 / 20.000 / 18.800), `start_time` = the burned-in time, decoding on reaches the target exactly
+(`artifacts/wp3/skp/grid.png`). One media-kit imprecision: an audio track is sought by the *video's* index
+(`avformat_seek_file(…, -1, …)` in `AVFormatReader`), so it lands at the video's key frame too — handled in WebKit below.
+
+**But the BUrl reader has its own defect (Haiku): a read across the end of the stream waits for data that never comes.**
+`BAdapterIO::_EvaluateWait()` waits until the buffer holds `position + size` bytes; FFmpeg's 32 kB reads near the end ask for
+more than is left, so the read stalls for the http_streamer's 10 s timeout and fails. Measured: a 15 s clip read to its
+end through `BUrl` stops after 420 of 452 frames with one **10 022 ms** read (`BFile`: all 452); in WebPositive the video
+freezes ~0.5 s before its end for 10 s. And an MP4 with `moov` at the end does not open at all ("moov atom not found",
+"No handler"): **that is why non-faststart HEVC never played in WebPositive** (WP1), and the 854×480 H.264 clip neither.
+
+**Fixes.**
+
+1. WebKit `patches/haikuwebkit/haikuwebkit-1.10.0-video-seek.patch` (after the overlay patch; `build-webkit.sh` revision 3):
+   duration = the longest track's (unknown: +∞); seekable = [0, duration]; `seekToTarget()` seeks the video track to the
+   key frame and the **video thread decodes on to the target without showing the pictures before it**
+   (`decodeToSeekTarget()`, the lock per picture so that a newer seek takes over: dragging), paused or playing; the audio
+   track is decoded on to the target (`skipAudioTo()`); a failed seek rejects the promise; a track that ends stays (a loop
+   seeks it again; it was set to null), the end of a video-only file is the end (`timeChanged()`, `currentTime()` exactly
+   the duration — `m_currentTime` is a float and fell short, so the loop never came); `WVO seek` lines with
+   `WEBKIT_VIDEO_OVERLAY_LOG=1`. Built by ninja in the WP2 tree (~20 s), test library `artifacts/wp3/t4`.
+2. Haiku branch **`wp3-adapterio-eof`** (haiku-pi, off rpi4 86e23ad36a, **not merged**): d5da656a29 `BAdapterIO`: a read
+   across the end of a stream of known size waits for what is left. Test `libmedia.so` (`artifacts/wp3/libmedia`: the rpi4
+   build's objects relinked with the new `AdapterIO.o`, the image's libmedia otherwise byte-identical), loaded by
+   `LIBRARY_PATH`.
+
+**Pi results** (t4 unless noted; `F5-*`, `F4-*`, `FM*-*` in `artifacts/wp3/runs`; HDMI time stamps `ts-final.png`):
+
+| Clip (decoder) | Paused at ~11.5: seek 5, seek 20, play | Playing: seek 40, later 3 |
+|---|---|---|
+| H.264 720p video only (h264_mmal) | ct 5.00 / 20.00; HDMI **5.000 / 20.000**, playing 23.433 | ct 40.00 / 3.00; HDMI 42.167 and 5.433 two s later |
+| H.264 720p + AAC (h264_mmal) | ct 5.00 / 20.01 (audio 5.003 / 20.011); HDMI 5.000 / 20.000 | ct 40.01 / 3.01 |
+| HEVC 1080p faststart (rpivid) | ct 5.00 / 20.00; HDMI 5.000 / 20.000 / 23.933 playing | ct 40.00 / 3.00 (t2) |
+| HEVC 720p faststart (rpivid) | 5.00 / 20.00 (t2) | — |
+| H.264 1080p60 (CPU) | 5.00 / 20.00 (t2); the picture after 0.8–1.0 s (63–73 pictures decoded) | 40 → end (30) → loop → 0, then 3.00 (t2) |
+| HEVC 720p **moov at end** + libmedia fix | ct 5.00 / 20.00 (t2); HDMI 5.000 / 20.000 | — |
+| H.264 854×480 **moov at end** + libmedia fix | — | 40 → 30 → loop → 0, then 3.00 (key frames 8.3 s apart: 91 pictures, 0.4 s) |
+| `WEBKIT_VIDEO_OVERLAY=0` (software path), H.264 720p | 5.00 / 20.00 (t2) | 40.00 / 3.00 (t2) |
+
+- Decoding on from the key frame: 17–40 pictures in 0.13–0.44 s (720p/1080p30 on the VideoCore or rpivid), 0.8–1.0 s for
+  1080p60 on the CPU.
+- End of a 15 s clip, `loop`: video only + libmedia fix: loops at 15.07 s, twice in 35 s; with AAC: the same; without
+  `loop`: `pause` + `ended` at 15.07; video only with the **stock** libmedia: loops, but only after the 10 s stall at 14.54
+  (1.10.0-2: frozen at 13.77, never loops).
+- **WP2's checks, t4, stock libmedia:** WebPositive / app_server / system 1080p30 H.264 **27.0 / 0.6 / 8.4 %** (WP2 26.1 /
+  0.7 / 8.2), 720p30 **15.7 / 0.7 / 5.2** (14.6 / 0.7 / 4.9), HEVC 1080p **23.6 / 0.4 / 6.8** (24.3 / 0.5 / 6.9); 300 plane
+  updates per 10 s; key census 52–61 (window baseline). **12 quits during 1080p30 playback: 12 × "quit in 1 s", 0
+  debugger entries.** 0 debugger entries in all 40-odd WebPositive runs of the session.
+- Slip: two `seekprobe` runs (an early version that returned without closing its file) did not exit and kept the
+  VideoCore's one H.264 decoder; the WebPositive runs between ~09:00 and 09:33 (`F2-*`, `F3-*`, `F4-*` H.264, the first CPU
+  runs `R-*`) fell back to the software decoder (their logs say so). Seeks were right on that path too; the CPU and the
+  H.264 seek runs were repeated once the probe was killed (`R2-*`, `F5-*`, `FM5-*`).
+
+Not checked: seeking over `http(s)://` (forward beyond what has arrived waits in `BAdapterIO`, up to 10 s per read, on the
+video thread — the main thread only seeks to the key frame, which may itself wait); the real media controls' slider
+(injected mouse events do not reach them, §3); audio *heard* after a seek (the clips are muted; the positions are the
+track's); a non-faststart file in the browser without the libmedia fix still does not open.
