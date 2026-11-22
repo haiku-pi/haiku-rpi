@@ -911,9 +911,14 @@ Blender's renders need).
 - **Speed (measured on the Pi 4, 4 cores):** the factory scene at 1920×1080 renders in about 35 s with EEVEE and
   1 min 37 s with Cycles without denoising. Denoising is on in a new file, and from blender -7 it really runs: the
   same F12 then takes about **3½ minutes and ~1.5 GB of RAM** (Render Properties ▸ Sampling ▸ Denoise; Prefilter
-  Fast is about a minute shorter, unticking Denoise gives the old time). The viewport is GPU-bound: orbiting at 1322×762 runs at about 5 frames per second
-  (blender 3.6.23-4; -2: 4); a 1024×600 window gives about 12, and with viewport anti-aliasing and Smooth Wires
-  off (Preferences ▸ Viewport) about 15. A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
+  Fast is about a minute shorter, unticking Denoise gives the old time). The viewport is GPU-bound (the shading of
+  its many full-screen passes, not memory bandwidth): orbiting in a 1600×900 window (viewport 1322×762) runs at
+  about **8 frames per second** from blender 3.6.23-10, which leaves out the anti-aliasing and smooth-wire passes
+  while you navigate (-9: 5; Material Preview 6, -9: 5); the picture is anti-aliased again as soon as you stop, and
+  paint strokes are also drawn without anti-aliasing. A 1024×600 window gives about **18** (-9: 12). For more speed:
+  turn off the grid and the selected object's outline (Viewport Overlays menu), use a smaller window, and set
+  Preferences ▸ Viewport ▸ Anti-Aliasing to None and untick Smooth Wires — with -10 these two no longer change
+  navigation, but they speed up every other redraw (playback, edits, the frames after you stop). A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
 - **Input:** click into the Blender window once before typing — keys go to the active window, and to the area
   under the mouse pointer.
 - Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, slow CPU denoising, no

@@ -12,7 +12,8 @@ B7 (11-20): blender -7 test packages — Cycles denoising with OpenImageDenoise 
 the `aud` module (NumPy 1.26 for Python 3.10), Alembic, the Ocean modifier, fluid simulation, and the Rendered
 viewport fixed (GL context sharing), §7.14. B8: OpenVDB, GMP, QuadriFlow, Draco, translations, §7.15. B9: USD
 import/export (OpenUSD 24.08 against oneTBB, Haiku port of its arch library) and a Haiku crash in Blender's
-recursive delete fixed, test packages blender -9 + usd, §7.16.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
+recursive delete fixed, test packages blender -9 + usd, §7.16. BW1: the viewport is not memory-bound; patch 0017 (no
+anti-aliasing while navigating on V3D, +52 % fps orbiting), §7.17; published as blender -10 (11-22), §7.18.** Owner (11-18): "If we have OpenGL 3.3 … schedule an
 analysis for bringing up the newest possible version of Blender3D … Blender 3.6 seems to work ok on OpenGL 3.3 …
 Start by analyzing if this is possible, and then plan implementation accordingly."
 
@@ -1471,6 +1472,43 @@ time) and a smaller window (1024×600 with 0017: 18.5 fps).
 Not cheap, and not done: making the passes themselves cheaper (the grid's and SMAA's shaders on V3D's QPUs, fewer
 overlay framebuffer switches, half-resolution overlays) — that is shader/draw-manager work, where the bus monitor
 now shows whether a change moves bytes or only time.
+
+### 7.18 blender -10: 0017 built and published (2026-11-22 02:12–03:40; session b10 03:21–03:35, image-2026-11-21b)
+
+Task B10: build blender **3.6.23-10** properly (BW1's -10 in `artifacts/packages-test/blender-10/` was a repack of -9
+with a relinked binary; deleted) and publish it.
+- **Build:** `scripts/build-blender.sh` at `--revision 10` (out to `artifacts/packages-test/blender-10/`; `stage` takes
+  blender from there). The `src` tree BW1 left (0017 reverse-applied) was deleted and recreated, so the build is
+  a fresh 3.6.23 + 0001–0017: `BLENDER_CLEAN=1 build-blender.sh blender_source blender_package`, hosttools and
+  configure from scratch, 4988 steps in 24 min (02:13–02:37), 881 warning lines (as -9). The `WITH_*` cache values
+  and the `blender` NEEDED list equal -9's build (saved before the clean).
+- **Against the published -9** (`scripts/package-diff.sh`): provides/requires the same (only the version), files
+  2457 → 2457, the same paths; 65 045 307 bytes (-9: 65 042 171).
+- **Pi** (`artifacts/blender-tests/b10/`): `pkgman install` of the -10 file over the published repository on a fresh
+  image-2026-11-21b. The first try failed after 89 s on a download ("Failed to download package oidn: Operation
+  would block"); the same install run again a minute later (blender-b9.sh's) succeeded, `pkgman search` shows
+  `blender 3.6.23-10`, the installed binary is the package's (same size).
+  - B9 USD (`blender-b9.sh`): every check PASS with -9's numbers (`.usdc` 762 705, `.usda` 2 535 574, `.usdz`
+    762 871, `.usd` 762 704 bytes; 4 objects, 7966 vertices, 7878 faces, 2 materials; the five primitives; x86-64's
+    four files import).
+  - M3: cube 9.8 s, factory 1080p 3 min 31 s, 1.57 GB peak, Filmic (-9: 9.7 s, 3 min 29 s). M5: EEVEE factory
+    35.8 s, scene 57.4 s, Cycles scene 81.6 s, the SSS message once (-9: 35.6, 57.2, 81.4). `blender-probe.sh`: every
+    program status 0, `sdlthread: PASS`.
+  - **BW1 drag** (`blender-bw.sh`, NAV=1, real middle-button drag; uiinject cannot drive the packaged app, which has
+    B_ARGV_ONLY, so the installed package's binary was run with its resources stripped — `.text` identical — beside a
+    link to the installed `3.6/`): 1600×900 factory Solid **127.1 ms (7.87 fps; -9 control in §7.17: 193.0 ms, 5.18
+    fps, +52 %)**, V3D 200+179 = 379 MB/frame (§7.17: 381); Material Preview 166.1 ms (6.02 fps; -9: 196.5);
+    1024×600 Solid **54.0 ms (18.5 fps; -9: 81.7)**. n = 1 each. The frames after the drag: 170, 90, then ~195 ms
+    (the anti-aliased frame and TAA samples, as §7.17).
+  - **Still frames** (`blender-bw-look.sh`, HDMI): 3 s after the drag the viewport equals BW1's 0017-v2 frame (1440×770
+    compared, largest difference 8 of 255, no pixel above 8) and the -9 control's except the pointer's 19×17 pixels
+    (as in BW1): anti-aliasing is back. During the drag the edges are aliased (5543 distinct colours in the crop;
+    control 6119, BW1's 0017 5597).
+  - 0 debugger entries, 0 PANIC (syslog and the serial log). The bench lock waited 02:38–03:21 behind the other
+    project's gate; the session was stopped at 03:35 (card untouched).
+- **Published** (03:36, packages repository b8aa108): -9 to `artifacts/packages-old/`, -10 into `artifacts/packages/`, `publish-repo.sh`;
+  `…/arm64/packages/blender-3.6.23-10-arm64.hpkg` serves HTTP 200 (65 045 307 bytes). Blender is not in the jam
+  image's repository list (no `HaikuPorts/arm64` or `download/` change); the mega image takes the newest file.
 
 ### 7.8 Draft user documentation (for USER-GUIDE / KNOWN-ISSUES at the next release; not published yet)
 
