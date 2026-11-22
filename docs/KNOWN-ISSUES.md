@@ -10,7 +10,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-11-21 10:55** (the newest entry: 2026-11-21 10:55, release image-2026-11-21b); F11, C16 and P2's WebPositive line also against 2026-11-22 12:11 (WP2–WP4: haikuwebkit 1.10.0-2 and 1.10.0-3, haiku d5da656a29); C16 also against 2026-11-22 14:10 (MP3).
+Checked against the weekly logs up to **2026-11-21 10:55** (the newest entry: 2026-11-21 10:55, release image-2026-11-21b); F11, C16 and P2's WebPositive line also against 2026-11-22 12:11 (WP2–WP4: haikuwebkit 1.10.0-2 and 1.10.0-3, haiku d5da656a29); C16 also against 2026-11-22 14:05 (MP3).
 
 ## 1. Correctness: crashes and hangs
 
