@@ -27,7 +27,7 @@ authors, and marked "not ours to attach".
 *arm64* (any arm64 board); *non-snooping DMA* (platforms whose devices do not snoop CPU caches); *Pi 4* (BCM2711
 hardware only).
 
-**Two forms.** 82 entries are full reports in the project's format. 55 are in **short form** (what, severity,
+**Two forms.** 84 entries are full reports in the project's format. 55 are in **short form** (what, severity,
 our fix, upstream status, and why it is short): fixes found by others (RenkuOS), findings from code reading that
 were never reproduced, bugs latent at upstream's default settings or exposed only by our fork's code, entries for
 an archived repository, duplicates of existing upstream reports, and minor items. The summary table's "Form"
@@ -107,6 +107,8 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [HK-69](#hk-69) | Haiku | System/Kernel | setrlimit() EINVAL for the current value of a fixed limit | wrong output | general | haiku f0a1d5f5cf | open | yes | full |
 | [HK-70](#hk-70) | Haiku | Kits/Media Kit | BTimeSource float conversion calls debugger() after 16.7 s | crash | general | haiku c41702df18 | open | yes | full |
 | [HK-87](#hk-87) | Haiku | Kits/Media Kit | BAdapterIO: a read across the end of a stream waits 10 s and fails (BUrl media lose their end; moov-at-end MP4s do not open) | hang / wrong output | general | haiku d5da656a29 | open | yes | full |
+| [HK-88](#hk-88) | Haiku | Kits/Support Kit | BUrl const getters build strings lazily: two threads reading one BUrl corrupt the heap (MediaPlayer URL-open crash) | crash | general | haiku 2d4241482f | open | yes | full |
+| [HK-89](#hk-89) | Haiku | Applications/MediaPlayer | Seek or Play before any file opened crashes in PlaybackManager (no playing state) | crash | general | haiku fb3d9ac1bd | open | yes | full |
 | [HK-78](#hk-78) | Haiku | Drivers/USB/XHCI | Physical transfers >384 KiB built over all vectors | wrong output | general | haiku e1d69f100f | open | yes | full |
 | [HK-62](#hk-62) | Haiku | System/Boot Loader/EFI | Any load option key not 2 characters long hangs the loader | hang | general | haiku d8dfb51d8d | open | notes | full |
 | [HK-74](#hk-74) | Haiku | System/Kernel | Net boot: no link wait; module unload deadlock | hang | general | haiku cea07d5468 | open | yes | full |
@@ -1079,6 +1081,108 @@ waiting. A read at the end then returns 0 at once. Streams of unknown size are u
   over https, throttled to 1.5 MB/s, and from file.
 
 [design/webpositive-video-overlay.md](design/webpositive-video-overlay.md) §6, §6.1.
+
+<a id="hk-88"></a>
+
+#### HK-88 — Support Kit: BUrl's const getters build their strings lazily, so two threads reading one BUrl corrupt the heap (MediaPlayer crashes opening a URL)
+
+- **Trac fields:** Component: `Kits/Support Kit` · Version: R1/beta5 (nightly hrev60450) · Platform: All · Type: bug
+- **Severity:** crash (heap corruption: `double free` / `bogus pointer` from the allocator)
+- **Scope:** all architectures; generic `src/kits/support/Url.cpp`; every program that reads one `BUrl` from more than one thread (MediaPlayer does on every URL it opens)
+- **Our fix:** haiku-pi/haiku `rpi4` `2d4241482f` — "BUrl: build the URL strings when the URL changes, not in const getters"
+- **Patch:** attachable as-is (Url.cpp, Url.h: private members only, `sizeof(BUrl)` unchanged)
+- **Upstream status (2026-11-22):** open: code unchanged at hrev60450, `Url.cpp:397-421` (`UrlString()`), `:447-460` (`UserInfo()`), `:477-492` (`Authority()`); Trac: not searched
+
+**Environment.** Haiku nightly at hrev60450 (merge base), arm64, Raspberry Pi 4 Model B 4 GB; MediaPlayer. Also reproduced on
+x86_64 Linux with the host build of the support kit (`libbe_build`).
+
+**Description.** `UrlString()`, `Authority()` and `UserInfo()` are `const` but build their result into `mutable`
+`BString` members the first time they are called after a change (`fUrlStringValid` etc.). Two threads calling them
+on the same `BUrl` both `Truncate()` and append to the same `BString`, and both `realloc()` its buffer. A copy made
+meanwhile (the copy constructor reads the flag and the string) can take a buffer that is being freed. Callers
+cannot see this: the methods are const, and a const `BString` is safe to read from several threads.
+
+MediaPlayer hits it on every URL. `Playlist::_NotifyItemAdded()` (`Playlist.cpp:833`) posts the new
+`UrlPlaylistItem` to its listeners. Two of them are windows with their own threads: `MainWin::_AddPlaylistItem()`
+(`MainWin.cpp:2906`, the playlist menu) and `PlaylistListView::Item::Item()` (`PlaylistListView.cpp:95`, the playlist
+window, created hidden). Both call `item->Name()` → `UrlPlaylistItem::GetAttribute()` → `fUrl.UrlString()` at the
+same time, on a `BUrl` whose string was never built (it came from `BUrl(BMessage*)`, which ends in `_ResetFields()`).
+The controller thread meanwhile copies the same `BUrl` (`BMediaFile(fUrl)` → `MediaStreamer`).
+
+**Steps to reproduce.** Run `MediaPlayer http://host/anything.mp4` repeatedly; a 404 URL is enough, because the crash
+comes before any request. Or read one fresh `BUrl` from two threads at once (`tools/host-burl/urlrace.cpp` here,
+200 000 rounds).
+
+**Expected.** The URL opens, or fails to open; reading a `BUrl` from several threads is as safe as reading a `BString`.
+**Actual.** About 1 in 8 MediaPlayer starts enters the debugger: `double free` in `realloc()` ←
+`BString::_Resize()` ← `BString::_DoAppend()` ← `BUrl::UrlString() + 0xdc` ← `UrlPlaylistItem::GetAttribute()` ←
+`PlaylistItem::Name()` ← `MainWin::_AddPlaylistItem()` or `PlaylistListView::_AddItem()`. Once it was `bogus
+pointer` in `~BUrl` at quit. On the host, two threads abort glibc's heap within 200 000 rounds every time (one
+thread: clean).
+
+**Root cause.** The lazy cache: `Url.cpp:399-418`. The getters write `mutable` members without a lock, and the
+`f…Valid` flags are bitfields sharing a byte with the `fHas*` flags.
+
+**Fix.** Build the three strings in every modifier instead: a private `_UpdateStrings()` is called by the setters,
+`SetAuthority()`, `_SetPathUnsafe()`, `_ResetFields()`, `_ExplodeUrlString()`, `IDNAToAscii/Unicode()` and the
+deprecated `UrlEncode/Decode(bool)`. The getters and `operator==` only read. `_ExplodeUrlString()` and
+`SetAuthority()` parse a copy of their argument, because it may be the object's own `UrlString()`/`Authority()`.
+The three flags and `mutable` go; `sizeof(BUrl)` stays 112 on arm64 and x86_64, and no accessor is inline. A lock
+was not an option (no room in the object; apps embed `BUrl` by value). As a side effect, `SetAuthority("")`,
+`IDNAToAscii()` and `IDNAToUnicode()` no longer leave an already built string stale.
+
+**Evidence.** Pi 4, sessions mp3, 2026-11-22, one image, stock against fixed libbe:
+- MediaPlayer URL opens: stock 9 of 70 crashed (15 of 114 with the earlier session). Fixed libbe with the stock
+  MediaPlayer: 0 of 50. The fixed image: 0 of 50, and 0 of 20 on a real clip over http.
+- `UrlTest` (581 checks, host) gives identical results with both. So does a field dump of 13 URLs through parse,
+  copy, assignment, setters and relative resolution, except the stale-string case above.
+
+[design/mediaplayer-url-crash.md](design/mediaplayer-url-crash.md) §1, §3.
+
+<a id="hk-89"></a>
+
+#### HK-89 — MediaPlayer: a seek or Play before any file has opened crashes in PlaybackManager (no playing state)
+
+- **Trac fields:** Component: `Applications/MediaPlayer` · Version: R1/beta5 (nightly hrev60450) · Platform: All · Type: bug
+- **Severity:** crash
+- **Scope:** all architectures; generic `src/apps/mediaplayer/Controller.cpp`
+- **Our fix:** haiku-pi/haiku `rpi4` `fb3d9ac1bd` — "MediaPlayer: don't seek or play before a file was ever opened"
+- **Patch:** attachable as-is (5 lines). Our tree adds 4 unrelated lines to Controller.cpp, so apply by hand if it
+  does not apply cleanly.
+- **Upstream status (2026-11-22):** open: code unchanged at hrev60450, `Controller.cpp:640-648` (`Play()`), `:844`
+  (`SetFramePosition()`); Trac: not searched
+
+**Environment.** Haiku nightly at hrev60450 (merge base), arm64, Raspberry Pi 4 Model B 4 GB.
+
+**Description.** `PlaybackManager` has no playing state until `PlaybackManager::Init()`, which
+`Controller::SetTo()` → `NodeManager::Init()` calls only for the first file that opens. Until then
+`_StateAtFrame()` and `_LastState()` return NULL.
+- `Controller::SetFramePosition()` calls `CurrentFrame()` → `PlaylistFrameAtFrame()`, which dereferences the state
+  (`PlaybackManager.cpp:667`).
+- `Controller::Play()` → `StartPlaying()` → `SetPlayMode()` copies `*_LastState()` (`:445`).
+- `Stop()` and `TogglePlaying()` already return early when `InitCheck()` fails; these two do not.
+
+**Steps to reproduce.** Start MediaPlayer on a file or URL that cannot be opened. Then, before dismissing the error
+alert, use one of:
+- `hey MediaPlayer set Position of Window 0 to int64 20000000`;
+- `hey MediaPlayer do Play of Window 0`, or the Play menu item;
+- the position slider.
+
+**Expected.** Nothing happens; the commands reply.
+**Actual.** Segment violation:
+- for the seek, at `PlaybackManager::PlaylistFrameAtFrame(long, int&, bool&) + 0x20` ← `Controller::SetFramePosition()`;
+- for Play, at `PlaybackManager::SetPlayMode(int, bool) + 0x30` ← `Controller::Play()`.
+
+**Root cause.** Missing `InitCheck()` in `Controller::SetFramePosition()` and `Controller::Play()`.
+
+**Fix.** Return early when `InitCheck() != B_OK`: `SetFramePosition()` returns 0, and `Play()` skips `StartPlaying()`
+but still sets `fAutoplay`, so the next file that opens starts playing.
+
+**Evidence.** Pi 4, sessions mp3, 2026-11-22, on a 404 URL. Stock: `set Position` crashed 3 of 3 and `do Play` 7 of 7.
+Fixed: every scripted command was handled and replied in 9 runs (`set Position`, `set Seek`, `do Play`, `do Pause`,
+`do Stop`), with 0 debugger entries.
+
+[design/mediaplayer-url-crash.md](design/mediaplayer-url-crash.md) §2, §3.
 
 <a id="hk-78"></a>
 

@@ -1,6 +1,6 @@
 # MediaPlayer crashes opening a URL (KNOWN-ISSUES C16, MP3)
 
-Status: **fixed on branch `mp3-url-crash`** of haiku-pi/haiku (from `rpi4` 519adfacb3), **not merged**.
+Status: **merged into `rpi4` at fb3d9ac1bd** (fast-forward from 519adfacb3, 2026-11-22 after the WebPositive check of §3.1; ships in the next image). Was branch `mp3-url-crash` of haiku-pi/haiku.
 Two commits, pushed: 2d4241482f (BUrl, support kit, libbe) and fb3d9ac1bd (MediaPlayer's Controller). Numbers are
 **measured** unless marked. Pi: 15 of 114 URL opens crashed before the fix, 0 of 120 after; the seek or Play after a
 failed open crashed 10 of 10 before; after the fix every such command got its reply (9 runs).
@@ -143,10 +143,24 @@ when the target is past the duration (0 here), so it never seeks and did not cra
 Host tools: `tools/host-burl/run.sh TREE` (§1.2–1.3). Pi tools: `tools/pi-tests/wp4-mpopen.sh` (now `APP=`, and it
 prints the libraries loaded), `tools/pi-tests/mp3-failseek.sh`. Runs: `artifacts/mp3/runs/`.
 
+### 3.1 WebPositive on the new libbe (session `mp3b` 14:11–14:16, same image, haikuwebkit 1.10.0-3, card untouched)
+
+`/boot/system/lib/libbe.so` md5 6bdb3b13… (this branch). WebKit uses `BUrl` throughout, so this checks the eager strings
+in a real client:
+- Browsing (`wp2-run.sh`): Wikipedia over https rendered ("Haiku (operating system) - Wikipedia"), then
+  `https://example.com/` typed into the URL field opened ("Example Domain"), and the typing page read "typed: Hello
+  Haiku 2026". Quit in 1 s, 0 debugger entries.
+- `<video>` over http (`wp3-seek.sh playing`, `play-720p30-aac.mp4` from `wp4-httpd.py`): `dur=60.00`, seek to 40 →
+  `ct=40.01` (key frame 38.7, 40 pictures decoded on in 435 ms), seek to 3 → 3.01. 0 debugger entries.
+- Download (`tools/pi-tests/mp3-wpdl.sh`, a 3 MB `application/octet-stream` file over http): it landed on the Desktop,
+  3 000 000 bytes, md5 identical to the source. With the stock libbe (`LIBRARY_PATH`) the result and the server's
+  request log were the same: one complete GET, then a second GET closed at quit. That second GET is WebPositive's
+  own behaviour, not this change.
+- 0 PANIC, 0 debugger entries in the session.
+
 ## 4. Not checked
 
-- WebPositive and other `BUrl` users with the new libbe. WebKit uses `BUrl` in its network layer. The host
-  `UrlTest` and the field dump give the same results, but no browser session ran on this libbe.
+- `BUrl` users other than MediaPlayer and WebPositive (§3.1) on the new libbe.
 - The cost of building the strings eagerly was not measured. It is a few appends per modifier.
 - How long the Controller holds its lock while it tries a URL that does not open (~20 s for a 404; the window
   is blocked meanwhile). This was not examined.
