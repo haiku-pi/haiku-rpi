@@ -6,6 +6,10 @@ bench without a person ([LAB-SETUP.md](LAB-SETUP.md)).
 
 **Newest release: image-2026-11-21b** (2026-11-21): image-2026-11-21 plus **HEVC shown without a copy** (the display plane scans out the decoder's pictures: 1080p30 at ~4 % of a core, **8-bit 4K HEVC on the plane**), **1080p60 H.264 in MediaPlayer with every frame shown** (decoded on the CPU; 1080p30 and below stay on the VideoCore), **screenshots that include video and full-screen games**, and **MediaPlayer's full screen keeping the video** (paused or after the clip ended it left the picture behind on a green screen); release checks 0 problems, H.264 play/two/kill/rate 0 problems, HEVC 1080p/10-bit/4K on the plane, booted twice from a card, mega smoke test 34 of 34. **The card holds mega35** (image-2026-11-21b plus every test app). New to try: MediaPlayer on a 4K HEVC clip and on 1080p60 H.264 (smooth, no dropped frames); MediaPlayer to full screen while paused or after the end and back; a screenshot (Print Screen) while a video plays.
 
+**Since then, as a package (2026-11-22):** `pkgman update haikuwebkit` (Terminal; mega35 and image-2026-11-21b
+have 1.10.0-1) gives **WebPositive video on the YUV plane** and **no crash when WebPositive is quit during
+playback** (haikuwebkit 1.10.0-2) — check 11.
+
 Before it, **image-2026-11-21** (2026-11-21): image-2026-11-19b plus **Firefox video on the display's YUV
 plane** (firefox 157.0.1-11: a playing `<video>` is scaled and converted by the display, 720p drawn at about a tenth of
 the CPU; captions, controls or scrolling bring it back into Firefox's own drawing), **video in its own colours**
@@ -48,6 +52,7 @@ desktop use is fine, the system feels fast. Since then a card-booted Pi also get
 | 8 | **Windows programs (Wine)** | `pkgman install wine wine_x86 wine_x86_64` (~1.5 min), then `wine winemine` in Terminal (the first start makes `~/.wine`: ~3 min from the SD card, Cancel the Wine Mono question), then `wine notepad` | Minesweeper takes mouse clicks (left and right); Notepad takes typing, capitals with Shift too; in File → Save As, typing a name replaces the proposed one (fixed in wine 11.20-17). A 32-bit x86 Windows game you own can be tried too (e.g. a 1990s demo: `wine game.exe` in its folder) |
 | 9 | **Bluetooth (optional)** | Terminal: `/boot/system/servers/bluetooth_server &`, then `bt_dev_info`; with a phone or laptop set discoverable, `bt_discovery` | `bt_dev_info` prints the controller: `BCM43455 ... DC:A6:32:3C:DD:F5`; `bt_discovery` lists the other device with its class and name after ~13 s. Pairing from the other device works by PIN (a "PIN Code Request" window opens on the Pi; the Pi must be connectable first, which only the port's test tool `btscan` sets — optional) |
 | 10 | **Shutting down** | Deskbar → Shut down | The Pi powers down cleanly; the next boot is normal (no disk check) |
+| 11 | **WebPositive video** (after `pkgman update haikuwebkit`, then a restart of WebPositive) | Open a page with an H.264 or HEVC video (e.g. a test-video site, or a local file: `file:///boot/home/clip.mp4`), play it, scroll the page, hover the video's controls, open another tab and come back, resize the window; quit WebPositive (Window → Quit) while it plays, several times | The picture is smooth and in the right colours, never a flat green or magenta area where the video should be (a short switch to slightly softer software drawing while scrolling or with the controls showing is expected); quitting never brings up the crash dialog |
 
 Known limits you may run into ([KNOWN-ISSUES.md](KNOWN-ISSUES.md)): HDMI audio only when the monitor is connected at boot; the first
 video played after Firefox starts drops frames (play it again); a full-screen Windows game switches the screen

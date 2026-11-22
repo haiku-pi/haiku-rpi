@@ -1,7 +1,7 @@
 # WebPositive `<video>` on the YUV overlay plane (WP1)
 
-Status: **test build measured on the Pi; not merged, not published** (2026-11-22, sessions `wp1a`, `wp1b`, §3). A change to HaikuWebKit's media player
-(`patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch`) and a test library (`artifacts/packages-test/`). Numbers are
+Status: **published as haikuwebkit 1.10.0-2** (2026-11-22, WP2: full GCC 16.2 build, Pi checks §3.2; in the image list from haiku rpi `86e23ad36a`). Measured first on a test build (2026-11-22, sessions `wp1a`, `wp1b`, §3). A change to HaikuWebKit's media player
+(`patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch`). Numbers are
 marked **measured** (with the source) or **estimated**. Builds on [video-overlay.md](video-overlay.md) (B_YUV420
 overlays, colour encodings §7, MediaPlayer's full-screen fix §10) and
 [firefox-video-overlay.md](firefox-video-overlay.md) (A1: key fill; A1b: no window drawing while only the video
@@ -170,6 +170,44 @@ scaled by the display). CPU = `teamstat` over 10 s from 20 s after the start, % 
 
 Not run: a canvas `drawImage()` of a video, the real media controls (they never appear for injected mouse events).
 
+### 3.2 WP2: the published package (full GCC 16.2 build; session wp2b 07:29–07:53, image-2026-11-21b, 0 PANIC, card untouched)
+
+- Build: `scripts/build-webkit.sh` from a fresh tree with both patches (the patched files identical to WP1's), against
+  a private sysroot (`artifacts/sysroot-webkit`: the shared one plus the published dependencies staged as the library
+  steps leave them; the CMake cache's library, include, `ENABLE_*` and `USE_*` entries identical to October's). ninja
+  06:23–07:27 (64 min, 8 jobs), 1552 warnings: 1328 of them GCC 16's new `-Wsfinae-incomplete`, the other classes as
+  October's (WP1's `seekToTarget()` `-Wreturn-type` gone). `.comment` of libWebKitLegacy, libJavaScriptCore and jsc:
+  GCC 16.2.0 only.
+- `package-diff.sh` against 1.10.0-1: runtime `+requires lib:libgcc_s` (from `gcc_syslibs`, as the test package), same 9
+  files; `_devel` the same 24 files, its requirement moved to `haikuwebkit == 1.10.0-2`.
+- Installed with `pkgman install` (the two files), MD5 of `/boot/system/lib/libWebKitLegacy.so.1` = the package's, and
+  `listimage` of a running WebPositive maps it from `/boot/system/lib` (no `LIBRARY_PATH`). Runs `artifacts/wp1/runs/W*`:
+
+| Clip | WebPositive / app_server / system | Plane |
+|---|---|---|
+| H.264 720p30 | 14.6 / 0.7 / 4.9 % | 301 of 300 updates per 10 s |
+| H.264 1080p30 | 26.1 / 0.7 / 8.2 % | 300 |
+| H.264 1080p60 (3 runs) | 158.7–164.9 / 0.7–0.8 / 40.5–42.3 % | 600–601 updates in 600 vblanks, 7 / 87 / 231 superseded: **370–594 of 600 shown** (WP1: 435–585) |
+| HEVC 1080p30 faststart | 24.3 / 0.5 / 6.9 % | 300 |
+| HEVC 720p30 faststart | 12.3 / 0.5 / 3.9 % | 300–301 |
+
+- CPU within WP1's spread on every clip (§3: 15.4 / 28.6 / 162.2 / 24.2 / 12.0 % for WebPositive). 1080p60's shown frames
+  swing widely within each build (the worst run here 370 of 600 against WP1's lowest 435; late decodes 73–334 against WP1's
+  63–125): three runs per build cannot tell noise from a build effect. Key census of the 20 HDMI
+  frames with the window at 1920×1080: 47–91 key-like pixels (window baseline and the test pattern's green bars; no key
+  area; the 1280×720 frame 20, two frames taken after the quit 7); scroll (80 scroll hooks,
+  plane moved twice), controls (40 foreign paints, back on the plane; the real media controls still never appear: uiinject's mouse
+  moves reach the window's focus view, not the page), two videos (H.264 + HEVC 720p: the first on the
+  plane, the other in software, `other 20`; key 60), hidden tab (the frame with the other tab in front: no video, no key; the plane given back and shown again by the
+  counters, `hides 1 shows 2` — the frame meant for after the tab closed was taken after the quit), mode change
+  1280×720 and back (one suspended-overlay fallback, plane again): as in §3/§3.1.
+- **Quits during playback: 32, 0 crashes** — 20 in `cycle` runs (8 × H.264 1080p30, 8 × 720p30, 4 × HEVC 1080p30), 12 at the
+  end of the other runs; 0 debugger entries in the whole session's syslog. 1080p60 quits take 8 s, as before.
+- Browsing (`tools/pi-tests/wp2-browse.sh`, `wp2-run.sh`): en.wikipedia.org, www.haiku-os.org, github.com/haiku/haiku and
+  DuckDuckGo's HTML search render (page titles right; Wikipedia's frame matches the 1.10.0-1 baseline's except the
+  Deskbar); typing into a page's text field (`typed: Hello Haiku 2026` in the title) and an address typed into the URL field
+  + Return (example.com loaded) work. `jsc` loop: 3.5 s with the JIT, 68.7 s with `JSC_useJIT=false`.
+
 ## 4. Defects found on the bench and fixed in the patch
 
 0. Two videos in one page fought over the view's one overlay (§3.1): a claim per view, the others in software.
@@ -190,7 +228,7 @@ Not run: a canvas `drawImage()` of a video, the real media controls (they never 
 - Test package: `artifacts/packages-test/wp1/haikuwebkit-1.10.0-2-arm64.hpkg` (the -1 package with this library,
   stripped, and `lib:libgcc_s`; library from `artifacts/wp1/t2`); installed with pkgman in session wp1b (§3.1); **not
   published**.
-- **Recommendation: merge the patch, publish only after a clean build.** The gain is large and measured on every clip
+- **Done (WP2, §3.2): merged and published as haikuwebkit 1.10.0-2.** The recommendation was: merge the patch, publish only after a clean build. The gain is large and measured on every clip
   (app_server −1 core at 30 fps; quits no longer crash), the change is contained (one WebCore file, two hooks in
   WebPage.cpp; `WEBKIT_VIDEO_OVERLAY=0` restores the old path), and the fallbacks were exercised. Before a release:
   a full `scripts/build-webkit.sh` with GCC 16.2 (the patch applies to a fresh tree: `patch --dry-run` checked; ~hours,

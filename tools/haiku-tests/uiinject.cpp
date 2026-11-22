@@ -165,8 +165,11 @@ main(int argc, char** argv)
 		get.AddSpecifier("Title");
 		get.AddSpecifier("Window", i);
 		const char* title;
-		if (target.SendMessage(&get, &reply, 1000000, 1000000) != B_OK
-			|| reply.FindString("result", &title) != B_OK)
+		// (a window whose looper does not answer, e.g. WebPositive's never-shown ones, is skipped; past the
+		// last window the reply has no result)
+		if (target.SendMessage(&get, &reply, 1000000, 1000000) != B_OK)
+			continue;
+		if (reply.FindString("result", &title) != B_OK)
 			break;
 		if (strstr(title, argv[2]) == NULL)
 			continue;

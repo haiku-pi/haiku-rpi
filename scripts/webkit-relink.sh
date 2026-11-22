@@ -8,6 +8,9 @@
 # libraries come from their packages in artifacts/packages (extracted once into a private directory), and
 # libWebKitLegacy.so.1.10.0 is linked with ninja's link line, the new objects in place of the old ones.
 # The result is a mixed 13.3/16.2 link: good for tests, not for a release (that is a full build-webkit.sh).
+# Since WP2 (2026-11-22) the tree is a full GCC 16.2 build against the private sysroot artifacts/sysroot-webkit:
+# while that sysroot exists, `WEBKIT_SYSROOT=$PWD/artifacts/sysroot-webkit scripts/build-webkit.sh webkit_build`
+# recompiles only what changed, and this script is not needed.
 #
 #   scripts/webkit-relink.sh OUTDIR SOURCE...
 #

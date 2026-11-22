@@ -28,13 +28,23 @@
 #   webkit_configure  cmake
 #   webkit_build      ninja, under scripts/heavy-build.sh (memory-capped; several hours)
 #   haikuwebkit       install + package
+#
+# Environment: WEBKIT_SYSROOT=DIR builds against (and installs into) another sysroot, e.g. a private copy
+# of artifacts/sysroot-arm64 for a long build while other builds use the shared one. Start such a build at
+# "icu74 icu74" then "webkit_source", after staging the published dependencies into DIR as the library
+# steps would have (without rebuilding and re-packaging them): their cross-ports install trees copied into
+# DIR (artifacts/cross-ports/<port>/install/.) and their runtime + _devel packages extracted into
+# DIR/boot/system (package-port.py does that; WTF finds execinfo.h only there). WEBKIT_REVISION=N: the
+# package revision (default below); WEBKIT_PKG_OUT=DIR: the haikuwebkit packages go there instead of
+# artifacts/packages (a test build).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 ports="$root/sources/haikuports"
 cross="$root/scripts/cross-port.sh"
 package="$root/scripts/package-port.py"
 gen="$root/sources/haiku/generated.arm64"
-sysroot="$root/artifacts/sysroot-arm64"
+sysroot="${WEBKIT_SYSROOT:-$root/artifacts/sysroot-arm64}"
+export HAIKU_PI_SYSROOT="$sysroot" CROSS_PORT_SYSROOT="$sysroot" # (tools/cmake/haiku-arm64.cmake, cross-port.sh)
 np="$sysroot/boot/system/non-packaged"
 hostTools="$gen/objects/linux/x86_64/release/tools"
 export LD_LIBRARY_PATH="$gen/objects/linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -194,6 +204,8 @@ rm -rf "$DEST/share"'
 # --- HaikuWebKit ---------------------------------------------------------------------------------
 wkRecipe="$ports/haiku-libs/haikuwebkit/haikuwebkit-1.10.0.recipe"
 wk="$root/artifacts/cross-ports/haikuwebkit-1.10.0"
+# 2: patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch (WP1/WP2)
+wkRevision="${WEBKIT_REVISION:-2}"
 
 # the recipe's source and patches (1.10.0 has none for gcc builds), then ours
 # (patches/haikuwebkit/: JavaScriptCore on arm64); only when src/ does not exist yet
@@ -243,7 +255,8 @@ haikuwebkit() {
 	mv "$dest/develop/headers" "$dest/include"
 	rmdir "$dest/develop"
 	cp -a "$wk/install/." "$sysroot/"
-	"$package" "$wkRecipe" --requires lib:libicuuc --requires lib:libicui18n
+	"$package" "$wkRecipe" --revision "$wkRevision" ${WEBKIT_PKG_OUT:+--out "$WEBKIT_PKG_OUT"} \
+		--requires lib:libicuuc --requires lib:libicui18n
 }
 
 steps=(icu74 libexecinfo sqlite libxml2 libxslt lcms brotli woff2 libwebp dav1d libavif libpsl

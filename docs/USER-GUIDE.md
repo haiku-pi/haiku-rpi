@@ -427,7 +427,7 @@ The 1080p stream decodes on less than half a core. Re-measured after the clock c
   is converted as before.
 - From image-2026-11-21b the media kit **chooses the H.264 decoder by the stream's rate**: above 1080p at 45 fps
   (1080p50/60) the VideoCore cannot keep up, so those streams decode on the CPU (1080p60 in MediaPlayer: about 2 cores, every frame
-  shown; with RGB output, as in WebPositive, the CPU cannot keep up; Firefox's 1080p60 is unchanged, §8.2); 1080p30 and below stay on the VideoCore. `FFMPEG_H264_MMAL=1` forces the VideoCore, `=0` the CPU.
+  shown; with RGB output, as in WebPositive before haikuwebkit 1.10.0-2, the CPU cannot keep up; Firefox's 1080p60 is unchanged, §8.2); 1080p30 and below stay on the VideoCore. `FFMPEG_H264_MMAL=1` forces the VideoCore, `=0` the CPU.
 - MediaPlayer's full screen (from image-2026-11-21b) keeps the video on the plane when switched paused or after the
   clip has ended; screenshots (the Screenshot app, `screenshot`) include what the display planes show.
 
@@ -526,6 +526,30 @@ JavaScriptCore's JIT on. It renders https://www.haiku-os.org/ completely (2026-1
 the rebuilt ICU on 2026-10-20). A JavaScript loop that takes 7 s without the JIT takes 1 s with it.
 
 ![WebPositive](screenshots/05-webpositive.png)
+
+**Video** (`<video>`, haikuwebkit 1.10.0-2, published 2026-11-22: `pkgman update haikuwebkit` on images up to
+image-2026-11-21b, in the image from the next release): WebPositive shows the video on the display's YUV overlay
+plane, like MediaPlayer, instead of converting each frame to RGB and redrawing the page. The display hardware scales
+and converts the picture, and app_server no longer copies it. Measured on the Pi (a muted, looped clip filling a
+1600×900 window; CPU over 10 s, % of one core; "system" is of all four cores):
+
+| Clip (decoder) | 1.10.0-1: WebPositive / app_server / system | 1.10.0-2: WebPositive / app_server / system |
+|---|---|---|
+| H.264 720p30 (VideoCore) | 27 / 102 / 33 % | 15 / 0.7 / 4.9 % |
+| H.264 1080p30 (VideoCore) | 45 / 102 / 38 % | 26 / 0.7 / 8.2 % |
+| H.264 1080p60 (CPU, by rate) | 179 / 65 / 62 %, ~1 frame in 3 shown | 159–165 / 0.8 / 41–42 %, 370–594 of 600 frames shown per 10 s |
+| HEVC 1080p30 (rpivid) | 35 / 102 / 35 % | 24 / 0.5 / 6.9 % |
+
+- While something else changes over the video (its controls, a menu, a hover effect), while the page scrolls and for
+  half a second after, and when a second video plays on the same page, that video is drawn in software as before;
+  it returns to the plane by itself. A video in a hidden tab gives the plane back.
+- Quitting WebPositive while a video plays no longer crashes it (it did at 10 of 17 quits; KNOWN-ISSUES F11).
+- HEVC plays only from MP4 files with the index at the front ("faststart", as most web video is); others show
+  nothing. Re-mux with `ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4`.
+- A seek while the video is paused lands on the clip's first frame when playback resumes (1.10.0-1 never resumed
+  after it); not yet fixed.
+- `WEBKIT_VIDEO_OVERLAY=0` in WebPositive's environment brings back the RGB path; `WEBKIT_VIDEO_OVERLAY_LOG=1`
+  prints the player's counters every 2 s ([design/webpositive-video-overlay.md](design/webpositive-video-overlay.md)).
 
 Limits: the Web Inspector's files are not installed (as on x86 Haiku; the HaikuPorts recipe leaves them out). Its user agent says "Macintosh; Intel Haiku/…"
 on purpose: upstream's Haiku WebKit poses as Safari for site compatibility, and Safari on Apple Silicon
