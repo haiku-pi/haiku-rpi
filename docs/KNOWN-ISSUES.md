@@ -10,7 +10,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-11-22 19:30** (the newest entry: 2026-11-22, release image-2026-11-22, R3): C16 (MediaPlayer URL-open crash), C17 ("Failed to unwire page" PANIC) and F11 (WebPositive crash at quit during playback) left the register — fixed in image-2026-11-22 (their stories: W47 11-22 WP2–WP4, MP3, VQ1, R3).
+Checked against the weekly logs up to **2026-11-22 19:55** (the newest entry: 2026-11-22 19:55, release image-2026-11-22, R3): C16 (MediaPlayer URL-open crash), C17 ("Failed to unwire page" PANIC) and F11 (WebPositive crash at quit during playback) left the register — fixed in image-2026-11-22 (their stories: W47 11-22 WP2–WP4, MP3, VQ1, R3).
 
 ## 1. Correctness: crashes and hangs
 

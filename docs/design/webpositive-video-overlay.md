@@ -292,7 +292,7 @@ freezes ~0.5 s before its end for 10 s. And an MP4 with `moov` at the end does n
    `WEBKIT_VIDEO_OVERLAY_LOG=1`; the destructor and `load()` no longer hold the media lock while `cancelLoad()` waits for
    the video thread (its own rule — see "Teardown" below). Built by ninja in the WP2 tree (~20 s), test library
    `artifacts/wp3/t5` (t4 = without the teardown change).
-2. Haiku branch **`wp3-adapterio-eof`** (haiku-pi, off rpi4 86e23ad36a, **not merged**): d5da656a29 `BAdapterIO`: a read
+2. Haiku branch **`wp3-adapterio-eof`** (haiku-pi, off rpi4 86e23ad36a; not merged at the time — merged by WP4, in image-2026-11-22): d5da656a29 `BAdapterIO`: a read
    across the end of a stream of known size waits for what is left. Test `libmedia.so` (`artifacts/wp3/libmedia`: the rpi4
    build's objects relinked with the new `AdapterIO.o`, the image's libmedia otherwise byte-identical), loaded by
    `LIBRARY_PATH`.
