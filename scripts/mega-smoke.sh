@@ -91,5 +91,9 @@ poll /boot/home/tracker-out.txt "$out/tracker.txt" TA1
 "$ssh" get /boot/home/ta1 "$out/tracker-shots" > /dev/null || true
 total=$(grep -c '^TA1 [0-9]' "$out/tracker.txt" || true)
 good=$(grep '^TA1 [0-9]' "$out/tracker.txt" | grep 'window after' | grep -c 'running, window shown' || true)
-echo "TRACKER result: $good of $total entries showed a window and kept it" | tee -a "$out/tracker.txt"
-[ "$total" -gt 0 ] && [ "$good" = "$total" ] || exit 3
+# the sweep lists the Test Apps entries as smoke-pi.sh does: as many as the shell pass started
+apps=$(grep -c '^TA1 [0-9]* Test Apps/' "$out/tracker.txt" || true)
+shell=$(sed -n 's/^SMOKE end //p' "$out/smoke.txt")
+echo "TRACKER result: $good of $total entries showed a window and kept it ($apps Test Apps entries, the shell pass $shell)" \
+	| tee -a "$out/tracker.txt"
+[ "$total" -gt 0 ] && [ "$good" = "$total" ] && [ "$apps" = "$shell" ] || exit 3
