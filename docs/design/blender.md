@@ -1488,8 +1488,8 @@ with a relinked binary; deleted) and publish it.
   image-2026-11-21b. The first try failed after 89 s on a download ("Failed to download package oidn: Operation
   would block"); the same install run again a minute later (blender-b9.sh's) succeeded, `pkgman search` shows
   `blender 3.6.23-10`, the installed binary is the package's (same size).
-  - B9 USD (`blender-b9.sh`): every check PASS with -9's numbers (`.usdc` 762 705, `.usda` 2 535 574, `.usdz`
-    762 871, `.usd` 762 704 bytes; 4 objects, 7966 vertices, 7878 faces, 2 materials; the five primitives; x86-64's
+  - B9 USD (`blender-b9.sh`): every check PASS (`.usdc` 762 705, `.usda` 2 535 574, `.usdz` 762 871 bytes as -9;
+    `.usd` 762 704, one byte less than -9's 762 705 in session b9g; 4 objects, 7966 vertices, 7878 faces, 2 materials; the five primitives; x86-64's
     four files import).
   - M3: cube 9.8 s, factory 1080p 3 min 31 s, 1.57 GB peak, Filmic (-9: 9.7 s, 3 min 29 s). M5: EEVEE factory
     35.8 s, scene 57.4 s, Cycles scene 81.6 s, the SSS message once (-9: 35.6, 57.2, 81.4). `blender-probe.sh`: every
