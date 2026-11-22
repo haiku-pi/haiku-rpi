@@ -461,7 +461,11 @@ the old team is gone). The clip decides it: MP3's `play-720p30-aac.mp4` (`artifa
 `wp4-httpd.py`) triggers it; the media-tests clips (1080p30 file, 720p30 over http, at full speed or 1500 kB/s) did not
 in 185 decodes on A. On C the diagnostic shows the fix at work in exactly that situation: 4 `VQ1: unmap: team … "heap
 area" … waits for wired pages above it` lines from 3 players' heaps in 90 starts — on A each such cut was a PANIC
-(3 `VQ1: cut_area` lines, 3 panics, in 120 starts).
+(3 `VQ1: cut_area` lines, 3 panics, in 120 starts). The players whose `free()` waited played on normally (the H.264
+clock line, ~100 plane updates per 200 vblanks, ended by their kill or quit). 0 in 90 alone would be weak against a
+~2.5 % baseline (a ~10 % chance of luck); the intercepted cuts carry the claim. Both images also had MediaPlayer
+debugger entries in these URL runs — all `double free` under `BUrl::UrlString()`, i.e. C16 (fixed in rpi4 fb3d9ac1bd
+by MP3, not in these images): A 5 in 120 starts, C 12 in 90 (WP4 measured ~3 in 20); none in a kernel path.
 
 | Image | MP3's clip over http, kill -9 | the same, hey quit | other clips (kill, quit, http, throttled) | encode (`testsrc2` 1080p30, half killed) |
 |---|---|---|---|---|
@@ -483,8 +487,8 @@ area" … waits for wired pages above it` lines from 3 players' heaps in 90 star
     the branch's own kernel: 200 of 200. 0 PANIC.
 - **Pi, VCHIQ** (`vchiq_test_cut -b 1024 400`: the firmware's echo bulk test, its 1 MB buffers in the upper half of a
   64 MB mapping, another thread cutting a page below them every 2 ms; `vq1-vchiqcut.sh`):
-  - A: **3 of 3** sessions panicked at the first `VQ1: cut_area` line — twice `get_memory_map()` in
-    `vchiq_haiku_buffer_lock()`; with a cut every 300 ms (`VQ1_CUT_US=300000`) MP3's exact stack, `VCHIQ-0` →
+  - A: **4 of 4** sessions panicked at the first `VQ1: cut_area` line — twice `get_memory_map()` in
+    `vchiq_haiku_buffer_lock()`; twice, with a cut every 300 ms (`VQ1_CUT_US=300000`), MP3's exact stack: `VCHIQ-0` →
     `vchiq_complete_bulk` → `vchiq_haiku_buffer_unlock` → "Failed to unwire page".
   - B: 4 of 5 runs complete, 0 PANIC; run 3 aborted on `vchiq: cannot lock the bulk buffer …: Invalid Argument` — the
     driver looked the buffer's area up before locking it, and a cut between `area_for()` and its size check made it
@@ -540,6 +544,9 @@ rescue clone the wrong range.
   `get_memory_map_etc()` relies on, also with interrupts off) without any new blocking; it is more VM code (mapping
   lists, page-table pages for x86/arm64). A kill-interruptible wait would only soften the first point.
 - Upstream Haiku has the same `cut_area()`; no upstream report drafted yet (a candidate for UPSTREAM-BUG-REPORTS).
+- Unchecked: the branch's own build (H, without the diagnostic) did not run MP3's clip nor the Firefox / `h264.sh`
+  checks (those ran on C, which differs only by the diagnostic lines); how long a cut waits in MediaPlayer was not
+  measured; whether the wait changes C16's rate (above) is not known.
 - Unchecked: a 1080p decode + 1080p encode in one ffmpeg (`h264_vc` → `h264_mmal`) failed with VideoCore `ENOMEM` on C
   (`mmal_vc_port_enable … video_encode:in:0 … ENOMEM`), 10 of 10; not tried on A, so not known to be new or related.
   The encode checks above use `testsrc2` instead.
