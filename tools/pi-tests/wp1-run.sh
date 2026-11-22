@@ -18,7 +18,8 @@ if [ "${1:-}" = setup ]; then
 	mkdir -p "$k/lib" "$k/control"
 	cp "$R/tools/pi-tests/wp1-video.sh" "$R/artifacts/v1-overlay/teamstat" "$R/artifacts/s1/bin/uiinject" \
 		"$R"/artifacts/media-tests/h264/play-{720p30,1080p30,1080p60}.mp4 \
-		"$R"/artifacts/v1-overlay/clips/play-{hevc-720p30,hevc-1080p30,854x480}.mp4 "$k/"
+		"$R"/artifacts/v1-overlay/clips/play-{hevc-720p30,hevc-1080p30,854x480}.mp4 \
+		"$R"/artifacts/wp1/clips/play-hevc-*-fs.mp4 "$k/"
 	cp "${WP1_LIB:-$R/artifacts/wp1/t1/libWebKitLegacy.so.1.10.0}" "$k/lib/libWebKitLegacy.so.1"
 	cp "$R/artifacts/wp1/control/libWebKitLegacy.so.1.10.0" "$k/control/libWebKitLegacy.so.1"
 	ssh_ "mkdir -p $D/lib $D/control"

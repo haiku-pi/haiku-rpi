@@ -6,7 +6,9 @@ RGB and repainting the page: paint() fills the video's rectangle with the overla
 YCbCr->RGB conversion) while the plane cannot be used: the video moved or is partly outside the view, content over
 it changed in the last 1.5 s (the media controls), a scroll (BWebPage::scroll calls the player), no free plane, a
 mode change. WEBKIT_VIDEO_OVERLAY=0 turns it off, WEBKIT_VIDEO_OVERLAY_LOG=1 prints counters.
-Also: seekToTarget() returns its promise (it fell off the end).
+Also: seekToTarget() returns its promise (it fell off the end); at the application's quit
+(BWebPage::ShutdownOnce(), and this library's destructors) every player stops decoding and closes its file
+before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed at quit during playback).
 
 --- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.h
 +++ b/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.h
@@ -29,7 +31,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
  struct media_raw_audio_format;
  
  namespace WebCore {
-@@ -94,8 +98,14 @@
+@@ -94,8 +98,16 @@
          bool didLoadingProgress() const override;
  
          void paint(GraphicsContext&, const FloatRect&) override;
@@ -40,11 +42,13 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        // a video on its overlay plane goes in software until it is painted
 +        // at its new place.
 +        static void rootViewScrolled(BView* view);
++        // The process exits: no decoding from here on (see the .cpp).
++        static void stopAllForExit(bool applicationAlive);
 +
      constexpr MediaPlayerType mediaPlayerType() const final { return MediaPlayerType::Haiku; }
  private:
      private:
-@@ -107,6 +117,16 @@
+@@ -107,6 +119,16 @@
          static void playCallback(void*, void*, size_t,
              const media_raw_audio_format&);
  
@@ -61,7 +65,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
          // engine support
          static void getSupportedTypes(WTF::HashSet<WTF::String>&);
          static MediaPlayer::SupportsType supportsType(const MediaEngineSupportParameters&);
-@@ -131,6 +151,45 @@
+@@ -131,6 +153,46 @@
          thread_id m_loadingThread;
          thread_id m_videoThread;
          String m_url;
@@ -98,6 +102,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        int32 m_repaintSerial;      // the picture last repainted in software
 +        bigtime_t m_retryAt;        // no plane until then (allocation failed, overlays suspended)
 +        bigtime_t m_lastRepaintRequest;
++        bigtime_t m_softwareSince;  // in software since then (0: on the plane)
 +
 +        // statistics (WEBKIT_VIDEO_OVERLAY_LOG=1)
 +        bigtime_t m_lastLog;
@@ -109,7 +114,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
  
 --- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
 +++ b/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
-@@ -22,26 +22,169 @@
+@@ -22,26 +22,200 @@
  
  #if ENABLE(VIDEO)
  
@@ -217,6 +222,18 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +    return log;
 +}
 +
++// WEBKIT_VIDEO_OVERLAY_LOG=2: also each change of the plane's state
++static bool overlayEvents()
++{
++    static const bool events = [] {
++        const char* env = getenv("WEBKIT_VIDEO_OVERLAY_LOG");
++        return env && !strcmp(env, "2");
++    }();
++    return events;
++}
++
++#define OVERLAY_EVENT(...) do { if (overlayEvents()) fprintf(stderr, "WVO event " __VA_ARGS__); } while (0)
++
 +static HashSet<MediaPlayerPrivate*>& livePlayers()
 +{
 +    static NeverDestroyed<HashSet<MediaPlayerPrivate*>> players;
@@ -276,10 +293,29 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +    MediaPlayerPrivate::rootViewScrolled(view);
 +}
 +
++// At exit, the players of a page that was not torn down yet still decode,
++// while the application object and libmedia's destructors go away under them:
++// a video thread in ReadFrames() then runs unmapped decoder code, one on the
++// plane uses a BBitmap without app_server (KNOWN-ISSUES F11, WebPositive quit
++// during playback). BWebPage::ShutdownOnce() (the application quits) stops
++// them; for an application that does not call it, this library's destructors,
++// which run before libmedia's (it depends on it).
++void mediaPlayerHaikuShutdown()
++{
++    MediaPlayerPrivate::stopAllForExit(true);
++}
++
++namespace {
++struct MediaPlayerExitGuard {
++    ~MediaPlayerExitGuard() { MediaPlayerPrivate::stopAllForExit(false); }
++};
++MediaPlayerExitGuard s_mediaPlayerExitGuard;
++}
++
  class MediaPlayerFactoryHaiku final : public MediaPlayerFactory {
  private:
      MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::Haiku; };
-@@ -89,12 +232,41 @@
+@@ -89,12 +263,42 @@
      , m_abort(false)
      , m_loadingThread(-1)
      , m_videoThread(-1)
@@ -305,6 +341,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +    , m_repaintSerial(0)
 +    , m_retryAt(0)
 +    , m_lastRepaintRequest(0)
++    , m_softwareSince(0)
 +    , m_lastLog(0)
 +    , m_statDecoded(0), m_statLate(0), m_statPlane(0), m_statSoftware(0), m_statConverted(0)
 +    , m_statForeign(0), m_statScrolled(0), m_statShows(0), m_statMoves(0), m_statHides(0)
@@ -321,7 +358,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
      m_mediaLock.Lock();
  
      cancelLoad();
-@@ -141,7 +313,13 @@
+@@ -141,7 +345,13 @@
          m_videoThread = -1;
      }
  
@@ -335,7 +372,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
      if (m_soundPlayer)
          m_soundPlayer->Stop();
      delete m_soundPlayer;
-@@ -233,12 +411,16 @@
+@@ -233,12 +443,16 @@
              startTime = system_time();
              startMediaTime = (bigtime_t)(player->m_currentTime * 1000000);
              lastObservedTime = player->m_currentTime;
@@ -352,7 +389,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
          if (player->m_videoTrack) {
              // Detect seek or external time update
              if (std::abs(player->m_currentTime - lastObservedTime) > 0.5f) {
-@@ -260,11 +442,13 @@
+@@ -260,11 +474,13 @@
  
              if (videoTime < audioTime) {
                  int64 count;
@@ -371,7 +408,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
                  } else {
                      player->m_videoTrack = nullptr;
                  }
-@@ -273,6 +457,12 @@
+@@ -273,6 +489,12 @@
              }
          }
          player->m_mediaLock.Unlock();
@@ -384,7 +421,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
          snooze(1000);
      }
  
-@@ -346,15 +536,21 @@
+@@ -346,15 +568,21 @@
  
      if (m_paused && m_videoTrack && m_frameBuffer) {
          int64 count;
@@ -411,7 +448,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
  }
  
  
-@@ -396,14 +592,414 @@
+@@ -396,14 +624,467 @@
  
  void MediaPlayerPrivate::paint(GraphicsContext& context, const FloatRect& r)
  {
@@ -426,7 +463,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
          target->SetDrawingMode(B_OP_COPY);
          target->DrawBitmap(m_frameBuffer, r);
 +        return;
-+    }
+     }
 +
 +    BRect viewRect;
 +    const bool usable = overlayTarget(target, r, viewRect);
@@ -438,7 +475,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        LocalFrameView* frameView = document ? document->view() : nullptr;
 +        HostWindow* hostWindow = frameView ? frameView->hostWindow() : nullptr;
 +        webView = hostWindow ? hostWindow->platformPageClient() : nullptr;
-     }
++    }
 +
 +    bool drawKey = false;
 +    rgb_color key;
@@ -447,8 +484,13 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        const bigtime_t now = system_time();
 +        if (webView)
 +            m_webView = BMessenger(webView);
-+        if (!usable)
++        if (!usable) {
++            if (m_paintRect.IsValid())
++                OVERLAY_EVENT("paint: not usable (rect %.1f,%.1f %.1fx%.1f)\n", r.x(), r.y(), r.width(), r.height());
 +            viewRect = BRect();
++        } else if (viewRect != m_paintRect)
++            OVERLAY_EVENT("paint at %d,%d %dx%d\n", (int)viewRect.left, (int)viewRect.top,
++                (int)viewRect.IntegerWidth() + 1, (int)viewRect.IntegerHeight() + 1);
 +        if (usable && viewRect == m_paintRect)
 +            m_paintStable++;
 +        else {
@@ -506,6 +548,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +                player->m_softwareUntil = std::max(player->m_softwareUntil,
 +                    system_time() + kScrollDelay);
 +                player->m_statScrolled++;
++                OVERLAY_EVENT("scroll\n");
 +                player->m_ownRepaint = true;
 +                // where the video is now is known after its next paint (none
 +                // if it was scrolled out of the view)
@@ -517,6 +560,38 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        // the picture at its new place, over the moved key
 +        if (scrolled)
 +            player->m_player.repaint();
++    }
++}
++
++void MediaPlayerPrivate::stopAllForExit(bool applicationAlive)
++{
++    for (auto* player : livePlayers()) {
++        player->m_abort = true;
++        // the video thread, a seek and the sound player's callback read only
++        // with the lock held and a track set
++        player->m_mediaLock.Lock();
++        player->m_videoTrack = nullptr;
++        player->m_audioTrack = nullptr;
++        player->m_mediaLock.Unlock();
++        if (player->m_videoThread >= 0) {
++            status_t status;
++            wait_for_thread(player->m_videoThread, &status);
++            player->m_videoThread = -1;
++        }
++        if (!applicationAlive)
++            continue;
++        // the overlay bitmaps need app_server; closing the file closes the
++        // decoder, whose own threads (h264_mmal's) would otherwise still run
++        // when the add-on is unloaded
++        player->releasePlane();
++        player->m_mediaLock.Lock();
++        if (player->m_soundPlayer)
++            player->m_soundPlayer->Stop();
++        delete player->m_soundPlayer;
++        player->m_soundPlayer = nullptr;
++        delete player->m_mediaFile;
++        player->m_mediaFile = nullptr;
++        player->m_mediaLock.Unlock();
 +    }
 +}
 +
@@ -615,6 +690,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        }
 +        bool viewGone = false;
 +        if (presentOnPlane(paintRect, viewGone)) {
++            m_softwareSince = 0;
 +            m_planeSerial = serial;
 +            m_statPlane++;
 +            if (samePlace && !keyDrawn) {
@@ -627,6 +703,8 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +                    m_statMoves++;
 +                else
 +                    m_statShows++;
++                OVERLAY_EVENT("%s at %d,%d %dx%d\n", m_planeShown ? "move" : "show", (int)paintRect.left,
++                    (int)paintRect.top, (int)paintRect.IntegerWidth() + 1, (int)paintRect.IntegerHeight() + 1);
 +                {
 +                    BAutolock lock(m_overlayLock);
 +                    m_planeShown = true;
@@ -641,6 +719,8 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        // this picture in software
 +    }
 +
++    if (!m_softwareSince)
++        m_softwareSince = now;
 +    if (serial != m_repaintSerial) {
 +        m_repaintSerial = serial;
 +        m_statSoftware++;
@@ -649,8 +729,14 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +        // where is the video now (paused, or after a software period)?
 +        requestRepaint(true);
 +    }
-+    if (m_overlayBitmaps[0] && now - paintTime > kReleaseDelay)
++    // (on the plane, nothing repaints the video: count from when it left)
++    const bigtime_t unpainted = now - std::max(paintTime, m_softwareSince);
++    if (m_overlayBitmaps[0] && unpainted > kReleaseDelay) {
++        OVERLAY_EVENT("release: no paint for %d ms\n", (int)(unpainted / 1000));
 +        releasePlane();
++        // key pixels shown transparent stay so until drawn again
++        requestRepaint(true);
++    }
 +}
 +
 +bool MediaPlayerPrivate::presentOnPlane(const BRect& viewRect, bool& viewGone)
@@ -716,6 +802,10 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +    }
 +    BLooper* looper = nullptr;
 +    BView* view = static_cast<BView*>(messenger.Target(&looper));
++    if (view && !view->Window()) {
++        // taken out of its window (the window closes): its overlay goes with it
++        view = nullptr;
++    }
 +    if (!view || view->IsHidden()) {
 +        // a hidden tab: give the plane back
 +        if (view && m_planeShown)
@@ -787,7 +877,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
 +    if (m_planeShown && messenger.LockTargetWithTimeout(kLockTimeout) == B_OK) {
 +        BLooper* looper = nullptr;
 +        BView* view = static_cast<BView*>(messenger.Target(&looper));
-+        if (view)
++        if (view && view->Window())
 +            view->ClearViewOverlay();
 +        if (looper)
 +            looper->Unlock();
@@ -829,7 +919,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
  }
  
  // #pragma mark - private methods
-@@ -431,10 +1027,52 @@
+@@ -431,10 +1112,52 @@
                  if (m_videoTrack)
                      continue;
                  m_videoTrack = track;
@@ -884,7 +974,26 @@ Also: seekToTarget() returns its promise (it fell off the end).
                      break;
 --- a/Source/WebKitLegacy/haiku/API/WebPage.cpp
 +++ b/Source/WebKitLegacy/haiku/API/WebPage.cpp
-@@ -861,6 +861,14 @@
+@@ -227,8 +227,18 @@
+     RunLoop::run(); // This attaches it to the existing be_app looper
+ }
+ 
++#if ENABLE(VIDEO)
++namespace WebCore {
++// MediaPlayerPrivateHaiku.cpp: no media decoding after this
++void mediaPlayerHaikuShutdown();
++}
++#endif
++
+ /*static*/ void BWebPage::ShutdownOnce()
+ {
++#if ENABLE(VIDEO)
++	WebCore::mediaPlayerHaikuShutdown();
++#endif
+ 	WebKit::iconDatabase().close();
+ 
+ 	// There is a crash on exit if the font cache is not empty, so make sure it is
+@@ -861,6 +871,14 @@
  }
  
  
@@ -899,7 +1008,7 @@ Also: seekToTarget() returns its promise (it fell off the end).
  void BWebPage::scroll(int xOffset, int yOffset, const BRect& rectToScroll,
         const BRect& clipRect)
  {
-@@ -868,6 +876,9 @@
+@@ -868,6 +886,9 @@
          || (xOffset == 0 && yOffset == 0) || !fWebView->LockLooper()) {
          return;
      }

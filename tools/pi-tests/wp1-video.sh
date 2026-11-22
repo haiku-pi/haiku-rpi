@@ -6,10 +6,11 @@
 # decoded as B_RGB32 and drawn by app_server, as before); FFENV="A=1 B=2": more environment for WebPositive.
 #   measure     the video filling the window (letterboxed); after WAIT s (default 20) the teams' CPU over SECS
 #               (default 10) s: WebPositive, app_server; the plane's updates (display driver statistics)
-#   controls    a 1280x720 <video controls>: the mouse over the video at 15 s (uiinject, in the script's directory),
+#   controls    a 1280x720 <video controls>; from 12 s to 24 s a translucent bar (text changing 4 times a second) and an
+#               opaque square over it (the media controls do not show for injected mouse moves); the mouse over the video at 15 s
 #               off it at 25 s; SNAP lines at the moments for HDMI frames
 #   scroll      a 640x360 video in a long page, scrolled 2 px every 50 ms for 2 s, still for 6 s, twice
-#   full        the measure page; WebPositive's full screen (F11) at 12 s, back at 24 s; CPU over 5 s in full screen
+#   full        the measure page; the window resized to the whole screen at 13 s, back at 25 s; CPU over 5 s then
 #   seek        the measure page; paused at 12 s, seeked to 5 s and 20 s while paused, played at 22 s (JavaScript)
 #   cycle       CYCLES (default 5) times: started on the measure page, PLAY s (default 10) of playing, quit; the
 #               WebPositive teams left after 15 s (killed then) and the debugger entries in the syslog
@@ -75,7 +76,14 @@ seek) body="$fill
 <script>const v = document.querySelector(\"video\");
 setTimeout(() => v.pause(), 12000); setTimeout(() => { v.currentTime = 5; }, 14000);
 setTimeout(() => { v.currentTime = 20; }, 17000); setTimeout(() => v.play(), 22000);</script>" ;;
-controls) body="<body style=\"margin:0;background:#000\"><video controls width=\"1280\" height=\"720\" $video></video>" ;;
+controls) body="<body style=\"margin:0;background:#000\"><div style=\"position:relative;width:1280px;height:720px\">
+<video controls width=\"1280\" height=\"720\" $video></video>
+<div id=\"o\" style=\"display:none;position:absolute;left:40px;right:40px;bottom:30px;height:60px;background:rgba(0,0,0,0.5);color:#fff;font:28px sans-serif;padding:10px\">A translucent bar over the video <span id=\"n\"></span></div>
+<div id=\"p\" style=\"display:none;position:absolute;left:560px;top:280px;width:160px;height:160px;background:#c00\"></div></div>
+<script>let n = 0; const o = document.getElementById(\"o\"), p = document.getElementById(\"p\");
+setTimeout(() => { o.style.display = \"block\"; p.style.display = \"block\"; }, 12000);
+setInterval(() => { document.getElementById(\"n\").textContent = n++; }, 250);
+setTimeout(() => { o.style.display = \"none\"; p.style.display = \"none\"; }, 24000);</script>" ;;
 scroll)
 	para='<p>Haiku is an open-source operating system that specifically targets personal computing. Inspired by the
 BeOS, Haiku is fast, simple to use, easy to learn and yet very powerful. This paragraph is here so that the page is
@@ -135,13 +143,16 @@ full)
 	start_wp
 	sleep 10
 	snapshot window
+	# F11 (WebPositive's full screen) by uiinject does not reach it: the window resized to the whole screen
+	# instead, the same relayout and repaint for the video
 	"$dir/uiinject" "$team" "wp1" activate key f11 > /dev/null 2>&1
+	timeout 5 hey WebPositive set Frame of Window "wp1 $label - WebPositive" to "BRect(0,0,1919,1079)" > /dev/null 2>&1
 	sleep 5
 	snapshot full
 	measure_teams 5
 	wvo_lines 1
 	sleep 2
-	"$dir/uiinject" "$team" "wp1" key f11 > /dev/null 2>&1
+	timeout 5 hey WebPositive set Frame of Window "wp1 $label - WebPositive" to "BRect(40,40,1639,939)" > /dev/null 2>&1
 	sleep 4
 	snapshot back
 	wvo_lines 1
