@@ -11,6 +11,7 @@
 # Lines (t = time.monotonic(), CLOCK_MONOTONIC as axibw prints):
 #   "BBW orbit <config> <t0> <t1> <frames> <ms/frame> <viewport WxH>"
 #   "BBW idle <config> <t0> <t1>"
+#   "BBW navtail <config> <ms> ..."   (NAV=1: the intervals between the viewport's draws around the drag's end)
 # configs: solid (factory Workbench), aa-off (the scene's viewport AA off: Workbench's F12 render setting),
 # vaa-off / vaa-fxaa / vaa-5 (Preferences ▸ Viewport ▸ Anti-Aliasing: off, FXAA, 5 samples),
 # smooth-off (Preferences ▸ Viewport ▸ Smooth Wires off),
@@ -122,6 +123,9 @@ def steps():
                 say("ERROR", config, "only %d draws while dragging" % len(steady))
                 continue
             t0, t1, frames = steady[0], steady[-1], len(steady) - 1
+            # the frames around the drag's end (the first ones after it are drawn with anti-aliasing again)
+            tail = [t for t in draws if t > ready + HOLD - 0.5][:16]
+            say("navtail", config, " ".join("%.0f" % (1000 * (b - a)) for a, b in zip(tail, tail[1:])))
         else:
             t0 = time.monotonic()
             frames = 0

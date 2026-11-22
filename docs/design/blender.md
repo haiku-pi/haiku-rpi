@@ -1391,9 +1391,18 @@ spread ≤ 0.6 ms.
 | Material Preview | 83.7–83.8 | 11.9 | 120+83 = 203 |
 | Material Preview + Smooth Wires off | 70.1 | 14.3 | 108+74 = 182 |
 
+- **The ID filter misses nothing that matters:** unfiltered bus 7 against `argon/v3d1` while orbiting (session bw1
+  second part, 01:42–): Solid 92.5 / 92.2 M reads/s, 74.1 / 74.1 M writes/s; Material Preview 89.3 / 88.7 and
+  62.3 / 62.3. The difference is ID v3d2 (0.3–0.6 M reads/s, 1–2 MB per frame); v3d0 reads 0.
 - **HVS** 498 MB/s at all times (the 1920×1080 desktop's scan-out; Blender changes nothing). **ARM** ~145 MB/s while
-  orbiting, ~11 MB per frame each way: the CPU is not a factor. `v3d_stats`: 37 render jobs per frame, 5.3 ms each,
-  bin 0.15 ms, GPU busy 99 %.
+  orbiting, ~11 MB per frame each way: the CPU is not a factor. `v3d_stats` (its serial-line clock aligned to axibw's
+  by a marker, offset 28.1 s): Solid orbit 34 render jobs per frame at 5.7 ms (bin 0.23 ms), Material Preview 37 at
+  5.3 ms (bin 0.15 ms), GPU busy 99 % in both; in the idle window after the orbit 23 % (Solid) and ~19 % (Material
+  Preview) busy.
+- **Calibration against simple GL** (glmark2-es2, 800×600 window, axibw on bus 7 during 4 s of each scene): build 489
+  fps, 0.34+2.87 GB/s; texture 440 fps, 0.84+2.56; shading 374 fps, 0.42+2.23; refract 59 fps, 3.27+1.43 (4.7 GB/s,
+  near the ceiling); terrain 27 fps, 1.44+0.51 (1.95 GB/s, shader-bound). Blender's 2.7 GB/s sits with the
+  shader-bound scenes, not with refract.
 - **Not memory-bound.** The factory viewport moves 514 MB per frame at **2.7 GB/s, half of what V3D reaches** (5–5.7
   GB/s). At the ceiling those bytes would take ~93 ms of the 193. Frame time and bytes do not move together: the grid
   costs 25 ms and 6 MB (a full-screen shader), the outline 18 ms and 53 MB, AA 35 ms and 90 MB, Smooth Wires 34 ms and
@@ -1403,15 +1412,19 @@ spread ≤ 0.6 ms.
 - Cost scales with pixels: 1024×600 has 41 % of the pixels, 42 % of the time and of the bytes.
 - Material Preview costs the same as Solid here (EEVEE's own AA is not affected by the Workbench setting).
 - The idle windows after an orbit are not idle: Workbench (8 samples) and EEVEE keep drawing progressive
-  anti-aliasing samples for seconds (V3D 0.2–0.4 GB/s, GPU 99 % busy in Material Preview), so per-frame numbers
-  above are gross (orbit rate × frame time; V3D moves nothing when the GPU idles).
+  anti-aliasing samples for seconds (V3D ~0.4 GB/s averaged over the 8-s window after a Solid orbit, ~0.7 GB/s after
+  Material Preview), so per-frame numbers above are gross (orbit rate × frame time; V3D moves nothing when the GPU
+  idles).
 
 **Cheap change: `patches/blender/0017-draw-v3d-no-anti-aliasing-while-navigating.patch`** (haiku-rpi branch `bw1`,
 not merged). Blender already draws navigation frames with 1 sample + SMAA; on v3d (renderer "V3D", the
 GPU_DEVICE_UNKNOWN/OPENSOURCE class of 0004) it now leaves out the SMAA and the overlays' smooth-wire resolve while
 `DRW_state_is_navigating()`, and the first frame after the navigation is anti-aliased as before (TAA accumulates).
-Real middle-button drag, 1600×900, control = the packaged -9 binary without resources (uiinject cannot drive an app
-with B_ARGV_ONLY), n = 3 each:
+v2 (4b8fad5, the version on the branch) also keeps Workbench's history/depth/SMAA buffers while navigating instead of
+freeing and re-allocating them at every drag start and end (v1 freed them; frame times equal). Paint strokes count as
+navigation in Blender (RV3D_PAINTING), so they lose anti-aliasing while drawn too. Real middle-button drag, control =
+the packaged -9 binary without resources (uiinject cannot drive an app with B_ARGV_ONLY); 1600×900: v1 n = 3, v2 n = 1
+(126.9 ms); 1024×600: v2 n = 3:
 
 | | control ms/frame | 0017 ms/frame | fps | V3D MB/frame |
 |---|---|---|---|---|
@@ -1419,19 +1432,42 @@ with B_ARGV_ONLY), n = 3 each:
 | Smooth Wires off | 159.6–159.9 | 124.2–124.3 | 6.26 → 8.05 | |
 | Anti-Aliasing None | 158.0–158.1 | 126.6–126.7 | 6.33 → 7.90 | |
 | Material Preview | 196.4–196.6 | 165.3–165.5 | 5.09 → 6.05 (+19 %) | 475 → 434 |
+| 1024×600 factory | 81.6–81.9 | **54.0** (3 of 3) | 12.2 → **18.5 (+51 %)** | 215 → 159 |
+| 1024×600 Material Preview | 83.9–84.1 | 70.7–71.0 | 11.9 → 14.1 | 202 → 184 |
+
+- The frame after the drag (draw intervals around the drag's end, `BBW navtail`, 1600×900 Solid, 2 drags each): control
+  193 ms during and after; v1 and v2 127 ms during, then 174–195 ms for the first anti-aliased frame and ~190 for
+  the TAA samples after it — no extra cost at the transition.
 
 - HDMI frames (artifacts/bw1/look-*.png): during the drag the wires and the cube's edges are aliased, as with the two
-  settings off; 3 s after the drag the image equals the control's (anti-aliased). Scripted orbiting (not
-  "navigating") is unchanged (193.5 ms with the package), so only navigation frames differ.
-- Test package **blender 3.6.23-10** in artifacts/packages-test/blender-10/ (the -9 package with the 0017 binary,
-  resources re-attached; built from the -9 build tree, which also recompiled ~10 stale objects outside the draw
-  module; same size as -9's binary): `pkgman install` + start + orbit on the Pi, exit 0, 0 PANIC. Not published.
-  The shared build tree was returned to -9's sources afterwards (0017 reverse-applied, relinked).
+  settings off; 3 s after the drag the viewport equals the control's (anti-aliased; 1320×760 pixels compared, largest
+  difference 3 of 255, capture noise); v2 the same (only the mouse pointer's shape differs). Scripted orbiting (not
+  "navigating") is unchanged (193.5 ms with the v1 package), so only navigation frames differ.
+- **Calibration of the binaries:** 0017's binary was linked in the -9 build tree (`ninja blender`, which also
+  recompiled ~10 stale objects outside the draw module); stripped, it is the size of -9's binary.
+- Test package **blender 3.6.23-10** in artifacts/packages-test/blender-10/: a **repack of the -9 package** (`package
+  extract`, the v2 binary with -9's resources re-attached by xres, version and `provides` set to -10, `package
+  create`), not a build-blender.sh build. The v1 repack installed with `pkgman`, started and orbited on the Pi (exit 0,
+  0 PANIC); the v2 repack itself was not installed (its binary was tested directly). Not published. The shared build
+  tree was returned to -9's sources afterwards (0017 reverse-applied, relinked). To ship: 0017 into patches/blender/ on
+  main, build-blender.sh's `--revision 10` + its comment, the usual bump steps.
+
+**The candidates of the task, one by one:**
+- TLB loads/stores of buffers a pass does not need: bounded by §7.11 (−4 % / −11 % with none at all), and the bus is
+  half used; not pursued.
+- MSAA: Blender 3.6's viewport framebuffers are single-sample (Workbench and the overlays anti-alias in shaders);
+  nothing to cut.
+- Depth formats (D24S8 throughout): not examined separately; their loads/stores are inside §7.11's bounds.
+- Passes that could be skipped: Workbench's SMAA and the overlays' smooth-wire resolve while navigating → 0017;
+  the grid and the outline are user choices (documented), the scene's viewport_aa does nothing in the viewport.
+- The SDL present path: §7.10 (one 5.6 MB cache sync, ~0.65 ms per frame); ARM traffic 11 MB per frame. Not a factor.
+- V3D tile size / TLB format: glbw shows no cost beyond bytes for smaller tiles (more targets), and double-buffered
+  tiles (`V3D_DEBUG=db`) change nothing. Not a lever.
 
 **Recommendation.** Merge 0017 and publish blender -10 with the next release: +52 % fps while orbiting at the
 default settings, no change to still frames. With it, the Smooth Wires and Anti-Aliasing settings no longer matter
 while navigating; what is left for users (§7.8) is the grid and outline overlays (−13 % / −9 % of the factory frame
-time) and a smaller window (1024×600 with 0017 not measured; expected ~53 ms = the "both off" row).
+time) and a smaller window (1024×600 with 0017: 18.5 fps).
 Not cheap, and not done: making the passes themselves cheaper (the grid's and SMAA's shaders on V3D's QPUs, fewer
 overlay framebuffer switches, half-resolution overlays) — that is shader/draw-manager work, where the bus monitor
 now shows whether a change moves bytes or only time.
@@ -1460,7 +1496,7 @@ now shows whether a change moves bytes or only time.
 >   it about a minute shorter). The viewport draws about
 >   5 frames per second while navigating in a 1600×900 window (8 with blender -10, which leaves out
 >   anti-aliasing while you navigate); the GPU's time grows with the window's size, so a smaller window is much
->   faster (1024×600: 12 fps). Turning off the viewport's grid and the selected object's outline (Viewport
+>   faster (1024×600: 12 fps, 18 with -10). Turning off the viewport's grid and the selected object's outline (Viewport
 >   Overlays menu) helps further; with blender -9 also Preferences ▸ Viewport ▸ Smooth Wires and Anti-Aliasing.
 > - **Memory:** a simple scene needs about 300–400 MB; large scenes and big textures may not fit in 4 GB.
 > - **Input:** click into the Blender window once before typing — keys go to the active window, and to the
