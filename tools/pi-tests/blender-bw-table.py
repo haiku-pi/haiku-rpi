@@ -5,7 +5,10 @@
 #   tools/pi-tests/blender-bw-table.py BBW-LOG AXB-LOG [SEL=BYTES-PER-TRANSACTION ...]
 #
 # With a BYTES-PER-TRANSACTION for a watcher (from a calibration, docs/design/blender.md §7.17) also MB/s and
-# MB per frame. Only axibw windows wholly inside a Blender window count.
+# MB per frame: "gross" = the orbit rate × the frame time (right for V3D, which moves nothing without work),
+# "over idle" = minus the idle window's rate (right for a master with background traffic; note Blender keeps
+# rendering for a while after the view stops: Workbench's and EEVEE's progressive anti-aliasing samples).
+# Only axibw windows wholly inside a Blender window count.
 import re
 import sys
 
@@ -51,12 +54,13 @@ def main():
             ri, wi = rate(sel, *win["idle"]) if "idle" in win else (0.0, 0.0)
             dr, dw = ro - ri, wo - wi
             fr = win["ms"] / 1000
-            line = "  %-16s orbit R %6.2fM/s W %6.2fM/s | idle R %6.2fM/s W %6.2fM/s | per frame +R %6.2fM +W %6.2fM" % (
-                sel, ro / 1e6, wo / 1e6, ri / 1e6, wi / 1e6, dr * fr / 1e6, dw * fr / 1e6)
+            line = ("  %-16s orbit R %6.2fM/s W %6.2fM/s | idle R %6.2fM/s W %6.2fM/s | per frame +R %6.2fM +W %6.2fM"
+                    % (sel, ro / 1e6, wo / 1e6, ri / 1e6, wi / 1e6, dr * fr / 1e6, dw * fr / 1e6))
             if sel in bpt:
                 b = float(bpt[sel])
-                line += " | %.0f+%.0f MB/s, %.1f+%.1f MB/frame" % (ro * b / 1e6, wo * b / 1e6, dr * fr * b / 1e6,
-                                                                   dw * fr * b / 1e6)
+                line += " | %.0f+%.0f MB/s; per frame %.0f+%.0f MB gross, %.0f+%.0f MB over idle" % (
+                    ro * b / 1e6, wo * b / 1e6, ro * fr * b / 1e6, wo * fr * b / 1e6, dr * fr * b / 1e6,
+                    dw * fr * b / 1e6)
             print(line)
 
 

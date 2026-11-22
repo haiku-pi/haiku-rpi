@@ -43,3 +43,13 @@ the window's end, the same clock as Python's `time.monotonic()` on Haiku), then
   them at the fabric's bandwidth).
 - The enable sequence is: reset the monitor, reset the watcher, configure it, enable the monitor **with the
   WATCH bit** (without it every counter reads 0).
+
+## Pi 4 findings (docs/design/blender.md §7.17)
+
+- V3D: bus 7 (`argon`, the vendor's name for the rpivid port, which V3D shares) with ID filter `v3d1`:
+  `axibw argon/v3d1 hvs arm_uc`. With nothing rendering it reads 0.
+- 16 bytes per transaction for the CPUs (`selftest`), the HVS (31.11 M reads/s = 1920×1080×4×60) and V3D (glbw,
+  within 3 %).
+- Selectors 37–42 read as 5–10 (32+n aliases n). Unnamed selectors are not understood: in a scan under GPU load
+  23, 31, 45, 57 and 61 counted exactly 500 M writes/s (V3D's clock), but 23 alone later read V3D's traffic.
+  Use the named buses.

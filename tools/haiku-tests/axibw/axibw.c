@@ -380,8 +380,8 @@ run_selftest(void)
 		printf("AXB selftest %s: idle R %.0f/s W %.0f/s; memcpy R %.0f/s W %.0f/s; extra per copied MiB "
 			"R %.0f W %.0f (%.1f / %.1f bytes per transaction)\n", sels[i].label,
 			idle[i].reads / idleSecs, idle[i].writes / idleSecs, busy[i].reads / busySecs,
-			busy[i].writes / busySecs, dr / mib, dw / mib, dr > 1000 ? mib * MIB / dr : 0,
-			dw > 1000 ? mib * MIB / dw : 0);
+			busy[i].writes / busySecs, dr / mib, dw / mib, dr > 1000 * mib ? mib * MIB / dr : 0,
+			dw > 1000 * mib ? mib * MIB / dw : 0);
 	}
 	free(a);
 	free(b);

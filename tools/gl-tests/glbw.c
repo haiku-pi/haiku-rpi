@@ -3,13 +3,17 @@
  * surfaceless EGL GLES 3 context, render passes into a W×H framebuffer object, each finished with glFinish
  * (one V3D render job per pass), for SECS seconds.
  *
- *   glbw [-m clear|load] [-f rgba8|rgba16f] [-s WxH] [-t SECS]
+ *   glbw [-m clear|load|full] [-f rgba8|rgba16f] [-r 1-4] [-s WxH] [-t SECS]
  *
- *   clear: each pass clears the colour buffer and draws nothing: the job stores W·H·bpp bytes, loads nothing
- *   load:  each pass draws one small triangle without a clear: the job loads and stores W·H·bpp bytes
+ *   clear: each pass clears the colour buffers and draws nothing: the job stores W·H·bpp bytes per buffer,
+ *          loads nothing
+ *   load:  each pass draws one small triangle without a clear: the job loads and stores W·H·bpp per buffer
+ *   full:  as load, but the triangles cover the whole buffer (every pixel shaded once, a post-process pass)
+ *   -r N:  N colour buffers (render targets) of the format; V3D's tile size shrinks with their count
  *
- * Lines: "GBW start <t>", then "GBW <mode> <format> <W>x<H>: <passes> passes in <secs> s (<passes/s>/s),
- * <MB/s> MB/s stored, <MB/s> MB/s loaded" and "GBW end <t>" (t = CLOCK_MONOTONIC seconds, as axibw prints).
+ * Lines: "GBW start <t>", then "GBW <mode> <format> x<N> <W>x<H>: <ms> ms/pass, <passes> passes in <secs> s
+ * (<passes/s>/s), <MB/s> MB/s stored, <MB/s> MB/s loaded" and "GBW end <t>" (t = CLOCK_MONOTONIC seconds, as
+ * axibw prints).
  *
  * Build (cross, on the host):
  *   g=sources/haiku/generated.arm64/cross-tools-arm64/bin/aarch64-unknown-haiku-gcc
@@ -54,10 +58,10 @@ main(int argc, char** argv)
 {
 	const char* mode = "clear";
 	const char* format = "rgba8";
-	int width = 1024, height = 1024;
+	int width = 1024, height = 1024, targets = 1;
 	double secs = 10;
 	int opt;
-	while ((opt = getopt(argc, argv, "m:f:s:t:")) != -1) {
+	while ((opt = getopt(argc, argv, "m:f:r:s:t:")) != -1) {
 		switch (opt) {
 			case 'm': mode = optarg; break;
 			case 'f': format = optarg; break;
@@ -66,12 +70,16 @@ main(int argc, char** argv)
 					return 2;
 				break;
 			case 't': secs = atof(optarg); break;
+			case 'r': targets = atoi(optarg); break;
 			default:
-				fprintf(stderr, "usage: glbw [-m clear|load] [-f rgba8|rgba16f] [-s WxH] [-t SECS]\n");
+				fprintf(stderr, "usage: glbw [-m clear|load|full] [-f rgba8|rgba16f] [-r 1-4] [-s WxH] [-t SECS]\n");
 				return 2;
 		}
 	}
-	int load = strcmp(mode, "load") == 0;
+	int full = strcmp(mode, "full") == 0;
+	int load = full || strcmp(mode, "load") == 0;
+	if (targets < 1 || targets > 4)
+		return 2;
 	int half = strcmp(format, "rgba16f") == 0;
 
 	EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -92,13 +100,18 @@ main(int argc, char** argv)
 		return 1;
 	}
 
-	GLuint rb, fb;
-	glGenRenderbuffers(1, &rb);
-	glBindRenderbuffer(GL_RENDERBUFFER, rb);
-	glRenderbufferStorage(GL_RENDERBUFFER, half ? GL_RGBA16F : GL_RGBA8, width, height);
+	GLuint rb[4], fb;
+	static const GLenum kBuffers[4] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2,
+		GL_COLOR_ATTACHMENT3 };
+	glGenRenderbuffers(targets, rb);
 	glGenFramebuffers(1, &fb);
 	glBindFramebuffer(GL_FRAMEBUFFER, fb);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb);
+	for (int i = 0; i < targets; i++) {
+		glBindRenderbuffer(GL_RENDERBUFFER, rb[i]);
+		glRenderbufferStorage(GL_RENDERBUFFER, half ? GL_RGBA16F : GL_RGBA8, width, height);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, kBuffers[i], GL_RENDERBUFFER, rb[i]);
+	}
+	glDrawBuffers(targets, kBuffers);
 	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
 		fprintf(stderr, "glbw: framebuffer incomplete (%s)\n", format);
 		return 1;
@@ -108,16 +121,30 @@ main(int argc, char** argv)
 	GLuint program = glCreateProgram();
 	glAttachShader(program, shader(GL_VERTEX_SHADER,
 		"#version 300 es\nin vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }\n"));
-	glAttachShader(program, shader(GL_FRAGMENT_SHADER,
-		"#version 300 es\nprecision mediump float; out vec4 c; void main() { c = vec4(1.0, 0.5, 0.0, 1.0); }\n"));
+	char fragment[512] = "#version 300 es\nprecision mediump float;\n";
+	for (int i = 0; i < targets; i++) {
+		snprintf(fragment + strlen(fragment), sizeof(fragment) - strlen(fragment),
+			"layout(location = %d) out vec4 c%d;\n", i, i);
+	}
+	strcat(fragment, "void main() {\n");
+	for (int i = 0; i < targets; i++) {
+		snprintf(fragment + strlen(fragment), sizeof(fragment) - strlen(fragment),
+			"c%d = vec4(1.0, 0.5, %d.0 / 4.0, 1.0);\n", i, i);
+	}
+	strcat(fragment, "}\n");
+	glAttachShader(program, shader(GL_FRAGMENT_SHADER, fragment));
 	glBindAttribLocation(program, 0, "p");
 	glLinkProgram(program);
 	glUseProgram(program);
-	static const GLfloat triangle[] = { -0.01f, -0.01f, 0.01f, -0.01f, 0.0f, 0.01f };
+	static const GLfloat small[] = { -0.01f, -0.01f, 0.01f, -0.01f, 0.0f, 0.01f };
+	static const GLfloat cover[] = { -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1 };
 	GLuint vb;
 	glGenBuffers(1, &vb);
 	glBindBuffer(GL_ARRAY_BUFFER, vb);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(triangle), triangle, GL_STATIC_DRAW);
+	if (full)
+		glBufferData(GL_ARRAY_BUFFER, sizeof(cover), cover, GL_STATIC_DRAW);
+	else
+		glBufferData(GL_ARRAY_BUFFER, sizeof(small), small, GL_STATIC_DRAW);
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
 	glEnableVertexAttribArray(0);
 
@@ -132,7 +159,7 @@ main(int argc, char** argv)
 	long passes = 0;
 	while (now() - start < secs) {
 		if (load) {
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+			glDrawArrays(GL_TRIANGLES, 0, full ? 6 : 3);
 		} else {
 			glClearColor((passes & 1) ? 1.0f : 0.0f, 0.0f, 0.0f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -142,9 +169,10 @@ main(int argc, char** argv)
 	}
 	double end = now();
 	double elapsed = end - start;
-	double mb = (double)width * height * (half ? 8 : 4) * passes / 1e6;
-	printf("GBW %s %s %dx%d: %ld passes in %.2f s (%.1f/s), %.1f MB/s stored, %.1f MB/s loaded\n", mode,
-		format, width, height, passes, elapsed, passes / elapsed, mb / elapsed, load ? mb / elapsed : 0.0);
+	double mb = (double)width * height * (half ? 8 : 4) * targets * passes / 1e6;
+	printf("GBW %s %s x%d %dx%d: %.2f ms/pass, %ld passes in %.2f s (%.1f/s), %.1f MB/s stored, "
+		"%.1f MB/s loaded\n", mode, format, targets, width, height, 1000 * elapsed / passes, passes, elapsed,
+		passes / elapsed, mb / elapsed, load ? mb / elapsed : 0.0);
 	printf("GBW end %.3f\n", end);
 	glGetError() == GL_NO_ERROR ? (void)0 : fprintf(stderr, "glbw: a GL error\n");
 	eglTerminate(display);
