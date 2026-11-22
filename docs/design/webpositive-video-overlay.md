@@ -242,7 +242,7 @@ Not run: a canvas `drawImage()` of a video, the real media controls (they never 
 Outputs: `artifacts/wp1/runs/` (per run `.out`, HDMI `.png`), UART `artifacts/uart/20261122-041231-session-wp1a.log`,
 `20261122-051151-session-wp1b.log`. Libraries: `artifacts/wp1/t2` (final), `t1` (before the plane claim), `control`.
 
-## 6. Seeking (WP3, 2026-11-22; session `wp3` 08:50–10:14, image-2026-11-21b, kept disk with 1.10.0-2, card untouched)
+## 6. Seeking (WP3, 2026-11-22; sessions `wp3` 08:50–10:14 and 10:19–10:25, image-2026-11-21b, kept disk with 1.10.0-2, card untouched)
 
 **Root cause (WebKit, not the media kit): the media player told WebCore the wrong duration and seekable range.**
 
@@ -316,7 +316,9 @@ freezes ~0.5 s before its end for 10 s. And an MP4 with `moov` at the end does n
 - **WP2's checks, t4, stock libmedia:** WebPositive / app_server / system 1080p30 H.264 **27.0 / 0.6 / 8.4 %** (WP2 26.1 /
   0.7 / 8.2), 720p30 **15.7 / 0.7 / 5.2** (14.6 / 0.7 / 4.9), HEVC 1080p **23.6 / 0.4 / 6.8** (24.3 / 0.5 / 6.9); 300 plane
   updates per 10 s; key census 52–61 (window baseline). **12 quits during 1080p30 playback: 12 × "quit in 1 s", 0
-  debugger entries.** 0 debugger entries in all 40-odd WebPositive runs of the session.
+  debugger entries.** 0 debugger entries in all 40-odd WebPositive runs of the session. Browsing (`wp2-run.sh … LIB=`, session
+  10:19–10:25): Wikipedia and github.com/haiku/haiku render (titles right), example.com typed into the URL field loads,
+  typing into a page field reaches it (`typed: Hello Haiku 2026`); quits in 1 s, 0 debugger entries.
 - Slip: two `seekprobe` runs (an early version that returned without closing its file) did not exit and kept the
   VideoCore's one H.264 decoder; the WebPositive runs between ~09:00 and 09:33 (`F2-*`, `F3-*`, `F4-*` H.264, the first CPU
   runs `R-*`) fell back to the software decoder (their logs say so). Seeks were right on that path too; the CPU and the
