@@ -3,13 +3,15 @@
 # (scripts/build-games.sh, scripts/build-q3.sh, scripts/build-stk.sh), each a self-contained directory in
 # apps/ with a Deskbar entry (Applications menu).
 #
-#   scripts/package-games.sh [--revision N] [--game NAME [--data-revision M]]
+#   scripts/package-games.sh [--revision N] [--game NAME [--data-revision M]] [--out DIR]
 #
 # --revision N        the packages' revision (default 1)
 # --game NAME         only that game (openarena or supertuxkart)
 # --data-revision M   with --game: keep the game's data packages already in artifacts/packages at revision M
 #                     (not rebuilt, the new engine package requires them), so an engine fix republishes
 #                     only the engine
+# --out DIR           test packages: into DIR (created), not artifacts/packages, and not copied into jam's
+#                     download directory; nothing there is removed
 #
 # Output: artifacts/packages/{openarena,supertuxkart}-<version>-<N>-arm64.hpkg and their data packages
 #   {openarena,supertuxkart}_data_<i>-<version>-<N>-arm64.hpkg
@@ -31,11 +33,13 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 revision=1
 only=""
 dataRevision=""
+testOut=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--revision) revision="$2"; shift 2 ;;
 	--game) only="$2"; shift 2 ;;
 	--data-revision) dataRevision="$2"; shift 2 ;;
+	--out) testOut="$2"; shift 2 ;;
 	*) echo "package-games: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -44,8 +48,9 @@ pkgtool="$gen/objects/linux/x86_64/release/tools/package/package"
 games="$root/artifacts/games/non-packaged/apps"
 stk="$root/artifacts/stk/non-packaged/apps/SuperTuxKart"
 out="$root/artifacts/packages"
-work="$out/build-games"
 download="$gen/download"
+[ -n "$testOut" ] && { mkdir -p "$testOut"; out="$(cd "$testOut" && pwd)"; download=""; }
+work="$out/build-games"
 [ -n "$dataRevision" ] && [ -z "$only" ] && { echo "package-games: --data-revision needs --game" >&2; exit 2; }
 want() { [ -z "$only" ] || [ "$only" = "$1" ]; }
 want openarena && { [ -x "$games/OpenArena/ioquake3" ] \
@@ -60,10 +65,11 @@ rm -rf "$work"
 create() {
 	local name="$1" version="$2" dir="$3"
 	local file="$out/$name-$version-$revision-arm64.hpkg"
-	rm -f "$out/$name"-*-arm64.hpkg "$download/$name"-*-arm64.hpkg
+	[ -z "$download" ] || rm -f "$out/$name"-*-arm64.hpkg "$download/$name"-*-arm64.hpkg
+	rm -f "$file"
 	"$pkgtool" create -q -z zstd -C "$dir" -i "$dir/.PackageInfo" "$file"
 	rm "$dir/.PackageInfo"
-	cp "$file" "$download/"
+	[ -z "$download" ] || cp "$file" "$download/"
 	echo "package-games: $file ($(stat -c %s "$file") bytes)"
 }
 # deskbar DIR APP LAUNCHER — the Applications menu entry, as HaikuPorts' addAppDeskbarSymlink
@@ -100,8 +106,8 @@ splitData() {
 	local name="$1" version="$2" dir="$3" sub="$4" parts="$work/$1-data" n i
 	if [ -n "$dataRevision" ]; then
 		# the published parts stay: require them, leave their files out of the engine package
-		n=$(ls "$out/${name}_data_"*"-$version-$dataRevision-arm64.hpkg" 2> /dev/null | wc -l)
-		[ "$n" -gt 0 ] || { echo "package-games: no ${name}_data_* at $version-$dataRevision in $out" >&2; exit 1; }
+		n=$(ls "$root/artifacts/packages/${name}_data_"*"-$version-$dataRevision-arm64.hpkg" 2> /dev/null | wc -l)
+		[ "$n" -gt 0 ] || { echo "package-games: no ${name}_data_* at $version-$dataRevision in artifacts/packages" >&2; exit 1; }
 		rm -rf "${dir:?}/$sub"
 		dataRequires=""
 		for i in $(seq 1 "$n"); do

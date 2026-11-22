@@ -1,0 +1,33 @@
+Haiku: find the data next to the executable when started through a link
+
+Tracker and the Deskbar start a program through a link (the Deskbar's Applications entries are links)
+with the link's path as argv[0]. FileManager looked for data/ next to the link and stopped with "Could
+not find file 'supertuxkart.1.5' in any standard location". Resolve the link first.
+
+--- a/src/io/file_manager.cpp
++++ b/src/io/file_manager.cpp
+@@ -41,6 +41,7 @@
+ #ifdef __HAIKU__
+ #include <Path.h>
+ #include <FindDirectory.h>
++#include <stdlib.h>
+ #endif
+ 
+ #include <stdio.h>
+@@ -173,6 +174,16 @@
+     if (fileExists(CommandLine::getExecName()))
+     {
+         exe_path = StringUtils::getPath(CommandLine::getExecName());
++#ifdef __HAIKU__
++        // Tracker and the Deskbar start the game through a link (the
++        // Deskbar's menu entries are links) with the link's path as argv[0]
++        char* resolved = realpath(CommandLine::getExecName().c_str(), NULL);
++        if (resolved != NULL)
++        {
++            exe_path = StringUtils::getPath(resolved);
++            free(resolved);
++        }
++#endif
+     }
+     if(exe_path.size()==0 || exe_path[exe_path.size()-1]!='/')
+         exe_path += "/";

@@ -1,0 +1,27 @@
+Blender on Haiku: find the data files next to the executable when started through a link
+
+Tracker and the Deskbar start a program through a link (the Deskbar's Applications entries are links)
+with the link's path as argv[0]. On Haiku where_am_i() takes argv[0] as the program path, so Blender
+looked for 3.6/ next to the link: no scripts, no fonts, "No module named 'bpy'" and an abort a second
+after start. Resolve the link (realpath) as binreloc does on Linux.
+
+--- a/source/blender/blenkernel/intern/appdir.c
++++ b/source/blender/blenkernel/intern/appdir.c
+@@ -880,6 +880,17 @@
+     }
+     /* Remove "/./" and "/../" so string comparisons can be used on the path. */
+     BLI_path_normalize_native(program_filepath);
++#  ifdef __HAIKU__
++    /* Tracker and the Deskbar start a program through a link (the Deskbar's menu entries are
++     * links) with the link's path as `argv[0]`: the data files are next to the executable. */
++    {
++      char *resolved = realpath(program_filepath, NULL);
++      if (resolved) {
++        BLI_strncpy(program_filepath, resolved, program_filepath_maxncpy);
++        free(resolved);
++      }
++    }
++#  endif
+ 
+ #  if defined(DEBUG)
+     if (!STREQ(program_name, program_filepath)) {

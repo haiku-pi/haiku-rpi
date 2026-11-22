@@ -18,7 +18,8 @@ for f in "$dir"/*; do
 	nn=$(printf '%02d' $n)
 	name=$(basename "$f")
 	teams > /tmp/smoke-before
-	# the link's target, as Tracker starts it (SuperTuxKart finds its data next to argv[0])
+	# the link's target, by exec from this shell — not as Tracker starts it (Tracker launches the link through the
+	# roster: tools/pi-tests/ta1-sweep.sh checks that path; docs/design/tracker-launch.md)
 	"$(readlink -f "$f")" > $out/$nn.log 2>&1 < /dev/null &
 	pid=$!
 	sleep $secs

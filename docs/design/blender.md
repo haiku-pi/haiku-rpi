@@ -1555,6 +1555,24 @@ with a relinked binary; deleted) and publish it.
 > - GPU subdivision is off (no compute shaders); subdivision runs on the CPU.
 > - No tablet pressure; input methods (IME) untested.
 
+### 7.19 blender -11: starts from the Deskbar and the Test Apps folder (TA1, 2026-11-22; sessions ta1, mega36 and a test image)
+
+- Owner report: Blender from the Test Apps folder or the Deskbar shows no window; from a Terminal it works. Two
+  causes, one of them Blender's: the whole story in [tracker-launch.md](tracker-launch.md).
+- **Deskbar entry (Blender's own bug):** the Deskbar's Applications entry is a link, and the roster passes the link
+  as `argv[0]`. `where_am_i()` takes `argv[0]` as the program path on Haiku, so Blender looked for `3.6/` in
+  `/boot/system/data/deskbar/menu/Applications/`: `bpy: couldn't find 'scripts/modules'`, `No module named
+  'bpy'`, then `Abort` (exit 1) about 2 s after the start, after a short-lived window. `patches/blender/0018`
+  resolves the path with `realpath()` on Haiku (Linux has binreloc for this). blender **-11** (only `appdir.c`
+  recompiled, 0 warnings; same file list as -10): `artifacts/packages-test/blender-11/`, also in
+  `artifacts/packages-test/ta1/`.
+- **Test Apps entry (Haiku's bug, fixed in libbe):** the launcher `exec`s Blender in the team the roster
+  pre-registered; the exec deleted the looper port the registrar had given the team, and Blender's BApplication
+  (in SDL's "SDLApplication" thread) adopted the dead port and spun; SDL waited forever for `ReadyToRun()`.
+- The `B_ARGV_ONLY` flag of -5 (§7.12) is why a `B_QUIT_REQUESTED` from another program cannot reach Blender
+  (the roster gives no messenger to an argv-only application): the TA1 checks quit it by sending its windows
+  B_QUIT_REQUESTED, as their close buttons do (`trackeropen -w`): gone after 0.6 s from both entries.
+
 ## 8. Files
 
 - New, for step 0:

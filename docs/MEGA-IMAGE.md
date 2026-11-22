@@ -50,4 +50,6 @@ on it: [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 `scripts/mega-smoke.sh` boots the image from the network on the bench Pi (the card is not touched), sets it up
 as its first boot would, then starts every Test Apps entry for 25 s and screenshots it: one line per entry with
-whether it still runs and how much of the screen it changed (artifacts/mega-smoke/, with the programs' logs).
+whether it still runs and how much of the screen it changed (artifacts/mega-smoke/, with the programs' logs). It starts each program by exec from a shell; the
+way a double-click starts it (through Tracker and the roster) is checked by `tools/pi-tests/ta1-sweep.sh` in a
+network session: on mega36, 13 entries never showed a window that way (KNOWN-ISSUES C18; fix on test packages).

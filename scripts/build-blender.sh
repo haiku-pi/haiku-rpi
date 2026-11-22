@@ -30,13 +30,13 @@
 #                -DBLENDER_HOST_TOOLS); fails unless its WITH_* options equal the host configure's
 #   build        ninja blender, under scripts/heavy-build.sh (≤ 16 GB)
 #   stage        the install tree + runtime packages for the Pi test, artifacts/blender-tests/
-#   blender_package  blender-3.6.23-10-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender-10
+#   blender_package  blender-3.6.23-11-arm64.hpkg (apps/Blender, Deskbar entry) in artifacts/packages-test/blender-11
 #
 # Packages: the libraries of revisions 1-6 in artifacts/packages-test/blender/ (unchanged since); what
 # -7 adds (oidn, numpy_python3.10, alembic, fftw) in artifacts/packages-test/blender-7/; what -8 adds (boost1.83
 # -2 with regex, iostreams and locale; c_blosc, openvdb, gmp, potrace, libharu) in
-# artifacts/packages-test/blender-8/; what -9 adds (usd) in artifacts/packages-test/blender-9/; blender itself (-10) in
-# artifacts/packages-test/blender-10/.
+# artifacts/packages-test/blender-8/; what -9 adds (usd) in artifacts/packages-test/blender-9/; blender itself (-11) in
+# artifacts/packages-test/blender-11/.
 #
 # Work directories: artifacts/cross-ports/<port>-<version>/ for the libraries,
 # artifacts/cross-ports/blender-3.6.23/{src,deps,host-build,host-tools,build}/ for Blender.
@@ -55,9 +55,9 @@ out="$root/artifacts/packages-test/blender"
 out7="$root/artifacts/packages-test/blender-7"
 out8="$root/artifacts/packages-test/blender-8"
 out9="$root/artifacts/packages-test/blender-9"
-out10="$root/artifacts/packages-test/blender-10"
+out11="$root/artifacts/packages-test/blender-11"
 package() { "$root/scripts/package-port.py" "$@" --out "$out"; }
-mkdir -p "$out" "$out7" "$out8" "$out9" "$out10"
+mkdir -p "$out" "$out7" "$out8" "$out9" "$out11"
 
 # the script-mode builds see pkg-config into the sysroot
 export PKG_CONFIG_SYSROOT_DIR="$sysroot"
@@ -875,7 +875,8 @@ blender_package() {
 	# nodes and Cycles volumes, the OpenVDB fluid cache), GMP (the Exact Boolean solver), Quadriflow, Draco
 	# (glTF compression, 0014: libextern_draco.so in 3.6/lib), potrace, libharu, translations (Boost.Locale:
 	# boost1.83 -2, which also has regex and iostreams); 9: USD import/export (usd 24.08, 0015); 10: on V3D, no SMAA
-	# and no smooth-wire resolve while navigating (0017, blender.md §7.17)
+	# and no smooth-wire resolve while navigating (0017, blender.md §7.17); 11: the data files found when started
+	# through a link (a Deskbar entry: argv[0] is the link; 0018)
 	[ -f "$sys/apps/Blender/3.6/lib/libextern_draco.so" ] || { echo "build-blender: no libextern_draco.so" >&2; exit 1; }
 	[ ! -e "$sys/apps/Blender/3.6/python" ] \
 		|| { echo "build-blender: 3.6/python exists (Blender would take it as its Python home)" >&2; exit 1; }
@@ -883,10 +884,10 @@ blender_package() {
 		|| { echo "build-blender: no translations in 3.6/datafiles/locale" >&2; exit 1; }
 	# (no 3.6/datafiles/usd: USD finds its plug-ins beside libusd_ms, in the usd package)
 	[ ! -e "$sys/apps/Blender/3.6/datafiles/usd" ] || { echo "build-blender: 3.6/datafiles/usd installed" >&2; exit 1; }
-	"$root/scripts/package-port.py" "$recipe" --revision 10 --system-prefix --no-devel --provides app:Blender \
+	"$root/scripts/package-port.py" "$recipe" --revision 11 --system-prefix --no-devel --provides app:Blender \
 		--requires "libsdl2 >= 2.32.10-8" --requires python3.10 --requires numpy_python3.10 \
-		--requires "boost1.83 >= 1.83.0-2" "${r[@]}" --out "$out10"
-	"$pkgtool" list -i "$out10/blender-3.6.23-10-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
+		--requires "boost1.83 >= 1.83.0-2" "${r[@]}" --out "$out11"
+	"$pkgtool" list -i "$out11/blender-3.6.23-11-arm64.hpkg" | grep -E 'requires|provides' | sed 's/^/build-blender: /'
 }
 
 # the install tree for the Pi test (M3): artifacts/blender-tests/Blender/ (blender, stripped, and its
@@ -903,11 +904,11 @@ stage() {
 		|| { echo "build-blender: incomplete install tree $t/Blender" >&2; exit 1; }
 	mkdir -p "$t/packages"
 	cp "$out"/*.hpkg "$root"/artifacts/packages-test/libsdl2-8/libsdl2-2.32.10-8-arm64.hpkg "$t/packages/"
-	# -7/-8/-9/-10: blender itself (blender_package runs first) from blender-10/, its libraries from blender-7/,
+	# -7/-8/-9/-11: blender itself (blender_package runs first) from blender-11/, its libraries from blender-7/,
 	# blender-8/ and blender-9/, not the earlier revisions of blender/ (blender, boost1.83 -1: pkgman would
 	# get two versions of one package)
-	cp "$out7"/*.hpkg "$out8"/*.hpkg "$out9"/*.hpkg "$out10"/*.hpkg "$t/packages/"
-	rm -f "$t/packages"/blender-3.6.23-[1-9]-*.hpkg "$t/packages"/boost1.83*-1.83.0-1-*.hpkg
+	cp "$out7"/*.hpkg "$out8"/*.hpkg "$out9"/*.hpkg "$out11"/*.hpkg "$t/packages/"
+	rm -f "$t/packages"/blender-3.6.23-[1-9]-*.hpkg "$t/packages"/blender-3.6.23-10-*.hpkg "$t/packages"/boost1.83*-1.83.0-1-*.hpkg
 	# and the run-time libraries of ours an image may not have yet (pkgman skips those it has)
 	# (python3.10's modules link openssl, sqlite, bz2, libedit, expat, which package-port.py does not
 	# turn into requires: they are in the sysroot's lib/, not non-packaged/)
