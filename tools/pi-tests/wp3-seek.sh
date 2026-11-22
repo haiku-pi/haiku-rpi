@@ -11,6 +11,7 @@
 #   teardown every 1.5 s currentTime = 20, and 150 ms later (while the player decodes on to 20 s) the player dropped
 #            (src removed + load(), then src again) or reloaded (src set again), alternately: "teardown N" counts them;
 #            a WebPositive that hangs stops counting
+# CLIP may also be a URL (http://, https://), played from there.
 # LIB=DIR: DIR first in LIBRARY_PATH (a test libWebKitLegacy.so.1); OVL=0: WEBKIT_VIDEO_OVERLAY=0.
 # Run over ssh in a bench session (scripts/pi-session.sh); tools/pi-tests/wp3-run.sh from the host takes the HDMI
 # frames at the SNAP lines.
@@ -21,7 +22,11 @@ dir=$(cd "$(dirname "$0")" && pwd)
 log=$dir/wp3-$label.log
 page=$dir/wp3-$label.html
 say() { echo "WP3 $label $*"; }
-[ -f "$dir/$clip" ] || { say "no $dir/$clip"; exit 1; }
+case "$clip" in
+*://*) src=$clip ;;	# a URL (WP4: http/https through the media kit's BUrl reader)
+*) [ -f "$dir/$clip" ] || { say "no $dir/$clip"; exit 1; }
+	src="file://$dir/$clip" ;;
+esac
 loop=""
 [ "$mode" = end ] && [ "${LOOP:-1}" = 0 ] || loop=loop
 
@@ -45,7 +50,7 @@ esac
 cat > "$page" << EOF
 <!DOCTYPE html><html style="height:100%;margin:0"><head><title>wp3 $label</title></head>
 <body style="height:100%;margin:0;overflow:hidden;background:#000">
-<video muted $loop autoplay src="file://$dir/$clip" style="display:block;width:100%;height:100%"></video>
+<video muted $loop autoplay src="$src" style="display:block;width:100%;height:100%"></video>
 <script>const v = document.querySelector("video"), t0 = performance.now(); let n = 0;
 const f = (x) => (typeof x == "number" ? x.toFixed(2) : String(x));
 const ev = [];

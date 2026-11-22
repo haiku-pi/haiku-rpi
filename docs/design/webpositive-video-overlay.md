@@ -341,3 +341,68 @@ seeking over `http(s)://` (forward beyond what has arrived waits in `BAdapterIO`
 video thread — the main thread only seeks to the key frame, which may itself wait); the real media controls' slider
 (injected mouse events do not reach them, §3); audio *heard* after a seek (the clips are muted; the positions are the
 track's); a non-faststart file in the browser without the libmedia fix still does not open.
+
+### 6.1 WP4: the release gate of -3 + `wp3-adapterio-eof` (2026-11-22; network session `wp4` 10:59–12:07, card untouched)
+
+**Result: everything the change touches is green, but the gate is not.** MediaPlayer entered the debugger 7 times
+while opening URLs. The defect is old: the MediaPlayer and libbe binaries are byte-identical to the rpi4 build, and
+`git diff f814da3263 d5da656a29` touches only `AdapterIO.cpp` in the media, support, app and interface kits and in
+MediaPlayer. It crashes as often with stock libmedia as with the fix. So nothing was merged or published; the main
+session decides.
+
+- **Package:** `artifacts/packages-test/wp4/haikuwebkit{,_devel}-1.10.0-3` (`build-webkit.sh`, `WEBKIT_REVISION=3`, private
+  sysroot; ninja was a no-op: the WP3 tree). A fresh unpack of the tarball with the three patches applied is identical
+  to `src/`, except `__pycache__`. The library matches t5 in `.text`, `.rodata`, `.data`, `.data.rel.ro` and `.dynsym`;
+  only `.dynstr`/`.dynamic` differ (the build-tree RPATH that `ninja install` drops). `.comment` reads "GCC 16.2.0"
+  only. `package-diff.sh` against -2: same requires and files; `_devel` requires `haikuwebkit == 1.10.0-3`.
+- **Image:** `artifacts/images/haiku-pi4-integ-wp4.img`, built by jam from the worktree `sources/haiku-wp3` (configured
+  with `--cross-tools-prefix` to the main tree's GCC 16.2 tools; `@pi-mmc`, `HAIKU_PI_GL=1`, 4500 MB), at hrev60450+366.
+  jam rc 0, with the usual 11 "not available" packages. Its `libmedia.so` is **byte-identical to WP3's tested relink**
+  (md5 afb8c6fe…), in both `/boot/system/lib` and `non-packaged`. -3 was installed with `pkgman` from the files; the md5
+  of `/boot/system/lib/libWebKitLegacy.so.1` is the package's.
+
+The WebPositive seek matrix (`wp3-seek.sh`; page `currentTime`, checked against the clip's burned-in time on the HDMI
+frames, `artifacts/wp4/runs/ts-wp4*.png`):
+
+| Source | paused 5 / 20 | playing 40 / 3 | end of a 15 s clip (`loop`) |
+|---|---|---|---|
+| file, H.264 720p ± AAC, HEVC 1080p, HEVC 720p moov-at-end, 854×480 moov-at-end | 5.00 / 20.00 (HDMI 5.000 / 20.000) | 40 / 3 (HDMI 41.433 / 4.667 3 s later); 854×480 (30 s): 40 → end → loop → 3 | loops at 15.4 s; with AAC the same; without `loop`: `ended` at 15.07; AAC only: right |
+| http (full speed, Content-Length) | the same, moov-at-end HEVC included | the same | loops at 15.4 s (HDMI 2.033 at 33 s) |
+| http, stock libmedia (control) | — | 854×480 moov-at-end: **never opens** (`dur=NaN`) | **frozen at 13.77 s for 10 s**, loops at 24.2 s |
+| http throttled 550 kB/s (≈1.2× the bit rate) | — | — | starts at 1.4 s, loops at 16.5 s; stock: frozen 13.77 → loop at 25.1 s |
+| http throttled 1500 kB/s | — | 40: **waits 4.9 s for the data**, then exact; 3: exact | 854×480 moov-at-end opens after the 4.9 s download and loops at 35.2 s |
+| http, **no Content-Length** (`/n/`, `/ns550/`) | — | — | **-3:** `dur=Infinity`, frozen at 13.77–13.80 for 10 s, then the clock runs on past the end (to 35.8 s) with the last picture; never `ended`, never loops. **-2 (either libmedia):** `dur=0`, the same freeze, then `currentTime` stuck at 23.86. Neither ends. The fix cannot apply (the size is unknown). |
+| https (test-videos.co.uk 10 s 720p, archive.org Elephants Dream 654 s) | — | 40 / 3 right | loops at 10.9, 21.0, 31.0 s |
+
+- During the throttled forward seek, the page's timers did not run for ~4 s: the main thread waits for the data
+  (BAdapterIO), as WP3 expected. This was not tried with more than 10 s to wait.
+- Teardown during a seek's decoding (H.264 1080p60): 21 teardowns, quit, 0 debugger entries.
+- **MediaPlayer** (`tools/pi-tests/wp4-mp.sh`, position from `hey`): a local file, http and https seek right (40 → 42.6–43.9
+  4 s later; 3 → 5.6–6.4; paused at 20 → 19.47–20.00, key frames); http and https play to the end without a stall (15.03 /
+  9.97). The http moov-at-end HEVC seeks right; the 854×480 one plays to 29.97. **Stock libmedia over http:** frozen at
+  13.66 for 8 s, then position 0. No Content-Length: the position reads 0 throughout, with both libmedias.
+- **MediaPlayer URL opens crash** (`wp4-mpopen.sh` plus the runs above): **3 of 25 opens with the fix, 3 of 19 with stock
+  libmedia** (n is small). Each is a double free or bogus pointer in a `BString` of the playlist item's `BUrl`:
+  `BUrl::UrlString()` from `UrlPlaylistItem::GetAttribute()` ← `PlaylistItem::Name()` ← `MainWin::_AddPlaylistItem()` or
+  `PlaylistListView::_AddItem()`, once in `~UrlPlaylistItem` from `Controller::SetTo()`. The crash comes before any
+  request reaches the server. `BUrl::UrlString()` rebuilds a mutable cache in a const method, and the item is read from
+  more than one thread; the cause is likely that race, but it is unproven. With stock libmedia there was one more crash:
+  a segment violation in `PlaybackManager::PlaylistFrameAtFrame()` on a scripted `set Position` after the moov-at-end
+  file had failed to open.
+- **WP2 regression, -3 + fix:** WebPositive / app_server / system 720p30 **14.9 / 0.7 / 5.0 %**, 1080p30 **28.8 / 0.6 / 9.0**,
+  HEVC 1080p **22.9 / 0.4 / 6.6** (WP2 on image-2026-11-21b: 14.6/0.7/4.9, 26.1/0.7/8.2, 24.3/0.5/6.9; WP3 t5 1080p30
+  28.4/0.6/8.8), 300 plane updates per 10 s, key census 47–61. **19 quits during playback** (2 × 8 `cycle` + 3 `measure`)
+  plus ~40 `wp3-seek` quits: 0 crashes, 0 WebPositive debugger entries. Browsing: Wikipedia, then example.com typed
+  into the URL field; typing into a page ("typed: Hello Haiku 2026"). MediaPlayer local files: 720p30 14.9 %, 1080p30
+  25.5 %, HEVC 1080p 4.5 %, 0 dropped, result 0 problems (R2: 14.7 / 25.9 / 4.3). Firefox -11: 1432 of 1455 frames
+  presented (23 dropped), on the plane; 5 of 5 quits in 1 s, 0 left, 0 MMAL errors. The image also carries
+  d0531402e0 (app_server), which 21b does not.
+- **0 PANIC** (UART and syslog); **7 debugger entries, all MediaPlayer** (above). Runs in `artifacts/wp4/runs`; syslog
+  `artifacts/wp4/syslog-wp4.txt`; UART `artifacts/uart/20261122-105937-session-wp4.log`.
+
+**Recommendation:** go (the main session's call, since gate rule (d) failed on an unrelated defect). -3 + the
+libmedia fix are right on every path tried, and they fix the http end-of-stream stall and moov-at-end files for
+MediaPlayer too. -3 on stock libmedia (a user who only runs `pkgman update` on image-2026-11-21b) is no worse than -2:
+local seeks were right in WP3 (t4 on stock libmedia); over http the end has the old 10 s stall (`C-*`), and
+moov-at-end files do not open (as before). http seeks on stock libmedia were not run. The MediaPlayer URL crash needs its own fix and a KNOWN-ISSUES row in
+either case.
