@@ -1,6 +1,6 @@
 # WebPositive `<video>` on the YUV overlay plane (WP1)
 
-Status: **test build measured on the Pi; not merged, not published** (2026-11-22, session `wp1a`, §3). A change to HaikuWebKit's media player
+Status: **test build measured on the Pi; not merged, not published** (2026-11-22, sessions `wp1a`, `wp1b`, §3). A change to HaikuWebKit's media player
 (`patches/haikuwebkit/haikuwebkit-1.10.0-video-overlay.patch`) and a test library (`artifacts/packages-test/`). Numbers are
 marked **measured** (with the source) or **estimated**. Builds on [video-overlay.md](video-overlay.md) (B_YUV420
 overlays, colour encodings §7, MediaPlayer's full-screen fix §10) and
@@ -79,6 +79,8 @@ Citation key: **[W]** `artifacts/cross-ports/haikuwebkit-1.10.0/src/Source` (Hai
 - `BWebPage::scroll()` calls `mediaPlayerHaikuRootViewScrolled()`: software for 0.5 s and a repaint; the plane follows
   once the video is painted twice at its new place. Not painted for 2 s (scrolled out, hidden): the plane is given
   back; a hidden BWebView (another tab) gives it back at the next picture.
+- One plane per view: a BView has one overlay, so the first video of a page to claim the BWebView's plane keeps it;
+  other videos on the page stay in software (`planeLock()`, the claim given back with the plane).
 - Fallbacks: no plane (allocation fails, all six in use), `LockBits()` failing (overlays suspended for a mode
   change), `SetViewOverlay()` failing: software, a retry after 1 s.
 - Quit: `BWebPage::ShutdownOnce()` calls `mediaPlayerHaikuShutdown()`: every player stops decoding, gives its plane back
@@ -99,17 +101,19 @@ scaled by the display). CPU = `teamstat` over 10 s from 20 s after the start, % 
 |---|---|---|---|
 | H.264 720p30 (h264_mmal) | 27.2 / 101.5 / 33.3 | **15.4 / 0.6 / 5.1** | 300–301 of 300 |
 | H.264 1080p30 (h264_mmal) | 44.7 / 101.8 / 38.3 (RGB: 46.2 / 102.5 / 38.8) | **28.6 / 0.6 / 8.9** | 300–301 |
-| H.264 1080p60 (CPU decoder, by rate) | 179.4 / 64.8 / 61.9 (RGB: 179.1 / 65.4 / 62.0) | **162.2 / 0.8 / 41.5** | 600–601 in 600 vblanks; 16–166 of them superseded |
+| H.264 1080p60 (CPU decoder, by rate) | 179.4 / 64.8 / 61.9 (RGB: 179.1 / 65.4 / 62.0) | **162.2 / 0.8 / 41.5** | 600–601 updates in 600 vblanks, 16–166 of them superseded: **435–585 of 600 frames shown** |
 | HEVC 720p30 (rpivid) | 19.6 / 101.1 / 30.9 | **12.0 / 0.8 / 4.1** | 301 |
 | HEVC 1080p30 (rpivid) | 35.3 / 101.7 / 35.0 | **24.2 / 0.5 / 6.9** | 300–301 |
 
 - **app_server drops from a whole core to <1 %**, the system from 31–39 % to 4–9 % busy at 30 fps; WebPositive itself
   saves the swscale conversion (720p −12 points, 1080p −16). Repeat runs on intermediate builds: 14.2–15.5 % (720p), 28.6 %
   (1080p30), 162.0–164.7 % (1080p60).
-- **1080p60**: every plane update reaches a vblank (600 of 600), the player decodes all 60 frames (1785 in ~30 s) with
-  63–125 decoded more than 1.5 frames late (RGB path: 376); 16–166 updates per 10 s were replaced before scan-out
-  (two frames in one vblank). The rest of the CPU is the software H.264 decoder (by rate, KNOWN-ISSUES P2). The RGB path
-  at 1080p60 does not keep up (app_server 65 %, late 376), as P2 says.
+- **1080p60**: not every frame is shown. The plane is updated at every vblank, but 16–166 of the ~600 updates per 10 s
+  were replaced by the next one before scan-out (two frames in one vblank: 3 runs gave 16, 28 and 166), so 435–585 of 600
+  frames reached the screen. The player decodes all frames (1785 in ~30 s), 63–125 of them more than 1.5 frame periods
+  late (RGB path: 376). The rest of the CPU is the software H.264 decoder (by rate, KNOWN-ISSUES P2). The baseline's
+  shown frames were not measured (no counter in the old library; P2 says ~1 in 3 for the RGB path); its app_server at
+  65 % and 376 late decodes say it does not keep up.
 - **HEVC plays only from a "faststart" MP4**: WebKit opens media through `BMediaFile(BUrl)` (a streaming reader); our
   x265 clips have the `moov` atom at the end ("moov atom not found", nothing played, baseline as well). Remuxed with
   `-movflags +faststart` (`artifacts/wp1/clips/`) they play, baseline and plane. Most web MP4s are faststart.
@@ -126,22 +130,49 @@ scaled by the display). CPU = `teamstat` over 10 s from 20 s after the start, % 
 - **Full screen**: uiinject's F11 does not reach WebPositive; the window resized to the whole screen and back instead
   (the same relayout): the plane moved to 1698×955 and back, 0 key, WebPositive 36.7 % in the full-screen period
   (1080p30; app_server 2.2 %).
-- **Seek while paused** (JavaScript `currentTime`): the plane shows the seeked picture, but every seek lands on frame 0
-  (the streaming reader); the baseline does not seek at all (its `seekToTarget()` returned nothing). Both wrong;
-  not WP1's.
+- **Seek while paused** (JavaScript `currentTime` to 5 s and 20 s, then play; session wp1b, burnt-in frame numbers):
+  baseline and the relinked control stay on the paused frame (351/350) and **never play again** (the 26-s frame still
+  shows 350): their `seekToTarget()` returns no promise. With the patch the seek completes and playback resumes, but
+  both seeks land on frame 0 (resumed at 2.7 s / 3.2 s after ~3 s), with `WEBKIT_VIDEO_OVERLAY=0` exactly as on the
+  plane, so it is the `seekToTarget()` fix, not the plane. The clip has key frames every ~2 s, so a backward seek should
+  land at 3.7 s; the cause (probably `SeekToTime()` through the `BMediaFile(BUrl)` streaming reader) is not proven.
+  Better than a frozen video, still wrong: a follow-up.
 - **Quit during playback** (KNOWN-ISSUES F11): baseline **crashed at 5 of 8 quits** (`cycle`, 1080p30) and at 5 of its 9
   other quits with a video playing: `ReadFrames()` in unloaded decoder code. Intermediate test builds crashed in
   `BBitmap::LockBits()` (a plane frame after the application was gone) and, with the decoding stopped, in h264_mmal's
   own threads after the add-on was unloaded (2 of 6). Final library: **0 of 12** (8 cycle quits, 4 measure runs; 1080p60
   quits take 8 s on both libraries).
-- A control (the unchanged sources relinked with GCC 16.2, `artifacts/wp1/control`) played 720p like the baseline.
+- Mixed-compiler control: the unchanged sources relinked with GCC 16.2 (`artifacts/wp1/control`) played 720p and quit
+  with the baseline's crash, but at another window size (not comparable numbers). The like-for-like check of the
+  relinked library is the RGB column: `WEBKIT_VIDEO_OVERLAY=0` on the test library gives 46.2 / 102.5 % at 1080p30 against
+  the baseline's 44.7 / 101.8 %, 179.1 / 65.4 % against 179.4 / 64.8 % at 1080p60.
 - 0 PANIC in the session.
 
-Not run: a hidden tab (the plane is given back by code, not tested), a mode change, two videos on a page, a canvas
-`drawImage()` of a video, the package installed with pkgman (only the library through `LIBRARY_PATH`).
+### 3.1 Session wp1b (06:03–06:13, same image, 0 PANIC): two videos, a hidden tab, a mode change, the package
+
+- **Two videos in one page** (H.264 720p and HEVC 720p, 760×428 each): the first test library had nothing to stop both
+  players from configuring the BWebView's one overlay: **325 134 key pixels** on HDMI (`TW1b`; the plane jumped between
+  the two rectangles, the other one green). Fixed: a player claims its view's plane (`planeLock()`), the others stay in
+  software (`other 20` retries in the log): `TW2b` **79** key pixels (window baseline), the HEVC video on the plane, the
+  H.264 one drawn by app_server (75 % of a core: the old cost, for the second video only).
+- **Hidden tab** (`window.open()` in front for 12 s): the plane was given back at the next picture (the display driver's
+  plane statistics stop), no video and no key on the other tab, the plane back when the tab closed; 0 debugger entries.
+- **Mode change** (1280×720 and back while playing 1080p30): one `LockBits()` failure while the overlays were suspended,
+  software for a second, then the plane again in both modes; key 26–61, 0 debugger entries.
+- **The test package installed with pkgman** (`haikuwebkit-1.10.0-2`, its requirements met: `gcc_syslibs` provides
+  `lib:libgcc_s`): WebPositive 26.0 %, app_server 0.6 %, system 8.1 % at 1080p30 (300–301 plane updates per 10 s); 6 of 6
+  quits clean.
+- **The translucent bar** (`rgba(0,0,0,0.5)`) renders neutral opaque black in this WebKit on both libraries (pixels (0,0,0)
+  inside it, `OVB` baseline and `OV720`): not green-tinted, but this page does not show what a truly translucent pixel
+  over the key would do; the software fallback while the content changes is what covers that case.
+- The image's `/boot/system/non-packaged/lib/libmedia.so` (seen in the crash traces) is byte-identical to the packaged
+  `/boot/system/lib/libmedia.so` (same MD5): the baseline is the release as published.
+
+Not run: a canvas `drawImage()` of a video, the real media controls (they never appear for injected mouse events).
 
 ## 4. Defects found on the bench and fixed in the patch
 
+0. Two videos in one page fought over the view's one overlay (§3.1): a claim per view, the others in software.
 1. `ClearViewOverlay()` on the BWebView after it left its window (quit) → `debugger("View method requires owner")`:
    a view without a window is treated as gone.
 2. Software after a scroll released the plane at once (the last paint was ~10 s old: nothing repaints on the plane), and
@@ -157,16 +188,18 @@ Not run: a hidden tab (the plane is given back by code, not tested), a mode chan
   (≈80 s): the two files compiled by GCC 16.2 with ninja's command lines, the dependencies' headers and libraries from
   their packages, `libWebKitLegacy.so` relinked from the October objects (GCC 13.3). It adds a `libgcc_s` NEEDED entry.
 - Test package: `artifacts/packages-test/wp1/haikuwebkit-1.10.0-2-arm64.hpkg` (the -1 package with this library,
-  stripped, and `lib:libgcc_s`); **not published, not installed on the Pi yet**.
+  stripped, and `lib:libgcc_s`; library from `artifacts/wp1/t2`); installed with pkgman in session wp1b (§3.1); **not
+  published**.
 - **Recommendation: merge the patch, publish only after a clean build.** The gain is large and measured on every clip
   (app_server −1 core at 30 fps; quits no longer crash), the change is contained (one WebCore file, two hooks in
   WebPage.cpp; `WEBKIT_VIDEO_OVERLAY=0` restores the old path), and the fallbacks were exercised. Before a release:
   a full `scripts/build-webkit.sh` with GCC 16.2 (the patch applies to a fresh tree: `patch --dry-run` checked; ~hours,
-  heavy-build lock), then one pkgman-installed run of `wp1-run.sh` measure/scroll/cycle, a hidden-tab and a mode-change
-  check, and the image's repository bump (AGENTS.md's three parts). KNOWN-ISSUES F11 would lose the quit crash, P2's
+  heavy-build lock), then the `wp1-run.sh` set again on the installed package (measure, scroll, controls, two, tab, mode,
+  cycle), and the image's repository bump (AGENTS.md's three parts). KNOWN-ISSUES F11 would lose the quit crash, P2's
   WebPositive line ("RGB output … 1 frame in 3") would change to the plane numbers above.
 - Follow-ups: rpivid's SAND pictures imported without the CPU copy (MediaPlayer's path, hw-video-decode §9); a
   `BPositionIO` (file) reader for `file://` media so non-faststart MP4s play and seeks are exact; a NEON or table
   converter for the software frames (9 ms at 720p, 23 ms at 1080p in C).
 
-Outputs: `artifacts/wp1/runs/` (per run `.out`, HDMI `.png`), UART `artifacts/uart/20261122-041231-session-wp1a.log`.
+Outputs: `artifacts/wp1/runs/` (per run `.out`, HDMI `.png`), UART `artifacts/uart/20261122-041231-session-wp1a.log`,
+`20261122-051151-session-wp1b.log`. Libraries: `artifacts/wp1/t2` (final), `t1` (before the plane claim), `control`.

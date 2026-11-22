@@ -5,7 +5,7 @@ overlay plane of the page's BWebView (SetViewOverlay with the stream's YCbCr enc
 RGB and repainting the page: paint() fills the video's rectangle with the overlay key. Software (the player's own
 YCbCr->RGB conversion) while the plane cannot be used: the video moved or is partly outside the view, content over
 it changed in the last 1.5 s (the media controls), a scroll (BWebPage::scroll calls the player), no free plane, a
-mode change. WEBKIT_VIDEO_OVERLAY=0 turns it off, WEBKIT_VIDEO_OVERLAY_LOG=1 prints counters.
+mode change, another video of the page has the view's plane (one overlay per BView). WEBKIT_VIDEO_OVERLAY=0 turns it off, WEBKIT_VIDEO_OVERLAY_LOG=1 prints counters.
 Also: seekToTarget() returns its promise (it fell off the end); at the application's quit
 (BWebPage::ShutdownOnce(), and this library's destructors) every player stops decoding and closes its file
 before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed at quit during playback).
@@ -48,7 +48,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
      constexpr MediaPlayerType mediaPlayerType() const final { return MediaPlayerType::Haiku; }
  private:
      private:
-@@ -107,6 +119,16 @@
+@@ -107,6 +119,17 @@
          static void playCallback(void*, void*, size_t,
              const media_raw_audio_format&);
  
@@ -59,13 +59,14 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +        void serviceOverlay();
 +        bool presentOnPlane(const BRect& viewRect, bool& viewGone);
 +        void releasePlane();
++        void dropPlaneClaim();
 +        void requestRepaint(bool own);
 +        void logStats(const char* what);
 +
          // engine support
          static void getSupportedTypes(WTF::HashSet<WTF::String>&);
          static MediaPlayer::SupportsType supportsType(const MediaEngineSupportParameters&);
-@@ -131,6 +153,46 @@
+@@ -131,6 +154,47 @@
          thread_id m_loadingThread;
          thread_id m_videoThread;
          String m_url;
@@ -103,18 +104,19 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +        bigtime_t m_retryAt;        // no plane until then (allocation failed, overlays suspended)
 +        bigtime_t m_lastRepaintRequest;
 +        bigtime_t m_softwareSince;  // in software since then (0: on the plane)
++        bool m_planeClaimed;        // this player has its view's plane (planeLock())
 +
 +        // statistics (WEBKIT_VIDEO_OVERLAY_LOG=1)
 +        bigtime_t m_lastLog;
 +        uint32 m_statDecoded, m_statLate, m_statPlane, m_statSoftware, m_statConverted, m_statForeign,
-+            m_statScrolled, m_statShows, m_statMoves, m_statHides, m_statFailed, m_statBusy;
++            m_statScrolled, m_statShows, m_statMoves, m_statHides, m_statFailed, m_statBusy, m_statOther;
 +        bigtime_t m_statConvertTime;
  };
  
  
 --- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
 +++ b/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
-@@ -22,26 +22,200 @@
+@@ -22,26 +22,209 @@
  
  #if ENABLE(VIDEO)
  
@@ -240,6 +242,15 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +    return players;
 +}
 +
++// Guards livePlayers() changes (main thread) against the video threads, and
++// the claims on a view's plane: a BView has one overlay, the first video of a
++// page to get it keeps it, the others stay in software.
++static BLocker& planeLock()
++{
++    static NeverDestroyed<BLocker> lock("WebKit video planes");
++    return lock;
++}
++
 +// B_YUV420 (planar 4:2:0, the whole picture's bytes per row: luma rows of 2/3
 +// of it, then the Cb and the Cr plane with rows of 1/3) into B_RGB32, with the
 +// picture's YCbCr encoding (untagged: BT.709 from 720 lines on, as the display
@@ -315,7 +326,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
  class MediaPlayerFactoryHaiku final : public MediaPlayerFactory {
  private:
      MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::Haiku; };
-@@ -89,12 +263,42 @@
+@@ -89,12 +272,47 @@
      , m_abort(false)
      , m_loadingThread(-1)
      , m_videoThread(-1)
@@ -342,23 +353,28 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +    , m_retryAt(0)
 +    , m_lastRepaintRequest(0)
 +    , m_softwareSince(0)
++    , m_planeClaimed(false)
 +    , m_lastLog(0)
 +    , m_statDecoded(0), m_statLate(0), m_statPlane(0), m_statSoftware(0), m_statConverted(0)
 +    , m_statForeign(0), m_statScrolled(0), m_statShows(0), m_statMoves(0), m_statHides(0)
-+    , m_statFailed(0), m_statBusy(0)
++    , m_statFailed(0), m_statBusy(0), m_statOther(0)
 +    , m_statConvertTime(0)
  {
++    BAutolock lock(planeLock());
 +    livePlayers().add(this);
  }
  
  
  MediaPlayerPrivate::~MediaPlayerPrivate()
  {
-+    livePlayers().remove(this);
++    {
++        BAutolock lock(planeLock());
++        livePlayers().remove(this);
++    }
      m_mediaLock.Lock();
  
      cancelLoad();
-@@ -141,7 +345,13 @@
+@@ -141,7 +359,13 @@
          m_videoThread = -1;
      }
  
@@ -372,7 +388,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
      if (m_soundPlayer)
          m_soundPlayer->Stop();
      delete m_soundPlayer;
-@@ -233,12 +443,16 @@
+@@ -233,12 +457,16 @@
              startTime = system_time();
              startMediaTime = (bigtime_t)(player->m_currentTime * 1000000);
              lastObservedTime = player->m_currentTime;
@@ -389,7 +405,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
          if (player->m_videoTrack) {
              // Detect seek or external time update
              if (std::abs(player->m_currentTime - lastObservedTime) > 0.5f) {
-@@ -260,11 +474,13 @@
+@@ -260,11 +488,13 @@
  
              if (videoTime < audioTime) {
                  int64 count;
@@ -408,7 +424,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
                  } else {
                      player->m_videoTrack = nullptr;
                  }
-@@ -273,6 +489,12 @@
+@@ -273,6 +503,12 @@
              }
          }
          player->m_mediaLock.Unlock();
@@ -421,7 +437,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
          snooze(1000);
      }
  
-@@ -346,15 +568,21 @@
+@@ -346,15 +582,21 @@
  
      if (m_paused && m_videoTrack && m_frameBuffer) {
          int64 count;
@@ -448,7 +464,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
  }
  
  
-@@ -396,14 +624,467 @@
+@@ -396,16 +638,496 @@
  
  void MediaPlayerPrivate::paint(GraphicsContext& context, const FloatRect& r)
  {
@@ -463,7 +479,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
          target->SetDrawingMode(B_OP_COPY);
          target->DrawBitmap(m_frameBuffer, r);
 +        return;
-     }
++    }
 +
 +    BRect viewRect;
 +    const bool usable = overlayTarget(target, r, viewRect);
@@ -560,9 +576,9 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +        // the picture at its new place, over the moved key
 +        if (scrolled)
 +            player->m_player.repaint();
-+    }
-+}
-+
+     }
+ }
+ 
 +void MediaPlayerPrivate::stopAllForExit(bool applicationAlive)
 +{
 +    for (auto* player : livePlayers()) {
@@ -742,6 +758,23 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +bool MediaPlayerPrivate::presentOnPlane(const BRect& viewRect, bool& viewGone)
 +{
 +    const bigtime_t now = system_time();
++    if (!m_planeClaimed) {
++        BMessenger messenger;
++        {
++            BAutolock lock(m_overlayLock);
++            messenger = m_webView;
++        }
++        BAutolock lock(planeLock());
++        for (auto* player : livePlayers()) {
++            if (player != this && player->m_planeClaimed && player->m_webView == messenger) {
++                // another video of the page has the view's plane
++                m_retryAt = now + kRetryDelay;
++                m_statOther++;
++                return false;
++            }
++        }
++        m_planeClaimed = true;
++    }
 +    if (!m_overlayBitmaps[0]) {
 +        const BRect bounds(0, 0, m_width - 1, m_height - 1);
 +        for (int i = 0; i < 3; i++) {
@@ -754,6 +787,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +                    delete bitmap;
 +                    bitmap = nullptr;
 +                }
++                dropPlaneClaim();
 +                m_retryAt = now + kRetryDelay;
 +                m_statFailed++;
 +                return false;
@@ -825,6 +859,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +            delete overlay;
 +            overlay = nullptr;
 +        }
++        dropPlaneClaim();
 +        return false;
 +    }
 +
@@ -853,6 +888,7 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +                delete overlay;
 +                overlay = nullptr;
 +            }
++            dropPlaneClaim();
 +        }
 +        m_retryAt = now + kRetryDelay;
 +        m_statFailed++;
@@ -893,6 +929,13 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +        delete bitmap;
 +        bitmap = nullptr;
 +    }
++    dropPlaneClaim();
++}
++
++void MediaPlayerPrivate::dropPlaneClaim()
++{
++    BAutolock lock(planeLock());
++    m_planeClaimed = false;
 +}
 +
 +void MediaPlayerPrivate::logStats(const char* what)
@@ -909,17 +952,19 @@ before the decoder add-ons are unloaded (KNOWN-ISSUES F11: WebPositive crashed a
 +        plane = m_planeRect;
 +    }
 +    fprintf(stderr, "WVO %s: %s %dx%d flags 0x%x; decoded %u late %u; plane %u shows %u moves %u hides %u"
-+        " failed %u busy %u; software %u converted %u (%.1f ms each) foreign %u scrolled %u; plane at"
++        " failed %u busy %u other %u; software %u converted %u (%.1f ms each) foreign %u scrolled %u; plane at"
 +        " %d,%d %dx%d\n", what, m_yuv ? "yuv420" : "rgb32", (int)m_width, (int)m_height,
 +        (unsigned)m_yuvFlags, m_statDecoded, m_statLate, m_statPlane, m_statShows, m_statMoves,
-+        m_statHides, m_statFailed, m_statBusy, m_statSoftware, m_statConverted,
++        m_statHides, m_statFailed, m_statBusy, m_statOther, m_statSoftware, m_statConverted,
 +        m_statConverted ? m_statConvertTime / 1000.0 / m_statConverted : 0.0, m_statForeign,
 +        m_statScrolled, (int)plane.left, (int)plane.top,
 +        plane.IsValid() ? (int)plane.IntegerWidth() + 1 : 0, plane.IsValid() ? (int)plane.IntegerHeight() + 1 : 0);
- }
- 
++}
++
  // #pragma mark - private methods
-@@ -431,10 +1112,52 @@
+ 
+ void MediaPlayerPrivate::IdentifyTracks(const String& url)
+@@ -431,10 +1153,52 @@
                  if (m_videoTrack)
                      continue;
                  m_videoTrack = track;

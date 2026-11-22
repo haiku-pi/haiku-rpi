@@ -12,6 +12,9 @@
 #   scroll      a 640x360 video in a long page, scrolled 2 px every 50 ms for 2 s, still for 6 s, twice
 #   full        the measure page; the window resized to the whole screen at 13 s, back at 25 s; CPU over 5 s then
 #   seek        the measure page; paused at 12 s, seeked to 5 s and 20 s while paused, played at 22 s (JavaScript)
+#   two         two videos (CLIP and CLIP2, default play-854x480.mp4) side by side, 760x428 each
+#   tab         the measure page; window.open() at 12 s (another tab or window in front), closed at 24 s
+#   mode        the measure page; the screen to 1280x720 at 10 s and back at 16 s (screenmode)
 #   cycle       CYCLES (default 5) times: started on the measure page, PLAY s (default 10) of playing, quit; the
 #               WebPositive teams left after 15 s (killed then) and the debugger entries in the syslog
 # Lines "WP1 <label> ...", "WP1 <label> SNAP <name>" at the moments meant for an HDMI frame.
@@ -92,6 +95,12 @@ long enough to scroll, with a video in the middle of the text.</p>'
 $para $para $para <video width=\"640\" height=\"360\" $video></video> $para $para $para $para $para $para $para $para $para</main>
 <script>function glide(dy) { let n = 0; const t = setInterval(() => { window.scrollBy(0, dy); if (++n == 40) clearInterval(t); }, 50); }
 setTimeout(() => glide(2), 10000); setTimeout(() => glide(-2), 18000);</script>" ;;
+two) body="<body style=\"margin:0;background:#000\"><video width=\"760\" height=\"428\" $video></video>
+<video width=\"760\" height=\"428\" muted loop autoplay src=\"file://$dir/${CLIP2:-play-854x480.mp4}\"></video>" ;;
+tab) body="$fill
+<script>let w; setTimeout(() => { w = window.open(\"about:blank\"); }, 12000);
+setTimeout(() => { if (w) w.close(); }, 24000);</script>" ;;
+mode) body=$fill ;;
 *) say "unknown mode $mode"; exit 2 ;;
 esac
 echo "<!DOCTYPE html><html><head><title>wp1 $label</title></head>$body</html>" > "$page"
@@ -170,6 +179,41 @@ seek)
 	sleep 6
 	snapshot playing
 	wvo_lines 2
+	quit_wp
+	;;
+two)
+	start_wp
+	sleep 14
+	snapshot two
+	measure_teams 5
+	wvo_lines 2
+	plane_stats
+	quit_wp
+	;;
+tab)
+	start_wp
+	sleep 14
+	snapshot tab
+	wvo_lines 1
+	sleep 12
+	snapshot back
+	wvo_lines 1
+	plane_stats
+	quit_wp
+	;;
+mode)
+	start_wp
+	sleep 10
+	screenmode 1280 720 > /dev/null 2>&1
+	say "mode: 1280x720"
+	sleep 6
+	snapshot mode720
+	screenmode 1920 1080 > /dev/null 2>&1
+	say "mode: 1920x1080"
+	sleep 8
+	snapshot back
+	wvo_lines 1
+	plane_stats
 	quit_wp
 	;;
 cycle)
