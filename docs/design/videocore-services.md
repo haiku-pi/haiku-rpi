@@ -391,8 +391,8 @@ Haiku branch **`vq1-vchiq-unwire`** (haiku-pi, off rpi4 519adfacb3), **merged in
 (2026-11-22, §8.6): 02813adf89 `kernel/vm: don't unmap wired pages above a cut out of an area's middle` (the fix),
 d0361ca9e1 `vchiq: find a bulk buffer's area once the buffer is locked` (a driver race the tests exposed; it relies on
 the first), 66a920ff23 `kernel/vm: above a cut, wait only for lock_memory_etc()'s wired ranges` (§8.4). Tools: `tools/haiku-tests/wiredcut.c`, `tools/haiku-tests/vq1-cut.c` (+ `vchiq_test_cut` in
-`scripts/build-vchiq-test.sh`), `tools/pi-tests/vq1-*.sh`. Images, binaries and the diagnostic patches:
-`artifacts/vq1/` (not in git).
+`scripts/build-vchiq-test.sh`), `tools/haiku-tests/pshcut.c`, `tools/pi-tests/vq1-*.sh`. Binaries, kernels and the
+diagnostic patches: `artifacts/vq1/` (not in git; the test images were deleted after the merge).
 
 ### 8.1 Symptom
 
