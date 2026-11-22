@@ -1,0 +1,82 @@
+Draw: no anti-aliasing passes while navigating on Mesa's v3d (Raspberry Pi)
+
+On a Raspberry Pi 4 (V3D 4.2) every full-screen pass of the viewport costs 3-5 ms at 1322x762, and the
+viewport is GPU-bound: orbiting the default cube takes 193 ms per frame. Two of its passes are
+anti-aliasing: Workbench's SMAA (Preferences > Viewport > Anti-Aliasing, while navigating) and the
+overlays' smooth-wire resolve (Smooth Wires); each costs about 35 ms of the frame (measured with them
+switched off, docs/design/blender.md 7.17 in haiku-rpi).
+
+While navigating (RV3D_NAVIGATING / RV3D_PAINTING) on v3d, leave both out: Workbench draws with 0
+samples, as with Anti-Aliasing "None", and the overlays draw their wires without the smooth-wire
+resolve, as with Smooth Wires off. The first frame after the navigation is anti-aliased as before
+(Workbench's TAA then accumulates as usual). Orbiting the default cube by middle-mouse drag: 193 ->
+127 ms per frame (5.2 -> 7.9 fps); Material Preview 197 -> 165 ms (only the overlays' part applies).
+
+diff --git a/source/blender/draw/engines/overlay/overlay_antialiasing.cc b/source/blender/draw/engines/overlay/overlay_antialiasing.cc
+index 2eefdce..cebe63a 100644
+--- a/source/blender/draw/engines/overlay/overlay_antialiasing.cc
++++ b/source/blender/draw/engines/overlay/overlay_antialiasing.cc
+@@ -66,7 +66,8 @@ void OVERLAY_antialiasing_init(OVERLAY_Data *vedata)
+ 
+   bool need_wire_expansion = (G_draw.block.size_pixel > 1.0f);
+   pd->antialiasing.enabled = need_wire_expansion ||
+-                             ((U.gpu_flag & USER_GPU_FLAG_OVERLAY_SMOOTH_WIRE) != 0);
++                             ((U.gpu_flag & USER_GPU_FLAG_OVERLAY_SMOOTH_WIRE) != 0 &&
++                              !DRW_state_skip_navigation_antialiasing());
+ 
+   GPUTexture *color_tex = nullptr;
+   GPUTexture *line_tex = nullptr;
+diff --git a/source/blender/draw/engines/workbench/workbench_effect_antialiasing.c b/source/blender/draw/engines/workbench/workbench_effect_antialiasing.c
+index efe2d37..a5e0576 100644
+--- a/source/blender/draw/engines/workbench/workbench_effect_antialiasing.c
++++ b/source/blender/draw/engines/workbench/workbench_effect_antialiasing.c
+@@ -101,6 +101,9 @@ int workbench_antialiasing_sample_count_get(WORKBENCH_PrivateData *wpd)
+   const Scene *scene = draw_ctx->scene;
+ 
+   if (wpd->is_navigating || wpd->is_playback) {
++    if (DRW_state_skip_navigation_antialiasing()) {
++      return 0;
++    }
+     /* Only draw using SMAA or no AA when navigating. */
+     return min_ii(wpd->preferences->viewport_aa, 1);
+   }
+diff --git a/source/blender/draw/intern/DRW_render.h b/source/blender/draw/intern/DRW_render.h
+index f4406db..fd46f3a 100644
+--- a/source/blender/draw/intern/DRW_render.h
++++ b/source/blender/draw/intern/DRW_render.h
+@@ -949,6 +949,10 @@ bool DRW_state_is_playback(void);
+  * Is the user navigating the region.
+  */
+ bool DRW_state_is_navigating(void);
++/**
++ * Leave out the viewport's anti-aliasing while navigating: on GPUs where each full-screen pass is costly.
++ */
++bool DRW_state_skip_navigation_antialiasing(void);
+ /**
+  * Should text draw in this mode?
+  */
+diff --git a/source/blender/draw/intern/draw_manager.c b/source/blender/draw/intern/draw_manager.c
+index c425e02..3e8e132 100644
+--- a/source/blender/draw/intern/draw_manager.c
++++ b/source/blender/draw/intern/draw_manager.c
+@@ -2963,6 +2963,20 @@ bool DRW_state_is_navigating(void)
+   return (rv3d) && (rv3d->rflag & (RV3D_NAVIGATING | RV3D_PAINTING));
+ }
+ 
++bool DRW_state_skip_navigation_antialiasing(void)
++{
++  /* Mesa's v3d (Raspberry Pi 4): a full-screen pass costs 3-5 ms of a ~190 ms frame at 1322x762, and the
++   * viewport's SMAA and the overlays' smooth-wire resolve are about 35 ms each. The frames drawn while
++   * navigating go without them, as with Anti-Aliasing "None" and Smooth Wires off; the frame after the
++   * navigation is anti-aliased as before. */
++  static int is_v3d = -1;
++  if (is_v3d < 0) {
++    is_v3d = GPU_type_matches(GPU_DEVICE_UNKNOWN, GPU_OS_ANY, GPU_DRIVER_OPENSOURCE) &&
++             strstr(GPU_platform_renderer(), "V3D") != NULL;
++  }
++  return is_v3d && DRW_state_is_navigating();
++}
++
+ bool DRW_state_show_text(void)
+ {
+   return (DST.options.is_select) == 0 && (DST.options.is_depth) == 0 &&
