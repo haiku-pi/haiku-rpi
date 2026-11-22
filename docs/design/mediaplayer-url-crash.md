@@ -3,7 +3,7 @@
 Status: **fixed on branch `mp3-url-crash`** of haiku-pi/haiku (from `rpi4` 519adfacb3), **not merged**.
 Two commits, pushed: 2d4241482f (BUrl, support kit, libbe) and fb3d9ac1bd (MediaPlayer's Controller). Numbers are
 **measured** unless marked. Pi: 15 of 114 URL opens crashed before the fix, 0 of 120 after; the seek or Play after a
-failed open crashed 5 of 5 before, 0 of 9 after.
+failed open crashed 10 of 10 before; after the fix every such command got its reply (9 runs).
 
 ## 0. Answer in one screen
 
@@ -79,12 +79,16 @@ itself not atomic, and readers hold a reference to the member); priming the cach
 `Controller::SetTo()` calls `NodeManager::Init()` → `PlaybackManager::Init()` (which pushes the first `PlayingState`)
 only after a file opened; until then `fStates` is empty, and `_StateAtFrame()`/`_LastState()` return NULL.
 `SetFramePosition()` → `CurrentFrame()` → `PlaylistFrameAtFrame()` dereferenced it (WP4: `+0x20`, `state->activation_frame`);
-`Play()` → `StartPlaying()` → `SetPlayMode()` copies `*_LastState()`. Entry points: `set Position` and `set Seek`
-(scripting), the seek keys and the position slider (`_Wind()`, `SetTimePosition()`), `do Play`, the Play menu item.
+`Play()` → `StartPlaying()` → `SetPlayMode()` copies `*_LastState()`. Entry points: the `set Position` script
+command (`SetTimePosition()`), the position slider (`ControllerView`, `SetPosition()`), `RestoreState()`, and for Play:
+`do Play`, the Play menu item and the playlist window. The seek keys and `set Seek` go through `MainWin::_Wind()`.
+With no file loaded, `_Wind()` skips to the previous or next item instead of seeking, so it does not reach
+`SetFramePosition()`. The Controller commit's message also names the seek keys; that is wrong, and since the branch
+is pushed it was not rewritten.
 `Stop()` and `TogglePlaying()` already checked `InitCheck()`; `Pause()` is safe (`PlayMode()` handles no state). A
 later failed file after a good one is not affected (the states stay).
 
-## 3. Pi results (network sessions `mp3` 12:44–12:48, 12:49–13:21, 13:23–13:36 on 2026-11-22; the card untouched)
+## 3. Pi results (network sessions `mp3` 12:44–12:48, 12:49–13:21, 13:23–13:36, 13:42–14:04 on 2026-11-22; the card untouched)
 
 Image: `sources/haiku-mp3/generated.arm64/haiku-pi4-regular.img` (jam `@pi-mmc` with `HAIKU_PI_GL=1`, from the branch on
 `rpi4` 519adfacb3; its `libbe.so` and `MediaPlayer` are the fixed ones, md5 6bdb3b13… / d97febbf…). The baseline
@@ -105,21 +109,24 @@ The baseline rate is 9 of 70 (13 %); with WP4's 6 of 44, 15 of 114. With the fix
 clean opens happen by chance with probability (7/8)^120 ≈ 1e-7. F1 shows that libbe alone fixes it; MediaPlayer needs
 no change for this crash.
 
-Seek after a failed open (`tools/pi-tests/mp3-failseek.sh MODE URL`, 404 URL, one scripted command after 6 s):
+Seek or Play after a failed open (`tools/pi-tests/mp3-failseek.sh MODE URL`, 404 URL). The commands go out together
+3 s after the start, each by its own `hey`, which waits up to 40 s for its reply. A command counts as handled only
+when its reply arrives. On a URL that does not open, MediaPlayer's window first blocks on the Controller's lock
+while `SetTo()` tries the URL (~20 s for the 404). Once the open has failed, `MainWin::_PlaylistItemOpened()` shows
+the "could not be opened" `BAlert` with `Go()` on the window thread, and the window handles nothing more until it
+is dismissed. That is ordinary modal behaviour, not a defect, but a command sent after it never gets a reply.
+Commands queued before it are handled first.
 
-| | `set Position` 20 s | `set Seek` +5 s | `do Play` | all (seek, Seek, Play, Pause, Stop, seek) |
+| session 4 (13:42–14:04) | `set Position` 20 s | `do Play` | `set Seek` +5 s | all at once (Position, Seek, Play, Pause, Stop) |
 |---|---|---|---|---|
-| stock | **crash** 1/1 (`PlaylistFrameAtFrame` + 0x20, WP4's stack) | no crash 0/1 | **crash** 4/4 (`SetPlayMode` + 0x30 ← `Controller::Play`) | — |
-| fixed | 0 of 3 | 0 of 1 | 0 of 3 | 0 of 2 |
+| stock | **crash** 1/1 (`PlaylistFrameAtFrame` + 0x20, WP4's stack) | **crash** 2/2 (`SetPlayMode` + 0x30 ← `Controller::Play`) | — | — |
+| fixed | **replied 3/3**, 0 debugger entries | **replied 3/3**, 0 | replied 1/1, 0 | **every command replied, 2/2**, 0 |
 
-`set Seek` goes through `MainWin::_Wind()`, which does not reach `CurrentFrame()` without video (`fHasVideo`).
+The stock binaries crashed every time across sessions 2–4: `set Position` 3 of 3, `do Play` 7 of 7. Session 2's fixed
+runs (9, 0 debugger entries) sent the commands one after another with short timeouts, so they do not prove the
+commands were handled; session 4's do. `set Seek` (`MainWin::_Wind()` without frames) jumps to the next playlist item
+when the target is past the duration (0 here), so it never seeks and did not crash on stock either.
 
-- **Pre-existing, not changed:** on a URL that does not open, MediaPlayer's window answers scripting only now and
-  then, with the stock binaries too. `get Position` every 4 s for 2 minutes, with no other command: answered once
-  (`A-stock-noplay`). So `hey` calls time out, and the script's last "does it answer" probe failed in the fixed
-  `play`/`all` runs. The team was alive, there was no debugger entry, and a later `get Position` was answered
-  (checked by hand). The likely cause is the Controller lock, which `SetTo()` holds while the media kit opens the
-  URL; this was not examined further.
 - **No regression:** the fixed image played and sought a local H.264 file (`wp4-mp.sh seek`: 40 → 42.67, 3 → 5.63,
   paused 20 → 19.47, play → 22.40, quit in 1 s, h264_mmal) and the same file over http (identical numbers), with 0
   problems and 0 debugger entries.
@@ -130,8 +137,8 @@ Seek after a failed open (`tools/pi-tests/mp3-failseek.sh MODE URL`, 404 URL, on
     killed with `kill -9`.
   - #2, uptime 1921.4 s, at `wp4-mp.sh seek` on http right after the same on a local file: the previous team had
     quit cleanly through `hey quit`.
-  - Logs: `artifacts/mp3/uart-session-mp3-{1,2}-panic.log`. No PANIC in the 210 opens of the 404 URL (no decoding),
-    nor in session 3.
+  - Logs: `artifacts/mp3/uart-session-mp3-{1,2}-panic.log`. No PANIC in the ~190 MediaPlayer starts on the 404 URL
+    in session 2 (no decoding), nor in sessions 3 and 4.
 
 Host tools: `tools/host-burl/run.sh TREE` (§1.2–1.3). Pi tools: `tools/pi-tests/wp4-mpopen.sh` (now `APP=`, and it
 prints the libraries loaded), `tools/pi-tests/mp3-failseek.sh`. Runs: `artifacts/mp3/runs/`.
@@ -141,6 +148,7 @@ prints the libraries loaded), `tools/pi-tests/mp3-failseek.sh`. Runs: `artifacts
 - WebPositive and other `BUrl` users with the new libbe. WebKit uses `BUrl` in its network layer. The host
   `UrlTest` and the field dump give the same results, but no browser session ran on this libbe.
 - The cost of building the strings eagerly was not measured. It is a few appends per modifier.
-- The Controller-lock stall on a URL that does not open (above).
+- How long the Controller holds its lock while it tries a URL that does not open (~20 s for a 404; the window
+  is blocked meanwhile). This was not examined.
 - Opening a URL from the GUI (Open URL dialog) rather than from the command line. It takes the same
   `Playlist::AppendItems()` path, but that was not run.
