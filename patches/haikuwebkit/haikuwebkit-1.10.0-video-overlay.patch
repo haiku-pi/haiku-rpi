@@ -1,0 +1,911 @@
+haikuwebkit 1.10.0: <video> on a YCbCr overlay plane (docs/design/webpositive-video-overlay.md, WP1)
+
+With a display that has B_YUV420 overlays, MediaPlayerPrivateHaiku decodes B_YUV420 and shows each picture on an
+overlay plane of the page's BWebView (SetViewOverlay with the stream's YCbCr encoding) instead of converting it to
+RGB and repainting the page: paint() fills the video's rectangle with the overlay key. Software (the player's own
+YCbCr->RGB conversion) while the plane cannot be used: the video moved or is partly outside the view, content over
+it changed in the last 1.5 s (the media controls), a scroll (BWebPage::scroll calls the player), no free plane, a
+mode change. WEBKIT_VIDEO_OVERLAY=0 turns it off, WEBKIT_VIDEO_OVERLAY_LOG=1 prints counters.
+Also: seekToTarget() returns its promise (it fell off the end).
+
+--- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.h
++++ b/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.h
+@@ -26,7 +26,10 @@
+ #include <wtf/WeakPtr.h>
+ 
+ #include <Locker.h>
++#include <GraphicsDefs.h>
++#include <Messenger.h>
+ #include <ObjectList.h>
++#include <Rect.h>
+ #include <private/netservices/UrlProtocolAsynchronousListener.h>
+ 
+ class BBitmap;
+@@ -34,6 +37,7 @@
+ class BMediaFile;
+ class BMediaTrack;
+ class BSoundPlayer;
++class BView;
+ struct media_raw_audio_format;
+ 
+ namespace WebCore {
+@@ -94,8 +98,14 @@
+         bool didLoadingProgress() const override;
+ 
+         void paint(GraphicsContext&, const FloatRect&) override;
++        void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) override;
+         DestinationColorSpace colorSpace() override;
+ 
++        // BWebPage::scroll() moved the pixels of VIEW (the page's BWebView):
++        // a video on its overlay plane goes in software until it is painted
++        // at its new place.
++        static void rootViewScrolled(BView* view);
++
+     constexpr MediaPlayerType mediaPlayerType() const final { return MediaPlayerType::Haiku; }
+ private:
+     private:
+@@ -107,6 +117,16 @@
+         static void playCallback(void*, void*, size_t,
+             const media_raw_audio_format&);
+ 
++        // the video on a YCbCr overlay plane (see the .cpp)
++        void releaseVideoBuffers();
++        bool overlayTarget(BView* target, const FloatRect&, BRect& viewRect);
++        void drawSoftwareFrame(BView* target, const FloatRect&);
++        void serviceOverlay();
++        bool presentOnPlane(const BRect& viewRect, bool& viewGone);
++        void releasePlane();
++        void requestRepaint(bool own);
++        void logStats(const char* what);
++
+         // engine support
+         static void getSupportedTypes(WTF::HashSet<WTF::String>&);
+         static MediaPlayer::SupportsType supportsType(const MediaEngineSupportParameters&);
+@@ -131,6 +151,45 @@
+         thread_id m_loadingThread;
+         thread_id m_videoThread;
+         String m_url;
++
++        // B_YUV420 decoding (m_yuv), for an overlay plane; else B_RGB32 into
++        // m_frameBuffer, drawn by app_server, as before
++        bool m_yuv;
++        uint8_t* m_yuvBuffer;
++        int32 m_yuvBytesPerRow;
++        uint32 m_yuvFlags;          // B_YCbCr_* of the decoded pictures
++        int32 m_width;
++        int32 m_height;
++        float m_frameRate;
++        int32 m_frameSerial;        // a new picture in m_yuvBuffer
++        int32 m_rgbSerial;          // m_frameBuffer converted from it (main thread)
++
++        // shared by paint() (main thread) and the video thread
++        BLocker m_overlayLock;
++        BMessenger m_webView;       // the BWebView the plane is shown on
++        BRect m_paintRect;          // the video's rectangle at the last paint (view coordinates; invalid: unusable)
++        bigtime_t m_paintTime;
++        int32 m_paintStable;        // paints at that rectangle in a row
++        bool m_planeShown;
++        BRect m_planeRect;
++        rgb_color m_key;
++        bigtime_t m_softwareUntil;  // drawn in software until then (content over the video changed, a scroll)
++        bool m_ownRepaint;          // a repaint asked for by the video thread is pending
++        bool m_keyDrawn;            // the last paint at m_planeRect drew the key (not the picture)
++
++        // the video thread's
++        BBitmap* m_overlayBitmaps[3];
++        int32 m_nextBitmap;
++        int32 m_planeSerial;        // the picture last put on the plane
++        int32 m_repaintSerial;      // the picture last repainted in software
++        bigtime_t m_retryAt;        // no plane until then (allocation failed, overlays suspended)
++        bigtime_t m_lastRepaintRequest;
++
++        // statistics (WEBKIT_VIDEO_OVERLAY_LOG=1)
++        bigtime_t m_lastLog;
++        uint32 m_statDecoded, m_statLate, m_statPlane, m_statSoftware, m_statConverted, m_statForeign,
++            m_statScrolled, m_statShows, m_statMoves, m_statHides, m_statFailed, m_statBusy;
++        bigtime_t m_statConvertTime;
+ };
+ 
+ 
+--- a/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
++++ b/Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp
+@@ -22,26 +22,169 @@
+ 
+ #if ENABLE(VIDEO)
+ 
++#include "CachedResourceLoader.h"
++#include "Document.h"
++#include "DocumentView.h"
+ #include "GraphicsContext.h"
++#include "HostWindow.h"
++#include "LocalFrameView.h"
+ #include "NotImplemented.h"
+ #include "wtf/text/CString.h"
+ #include "wtf/NeverDestroyed.h"
++#include <wtf/NativePromise.h>
+ 
++#include <support/Autolock.h>
+ #include <support/Locker.h>
++#include <AffineTransform.h>
+ #include <Bitmap.h>
+ #include <DataIO.h>
+ #include <HttpRequest.h>
++#include <Looper.h>
+ #include <MediaDefs.h>
+ #include <MediaFile.h>
+ #include <MediaTrack.h>
+ #include <SoundPlayer.h>
+ #include <View.h>
+ #include <OS.h>
++#include <algorithm>
+ #include <cmath>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ 
+ namespace WebCore {
+ 
++// The video on a YCbCr overlay plane
++//
++// With a display that has B_YUV420 overlays (the Raspberry Pi 4's), the
++// decoder is asked for planar B_YUV420 pictures. paint() fills the video's
++// rectangle with the overlay's colour key instead of drawing the picture, and
++// the video thread puts each new picture on an overlay plane of the page's
++// BWebView (BView::SetViewOverlay()) without repainting the page: no YCbCr to
++// RGB conversion, and none of app_server's copies of the picture. The page
++// covers the plane wherever it draws anything but the key over the video.
++// The picture is drawn in software instead (converted here) while
++// - the video's place is not known yet, or changed: the plane is moved there
++//   first, then the key is painted (key pixels written before the plane is
++//   there would stay opaque);
++// - the video is not wholly inside the view, the view is rotated or sheared,
++//   or the paint does not go to the page itself (a canvas, a snapshot);
++// - the page painted something else over the video in the last 1.5 s (the
++//   media controls: translucent pixels would blend with the key colour, not
++//   with the picture), or was scrolled in the last 0.5 s (the blit moves the
++//   key, not the plane);
++// - no plane can be had (all in use, overlays suspended for a mode change).
++// WEBKIT_VIDEO_OVERLAY=0 turns it off (B_RGB32 pictures, as before);
++// WEBKIT_VIDEO_OVERLAY_LOG=1 prints counters on stderr every 2 s.
++
++// media_video_display_info.flags (MediaDefs.h) and SetViewOverlay() options
++// (InterfaceDefs.h) naming the YCbCr encoding, in haiku-pi's tree since
++// 552c42233d; the build's headers may predate them. An app_server that does
++// not know the options ignores them (the display guesses: BT.709 from 720
++// lines on, BT.601 below, limited range).
++static const uint32 kYCbCrBT601 = 0x10;
++static const uint32 kYCbCrBT709 = 0x20;
++static const uint32 kYCbCrBT2020 = 0x30;
++static const uint32 kYCbCrMatrixMask = 0x30;
++static const uint32 kYCbCrFullRange = 0x40;
++static const uint32 kOverlayYCbCrBT601 = 0x00100000;
++static const uint32 kOverlayYCbCrBT709 = 0x00200000;
++static const uint32 kOverlayYCbCrFullRange = 0x00400000;
++
++// the window lock, taken from the video thread: never wait long for it
++static const bigtime_t kLockTimeout = 50000;
++// software after a failed allocation or a suspended overlay
++static const bigtime_t kRetryDelay = 1000000;
++// software after something else was painted over the video, and after a scroll
++static const bigtime_t kForeignDelay = 1500000;
++static const bigtime_t kScrollDelay = 500000;
++// a paint younger than this tells where the video is now
++static const bigtime_t kPaintFresh = 150000;
++// the plane is given back after this long without a paint (in software)
++static const bigtime_t kReleaseDelay = 2000000;
++
++static bool overlayEnabled()
++{
++    static const bool enabled = [] {
++        const char* env = getenv("WEBKIT_VIDEO_OVERLAY");
++        if (env && !strcmp(env, "0"))
++            return false;
++        uint32 flags = 0;
++        return bitmaps_support_space(B_YUV420, &flags)
++            && (flags & B_BITMAPS_SUPPORT_OVERLAY) != 0;
++    }();
++    return enabled;
++}
++
++static bool overlayLog()
++{
++    static const bool log = [] {
++        const char* env = getenv("WEBKIT_VIDEO_OVERLAY_LOG");
++        return env && strcmp(env, "0");
++    }();
++    return log;
++}
++
++static HashSet<MediaPlayerPrivate*>& livePlayers()
++{
++    static NeverDestroyed<HashSet<MediaPlayerPrivate*>> players;
++    return players;
++}
++
++// B_YUV420 (planar 4:2:0, the whole picture's bytes per row: luma rows of 2/3
++// of it, then the Cb and the Cr plane with rows of 1/3) into B_RGB32, with the
++// picture's YCbCr encoding (untagged: BT.709 from 720 lines on, as the display
++// and the decoder's own RGB conversion guess)
++static void convertToRGB32(const uint8_t* src, int32 srcBytesPerRow, int32 width, int32 height,
++    uint32 flags, uint8_t* dst, int32 dstBytesPerRow)
++{
++    uint32 matrix = flags & kYCbCrMatrixMask;
++    if (!matrix)
++        matrix = height >= 720 ? kYCbCrBT709 : kYCbCrBT601;
++    const bool full = (flags & kYCbCrFullRange) != 0;
++    // 16.16 fixed point
++    int32 ys = 76309, yOffset = 16, rv, gu, gv, bu;
++    if (full) {
++        ys = 65536;
++        yOffset = 0;
++        rv = 91881; gu = 22554; gv = 46802; bu = 116130;
++    } else if (matrix == kYCbCrBT709) {
++        rv = 117489; gu = 13954; gv = 34925; bu = 138438;
++    } else {
++        rv = 104597; gu = 25675; gv = 53279; bu = 132201;
++    }
++    const int32 lumaPitch = srcBytesPerRow / 3 * 2;
++    const int32 chromaPitch = lumaPitch / 2;
++    const uint8_t* cbPlane = src + (size_t)lumaPitch * height;
++    const uint8_t* crPlane = cbPlane + (size_t)chromaPitch * (height / 2);
++    auto clamp = [](int32 value) -> uint8_t {
++        value >>= 16;
++        return value < 0 ? 0 : value > 255 ? 255 : value;
++    };
++    for (int32 y = 0; y < height; y++) {
++        const uint8_t* luma = src + (size_t)lumaPitch * y;
++        const uint8_t* cb = cbPlane + (size_t)chromaPitch * (y / 2);
++        const uint8_t* cr = crPlane + (size_t)chromaPitch * (y / 2);
++        uint8_t* out = dst + (size_t)dstBytesPerRow * y;
++        for (int32 x = 0; x < width; x++) {
++            const int32 u = cb[x / 2] - 128;
++            const int32 v = cr[x / 2] - 128;
++            const int32 l = (luma[x] - yOffset) * ys + 32768;
++            out[0] = clamp(l + bu * u);
++            out[1] = clamp(l - gu * u - gv * v);
++            out[2] = clamp(l + rv * v);
++            out[3] = 255;
++            out += 4;
++        }
++    }
++}
++
++void mediaPlayerHaikuRootViewScrolled(BView* view)
++{
++    MediaPlayerPrivate::rootViewScrolled(view);
++}
++
+ class MediaPlayerFactoryHaiku final : public MediaPlayerFactory {
+ private:
+     MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::Haiku; };
+@@ -89,12 +232,41 @@
+     , m_abort(false)
+     , m_loadingThread(-1)
+     , m_videoThread(-1)
++    , m_yuv(false)
++    , m_yuvBuffer(nullptr)
++    , m_yuvBytesPerRow(0)
++    , m_yuvFlags(0)
++    , m_width(0)
++    , m_height(0)
++    , m_frameRate(30)
++    , m_frameSerial(0)
++    , m_rgbSerial(0)
++    , m_paintTime(0)
++    , m_paintStable(0)
++    , m_planeShown(false)
++    , m_key({ 0, 80, 0, 255 })
++    , m_softwareUntil(0)
++    , m_ownRepaint(false)
++    , m_keyDrawn(false)
++    , m_overlayBitmaps { }
++    , m_nextBitmap(0)
++    , m_planeSerial(0)
++    , m_repaintSerial(0)
++    , m_retryAt(0)
++    , m_lastRepaintRequest(0)
++    , m_lastLog(0)
++    , m_statDecoded(0), m_statLate(0), m_statPlane(0), m_statSoftware(0), m_statConverted(0)
++    , m_statForeign(0), m_statScrolled(0), m_statShows(0), m_statMoves(0), m_statHides(0)
++    , m_statFailed(0), m_statBusy(0)
++    , m_statConvertTime(0)
+ {
++    livePlayers().add(this);
+ }
+ 
+ 
+ MediaPlayerPrivate::~MediaPlayerPrivate()
+ {
++    livePlayers().remove(this);
+     m_mediaLock.Lock();
+ 
+     cancelLoad();
+@@ -141,7 +313,13 @@
+         m_videoThread = -1;
+     }
+ 
++    // the video thread is gone: its plane is ours
++    if (m_yuv)
++        logStats("end");
++    releasePlane();
++
+     m_mediaLock.Lock();
++    releaseVideoBuffers();
+     if (m_soundPlayer)
+         m_soundPlayer->Stop();
+     delete m_soundPlayer;
+@@ -233,12 +411,16 @@
+             startTime = system_time();
+             startMediaTime = (bigtime_t)(player->m_currentTime * 1000000);
+             lastObservedTime = player->m_currentTime;
++            // a picture of a seek, a move of the video, the end of a software period
++            if (player->m_yuv)
++                player->serviceOverlay();
+             continue;
+         }
+ 
+         if (!player->m_mediaLock.Lock())
+             continue;
+ 
++        bool decoded = false;
+         if (player->m_videoTrack) {
+             // Detect seek or external time update
+             if (std::abs(player->m_currentTime - lastObservedTime) > 0.5f) {
+@@ -260,11 +442,13 @@
+ 
+             if (videoTime < audioTime) {
+                 int64 count;
+-                if (player->m_videoTrack->ReadFrames(player->m_frameBuffer->Bits(), &count) == B_OK) {
+-                    callOnMainThread([player = WeakPtr(player)] {
+-                        if (player)
+-                            player->m_player.repaint();
+-                    });
++                void* buffer = player->m_yuv ? player->m_yuvBuffer : player->m_frameBuffer->Bits();
++                if (player->m_videoTrack->ReadFrames(buffer, &count) == B_OK) {
++                    decoded = true;
++                    player->m_statDecoded++;
++                    if (audioTime - videoTime > (bigtime_t)(1500000 / player->m_frameRate))
++                        player->m_statLate++;
++                    atomic_add(&player->m_frameSerial, 1);
+                 } else {
+                     player->m_videoTrack = nullptr;
+                 }
+@@ -273,6 +457,12 @@
+             }
+         }
+         player->m_mediaLock.Unlock();
++
++        if (player->m_yuv)
++            player->serviceOverlay();
++        else if (decoded)
++            player->requestRepaint(false);
++        player->logStats("stats");
+         snooze(1000);
+     }
+ 
+@@ -346,15 +536,21 @@
+ 
+     if (m_paused && m_videoTrack && m_frameBuffer) {
+         int64 count;
+-        if (m_videoTrack->ReadFrames(m_frameBuffer->Bits(), &count) == B_OK) {
+-            callOnMainThread([p = WeakPtr(this)] {
+-                if (p)
+-                    p->m_player.repaint();
+-            });
++        void* buffer = m_yuv ? m_yuvBuffer : m_frameBuffer->Bits();
++        if (m_videoTrack->ReadFrames(buffer, &count) == B_OK) {
++            atomic_add(&m_frameSerial, 1);
++            // on the plane, the video thread shows it
++            if (!m_yuv) {
++                callOnMainThread([p = WeakPtr(this)] {
++                    if (p)
++                        p->m_player.repaint();
++                });
++            }
+         }
+     }
+     m_player.timeChanged();
+     m_mediaLock.Unlock();
++    return MediaTimePromise::createAndResolve(MediaTime::createWithDouble(m_currentTime));
+ }
+ 
+ 
+@@ -396,14 +592,414 @@
+ 
+ void MediaPlayerPrivate::paint(GraphicsContext& context, const FloatRect& r)
+ {
+-    if (context.paintingDisabled())
++    if (context.paintingDisabled() || !m_frameBuffer)
+         return;
+ 
+-    if (m_frameBuffer) {
+-        BView* target = context.platformContext();
++    BView* target = context.platformContext();
++    if (!m_yuv) {
+         target->SetDrawingMode(B_OP_COPY);
+         target->DrawBitmap(m_frameBuffer, r);
++        return;
++    }
++
++    BRect viewRect;
++    const bool usable = overlayTarget(target, r, viewRect);
++    BView* webView = nullptr;
++    if (usable && !m_webView.IsValid()) {
++        // the page's BWebView, which shows the offscreen view's pixels
++        CachedResourceLoader* loader = m_player.cachedResourceLoader();
++        Document* document = loader ? loader->document() : nullptr;
++        LocalFrameView* frameView = document ? document->view() : nullptr;
++        HostWindow* hostWindow = frameView ? frameView->hostWindow() : nullptr;
++        webView = hostWindow ? hostWindow->platformPageClient() : nullptr;
+     }
++
++    bool drawKey = false;
++    rgb_color key;
++    {
++        BAutolock lock(m_overlayLock);
++        const bigtime_t now = system_time();
++        if (webView)
++            m_webView = BMessenger(webView);
++        if (!usable)
++            viewRect = BRect();
++        if (usable && viewRect == m_paintRect)
++            m_paintStable++;
++        else {
++            m_paintRect = viewRect;
++            m_paintStable = 0;
++        }
++        m_paintTime = now;
++        const bool own = m_ownRepaint;
++        m_ownRepaint = false;
++        if (m_planeShown && usable && viewRect == m_planeRect) {
++            if (!own) {
++                // something else changed over the video
++                m_softwareUntil = std::max(m_softwareUntil, now + kForeignDelay);
++                m_statForeign++;
++            } else if (now >= m_softwareUntil) {
++                drawKey = true;
++                key = m_key;
++            }
++            m_keyDrawn = drawKey;
++        }
++    }
++
++    if (!drawKey) {
++        drawSoftwareFrame(target, r);
++        return;
++    }
++
++    // the key over exactly the plane's pixels, in view coordinates; app_server
++    // shows the plane through key pixels written inside its rectangle
++    target->PushState();
++    BAffineTransform toCurrent = target->TransformTo(B_VIEW_COORDINATES);
++    toCurrent.Invert();
++    target->SetTransform(toCurrent);
++    target->SetDrawingMode(B_OP_COPY);
++    target->SetHighColor(key);
++    target->FillRect(viewRect);
++    target->PopState();
++}
++
++void MediaPlayerPrivate::paintCurrentFrameInContext(GraphicsContext& context, const FloatRect& r)
++{
++    // a canvas, a snapshot: always the picture
++    if (context.paintingDisabled() || !m_frameBuffer)
++        return;
++    drawSoftwareFrame(context.platformContext(), r);
++}
++
++void MediaPlayerPrivate::rootViewScrolled(BView* view)
++{
++    for (auto* player : livePlayers()) {
++        bool scrolled = false;
++        {
++            BAutolock lock(player->m_overlayLock);
++            if (player->m_planeShown && player->m_webView.Target(nullptr) == view) {
++                player->m_softwareUntil = std::max(player->m_softwareUntil,
++                    system_time() + kScrollDelay);
++                player->m_statScrolled++;
++                player->m_ownRepaint = true;
++                // where the video is now is known after its next paint (none
++                // if it was scrolled out of the view)
++                player->m_paintRect = BRect();
++                player->m_keyDrawn = false;
++                scrolled = true;
++            }
++        }
++        // the picture at its new place, over the moved key
++        if (scrolled)
++            player->m_player.repaint();
++    }
++}
++
++// #pragma mark - the overlay plane
++
++void MediaPlayerPrivate::releaseVideoBuffers()
++{
++    m_yuv = false;
++    free(m_yuvBuffer);
++    m_yuvBuffer = nullptr;
++}
++
++// Whether the video can be shown on the plane in this paint: into the page's
++// offscreen view, wholly inside it, not rotated or sheared. viewRect: its
++// pixels in the view.
++bool MediaPlayerPrivate::overlayTarget(BView* target, const FloatRect& r, BRect& viewRect)
++{
++    if (!target || strcmp(target->Name(), "WebKit offscreen view"))
++        return false;
++    BAffineTransform toView = target->TransformTo(B_VIEW_COORDINATES);
++    if (!toView.IsDilation() || toView.sx <= 0 || toView.sy <= 0)
++        return false;
++    const BPoint leftTop = toView.Apply(BPoint(r.x(), r.y()));
++    const BPoint rightBottom = toView.Apply(BPoint(r.maxX(), r.maxY()));
++    const int32 left = (int32)roundf(leftTop.x);
++    const int32 top = (int32)roundf(leftTop.y);
++    const int32 right = (int32)roundf(rightBottom.x);
++    const int32 bottom = (int32)roundf(rightBottom.y);
++    const BRect bounds = target->Bounds();
++    if (right - left < 16 || bottom - top < 16 || left < bounds.left || top < bounds.top
++        || right > bounds.right + 1 || bottom > bounds.bottom + 1)
++        return false;
++    viewRect.Set(left, top, right - 1, bottom - 1);
++    return true;
++}
++
++void MediaPlayerPrivate::drawSoftwareFrame(BView* target, const FloatRect& r)
++{
++    if (m_yuv && m_yuvBuffer) {
++        const int32 serial = atomic_get(&m_frameSerial);
++        if (serial != m_rgbSerial) {
++            m_rgbSerial = serial;
++            const bigtime_t start = system_time();
++            convertToRGB32(m_yuvBuffer, m_yuvBytesPerRow, m_width, m_height, m_yuvFlags,
++                (uint8_t*)m_frameBuffer->Bits(), m_frameBuffer->BytesPerRow());
++            m_statConvertTime += system_time() - start;
++            m_statConverted++;
++        }
++    }
++    target->SetDrawingMode(B_OP_COPY);
++    target->DrawBitmap(m_frameBuffer, r);
++}
++
++void MediaPlayerPrivate::requestRepaint(bool own)
++{
++    m_lastRepaintRequest = system_time();
++    callOnMainThread([player = WeakPtr(this), own] {
++        if (!player)
++            return;
++        if (own) {
++            BAutolock lock(player->m_overlayLock);
++            player->m_ownRepaint = true;
++        }
++        player->m_player.repaint();
++    });
++}
++
++// The video thread, after each loop: the new picture on the plane, the plane
++// moved to where the video was painted last, or the picture repainted in
++// software.
++void MediaPlayerPrivate::serviceOverlay()
++{
++    const bigtime_t now = system_time();
++    const int32 serial = atomic_get(&m_frameSerial);
++    BRect paintRect;
++    bigtime_t paintTime, softwareUntil;
++    int32 paintStable;
++    bool keyDrawn;
++    {
++        BAutolock lock(m_overlayLock);
++        paintRect = m_paintRect;
++        paintTime = m_paintTime;
++        paintStable = m_paintStable;
++        softwareUntil = m_softwareUntil;
++        keyDrawn = m_keyDrawn;
++    }
++    const bool samePlace = m_planeShown && paintRect == m_planeRect;
++    const bool software = serial == 0 || now < softwareUntil || now < m_retryAt;
++
++    if (!software && paintRect.IsValid() && (samePlace || (now - paintTime < kPaintFresh && paintStable >= 1))) {
++        if (samePlace && serial == m_planeSerial) {
++            // the plane has this picture; back from software, the key over it again
++            if (!keyDrawn && now - m_lastRepaintRequest > 100000)
++                requestRepaint(true);
++            return;
++        }
++        bool viewGone = false;
++        if (presentOnPlane(paintRect, viewGone)) {
++            m_planeSerial = serial;
++            m_statPlane++;
++            if (samePlace && !keyDrawn) {
++                // back from software: the key over the picture again (once
++                // per picture at most, until the paint drew it)
++                if (now - m_lastRepaintRequest > 100000)
++                    requestRepaint(true);
++            } else if (!samePlace) {
++                if (m_planeShown)
++                    m_statMoves++;
++                else
++                    m_statShows++;
++                {
++                    BAutolock lock(m_overlayLock);
++                    m_planeShown = true;
++                    m_planeRect = paintRect;
++                    m_keyDrawn = false;
++                }
++                // the key, now that the plane is there
++                requestRepaint(true);
++            }
++            return;
++        }
++        // this picture in software
++    }
++
++    if (serial != m_repaintSerial) {
++        m_repaintSerial = serial;
++        m_statSoftware++;
++        requestRepaint(true);
++    } else if (!software && now - paintTime >= kPaintFresh && now - m_lastRepaintRequest > 100000) {
++        // where is the video now (paused, or after a software period)?
++        requestRepaint(true);
++    }
++    if (m_overlayBitmaps[0] && now - paintTime > kReleaseDelay)
++        releasePlane();
++}
++
++bool MediaPlayerPrivate::presentOnPlane(const BRect& viewRect, bool& viewGone)
++{
++    const bigtime_t now = system_time();
++    if (!m_overlayBitmaps[0]) {
++        const BRect bounds(0, 0, m_width - 1, m_height - 1);
++        for (int i = 0; i < 3; i++) {
++            // the first reserves the overlay channel; the others take it over
++            // when SetViewOverlay() transfers it to them
++            m_overlayBitmaps[i] = new BBitmap(bounds,
++                B_BITMAP_WILL_OVERLAY | (i == 0 ? B_BITMAP_RESERVE_OVERLAY_CHANNEL : 0), B_YUV420);
++            if (m_overlayBitmaps[i]->InitCheck() != B_OK) {
++                for (auto& bitmap : m_overlayBitmaps) {
++                    delete bitmap;
++                    bitmap = nullptr;
++                }
++                m_retryAt = now + kRetryDelay;
++                m_statFailed++;
++                return false;
++            }
++        }
++        m_nextBitmap = 0;
++    }
++
++    BBitmap* bitmap = m_overlayBitmaps[m_nextBitmap];
++    // fails while app_server has the overlays suspended (a mode change)
++    if (bitmap->LockBits() != B_OK) {
++        m_retryAt = now + kRetryDelay;
++        m_statFailed++;
++        return false;
++    }
++    {
++        // the picture (a seek may replace it)
++        BAutolock lock(m_mediaLock);
++        uint8_t* bits = (uint8_t*)bitmap->Bits();
++        const int32 dstLuma = bitmap->BytesPerRow() / 3 * 2;
++        const int32 srcLuma = m_yuvBytesPerRow / 3 * 2;
++        const uint8_t* src[3] = { m_yuvBuffer, m_yuvBuffer + (size_t)srcLuma * m_height,
++            m_yuvBuffer + (size_t)srcLuma * m_height + (size_t)srcLuma / 2 * (m_height / 2) };
++        uint8_t* dst[3] = { bits, bits + (size_t)dstLuma * m_height,
++            bits + (size_t)dstLuma * m_height + (size_t)dstLuma / 2 * (m_height / 2) };
++        for (int p = 0; p < 3; p++) {
++            const int32 srcPitch = p ? srcLuma / 2 : srcLuma;
++            const int32 dstPitch = p ? dstLuma / 2 : dstLuma;
++            const int32 rowBytes = p ? m_width / 2 : m_width;
++            const int32 rows = p ? m_height / 2 : m_height;
++            for (int32 y = 0; y < rows; y++)
++                memcpy(dst[p] + (size_t)dstPitch * y, src[p] + (size_t)srcPitch * y, rowBytes);
++        }
++    }
++    bitmap->UnlockBits();
++
++    BMessenger messenger;
++    {
++        BAutolock lock(m_overlayLock);
++        messenger = m_webView;
++    }
++    if (messenger.LockTargetWithTimeout(kLockTimeout) != B_OK) {
++        viewGone = !messenger.IsValid();
++        m_statBusy++;
++        return false;
++    }
++    BLooper* looper = nullptr;
++    BView* view = static_cast<BView*>(messenger.Target(&looper));
++    if (!view || view->IsHidden()) {
++        // a hidden tab: give the plane back
++        if (view && m_planeShown)
++            view->ClearViewOverlay();
++        if (looper)
++            looper->Unlock();
++        viewGone = !view;
++        if (m_planeShown)
++            m_statHides++;
++        {
++            BAutolock lock(m_overlayLock);
++            m_planeShown = false;
++            m_planeRect = BRect();
++            m_paintRect = BRect();
++        }
++        for (auto& overlay : m_overlayBitmaps) {
++            delete overlay;
++            overlay = nullptr;
++        }
++        return false;
++    }
++
++    uint32 options = B_OVERLAY_FILTER_HORIZONTAL | B_OVERLAY_FILTER_VERTICAL;
++    switch (m_yuvFlags & kYCbCrMatrixMask) {
++    case kYCbCrBT601:
++        options |= kOverlayYCbCrBT601;
++        break;
++    case kYCbCrBT709:
++        options |= kOverlayYCbCrBT709;
++        break;
++    }
++    if (m_yuvFlags & kYCbCrFullRange)
++        options |= kOverlayYCbCrFullRange;
++    if (m_planeShown)
++        options |= B_OVERLAY_TRANSFER_CHANNEL;
++    rgb_color key;
++    // the first call configures the plane, a later one flips it at the next
++    // vertical blank (and moves it to viewRect)
++    const status_t status = view->SetViewOverlay(bitmap, bitmap->Bounds(), viewRect, &key,
++        B_FOLLOW_LEFT_TOP, options);
++    looper->Unlock();
++    if (status != B_OK) {
++        if (!m_planeShown) {
++            for (auto& overlay : m_overlayBitmaps) {
++                delete overlay;
++                overlay = nullptr;
++            }
++        }
++        m_retryAt = now + kRetryDelay;
++        m_statFailed++;
++        return false;
++    }
++    {
++        BAutolock lock(m_overlayLock);
++        m_key = key;
++    }
++    m_nextBitmap = (m_nextBitmap + 1) % 3;
++    return true;
++}
++
++// The plane hidden and its bitmaps freed (the video thread, or after it ended).
++void MediaPlayerPrivate::releasePlane()
++{
++    BMessenger messenger;
++    {
++        BAutolock lock(m_overlayLock);
++        messenger = m_webView;
++    }
++    if (m_planeShown && messenger.LockTargetWithTimeout(kLockTimeout) == B_OK) {
++        BLooper* looper = nullptr;
++        BView* view = static_cast<BView*>(messenger.Target(&looper));
++        if (view)
++            view->ClearViewOverlay();
++        if (looper)
++            looper->Unlock();
++    }
++    if (m_planeShown)
++        m_statHides++;
++    {
++        BAutolock lock(m_overlayLock);
++        m_planeShown = false;
++        m_planeRect = BRect();
++    }
++    for (auto& bitmap : m_overlayBitmaps) {
++        delete bitmap;
++        bitmap = nullptr;
++    }
++}
++
++void MediaPlayerPrivate::logStats(const char* what)
++{
++    if (!overlayLog())
++        return;
++    const bigtime_t now = system_time();
++    if (!strcmp(what, "stats") && now - m_lastLog < 2000000)
++        return;
++    m_lastLog = now;
++    BRect plane;
++    {
++        BAutolock lock(m_overlayLock);
++        plane = m_planeRect;
++    }
++    fprintf(stderr, "WVO %s: %s %dx%d flags 0x%x; decoded %u late %u; plane %u shows %u moves %u hides %u"
++        " failed %u busy %u; software %u converted %u (%.1f ms each) foreign %u scrolled %u; plane at"
++        " %d,%d %dx%d\n", what, m_yuv ? "yuv420" : "rgb32", (int)m_width, (int)m_height,
++        (unsigned)m_yuvFlags, m_statDecoded, m_statLate, m_statPlane, m_statShows, m_statMoves,
++        m_statHides, m_statFailed, m_statBusy, m_statSoftware, m_statConverted,
++        m_statConverted ? m_statConvertTime / 1000.0 / m_statConverted : 0.0, m_statForeign,
++        m_statScrolled, (int)plane.left, (int)plane.top,
++        plane.IsValid() ? (int)plane.IntegerWidth() + 1 : 0, plane.IsValid() ? (int)plane.IntegerHeight() + 1 : 0);
+ }
+ 
+ // #pragma mark - private methods
+@@ -431,10 +1027,52 @@
+                 if (m_videoTrack)
+                     continue;
+                 m_videoTrack = track;
++                m_width = format.Width();
++                m_height = format.Height();
++                if (format.u.raw_video.field_rate > 1)
++                    m_frameRate = format.u.raw_video.field_rate;
++
++                if (overlayEnabled()) {
++                    // planar 4:2:0 for the overlay plane (the decoder gives it
++                    // for 4:2:0 pictures of an even size); not BT.2020, which
++                    // the plane does not show right
++                    media_format yuv;
++                    yuv.Clear();
++                    yuv.u.raw_video.display.format = B_YUV420;
++                    yuv.u.raw_video.display.line_width = m_width;
++                    yuv.u.raw_video.display.line_count = m_height;
++                    yuv.u.raw_video.display.bytes_per_row = (m_width + 3) / 4 * 6;
++                    const uint32 bytesPerRow = yuv.u.raw_video.display.bytes_per_row;
++                    if (track->DecodedFormat(&yuv) == B_OK
++                        && yuv.u.raw_video.display.format == B_YUV420
++                        && (yuv.u.raw_video.display.flags & kYCbCrMatrixMask) != kYCbCrBT2020
++                        && yuv.u.raw_video.display.bytes_per_row >= bytesPerRow) {
++                        m_yuvBytesPerRow = yuv.u.raw_video.display.bytes_per_row;
++                        m_yuvFlags = yuv.u.raw_video.display.flags & (kYCbCrMatrixMask | kYCbCrFullRange);
++                        const size_t lumaSize = (size_t)m_yuvBytesPerRow / 3 * 2 * m_height;
++                        m_yuvBuffer = (uint8_t*)malloc((size_t)m_yuvBytesPerRow * m_height);
++                        if (m_yuvBuffer) {
++                            // black
++                            memset(m_yuvBuffer, (m_yuvFlags & kYCbCrFullRange) ? 0 : 16, lumaSize);
++                            memset(m_yuvBuffer + lumaSize, 128, (size_t)m_yuvBytesPerRow * m_height - lumaSize);
++                        }
++                    }
++                    if (!m_yuvBuffer) {
++                        media_format rgb;
++                        rgb.Clear();
++                        rgb.u.raw_video.display.format = B_RGB32;
++                        rgb.u.raw_video.display.line_width = m_width;
++                        rgb.u.raw_video.display.line_count = m_height;
++                        rgb.u.raw_video.display.bytes_per_row = m_width * 4;
++                        track->DecodedFormat(&rgb);
++                    }
++                }
+ 
+                 m_frameBuffer = new BBitmap(
+                     BRect(0, 0, format.Width() - 1, format.Height() - 1),
+                     B_RGB32);
++                // last: paint() goes by it
++                m_yuv = m_yuvBuffer != nullptr;
+ 
+                 if (m_audioTrack)
+                     break;
+--- a/Source/WebKitLegacy/haiku/API/WebPage.cpp
++++ b/Source/WebKitLegacy/haiku/API/WebPage.cpp
+@@ -861,6 +861,14 @@
+ }
+ 
+ 
++#if ENABLE(VIDEO)
++namespace WebCore {
++// MediaPlayerPrivateHaiku.cpp: a video on an overlay plane of the view goes in
++// software while the blit below moves its key
++void mediaPlayerHaikuRootViewScrolled(BView* view);
++}
++#endif
++
+ void BWebPage::scroll(int xOffset, int yOffset, const BRect& rectToScroll,
+        const BRect& clipRect)
+ {
+@@ -868,6 +876,9 @@
+         || (xOffset == 0 && yOffset == 0) || !fWebView->LockLooper()) {
+         return;
+     }
++#if ENABLE(VIDEO)
++    WebCore::mediaPlayerHaikuRootViewScrolled(fWebView);
++#endif
+ 
+     BBitmap* bitmap = fWebView->OffscreenBitmap();
+     BView* offscreenView = fWebView->OffscreenView();
