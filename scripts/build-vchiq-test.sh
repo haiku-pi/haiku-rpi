@@ -7,7 +7,8 @@
 # service), against TREE's driver headers. vchiq_test: Broadcom's libvchiq + VCOS (pthreads) + vchiq_test from
 # external/userland (raspberrypi/userland, BSD-3-Clause; docs/design/vchiq.md), unchanged but for
 # tools/haiku-tests/vchiq-shim (linux/ioctl.h -> <sys/ioccom.h>, linux/param.h) and two lines (below); its
-# -f / -p / -b / -c modes run against the firmware's own test services ("func", "echo").
+# -f / -p / -b / -c modes run against the firmware's own test services ("func", "echo"). vchiq_test_cut: the same
+# with tools/haiku-tests/vq1-cut.c (VQ1: its -b buffers in an area that another thread cuts below them).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 tree="$root/sources/haiku-vchiq"
@@ -54,4 +55,12 @@ for s in interface/vchiq_arm/{vchiq_util,vchiq_test}.c \
 	"$g" "--sysroot=$sysroot" "${flags[@]}" -w -c "$u/$s" -o "$obj/$(basename "${s%.c}").o"
 done
 "$g" "--sysroot=$sysroot" -o "$out/vchiq_test" "$obj"/*.o
-echo "build-vchiq-test: $out/vchiq-gcmd $out/vchiq_test (userland $(git -C "$u" rev-parse --short=12 HEAD))"
+# vchiq_test_cut (VQ1, tools/haiku-tests/vq1-cut.c): the bulk test's buffers from vq1_alloc(), cut below while in use
+patch_source interface/vchiq_arm/vchiq_test.c \
+	'1i void *vq1_alloc(unsigned long); void vq1_free(void *);
+s/bulk_bufs\[i\] = malloc(/bulk_bufs[i] = vq1_alloc(/; s/free(bulk_bufs\[/vq1_free(bulk_bufs[/' 'bulk_bufs\[i\] = vq1_alloc('
+mkdir -p "$obj/cut"
+"$g" "--sysroot=$sysroot" "${flags[@]}" -w -c "$obj/vchiq_test.c" -o "$obj/cut/vchiq_test.o"
+"$g" "--sysroot=$sysroot" -O2 -Wall -c "$root/tools/haiku-tests/vq1-cut.c" -o "$obj/cut/vq1-cut.o"
+"$g" "--sysroot=$sysroot" -o "$out/vchiq_test_cut" "$obj/cut"/*.o $(ls "$obj"/*.o | grep -v '/vchiq_test\.o$')
+echo "build-vchiq-test: $out/vchiq-gcmd $out/vchiq_test $out/vchiq_test_cut (userland $(git -C "$u" rev-parse --short=12 HEAD))"

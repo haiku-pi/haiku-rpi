@@ -15,6 +15,10 @@ libmmal in `raspberrypi_userland`, `h264_mmal` in the media kit) and on the YUV 
 
 Numbers are **measured** (with the session) unless marked **estimated**.
 
+§8 (VQ1, 2026-11-22): the kernel PANIC "Failed to unwire page" in `VCHIQ-0` after MediaPlayer starts an H.264 decode
+is a kernel VM bug (a cut out of the middle of the heap area unmapped the wired bulk buffer above it); fix on haiku
+branch `vq1-vchiq-unwire`, not merged.
+
 ## 1. (a) H.264 in Firefox without rebuilding Firefox
 
 ### 1.1 How Firefox picks its H.264 decoder
@@ -380,3 +384,170 @@ whole run (~25 s), shown = the overlay plane's updates per 10 s. Three `rate` ru
   1080p60 with most frames dropped): 1080p60 ~2.05 cores (53 % of the system), every frame shown after the first
   seconds (0–11 of ~1500 dropped); `FFMPEG_H264_MMAL=1` forces the VideoCore", and the workaround column: "CPU
   decoding (`FFMPEG_H264_MMAL=0` forces it, `=1` forces the VideoCore)".
+
+## 8. (VQ1) The kernel PANIC "Failed to unwire page" in VCHIQ-0 (2026-11-22)
+
+Haiku branch **`vq1-vchiq-unwire`** (haiku-pi, off rpi4 519adfacb3; **not merged**; rpi4 has since moved to
+fb3d9ac1bd with MP3): 02813adf89 `kernel/vm: don't unmap wired pages above a cut out of an area's middle` (the fix),
+d0361ca9e1 `vchiq: find a bulk buffer's area once the buffer is locked` (a driver race the tests exposed; it relies on
+the first). Tools: `tools/haiku-tests/wiredcut.c`, `tools/haiku-tests/vq1-cut.c` (+ `vchiq_test_cut` in
+`scripts/build-vchiq-test.sh`), `tools/pi-tests/vq1-*.sh`. Images, binaries and the diagnostic patches:
+`artifacts/vq1/` (not in git).
+
+### 8.1 Symptom
+
+`PANIC: unlock_memory_etc(): Failed to unwire page: address space 0x…, address: 0x…` in thread `VCHIQ-0`,
+`slot_handler_func` → `vchiq_complete_bulk` → `vchiq_haiku_buffer_unlock` (+0xd0) → `unlock_memory_etc`. Twice on
+11-22 in the MP3 agent's sessions (rpi4 519adfacb3 + two MediaPlayer commits; the vchiq driver and the VM as in
+image-2026-11-21b, so the release has it): `artifacts/mp3/uart-session-mp3-{1,2}-panic.log`, each 0.2 s after a new
+MediaPlayer's H.264 decoder started on the VideoCore and ~1.2 s after the previous player ended (`kill -9` while
+decoding; `hey quit`).
+
+### 8.2 Root cause (the code path)
+
+The message narrows it: `unlock_memory_etc()` panics only when `LookupArea()` finds an area at the address and
+`Query()` finds no present page in it. A dead team has no areas (its unlock returns `B_BAD_ADDRESS` silently), and a
+buffer rescued at `TEAM_REMOVED` is unlocked at its kernel clone's address; the panic's address is a user one. So a
+**live** team's wired pages had lost their mappings while their area still existed. The VM path that does that:
+
+1. libroot's allocator (`PagesAllocator::_UnlockingUnmap()`, "Cut the middle and get the new ID") `munmap()`s a freed
+   large chunk in the middle of its heap area (holding its own lock).
+2. `_user_unmap_memory()` waits for wired ranges **in the cut range only** (`wait_if_address_range_is_wired()`), then
+   `vm_unmap_address_range()` → `cut_area()`.
+3. `cut_area()`, middle case: `unmap_pages(area, address, area->Size() - firstNewSize)` unmaps the cut **and the whole
+   part above it**, moves that part's pages to a new cache (`Adopt()`) of a new area, which maps them again only when
+   they are touched. The `VMAreaWiredRange` stays with the first area.
+4. A bulk buffer above the cut is written by the VideoCore's DMA, which never faults: at the end of the transfer
+   `vchiq_haiku_buffer_unlock()` → `unlock_memory_etc(team, …)` finds the second area and no page → **"Failed to
+   unwire page"**. A cut between `lock_memory_etc()` and `get_memory_map_etc()` in `vchiq_haiku_buffer_lock()` panics
+   **"get_memory_map() called on unmapped memory!"** instead.
+
+**Caught in the act on the Pi** (image A below, MediaPlayer on MP3's clip, session vq1 16:03): the new player, team
+1469, started at 188.37 s; at 188.775 s the diagnostic kernel printed `VQ1: cut_area: team 1469 area 37621 "heap
+area" [0x78f8b61000, 0x78fb289000): the cut [0x78fa90d000, 0x78face7000) unmaps wired pages above it`, and the next
+line is `PANIC: unlock_memory_etc(): Failed to unwire page: … address: 0x78face9000` with MP3's stack — two pages
+above the cut (a ~3.8 MB block, one 720p frame's worth, freed in the middle of the heap area). All three MediaPlayer
+panics on image A (§8.3) came right after such a line for the new player's heap area, two of them the
+`get_memory_map()` variant; no `VQ1: cut_area` line ever appeared without a panic following it.
+
+Nothing here is specific to VCHIQ: any driver that keeps user memory wired while another thread of the same team
+frees memory can hit it (the disk I/O below shows both panics), on any architecture; upstream's `cut_area()` and
+`_user_unmap_memory()` are the same.
+
+The brief's hypotheses, checked against the code and the logs:
+
+| Hypothesis | Verdict |
+|---|---|
+| a bulk of the dead/quit team completes late against a stale or recycled address space | no: a removed team's address space has no areas (`B_BAD_ADDRESS`, no panic); neither log has the rescue's "went away with a bulk transfer queued" line, so no locked buffer was outstanding when the old team went; the panicking buffer was the new team's |
+| a per-team bookkeeping entry is reused by the new team | no: one `vchiq_haiku_buffer` per transfer, freed at its unlock; nothing per team survives |
+| double unlock after the `TEAM_REMOVED` rescue | no: a rescued buffer is unlocked at its kernel clone's address, and no rescue happened |
+| lock and unlock with different flags or range | no: both use the buffer's own `address`, `size` and `lock_flags()` |
+| (found) the area was cut below the wired buffer | **yes**: steps 1–4, seen by the diagnostic, reproduced at will (§8.3) |
+
+The previous player matters only through timing: the panic comes from the new decoder's first transfers, when the
+player frees and allocates frame-sized blocks.
+
+### 8.3 Evidence
+
+Diagnostic kernels (`artifacts/vq1/diag-cut.diff`, `diag-fix.diff`; not on the branch): kernel **A** = rpi4 + a
+`VQ1: cut_area: … unmaps wired pages above it (n)` line in the middle-cut path; kernel **B** = A + the fix + a
+`VQ1: unmap: … waits for wired pages above it (n)` line where the fix waits. Image **A** = the regular image of rpi4
+519adfacb3 built in the worktree (hrev60450+368) with kernel A; **B** = A with the haiku package's kernel swapped; **C**
+= B + the branch's vchiq driver; **H** = A with the branch's own kernel and driver (no diagnostic). Only the kernel and
+the vchiq driver differ between them.
+
+**MediaPlayer back to back** (`vq1-mpswitch.sh` via `vq1-run.sh`: start, 4 s of playback, end, the next one 1 s after
+the old team is gone). The clip decides it: MP3's `play-720p30-aac.mp4` (`artifacts/wp3/clips`, served at full speed by
+`wp4-httpd.py`) triggers it; the media-tests clips (1080p30 file, 720p30 over http, at full speed or 1500 kB/s) did not
+in 185 decodes on A. On C the diagnostic shows the fix at work in exactly that situation: 4 `VQ1: unmap: team … "heap
+area" … waits for wired pages above it` lines from 3 players' heaps in 90 starts — on A each such cut was a PANIC
+(3 `VQ1: cut_area` lines, 3 panics, in 120 starts).
+
+| Image | MP3's clip over http, kill -9 | the same, hey quit | other clips (kill, quit, http, throttled) | encode (`testsrc2` 1080p30, half killed) |
+|---|---|---|---|---|
+| A (no fix) | **2 PANIC** in 90 starts (84 decodes) | **1 PANIC** in 30 | 0 PANIC in 185 decodes, 0 `VQ1:` lines | 0 PANIC in 20 |
+| C (the branch, diagnostic kernel) | **0 PANIC** in 60; the fix waited 3 times | **0 PANIC** in 30; waited once | 0 PANIC in 100 decodes | 0 PANIC in 20 |
+| B / H (kernel fix / the branch's own build) | – | – | 0 PANIC in 30 / 10 decodes | – |
+
+**Deterministic tests** (no luck needed):
+
+- **QEMU** (`scripts/qemu-virt.sh`, virt + EDK2, the same build's `haiku-mmc.image`, `wiredcut` as UserBootscript:
+  `tools/pi-tests/vq1-wiredcut-boot.sh`): a thread `pread()`s 8 MB from `/dev/disk/virtual/virtio_block/0/raw` into the
+  upper half of a 16 MB mapping (the I/O scheduler wires it), the main thread cuts one page near the start after a
+  random 0..DELAY µs.
+  - A: the first cut panics — DELAY 3000: **"Failed to unwire page"** at the buffer's first page, from
+    `IOSchedulerSimple::_Finisher` → `IORequest::NotifyFinished` → `IOBuffer::UnlockMemory` (the same
+    `unlock_memory_etc + 0x37c` as on the Pi); DELAY 1500: **"get_memory_map() called on unmapped memory!"** from
+    `DMAResource::TranslateNext`.
+  - B: 200 of 200 rounds twice, every read complete, every `munmap()` waited (195 / 193 `VQ1: unmap … waits` lines);
+    the branch's own kernel: 200 of 200. 0 PANIC.
+- **Pi, VCHIQ** (`vchiq_test_cut -b 1024 400`: the firmware's echo bulk test, its 1 MB buffers in the upper half of a
+  64 MB mapping, another thread cutting a page below them every 2 ms; `vq1-vchiqcut.sh`):
+  - A: **3 of 3** sessions panicked at the first `VQ1: cut_area` line — twice `get_memory_map()` in
+    `vchiq_haiku_buffer_lock()`; with a cut every 300 ms (`VQ1_CUT_US=300000`) MP3's exact stack, `VCHIQ-0` →
+    `vchiq_complete_bulk` → `vchiq_haiku_buffer_unlock` → "Failed to unwire page".
+  - B: 4 of 5 runs complete, 0 PANIC; run 3 aborted on `vchiq: cannot lock the bulk buffer …: Invalid Argument` — the
+    driver looked the buffer's area up before locking it, and a cut between `area_for()` and its size check made it
+    "not in one area". Fixed by the branch's second commit.
+  - C: **10 of 10** complete, 0 PANIC, 6667 cuts of which 3272 waited ≥ 1 ms (6060 kernel wait lines).
+  - H (the branch's own build): 5 of 5 complete. **`kill -9` during the waits** (`KILL=1`: `-b 1024 2000` killed after
+    2 s, 8 times): every team gone, no buffer kept by the rescue, a normal run afterwards exit 0 — 8 of 8.
+
+**No regression** (C against A, same session plan; network sessions vq1 15:04–15:20, 15:21–15:41 (C), 15:42–15:52 (A)):
+
+| Check | A | C |
+|---|---|---|
+| `h264.sh audio` MediaPlayer CPU (one CPU), 720p30 hw / sw | 18.2 % / 47.0 % | 19.1 % / 47.1 % |
+| 1080p30 hw / sw | 31.4 % / 99.4 % | 31.9 % / 98.6 % |
+| frames dropped (VideoProducer), all four | 0 | 0 |
+| Firefox (`ffv0.sh`, 10–12 s window) h264-720p: frames / dropped / Firefox CPU | 359 / 0 / 17.9 s | 357 / 1 / 17.0 s |
+| h264-1080p | 299 / 10 / 24.0 s | 299 / 9 / 23.5 s |
+| ffmpeg `h264_mmal` encode of `testsrc2` 1080p30, 10 complete runs | 120 frames each | 120 frames each |
+| plane updates late (display statistics, all MediaPlayer runs of a session) | 8–20 % | 11–23 % |
+| debugger entries | 0 | 0 |
+
+### 8.4 The fix
+
+`kernel/vm` (02813adf89): `size_to_unmap(area, base, size)` says how much of an area unmapping a range unmaps from
+`base` on — for a cut out of the middle, up to the area's end. `wait_if_address_range_to_unmap_is_wired()` waits for
+a wired range anywhere in that, and replaces `wait_if_address_range_is_wired()` before the four
+`vm_unmap_address_range()` callers (`munmap()`, and `B_EXACT_ADDRESS` + `CREATE_AREA_UNMAP_ADDRESS_RANGE` in
+anonymous, null and file areas); rpi4's `vm_clone_area_etc()` with the same flag refuses (`B_BUSY`) on the same
+range. `MADV_FREE` keeps the old check: it discards without cutting. Waiting is what Haiku already does for the cut
+range itself, for `resize_area()` and, for the whole area, `delete_area()` and `set_area_protection()`.
+
+`vchiq` (d0361ca9e1): `vchiq_haiku_buffer_lock()` takes the buffer's area id after `lock_memory_etc()`. With the
+kernel fix a locked buffer stays in that area for the whole transfer (a cut below it waits, a cut above leaves it in
+the area that keeps the id), which the `TEAM_REMOVED` rescue relies on: with the id taken before the lock, a cut in
+between refused a valid buffer (seen), and an id that later named only the part below the buffer would have made the
+rescue clone the wrong range.
+
+### 8.5 Limits, risks and what is unchecked
+
+- **A cut now waits for I/O above it, uninterruptibly, with libroot's allocator lock held.** A `free()` that cuts
+  below a buffer under transfer blocks the team's large allocations until the transfer ends, and `kill -9` of that
+  thread takes effect only then. MMAL's transfers end within milliseconds; but in `vchiq_test_cut` on the branch's
+  own build (transfers back to back, 7.5 ms per iteration) the cutter got only 7–12 cuts in a ~3 s run: a cut waits as
+  long as the transfers above it keep the range wired without a gap.
+- **Long-lived wires turn into long waits** where the old code silently unmapped: a thread waiting on a
+  process-shared `pthread` mutex or condition variable (`B_USER_MUTEX_SHARED`: `vm_wire_page()` for the whole wait)
+  that lives in heap memory blocks a `free()` that cuts below it until the wait ends — if the waiter needs the freeing
+  thread, a deadlock; and the lock leaked by an aborted bulk that the VideoCore never acknowledged (vchiq.md §2: the
+  core's dummy bulk drops `remote_data`, as in FreeBSD and Linux) would block such a `free()` for good. Not seen;
+  the v3d import and the debugger/profiler wire kernel clones, not the user area, and are not affected.
+- **Option for the owner:** a fix without waiting — `cut_area()` keeps the wired pages of the part above the cut mapped
+  (moves their page mappings and the wired ranges to the second area) — keeps "wired means mapped" (which
+  `get_memory_map_etc()` relies on, also with interrupts off) without any new blocking; it is more VM code (mapping
+  lists, page-table pages for x86/arm64). A kill-interruptible wait would only soften the first point.
+- Upstream Haiku has the same `cut_area()`; no upstream report drafted yet (a candidate for UPSTREAM-BUG-REPORTS).
+- Unchecked: a 1080p decode + 1080p encode in one ffmpeg (`h264_vc` → `h264_mmal`) failed with VideoCore `ENOMEM` on C
+  (`mmal_vc_port_enable … video_encode:in:0 … ENOMEM`), 10 of 10; not tried on A, so not known to be new or related.
+  The encode checks above use `testsrc2` instead.
+- `exec()` with transfers queued (vchiq.md §2) is unchanged.
+
+### 8.6 Merging (for the main session)
+
+The two commits on top of rpi4 (the driver commit needs the kernel one); no package changes — the next image carries
+them; KNOWN-ISSUES C17 then says "fixed in image-…". `tools/pi-tests/vq1-c-run.sh IMAGE TAG [PHASE...]` re-checks an
+image in one session (~20 min); `URL=http://10.42.0.1:PORT/f tools/pi-tests/vq1-run.sh IMAGE kill 60 15 LABEL
+play-720p30-aac.mp4` with `wp4-httpd.py artifacts/wp3/clips 10.42.0.1 PORT` is the MediaPlayer reproduction.
