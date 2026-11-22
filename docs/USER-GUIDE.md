@@ -544,10 +544,17 @@ and converts the picture, and app_server no longer copies it. Measured on the Pi
   half a second after, and when a second video plays on the same page, that video is drawn in software as before;
   it returns to the plane by itself. A video in a hidden tab gives the plane back.
 - Quitting WebPositive while a video plays no longer crashes it (it did at 10 of 17 quits; KNOWN-ISSUES F11).
-- HEVC plays only from MP4 files with the index at the front ("faststart", as most web video is); others show
-  nothing. Re-mux with `ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4`.
-- A seek while the video is paused lands on the clip's first frame when playback resumes (1.10.0-1 never resumed
-  after it); not yet fixed.
+- **Seeking** (haikuwebkit 1.10.0-3, published 2026-11-22: `pkgman update haikuwebkit`): a seek, paused or playing,
+  lands on its time (the picture is decoded on from the key frame before it, 0.1–0.4 s at 720p/1080p30, ~1 s for
+  1080p60 on the CPU); `loop` and the end of a video without sound work. 1.10.0-2 sent every seek of a video without
+  an audio track to its first frame, and seeks of videos with sound landed up to a key-frame interval early.
+- **MP4 files with the index at the end** ("non-faststart") and **the end of a video from the web** need the image
+  after image-2026-11-21b (haiku `d5da656a29`, the media kit's URL reader): with it such files open, from disk or
+  http(s), and a video plays to its last frame. Older images do not open them at all, and freeze for 10 s about a
+  second before the end of any video read by URL. On those images, re-mux with
+  `ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4`.
+- A seek forward past what has arrived over the network waits for the data, and the page stops responding meanwhile
+  (~5 s measured). A video from a server that sends no length freezes about a second before its end and never ends.
 - `WEBKIT_VIDEO_OVERLAY=0` in WebPositive's environment brings back the RGB path; `WEBKIT_VIDEO_OVERLAY_LOG=1`
   prints the player's counters every 2 s ([design/webpositive-video-overlay.md](design/webpositive-video-overlay.md)).
 

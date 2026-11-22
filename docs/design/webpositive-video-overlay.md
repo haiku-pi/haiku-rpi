@@ -400,7 +400,9 @@ frames, `artifacts/wp4/runs/ts-wp4*.png`):
 - **0 PANIC** (UART and syslog); **7 debugger entries, all MediaPlayer** (above). Runs in `artifacts/wp4/runs`; syslog
   `artifacts/wp4/syslog-wp4.txt`; UART `artifacts/uart/20261122-105937-session-wp4.log`.
 
-**Recommendation:** go (the main session's call, since gate rule (d) failed on an unrelated defect). -3 + the
+**Decision (main session, 2026-11-22, after the 12:11 report): GO.** Done in WP4's second part: haiku `rpi4` fast-forwarded to `d5da656a29` and the image list bumped to -3 at `519adfacb3` (pushed); haikuwebkit 1.10.0-3 published; KNOWN-ISSUES C16 for the MediaPlayer URL crash; drafts HK-87, HWK-01/02 in UPSTREAM-BUG-REPORTS.
+
+**Recommendation (before the decision):** go (the main session's call, since gate rule (d) failed on an unrelated defect). -3 + the
 libmedia fix are right on every path tried, and they fix the http end-of-stream stall and moov-at-end files for
 MediaPlayer too. -3 on stock libmedia (a user who only runs `pkgman update` on image-2026-11-21b) is no worse than -2:
 local seeks were right in WP3 (t4 on stock libmedia); over http the end has the old 10 s stall (`C-*`), and

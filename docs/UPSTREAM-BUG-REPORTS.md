@@ -27,7 +27,7 @@ authors, and marked "not ours to attach".
 *arm64* (any arm64 board); *non-snooping DMA* (platforms whose devices do not snoop CPU caches); *Pi 4* (BCM2711
 hardware only).
 
-**Two forms.** 80 entries are full reports in the project's format. 54 are in **short form** (what, severity,
+**Two forms.** 82 entries are full reports in the project's format. 55 are in **short form** (what, severity,
 our fix, upstream status, and why it is short): fixes found by others (RenkuOS), findings from code reading that
 were never reproduced, bugs latent at upstream's default settings or exposed only by our fork's code, entries for
 an archived repository, duplicates of existing upstream reports, and minor items. The summary table's "Form"
@@ -78,7 +78,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 
 ## Summary
 
-134 entries: 80 full reports and 54 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
+137 entries: 82 full reports and 55 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
 
 | ID | Project | Component | Title | Severity | Scope | Our fix | Upstream | Patch | Form |
 |---|---|---|---|---|---|---|---|---|---|
@@ -106,6 +106,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [HK-67](#hk-67) | Haiku | System/runtime_loader | Dynamic TLS blocks ignore the segment alignment | wrong output | general | haiku 4d433669a8 | open | notes | full |
 | [HK-69](#hk-69) | Haiku | System/Kernel | setrlimit() EINVAL for the current value of a fixed limit | wrong output | general | haiku f0a1d5f5cf | open | yes | full |
 | [HK-70](#hk-70) | Haiku | Kits/Media Kit | BTimeSource float conversion calls debugger() after 16.7 s | crash | general | haiku c41702df18 | open | yes | full |
+| [HK-87](#hk-87) | Haiku | Kits/Media Kit | BAdapterIO: a read across the end of a stream waits 10 s and fails (BUrl media lose their end; moov-at-end MP4s do not open) | hang / wrong output | general | haiku d5da656a29 | open | yes | full |
 | [HK-78](#hk-78) | Haiku | Drivers/USB/XHCI | Physical transfers >384 KiB built over all vectors | wrong output | general | haiku e1d69f100f | open | yes | full |
 | [HK-62](#hk-62) | Haiku | System/Boot Loader/EFI | Any load option key not 2 characters long hangs the loader | hang | general | haiku d8dfb51d8d | open | notes | full |
 | [HK-74](#hk-74) | Haiku | System/Kernel | Net boot: no link wait; module unload deadlock | hang | general | haiku cea07d5468 | open | yes | full |
@@ -216,6 +217,8 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [CMAKE-01](#cmake-01) | CMake | Utilities/cmlibuv | Bundled libuv CMakeLists has no Haiku branch (link fails) | build | Haiku | `patches/cmake-4.4.5/0001-cmlibuv-build-the-Haiku-platform-sources.patch` | open | yes | short |
 | [IOQ3-01](#ioq3-01) | ioquake3 | sys_main.c | Shutdown inside SIGTERM/SIGINT handler can hang | hang | general | `patches/ioq3/0002-quit-signal-from-main-loop.patch` | open | notes | short |
 | [VKQUAKE-01](#vkquake-01) | vkQuake | common.c | Shareware: + commands ignored (cmdline cvar not set) | wrong output | general | `patches/vkquake/0002-shareware-command-line.patch` | open | notes | short |
+| [HWK-01](#hwk-01) | HaikuWebKit | WebCore/platform/graphics/haiku | `<video>` duration is 0 without an audio track and the seekable range ends at the current time: seeks go to 0 or are clamped | wrong output | general | `patches/haikuwebkit/haikuwebkit-1.10.0-video-seek.patch` | open | notes | full |
+| [HWK-02](#hwk-02) | HaikuWebKit | WebCore/platform/graphics/haiku | Media player: seeks land on the key frame (audio too), ended tracks cannot loop, teardown during a seek hangs | wrong output / hang | general | same patch | open | notes | short |
 
 No entries for Firefox, OpenUSD, OpenImageIO, Vulkan-Loader, libdrm or CPython: every patch we carry there is Haiku port glue or already fixed upstream (see [Checked and not reported](#checked-and-not-reported) and [Already fixed upstream](#already-fixed-upstream-no-report-needed)).
 
@@ -1033,6 +1036,49 @@ stall the time source's publishing for more than 16.7 s (e.g. heavy system load)
 **Fix.** Do the conversion in double precision, which holds any span; drop the debugger() calls (c41702df18).
 
 **Evidence.** MediaPlayer's video producer hit it once in a 15-minute soak (Firefox + SuperTuxKart + HEVC playback) on the Pi 4. That is a single occurrence, with no rate.
+
+<a id="hk-87"></a>
+
+#### HK-87 — Media Kit: BAdapterIO waits for the whole read at the end of a stream of known size: 10 s stall, then the read fails (BUrl media lose their end; MP4s with the index at the end do not open)
+
+- **Trac fields:** Component: `Kits/Media Kit` · Version: R1/beta5 (nightly hrev60431) · Platform: All · Type: bug
+- **Severity:** hang (10 s per read) and wrong output (the end of the stream is lost; some files do not open)
+- **Scope:** all architectures; generic `src/kits/media/experimental/AdapterIO.cpp`; every `BMediaFile(const BUrl&)` client (WebPositive, MediaPlayer opening a URL; http_streamer also serves `file://` URLs)
+- **Our fix:** haiku-pi/haiku `rpi4` `d5da656a29` — "media: BAdapterIO: a read across the end gets what is left"
+- **Patch:** attachable as-is (7 lines)
+- **Upstream status (2026-11-22):** open: code unchanged at hrev60450, `AdapterIO.cpp:449-471` (`_EvaluateWait()` ends in `return fBuffer->WaitForData(pos, size);` at :470); Trac: not searched
+
+**Environment.** Haiku nightly at hrev60431 (merge base), arm64, Raspberry Pi 4 Model B 4 GB; WebPositive (HaikuWebKit 1.10.0) and MediaPlayer.
+
+**Description.** `BAdapterIO::_EvaluateWait(pos, size)` waits until the buffer holds `pos + size` bytes. A reader near
+the end of a stream asks for more than is left; FFmpeg's AVIO always reads 32 kB. For a stream of known size
+(http with Content-Length, `file://`), those bytes never come. The read waits for the adapter's timeout (10 s in
+http_streamer) and then fails. So a video read through `BUrl` freezes about 0.5–1 s before its end for 10 s and loses
+its last frames, and an MP4 whose `moov` box is at the end does not open ("moov atom not found", "No handler"),
+because FFmpeg's probe reads across the end.
+
+**Steps to reproduce.** Serve a 15 s H.264 MP4 over http (any static server; `tools/pi-tests/wp4-httpd.py` here) and
+run `MediaPlayer http://host/clip.mp4`. Or open it in WebPositive in a `<video>`. Or read it to the end through
+`BMediaFile(BUrl("file:///…"))` (`tools/media-tests/seekprobe.cpp`).
+
+**Expected.** Playback reaches the end; the last read returns what is left.
+**Actual.** The position stops at ~13.7 s for 10 s, then the read fails: MediaPlayer jumps to 0, and WebPositive loops
+or ends 10 s late. Through `BUrl` the read gets 420 of 452 frames, with one 10 022 ms read; a `BFile` gets all 452.
+An MP4 with the index at the end does not open.
+
+**Root cause.** `AdapterIO.cpp:470` `return fBuffer->WaitForData(pos, size);` with `size` not limited by the stream's
+size (`GetSize()` at :455 knows it; `EvaluatePosition()` at :461 only checks the position).
+
+**Fix.** For a stream of known size (`totalSize > 0`, buffer not mutable), cut `size` to `totalSize - pos` before
+waiting. A read at the end then returns 0 at once. Streams of unknown size are unchanged.
+
+**Evidence.** Pi 4, sessions wp3 and wp4, 2026-11-22. On the same image, stock libmedia against the fix, over http:
+- MediaPlayer: frozen at 13.66 s for 8 s, then position 0; with the fix it reaches 15.03 s.
+- WebPositive: frozen at 13.77 s, loops at 24.2 s; with the fix it loops at 15.4 s.
+- MP4 files with `moov` at the end (H.264 854×480, HEVC 720p): never open; with the fix they open and play over http,
+  over https, throttled to 1.5 MB/s, and from file.
+
+[design/webpositive-video-overlay.md](design/webpositive-video-overlay.md) §6, §6.1.
 
 <a id="hk-78"></a>
 
@@ -3662,6 +3708,65 @@ Checked against Kitware/CMake `master` `b3dfac925165`, ioquake/ioq3 `main` `5208
 - **Patch:** with notes. It is written against 1.35.0 and needs a rebase onto `master`: the same code, at different lines.
 - **Upstream status:** open. vkQuake `master` 1e573d749014 `Quake/common.c:2018-2049`: the shareware branch returns at `:2036` before `Cvar_SetROM ("cmdline", …)` at `:2047`. `Cmd_StuffCmds_f` (`Quake/cmd.c`, "rewritten to read the cmdline cvar") then finds nothing. QuakeSpasm's `COM_CheckRegistered` has the same structure, and QuakeSpasm 0.96.3 shows the same symptom (our games bench passes its shareware timedemo through `id1/autoexec.cfg` for that reason). Tracker: searched "shareware", "timedemo" and "stuffcmds" in vkQuake: only #551 ("Cannot play Shareware version after fresh compilation", closed, a different problem).
 - **Short form because:** shareware data only.
+
+## 16. HaikuWebKit (WebPositive's engine)
+
+Checked against codeberg.org/haiku/haikuwebkit branch `haiku` at `56704ac66ae8` (2026-10-11): its
+`Source/WebCore/platform/graphics/haiku/MediaPlayerPrivateHaiku.cpp` is identical to release 1.10.0's.
+
+<a id="hwk-01"></a>
+
+#### HWK-01 — MediaPlayerPrivateHaiku: the duration is 0 without an audio track, and the seekable range ends at the current time, so `<video>` seeks go to 0 or are clamped
+
+- **Tracker fields:** Haiku Trac, component `Applications/WebPositive`, or an issue / pull request on codeberg.org/haiku/haikuwebkit (ask which is preferred). Type: bug.
+- **Severity:** wrong output (seeking is broken for video-only files and limited for the rest)
+- **Scope:** all architectures; generic port code
+- **Our fix:** `patches/haikuwebkit/haikuwebkit-1.10.0-video-seek.patch` (with HWK-02), published in haikuwebkit 1.10.0-3 of our arm64 repository
+- **Patch:** with notes. It applies after our `haikuwebkit-1.10.0-video-overlay.patch` (a YUV-overlay change that is not an upstream bug); a standalone version needs rebasing onto upstream's file.
+- **Upstream status (2026-11-22):** open: `MediaPlayerPrivateHaiku.cpp:323-329` (`duration()`: `if (!m_audioTrack) return WTF::MediaTime();`, and the audio track's duration otherwise) and `MediaPlayerPrivateHaiku.h:91` (`maxTimeSeekable() const override { return currentTime(); }`); tracker: not searched
+
+**Environment.** HaikuWebKit 1.10.0 (WebPositive), Haiku nightly hrev60431 + our fork, arm64, Raspberry Pi 4.
+
+**Description.** `duration()` returns the audio track's duration and, for a file without audio, `WTF::MediaTime()`.
+That is a *valid zero*, not an unknown time. `HTMLMediaElement::seekTask()` clamps every target to the duration
+(`HTMLMediaElement.cpp:4058` in 1.10.0), so every seek of a video-only file goes to 0. `maxTimeSeekable()` is
+`currentTime()`, and `seekTask()` moves the target into the seekable range (`:4111`). A forward seek therefore stops
+at the current position, and at position 0 the range is empty and the seek is dropped. The video's `duration` and
+`seekable` are wrong for page scripts too.
+
+**Steps to reproduce.** A page with `<video muted autoplay src="clip.mp4">`, where the clip is H.264 without audio,
+60 s long. After 12 s: `v.pause(); v.currentTime = 20;` then `v.play()`. Log `v.duration`, `v.seekable.end(0)` and
+`v.currentTime` (`tools/pi-tests/wp3-seek.sh` writes them into the title).
+
+**Expected.** `duration` 60, `seekable` [0, 60], and playback resumes at 20 s.
+**Actual.** `duration` 0.00 and `currentTime` 0 after the seek; playback starts again from frame 0. With an AAC track:
+`duration` is right, but seeking forward stops at the current time.
+
+**Root cause.** See the two locations under "Upstream status".
+
+**Fix.** The duration is the longest track's (both tracks' `Duration()`); unknown means `positiveInfiniteTime()`. The
+seekable end is the duration. See HWK-02 for the rest of the seek path.
+
+**Evidence.** On the Pi, with 1.10.0-2 (= upstream here): `dur=0.00` and every seek at 0 (H.264 720p without audio);
+with AAC, seek 5 → 3.63 and seek 20 → 1.62. With the patch: 5.00 / 20.00 on the page and on HDMI (the clip's
+burned-in time), for H.264, H.264 + AAC, HEVC, from file, over http and over https (sessions wp3, wp4; design note §6, §6.1).
+
+<a id="hwk-02"></a>
+
+#### HWK-02 — MediaPlayerPrivateHaiku: seeks land on the key frame (audio too), ended tracks cannot loop, and teardown during a seek hangs
+
+- **What:** `seekToTarget()` passes one variable to both tracks. The video's `SeekToTime()` moves it back to the key
+  frame, so the audio is sought there too and the element reports that time: seeks land up to a key-frame interval
+  early. When a track ends the player sets it to null, so `loop` cannot restart a video-only file. The destructor
+  and `load()` hold `m_mediaLock` while `cancelLoad()` waits for the video thread, which needs that lock: dropping
+  a `<video>` during a seek hangs WebPositive.
+- **Severity / scope:** wrong output, hang; generic port code.
+- **Our fix:** the same patch as HWK-01. The video thread decodes from the key frame to the target without showing
+  the frames before it, the audio is decoded on to the target, ended tracks stay, a video-only file ends at its
+  duration (so `loop` and `ended` work), and the lock is released before `cancelLoad()`.
+- **Upstream status (2026-11-22):** open (`seekToTarget()` at `MediaPlayerPrivateHaiku.cpp:336-343`;
+  `m_videoTrack = nullptr` at :269; `cancelLoad()` from the destructor :100 and :115).
+- **Why short:** it shares HWK-01's patch and evidence. Send it as one report with HWK-01, or split the patch.
 
 ## Already fixed upstream (no report needed)
 
