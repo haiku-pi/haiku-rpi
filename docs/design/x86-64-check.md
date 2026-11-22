@@ -712,7 +712,7 @@ file are in `artifacts/qemu-x86/` (`results.tsv`: one row per test and run; `per
 
 | image | what |
 |---|---|
-| **ours** | `sources/haiku-x86` = rpi4 **a779571e90** (copy kept as `artifacts/x86-images/rpi4-a779571e90.iso`) |
+| **ours** | `sources/haiku-x86` = rpi4 **a779571e90** (copy kept as `artifacts/x86-images/rpi4-a779571e90.iso`; the ISOs and the `sources/haiku-x86*` worktrees except `haiku-x86-up-kd1` were deleted in the 2026-11-22 disk cleanup, `scripts/build-x86.sh` rebuilds them) |
 | **up** | `sources/haiku-x86-up` = hrev60314, `KDEBUG_LEVEL` 2 as shipped: the functional baseline |
 | **kd1** | `sources/haiku-x86-up-kd1` = hrev60314 at `KDEBUG_LEVEL` 1: the timing baseline only |
 | **fix** | `sources/haiku-x86-fix` = branch **`x86-fix`** (a779571e90 + the four phase-4 commits, §9.4) |

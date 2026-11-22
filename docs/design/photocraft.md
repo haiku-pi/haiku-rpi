@@ -37,7 +37,7 @@ fractional scale); build time and memory (a 32 MB workspace cross-built on the h
 
 ### P0 — toolchain (done 10-25)
 - **rustc + cargo 1.99.1** (the newest stable, 2026-10-13; ≥ 1.95 with headroom for Photocraft's next
-  rust-version bumps): `scripts/build-rust.sh --version 1.99.1` → `artifacts/rust-1.99.1/` (`env.sh`);
+  rust-version bumps): `scripts/build-rust.sh --version 1.99.1` → `artifacts/rust-1.99.1/` (`env.sh`; deleted in the 2026-11-22 disk cleanup, the same command rebuilds it);
   stage0 1.98.0, LLVM built from the tarball, ~25 min. 1.90.0 stays the default and stays in
   `artifacts/rust/` (Firefox and SpiderMonkey build with it).
 - `patches/rust/<version>/`: the target patch rebased (1.99 types the spec's `arch` as `Arch::AArch64`;

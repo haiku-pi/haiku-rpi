@@ -114,7 +114,7 @@ The diagnostic kernel shows the faulting frame even when Firefox's handler ends 
 trace walks from `raise()` through the handler into the faulting function, as above. To use it:
 
 - **Image:** artifacts/images/h20-ffquit-diag-evt.img (h20-imgevt with the haiku package's `kernel_arm64`
-  replaced; not kept in git).
+  replaced; not kept in git, and deleted in the 2026-11-22 disk cleanup: rebuild it from the patch below).
 - **Patch:** artifacts/firefox-quit/20261104-ffquit-diag-evt/diag.diff. It is the vm.cpp / arch_int.cpp part of
   firefox-contentproc-crash.md's diagnostic, plus `FFSIG` lines in `handle_signals()`. Apply it to rpi4,
   `scripts/build.sh --generated DIR kernel_arm64` in a worktree, then

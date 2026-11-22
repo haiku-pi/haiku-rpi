@@ -371,6 +371,7 @@ cd sources/haiku-stage6 && mkdir generated.arm64 && cd generated.arm64
 cp -al ../../haiku/generated.arm64/download download
 cd ../../..
 scripts/build.sh --generated sources/haiku-stage6/generated.arm64 bcm2711_display bcm2711_display.accelerant app_server
+# (artifacts/stage6 and its base images were deleted in the 2026-11-22 disk cleanup; stage 6 shipped in 11-03c)
 # libglvnd, Mesa, the GL tests: meson with build-gl-stack.sh's options into artifacts/stage6/build/<name>
 #   (the shared sysroot only read, nothing installed into it); Mesa: ninja ... src/egl/libEGL_mesa.so.0.0.0
 tools/haiku-tests/host-overlay-keying/run.sh sources/haiku-stage6     # KEY ... PASS
