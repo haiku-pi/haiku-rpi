@@ -1,0 +1,194 @@
+Haiku: keep a new window's tab on the screen; report un-zoom as restored
+
+SDL places a window by its content area, and the Haiku backend made that
+the BWindow's frame as it was. The tab and the border lie outside it, and
+Haiku moves no window by itself: a window as large as the screen, or one
+at y = 0 (SDL_WINDOWPOS_CENTERED does that for a window as high as the
+screen), had its tab above the top of the screen, where it cannot be
+dragged, zoomed or closed. Blender's render window (the render resolution,
+clamped to the screen size and centred on the mouse) opened that way.
+
+Windows with a border now keep their tab on the screen when they are
+created, moved, or leave fullscreen; one that cannot fit is shrunk if it is
+resizable. SDL learns the new frame before SDL_CreateWindow() returns.
+Windows placed elsewhere, borderless and fullscreen windows are left alone.
+
+The zoom button: BWindow::Zoom() calls the Zoom() hook both to zoom and to
+zoom back, and the hook reported both as SDL_WINDOWEVENT_MAXIMIZED, so
+SDL_WINDOW_MAXIMIZED never cleared and SDL_MaximizeWindow() toggled. The
+un-zoom (and SDL_RestoreWindow() of a zoomed window) is now reported as
+SDL_WINDOWEVENT_RESTORED, which the handler did not handle at all (also not
+for an unminimized window), and a maximize request zooms only a window that
+is not zoomed.
+
+--- a/src/main/haiku/SDL_BApp.h	2026-11-23 00:13:47.506364790 +0100
++++ b/src/main/haiku/SDL_BApp.h	2026-11-23 00:14:32.780018141 +0100
+@@ -66,7 +66,7 @@
+     /* From BWindow */
+     BAPP_MAXIMIZE, /* from B_ZOOM */
+     BAPP_MINIMIZE,
+-    BAPP_RESTORE, /* TODO: IMPLEMENT! */
++    BAPP_RESTORE, /* from B_MINIMIZE (unminimized) and an un-zoom */
+     BAPP_SHOW,
+     BAPP_HIDE,
+     BAPP_MOUSE_FOCUS,    /* caused by MOUSE_MOVE */
+@@ -153,6 +153,10 @@
+             _HandleBasicWindowEvent(message, SDL_WINDOWEVENT_MINIMIZED);
+             break;
+ 
++        case BAPP_RESTORE:
++            _HandleBasicWindowEvent(message, SDL_WINDOWEVENT_RESTORED);
++            break;
++
+         case BAPP_SHOW:
+             _HandleBasicWindowEvent(message, SDL_WINDOWEVENT_SHOWN);
+             break;
+--- a/src/video/haiku/SDL_BWin.h	2026-11-23 00:13:47.502724174 +0100
++++ b/src/video/haiku/SDL_BWin.h	2026-11-23 00:14:32.626919218 +0100
+@@ -35,6 +35,7 @@
+ }
+ #endif
+ 
++#include <algorithm>
+ #include <stdio.h>
+ #include <AppKit.h>
+ #include <Cursor.h>
+@@ -309,17 +310,72 @@
+               float width,
+               float height)
+     {
+-        BMessage msg(BAPP_MAXIMIZE); /* Closest thing to maximization Haiku has */
++        /* BWindow::Zoom() calls this hook both to zoom and to zoom back to
++           the frame the window had before: only the first is a maximization */
++        bool unzoom = _prev_frame != NULL && origin == _prev_frame->LeftTop()
++            && width == _prev_frame->Width() && height == _prev_frame->Height();
++        BMessage msg(unzoom ? BAPP_RESTORE : BAPP_MAXIMIZE);
+         _PostWindowEvent(msg);
+ 
+-        /* Before the window zooms, record its size */
+-        if (!_prev_frame)
++        /* Before the window zooms, record its frame, as BWindow::Zoom() does */
++        if (unzoom) {
++            delete _prev_frame;
++            _prev_frame = NULL;
++        } else if (_prev_frame == NULL) {
+             _prev_frame = new BRect(Frame());
++        } else {
++            *_prev_frame = Frame();
++        }
+ 
+         /* Perform normal hook operations */
+         BWindow::Zoom(origin, width, height);
+     }
+ 
++    /* SDL places a window by its content area; its tab and border lie
++       outside it, and Haiku moves no window by itself. Keep the tab of a
++       window with a border on the screen: a window as large as the screen,
++       or one placed at the top edge, would have it above the screen, out of
++       the user's reach. A window that cannot fit is shrunk if resizeToFit,
++       and moved onto the screen. Other windows that overhang an edge are left
++       where they were placed. */
++    void KeepTabOnScreen(bool resizeToFit)
++    {
++        if (_fullscreen || Look() == B_NO_BORDER_WINDOW_LOOK)
++            return;
++
++        BRect screenFrame = BScreen(this).Frame();
++        BRect frame = Frame();
++        BRect decorator = DecoratorFrame();
++        /* the decorator's extent on each side of the content area */
++        float left = frame.left - decorator.left;
++        float top = frame.top - decorator.top;
++        float right = decorator.right - frame.right;
++        float bottom = decorator.bottom - frame.bottom;
++
++        bool shrunk = false;
++        if (resizeToFit && !(Flags() & B_NOT_RESIZABLE)) {
++            float width = std::min(frame.Width(), screenFrame.Width() - left - right);
++            float height = std::min(frame.Height(), screenFrame.Height() - top - bottom);
++            if (width != frame.Width() || height != frame.Height()) {
++                ResizeTo(width, height);
++                frame = Frame();
++                shrunk = true;
++            }
++        }
++
++        BPoint origin = frame.LeftTop();
++        if (shrunk && frame.right + right > screenFrame.right)
++            origin.x = screenFrame.right - right - frame.Width();
++        if (origin.x - left < screenFrame.left)
++            origin.x = screenFrame.left + left;
++        if (shrunk && frame.bottom + bottom > screenFrame.bottom)
++            origin.y = screenFrame.bottom - bottom - frame.Height();
++        if (origin.y - top < screenFrame.top)
++            origin.y = screenFrame.top + top;
++        if (origin != frame.LeftTop())
++            MoveTo(origin);
++    }
++
+     /* Member functions */
+     void Show()
+     {
+@@ -467,7 +523,9 @@
+             Hide();
+             break;
+         case BWIN_MAXIMIZE_WINDOW:
+-            BWindow::Zoom();
++            /* BWindow::Zoom() toggles: zoom only a window that is not zoomed */
++            if (_prev_frame == NULL)
++                BWindow::Zoom();
+             break;
+         case BWIN_MINIMIZE_WINDOW:
+             Minimize(true);
+@@ -646,8 +704,10 @@
+         }
+         if (_fullscreen)
+             _non_fullscreen_frame.OffsetTo(x, y);
+-        else
++        else {
+             MoveTo(x, y);
++            KeepTabOnScreen(false);
++        }
+     }
+ 
+     void _ResizeTo(BMessage *msg)
+@@ -716,6 +776,10 @@
+         } else if (_prev_frame != NULL) { /* Zoomed */
+             MoveTo(_prev_frame->left, _prev_frame->top);
+             ResizeTo(_prev_frame->Width(), _prev_frame->Height());
++            delete _prev_frame;
++            _prev_frame = NULL;
++            BMessage msg(BAPP_RESTORE);
++            _PostWindowEvent(msg);
+         }
+     }
+ 
+@@ -742,6 +806,7 @@
+                 ResizeTo(_non_fullscreen_frame.Width(), _non_fullscreen_frame.Height());
+                 _SetBordered(_bordered);
+                 _SetResizable(_resizable);
++                KeepTabOnScreen(true);
+             }
+         }
+     }
+--- a/src/video/haiku/SDL_bwindow.cc	2026-11-23 00:13:47.502887106 +0100
++++ b/src/video/haiku/SDL_bwindow.cc	2026-11-23 00:14:32.794706624 +0100
+@@ -75,6 +75,18 @@
+     int32 winID = _GetBeLooper()->GetID(window);
+     bwin->SetID(winID);
+ 
++    /* Keep the window's tab on the screen (a fullscreen window has none yet:
++       SDL makes it fullscreen after this), and tell SDL where the window is
++       now, before SDL_CreateWindow() returns: the program may read it at once */
++    if (!(window->flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS))) {
++        bwin->KeepTabOnScreen((window->flags & SDL_WINDOW_RESIZABLE) != 0);
++        BRect frame = bwin->Frame();
++        window->x = window->windowed.x = (int)frame.left;
++        window->y = window->windowed.y = (int)frame.top;
++        window->w = window->windowed.w = (int)frame.Width() + 1;
++        window->h = window->windowed.h = (int)frame.Height() + 1;
++    }
++
+ #ifdef SDL_VIDEO_VULKAN
+     /* a Vulkan surface needs the view attached when it is created */
+     if (window->flags & SDL_WINDOW_VULKAN) {
