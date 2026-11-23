@@ -10,7 +10,7 @@ Every issue we know about and have **not** fixed, in one short register.
 - What works and how well: [HARDWARE-SUPPORT.md](HARDWARE-SUPPORT.md). The bench the rates were measured
   on: [LAB-SETUP.md](LAB-SETUP.md).
 
-Checked against the weekly logs up to **2026-11-23 00:55** (the newest entry: 2026-11-23 00:54, R4: release image-2026-11-23; before it 2026-11-22 23:05, TA1): C18 (Test Apps and Deskbar entries without a window) left the register — fixed in image-2026-11-23 with blender 3.6.23-11 and supertuxkart 1.5-4 (its story: W47 11-22 TA1, 11-23 R4; design/tracker-launch.md). F1 has the owner's hands-on results of 11-22.
+Checked against the weekly logs up to **2026-11-23 01:59** (the newest entry: 2026-11-23 01:59, BR1: G3 added, fix on a test package; before it 01:53, WC1: W14–W16; 00:54, R4: release image-2026-11-23; 2026-11-22 23:05, TA1): C18 (Test Apps and Deskbar entries without a window) left the register — fixed in image-2026-11-23 with blender 3.6.23-11 and supertuxkart 1.5-4 (its story: W47 11-22 TA1, 11-23 R4; design/tracker-launch.md). F1 has the owner's hands-on results of 11-22.
 
 ## 1. Correctness: crashes and hangs
 

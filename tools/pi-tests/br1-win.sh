@@ -8,6 +8,9 @@
 #   sh br1-win.sh q2 SIZE|full [LIBDIR]   Yamagi Quake II's demo in a SIZE (e.g. 1920x1080) window, or full screen
 #   sh br1-win.sh stk [LIBDIR]       SuperTuxKart in a 1280x720 window
 #   sh br1-win.sh winpos LIBDIR|- ARGS...   sdl-winpos ARGS in the background (its lines: sh br1-win.sh log)
+#   sh br1-win.sh blur LIBDIR|-     with a game running: open a small SDL window (sdl-winpos), which takes the focus;
+#                                    then the game's windows
+#   sh br1-win.sh refocus TITLE      activate the game's window TITLE again; then its windows
 #   sh br1-win.sh frames             every window of the program started last: index, title, frame, hidden
 #   sh br1-win.sh keys K...          activate the main window, mouse to its middle, then uiinject commands
 #   sh br1-win.sh zoom [TITLE]       the window's zoom button (B_ZOOM; TITLE default "Blender")
@@ -69,6 +72,19 @@ winpos)
 	"$prog" "$@" > /tmp/br1-swp.txt 2>&1 &
 	started 2
 	;;
+blur)
+	cp $state /tmp/br1-game.pid
+	sh "$0" winpos "$2" 300 300 400 300 r wait 20000 > /dev/null
+	cp /tmp/br1-game.pid $state
+	sleep 3
+	"$here/winframes" "$(cat /tmp/br1-game.pid)" | sed 's/^WF /BR1 game window /'
+	;;
+refocus)
+	"$here/uiinject" "$pid" "$2" activate > /dev/null 2>&1
+	echo "BR1 refocus $2: $?"
+	sleep 3
+	"$here/winframes" "$pid" | sed 's/^WF /BR1 game window /'
+	;;
 log)
 	cat /tmp/br1-swp.txt
 	;;
@@ -102,7 +118,7 @@ stop)
 	echo "BR1 stopped"
 	;;
 *)
-	sed -n '5,16p' "$0" >&2
+	sed -n '5,19p' "$0" >&2
 	exit 2
 	;;
 esac

@@ -66,10 +66,12 @@ done
 # window events handled on the thread that pumps events; SDL_GL_SetSwapInterval() passed on to
 # BGLView::SwapBuffers(vSync); the core profile asked for with BGL_CONTEXT_CORE, needs mesa 26.2.7-3; the current
 # OpenGL context kept per thread, for programs that use GL on several threads such as Blender; a window's tab kept on
-# the screen, and the zoom button's un-zoom reported as restored: docs/design/blender.md §7.20); revision 9
+# the screen, and the zoom button's un-zoom reported as restored: docs/design/blender.md §7.20); revision 9.
+# SDL_SYSTEM_ICONV=OFF: SDL's own iconv, as up to -8; the sysroot has had libiconv since the Blender build, and SDL
+# found it then, linking libiconv.so.2, which the package would not require and a regular image does not have.
 "$root/scripts/cross-port.sh" --patches "$root/patches/libsdl2" \
 	"$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" cmake \
-	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF -DSDL_VULKAN=ON
+	-DSDL_STATIC=OFF -DSDL_RPATH=OFF -DSDL_TEST=OFF -DSDL_VULKAN=ON -DSDL_SYSTEM_ICONV=OFF
 "$root/scripts/package-port.py" "$ports/media-libs/libsdl2/libsdl2-2.32.10.recipe" \
 	--revision 9 --devel-bin sdl2-config
 

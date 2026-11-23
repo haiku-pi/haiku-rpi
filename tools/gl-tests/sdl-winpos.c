@@ -8,7 +8,8 @@
  *     X, Y          a position, or c (SDL_WINDOWPOS_CENTERED) or u (SDL_WINDOWPOS_UNDEFINED)
  *     r b f         flags: resizable, borderless, fullscreen (SDL_WINDOW_FULLSCREEN_DESKTOP); "-" for none
  *     move X Y      SDL_SetWindowPosition (X, Y as above)
- *     max | restore SDL_MaximizeWindow / SDL_RestoreWindow
+ *     max | min     SDL_MaximizeWindow / SDL_MinimizeWindow
+ *     restore       SDL_RestoreWindow
  *     full | unfull SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN) / (0)
  *     wait MS       pump events for MS milliseconds (every command is followed by 300 ms of that)
  *
@@ -45,6 +46,10 @@ pump(SDL_Window *window, int ms)
 				printf("SWP event maximized\n");
 			else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESTORED)
 				printf("SWP event restored\n");
+			else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_MINIMIZED)
+				printf("SWP event minimized\n");
+			else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED)
+				printf("SWP event resized %dx%d\n", event.window.data1, event.window.data2);
 		}
 		SDL_Surface *surface = SDL_GetWindowSurface(window);
 		if (surface != NULL) {
@@ -62,8 +67,9 @@ report(SDL_Window *window, const char *what)
 	SDL_GetWindowPosition(window, &x, &y);
 	SDL_GetWindowSize(window, &w, &h);
 	Uint32 flags = SDL_GetWindowFlags(window);
-	printf("SWP %s pos=%d,%d size=%dx%d%s%s\n", what, x, y, w, h,
+	printf("SWP %s pos=%d,%d size=%dx%d%s%s%s\n", what, x, y, w, h,
 		(flags & SDL_WINDOW_MAXIMIZED) ? " maximized" : "",
+		(flags & SDL_WINDOW_MINIMIZED) ? " minimized" : "",
 		(flags & SDL_WINDOW_FULLSCREEN) ? " fullscreen" : "");
 	fflush(stdout);
 }
@@ -72,7 +78,7 @@ int
 main(int argc, char **argv)
 {
 	if (argc < 6) {
-		fprintf(stderr, "usage: sdl-winpos X Y W H [r][b][f] [move X Y|max|restore|full|unfull|wait MS]...\n");
+		fprintf(stderr, "usage: sdl-winpos X Y W H [r][b][f] [move X Y|max|min|restore|full|unfull|wait MS]...\n");
 		return 2;
 	}
 	Uint32 flags = SDL_WINDOW_SHOWN;
@@ -104,6 +110,8 @@ main(int argc, char **argv)
 			i += 2;
 		} else if (strcmp(command, "max") == 0) {
 			SDL_MaximizeWindow(window);
+		} else if (strcmp(command, "min") == 0) {
+			SDL_MinimizeWindow(window);
 		} else if (strcmp(command, "restore") == 0) {
 			SDL_RestoreWindow(window);
 		} else if (strcmp(command, "full") == 0) {

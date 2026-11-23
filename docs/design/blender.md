@@ -1643,6 +1643,9 @@ with a relinked binary; deleted) and publish it.
     | toggle back | 5,29 – 1914,1074 | titled |
     | zoom | 5,29 – 1778,1074 | titled |
 
+    - The un-zoomed frame covers the Deskbar (`b-zoom-005647.webp`). That is Blender's own start frame (the
+      screen size, now fitted below the tab), not Zoom: Zoom leaves the Deskbar out, as before.
+
     - From the zoomed state: full screen, then back, gives the un-zoomed frame, because Blender sets "normal"
       (SDL_RestoreWindow). Zoom then gives the zoomed frame again.
   - Edit > Preferences: 375,186 – 1034,705, where Blender put it (`b-prefs.webp`). The main window opens maximized,
@@ -1658,9 +1661,9 @@ with a relinked binary; deleted) and publish it.
   | sdl-winpos at 200,150, then moved to 300,200 / 0,0 / 1700,900 | as asked | as asked, except 0,0 → 5,29 |
   | sdl-winpos borderless at 0,0 | 0,0 | 0,0 |
   | Quake II, 1920×1080 window | 0,0 – 1919,1079 (tab off) | 5,29 – 1924,1108: tab visible, HUD's bottom ~28 px below the screen (`q2-1920x1080-s9.webp`) |
-  | Quake II, 1280×720 window | — | 320,180 – 1599,899 (centred, as before) |
-  | Quake II, full screen | — | 0,0 – 1919,1079, no border |
-  | SuperTuxKart, 1280×720 window | — | 320,180 – 1599,899 (`stk-1280x720-s9.webp`) |
+  | Quake II, 1280×720 window | not run | 320,180 – 1599,899 (centred) |
+  | Quake II, full screen | not run | 0,0 – 1919,1079, no border |
+  | SuperTuxKart, 1280×720 window | not run | 320,180 – 1599,899 (`stk-1280x720-s9.webp`) |
 
   - SDL state (`tools/gl-tests/sdl-winpos`, `max max restore max`):
     - -8: after `SDL_RestoreWindow()` SDL still says "maximized", so the next `SDL_MaximizeWindow()` does nothing.
@@ -1675,7 +1678,9 @@ with a relinked binary; deleted) and publish it.
   - a second monitor;
   - a Deskbar placed at the top or on the left;
   - vkQuake and the other Quakes;
-  - Wine (not SDL).
+  - Wine (not SDL);
+  - a window placed off the left or top edge, even fully off screen, is pulled in, while right and bottom overhangs
+    stay. `move -50 400` was not run.
 - **Not released:** the test package is `artifacts/packages-test/br1/libsdl2{,_devel}-2.32.10-9-arm64.hpkg`.
   `build/jam/repositories/HaikuPorts/arm64` still names -8.
 - **Tool caveats:**

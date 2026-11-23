@@ -1,8 +1,8 @@
 /*
  * winframes.cpp — the windows of a running Haiku application with their frames (the content area, in screen
  * coordinates; the tab and border lie outside it), visibility and look, by scripting, for unattended checks of
- * window placement. `hey` cannot reach an application launched with B_ARGV_ONLY (Blender's): the roster
- * has no app info for it; a messenger to the team works.
+ * window placement. Neither `hey` nor this tool reaches an application with B_ARGV_ONLY (the packaged Blender): the
+ * roster has no app info for it, so no messenger to its team; run a copy without resources (objcopy drops them).
  *
  *   winframes TEAM
  *
