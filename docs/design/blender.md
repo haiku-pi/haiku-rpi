@@ -1701,8 +1701,11 @@ with a relinked binary; deleted) and publish it.
   - Wine (not SDL);
   - a window placed off the left or top edge, even fully off screen, is pulled in, while right and bottom overhangs
     stay. `move -50 400` was not run.
-- **Not released:** the test package is `artifacts/packages-test/br1/libsdl2{,_devel}-2.32.10-9-arm64.hpkg`.
-  `build/jam/repositories/HaikuPorts/arm64` still names -8.
+- **Published 2026-11-23 (P1):** the test packages' bytes (libsdl2 sha256 2cabd492…, _devel af3dfcc6…; haiku-pi/packages
+  514cc04), and the image list names -9 (haiku `db1f8f465f`). Gate on mega38 (session p1, 0 PANIC): F12 render window
+  5,29 – 1914,1074 with its tab, render completed; un-zoom 5,29 – 1914,1074; Toggle Window Fullscreen 0,0 – 1919,1079
+  and back to 5,29 – 1914,1074; zoom 5,29 – 1778,1074. OpenArena, QuakeSpasm, vkQuake, Quake II and Quake III opened
+  through Tracker, kept their window 10 s and ended 100–180 ms after a quit request. KNOWN-ISSUES G3 closed.
 - **Tool caveats:**
   - `hey` cannot script an application started with B_ARGV_ONLY. `winframes` reached the copy without resources.
   - A program finds a `lib/` next to itself first (`%A/lib`), so the -8 control runs a copy elsewhere

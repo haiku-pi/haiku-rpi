@@ -343,11 +343,15 @@ Notepad++ x86 one row too.
   rows is the test PDF's, also on stock). Not measured: Wine's start time with ~15 more fonts to scan (the prefix
   updates took 40–53 s; no baseline taken).
 
-**Test packages** (`artifacts/packages-test/wc1/`, not published, not in the image): wayland_server
+**Published 2026-11-23 (P1; haiku-pi/packages 514cc04, KNOWN-ISSUES W14 and W15 closed, W16 left as the fullwidth/CJK
+residue).** Gate on mega38 (session p1, 03:02–03:12, 0 PANIC; frames `artifacts/p1/`, not in git): Warcraft III and
+Diablo II menus show only the game's gauntlet, Haiku's hand back on the desktop after quitting; Notepad++ x86-64 menu
+bar one row with ▼ ✕ (＋ a box) and its I-beam over the editor; PhotoCraft (the server's other client) starts, draws
+and shows its cursor over its window and on the desktop; mega smoke 34 of 34, Tracker 39 of 39 with a fresh -4 prefix.
+The packages were the test packages, byte for byte: wayland_server
 0.1.20251004-11; wine, wine_data, wine_directx, wine_x86, wine_x86_64 11.21-4 (GCC 16.2, `WINE_PACKAGES_SHARED=no
 scripts/build-wine.sh`; no warnings in the changed files; the committed series applied to a clean 11.21 gives the
-built tree's `dlls/` and `server/` exactly). **Not checked:** PhotoCraft (the other client of the
-server) with -11; a Wine program that hides the cursor without pumping messages; StarCraft and Age of Empires II
+built tree's `dlls/` and `server/` exactly). **Not checked:** a Wine program that hides the cursor without pumping messages; StarCraft and Age of Empires II
 (their intro and EULA were up during the frames); the x86-64 build; a real mouse by hand.
 
 ## Test programs (to be chosen and license-checked at the start)

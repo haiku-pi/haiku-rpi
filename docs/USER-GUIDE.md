@@ -852,8 +852,8 @@ refuses to install it on an older image). x86-64 programs also need the next ker
 the CPU's feature registers readable by programs, which FEX reads). Build a new image
 ([TRY-IT.md](TRY-IT.md#build-the-image)).
 
-The packages (wine 11.21-2) were built on 2026-11-02 (`scripts/build-wine.sh`) and are in our repository with
-the Wayland packages they need. Without `wine_mono` the first start asks to install Wine Mono (.NET); Cancel is fine
+The packages (wine 11.21-4, built 2026-11-23 with `scripts/build-wine.sh`) are in our repository with the Wayland
+packages they need; `pkgman update` brings them to an installed Wine. Without `wine_mono` the first start asks to install Wine Mono (.NET); Cancel is fine
 for most programs.
 
 Run a program from Terminal:
@@ -892,7 +892,13 @@ ln -sfn /boot ~/.wine/dosdevices/d:
 
 After that, a program anywhere under `/boot` (your home folder included) runs from `D:`.
 
-**Known limits** (written 2026-10-29 for wine 11.20-23; the open items of wine 11.21-2 are in KNOWN-ISSUES §5):
+**From wine 11.21-4 and wayland_server 0.1.20251004-11** (2026-11-23, `pkgman update`): a game that draws its own
+mouse cursor (Warcraft III, Diablo II, most full-screen games) shows only its own cursor, not Haiku's arrow over it;
+windowed programs keep their normal cursor. Notepad++'s menu bar is one row again (Wine 11.21 wrapped it into about
+eight; upstream fix b94b54c62b). Wine also uses Haiku's fonts, so symbols its own fonts lack are drawn (Notepad++'s
+▼ and ✕); fullwidth and CJK characters (Notepad++'s ＋) are still boxes (KNOWN-ISSUES W16).
+
+**Known limits** (written 2026-10-29 for wine 11.20-23; the open items of wine 11.21-4 are in KNOWN-ISSUES §5):
 - **OpenGL programs run on the V3D** (Wine's EGL driver on Mesa: OpenGL 2.1), and so do **DirectDraw and
   Direct3D (up to 9)**: wined3d's OpenGL renderer, the default. A Direct3D 9 test draws at about 120 frames per
   second in a 640x480 window, 32-bit x86, x86-64 or arm64 alike (126 for 32-bit x86 on 2026-11-03, with the
@@ -963,6 +969,11 @@ Blender's renders need).
   turn off the grid and the selected object's outline (Viewport Overlays menu), use a smaller window, and set
   Preferences ▸ Viewport ▸ Anti-Aliasing to None and untick Smooth Wires — with -10 these two no longer change
   navigation, but they speed up every other redraw (playback, edits, the frames after you stop). A simple scene needs about 300–400 MB of RAM; large scenes and textures may not fit in 4 GB.
+- **Windows** (libsdl2 2.32.10-9, 2026-11-23; in the image's list after image-2026-11-23, `pkgman update libsdl2` on
+  image-2026-11-23): the F12 **Render window** opens with its tab on the screen (it opened as large as the screen with
+  its tab above the top edge), and the main window's **zoom button** zooms and un-zooms like other programs' (before,
+  un-zooming gave a screen-sized window without a tab that looked like full screen); Window ▸ Toggle Window Fullscreen
+  goes to full screen and back.
 - **Input:** click into the Blender window once before typing — keys go to the active window, and to the area
   under the mouse pointer.
 - Limits are listed in KNOWN-ISSUES (F12): no Subsurface Scattering in EEVEE, slow CPU denoising, no
@@ -1066,6 +1077,8 @@ work that way, which also lets you run things on a Pi without a keyboard.
 | A program started from the Desktop (a link, a launcher like the test image's Test Apps) or from the Deskbar's Applications menu shows no window: the process runs and uses some CPU, only `kill` ends it; or Blender / SuperTuxKart from the Deskbar quit at once | Images before image-2026-11-23: a program that a launcher or script `exec`s lost the message port Tracker's launch gave it (was KNOWN-ISSUES C18, fixed in image-2026-11-23: [design/tracker-launch.md](design/tracker-launch.md)), and Blender before 3.6.23-11 and SuperTuxKart before 1.5-4 looked for their data next to the link (`pkgman update blender supertuxkart`). On an older image, start the program from a Terminal (`/boot/system/apps/Blender/Blender`). |
 | SuperTuxKart says "OpenGL version is too old" | That is about its shader renderer; it falls back to the legacy one. For shaders, start `SuperTuxKart-GLES`. |
 | An SDL game crashed at a full-screen start with "double free" | Fixed in libsdl2 2.32.10-5 (2026-10-20). On an older image: `pkgman update libsdl2`. |
+| An SDL window (Blender's F12 Render window, a game asking for a window as large as the screen) has its tab above the screen; Blender's zoom button seems to switch to full screen | Fixed in libsdl2 2.32.10-9 (2026-11-23): `pkgman update libsdl2` and restart the program. |
+| A full-screen Windows game shows Haiku's arrow over its own cursor; Notepad++'s menu bar wraps into many rows | Fixed in wayland_server 0.1.20251004-11 and wine 11.21-4 (2026-11-23): quit every Windows program, `pkgman update`, start again (the first start updates the prefix). |
 | ioquake3/OpenArena stays alive after `kill` | From openarena 0.8.8-3 about 1 in 10 (was 1 in 4) needs `kill -9` after a plain `kill`: it hangs in the GL teardown at exit. Quitting from the game's menu is not affected. |
 | Expected noise in the games' logs | OpenArena: "Couldn't read q3history" on the first start, two "Failed to load model file models/players/characters/ayumi/lower.md3" (that model's file is left out). SuperTuxKart: "Material: Missing container id for ..." (texture compression off), "kartDirt shader is missing". |
 | QuakeSpasm's timedemo prints no result | Its standard output is buffered and lost when the game is killed; add `-condebug` and read `qconsole.log` (§6.3). |

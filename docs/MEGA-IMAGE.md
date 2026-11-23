@@ -42,8 +42,10 @@ first boot creates that folder and sets Wine up (about two minutes, a notificati
 `scripts/pi-test.sh` boots the card with a DHCP server on the Pi LAN (the host is the gateway and DNS
 server; the firmware's network boot requests are ignored), so the network, `pkgman` and the browsers work.
 
-The bench card holds **mega37** (2026-11-23): release image-2026-11-23 plus the content above, Blender 3.6.23-11,
-SuperTuxKart 1.5-4; smoke test 34 of 34, and 39 of 39 entries with a window through Tracker. The mega images are numbered in the weekly logs, one per card write; what the owner should try
+The bench card holds **mega38** (2026-11-23): image-2026-11-23's sources plus the libsdl2 2.32.10-9 list bump (haiku
+`db1f8f465f`, hrev60450+376) and the content above, with wayland_server 0.1.20251004-11, wine 11.21-4, Blender
+3.6.23-11 and SuperTuxKart 1.5-4; smoke test 34 of 34, and 39 of 39 entries with a window through Tracker (mega37 was
+release image-2026-11-23 itself, with wayland_server -10, wine 11.21-3 and libsdl2 -8). The mega images are numbered in the weekly logs, one per card write; what the owner should try
 on it: [HANDS-ON-CHECKS.md](HANDS-ON-CHECKS.md).
 
 ## Check it

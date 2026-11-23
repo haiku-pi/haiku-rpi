@@ -4103,7 +4103,7 @@ Bugs we found and fixed that upstream has fixed since (often its own way), with 
   - **Cause:** a regression from 6b486ec7830a (first released in wine-11.11). It broke the Diablo II demo with "Error 22" on any GL driver, including x86-64 Linux with llvmpipe.
   - **Fix:** c209164dafff "ddraw: Do not force render target for surface formats which do not support it." (2026-11-06). It is in **wine-11.22**, not in 11.21.
   - **To do:** drop our patch when we move to 11.22. We have not re-tested upstream's fix.
-- **0034 — win32u: menu bar laid out once** (`patches/wine-11.21/0034-win32u-menu-bar-height-recalculate.patch`; KNOWN-ISSUES W15).
+- **0034 — win32u: menu bar laid out once** (`patches/wine-11.21/0034-win32u-menu-bar-height-recalculate.patch`; was KNOWN-ISSUES W15, fixed in the published wine 11.21-4).
   - **Cause:** a regression from f3de8edf99 (first released in wine-11.21; 11.20's `get_menu_bar_height()` lays the menu bar out every time): `get_menu_bar_height()` keeps the menu bar's first layout, so Notepad++'s menu bar stays wrapped into 8 rows.
   - **Fix:** b94b54c62b "win32u: Force recalculating menu bar height in get_menu_bar_height." (2026-11-03). It is in **wine-11.22** (GitHub compare: the tag is 277 commits ahead of it, 0 behind), not in 11.21. Our patch is that commit, unchanged.
   - **To do:** drop our patch when we move to 11.22.
