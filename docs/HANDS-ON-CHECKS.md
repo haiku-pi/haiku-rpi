@@ -63,7 +63,8 @@ Mono: .NET programs run, no Mono question).
 **Done so far** (owner, 2026-10-25, image-2026-10-25e): checks 1 and 2 — keyboard and mouse work, everyday
 desktop use is fine, the system feels fast. (owner, 2026-11-22, mega36): checks 1 and 2 again across the system,
 4 in Firefox, 5, 12, 13 (Blender, started from a Terminal) and 14 passed; still open: 3 (audio by ear), 7 (WiFi),
-9 (Bluetooth), 11 (WebPositive video). Since then a card-booted Pi also gets an address from the bench
+9 (Bluetooth), 11 (WebPositive video); not reported: 4 in WebPositive, 6 (a real monitor with GL), 8 (Wine by hand:
+the owner saw the cursor defect above in full-screen games), 10 (shutting down). Since then a card-booted Pi also gets an address from the bench
 (`scripts/pi-test.sh` runs a DHCP server that leaves the firmware alone), so the network checks below can be done.
 
 | # | Check | Do | Expected |

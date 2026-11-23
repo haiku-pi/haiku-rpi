@@ -151,7 +151,8 @@ the team still running with a window shown; then a quit). Raw lines: `artifacts/
   `ArgvReceived()` and `RefsReceived()`; a script `exec /boot/home/argcount "$@"`, launched by `BRoster::Launch(ref,
   argc, argv)` directly and through a link): `ArgvReceived()` ran **once**, with each argument once — no second
   `B_ARGV_RECEIVED` from the roster. The roster appends the script's own path to a script's argv (`argcount one two
-  /…/wrap.sh`), with or without the fix (upstream behaviour). Files handed to the wrapper as `B_REFS_RECEIVED`
+  /…/wrap.sh`): the roster builds that argv before the program runs, so it does not depend on the fix (only the fixed
+  image was run). Files handed to the wrapper as `B_REFS_RECEIVED`
   (`BRoster::Launch(ref, &refsMessage)`, as a drop onto it) do not reach the program — neither argv nor
   `RefsReceived()`; the message went to the launcher's port (before the fix the program hung). The mega image has no
   wrapper-launched program that opens files, so this was not tried with a real application.
