@@ -1,0 +1,45 @@
+wayland-server: hide the cursor when a client sets a NULL cursor surface
+
+wl_pointer.set_cursor with a NULL surface means "hide the pointer image",
+the request Wine's Wayland driver sends for SetCursor(NULL), ShowCursor(FALSE)
+and a fully transparent cursor. HandleSetCursor() ignored it, so the last
+cursor the client set (usually the arrow) stayed on top of every game that
+draws its own cursor (Warcraft III, Diablo II...).
+
+- set_cursor(NULL) sets the application cursor to B_CURSOR_ID_NO_CURSOR while
+  one of the client's surfaces has the pointer.
+- wl_pointer.leave to no surface restores the system default cursor: outside
+  the client's surfaces (the window decorator, borders) the cursor is the
+  compositor's, and the client sets its own again at the next enter.
+
+--- a/HaikuSeat.cpp
++++ b/HaikuSeat.cpp
+@@ -226,6 +226,15 @@
+ 		hook->fHotspot = BPoint(hotspot_x, hotspot_y);
+ 		surface->SetHook(hook);
+ 		hook->HandleCommit();
++	} else {
++		// A NULL surface hides the cursor (wl_pointer.set_cursor), e.g. a game
++		// that draws its own. Only while one of the client's surfaces has the
++		// pointer: elsewhere the cursor is not the client's to hide.
++		HaikuSurface *focus = fGlobal->fPointerFocus;
++		if (focus != NULL && focus->Client() == Client()) {
++			BCursor noCursor(B_CURSOR_ID_NO_CURSOR);
++			be_app->SetCursor(&noCursor, true);
++		}
+ 	}
+ }
+ 
+@@ -279,6 +288,12 @@
+ 				pointer->SendLeave(NextSerial(), fPointerFocus->ToResource());
+ 				pointer->SendFrame();
+ 			}
++			// Outside the client's surfaces (window borders, decorator) the
++			// cursor is the compositor's again: a cursor the client set (or
++			// hid) applies only until the pointer leaves, and the client sets
++			// it anew on the next enter.
++			if (surface == NULL)
++				be_app->SetCursor(B_CURSOR_SYSTEM_DEFAULT, true);
+ 			break;
+ 		case trackDrag:
+ 			fDataDevice->SendLeave();

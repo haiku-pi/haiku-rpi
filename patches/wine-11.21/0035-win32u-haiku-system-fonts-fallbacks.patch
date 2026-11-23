@@ -1,0 +1,162 @@
+win32u: on Haiku, load Haiku's fonts and fall back to them as app_server does
+
+Without fontconfig, Wine on Haiku saw only its own fonts (data/wine/fonts
+and the prefix's Fonts folder); Haiku's own (Noto) were invisible to
+Windows programs. And the default font links name Windows fonts Haiku does
+not have (MS UI Gothic, SimSun, Segoe UI Symbol...), so a character missing
+from Tahoma (Wine's menu and dialog font) was drawn as a box: Notepad++'s
+menu bar ends with three boxes where its tab buttons are (U+FF0B, U+25BC,
+U+2715).
+
+- Read Haiku's font directories (find_directory()'s B_*_FONTS_DIRECTORY,
+  the user's first) as the Android build reads /system/fonts: external
+  fonts, as with fontconfig. find_directory() is called from a file of its
+  own, haiku_fonts.c: Haiku's headers clash with Wine's (system_info).
+- Link the fonts app_server itself falls back to (GlyphLayoutEngine.h:
+  Noto Sans, Noto Sans Thai, Noto Sans Cherokee, Noto Sans Symbols, Noto
+  Sans Symbols 2), those present, into Tahoma's,
+  Microsoft Sans Serif's and Lucida Sans Unicode's links. Every font that
+  is not a symbol or OEM font falls back through Tahoma's and Microsoft
+  Sans Serif's links. At run time rather than in the SystemLink registry
+  key, which Wine writes only when a prefix is made, so existing prefixes
+  get it too. Not Noto Sans CJK JP (nor Noto Emoji, not checked): Haiku
+  ships it as a CFF2 variable font, which the FreeType Wine loads
+  (app_server's 2.6.3) does not draw; linked, it covered U+FF0B with a blank
+  glyph and the symbols after it came out blank too. Fullwidth forms such
+  as U+FF0B stay boxes.
+
+--- a/dlls/win32u/Makefile.in
++++ b/dlls/win32u/Makefile.in
+@@ -31,6 +31,7 @@
+ 	font.c \
+ 	freetype.c \
+ 	gdiobj.c \
++	haiku_fonts.c \
+ 	hook.c \
+ 	imm.c \
+ 	input.c \
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -2090,6 +2090,42 @@
+     }
+     else WARN( "could not find FontSubstitute for MS Shell Dlg\n" );
+ 
++#ifdef __HAIKU__
++    {
++        /* Haiku has none of the fonts the default links name (MS UI Gothic, SimSun, Segoe UI
++           Symbol...): link the fonts app_server itself falls back to (GlyphLayoutEngine.h), so
++           that characters missing from Tahoma are drawn, not boxes. Not Noto Sans CJK JP:
++           Haiku ships it as a CFF2 variable font, which the FreeType Wine loads (app_server's,
++           2.6.3) does not draw; linked, it made the symbols after it blank as well */
++        static const WCHAR noto_sansW[] = {'N','o','t','o',' ','S','a','n','s',0};
++        static const WCHAR noto_sans_thaiW[] = {'N','o','t','o',' ','S','a','n','s',' ','T','h','a','i',0};
++        static const WCHAR noto_sans_cherokeeW[] =
++            {'N','o','t','o',' ','S','a','n','s',' ','C','h','e','r','o','k','e','e',0};
++        static const WCHAR noto_symbolsW[] =
++            {'N','o','t','o',' ','S','a','n','s',' ','S','y','m','b','o','l','s',0};
++        static const WCHAR noto_symbols_2W[] =
++            {'N','o','t','o',' ','S','a','n','s',' ','S','y','m','b','o','l','s',' ','2',0};
++        static const WCHAR * const haiku_fallbacks[] =
++        {
++            noto_sansW, noto_sans_thaiW, noto_sans_cherokeeW, noto_symbolsW, noto_symbols_2W,
++        };
++        struct gdi_font_family *family;
++        const struct list *faces;
++
++        for (i = 0; i < ARRAY_SIZE(haiku_fallbacks); i++)
++        {
++            if (!(family = find_family_from_name( haiku_fallbacks[i] ))) continue;
++            faces = get_family_face_list( family );
++            if (list_empty( faces )) continue;
++            face = LIST_ENTRY( list_head( faces ), struct gdi_font_face, entry );
++            for (j = 0; j < ARRAY_SIZE(font_links_list); j++)
++                if ((font_link = add_gdi_font_link( font_links_list[j] )))
++                    add_gdi_font_link_entry( font_link, family->family_name, face->fs );
++            TRACE( "added Haiku fallback %s\n", debugstr_w(family->family_name) );
++        }
++    }
++#endif
++
+     /* Explicitly add an entry for the system font, this links to Tahoma and any links
+        that Tahoma has */
+ 
+--- a/dlls/win32u/freetype.c
++++ b/dlls/win32u/freetype.c
+@@ -1096,7 +1096,11 @@
+     return AddFontToList( NULL, NULL, ptr, size, flags );
+ }
+ 
+-#ifdef __ANDROID__
++#ifdef __HAIKU__
++extern int haiku_font_directory( unsigned int index, char *path, size_t size );
++#endif
++
++#if defined(__ANDROID__) || defined(__HAIKU__)
+ static BOOL ReadFontDir(const char *dirname, BOOL external_fonts)
+ {
+     DIR *dir;
+@@ -1547,6 +1551,12 @@
+     load_mac_fonts();
+ #elif defined(__ANDROID__)
+     ReadFontDir("/system/fonts", TRUE);
++#elif defined(__HAIKU__)
++    char path[PATH_MAX];
++    unsigned int i;
++
++    for (i = 0; haiku_font_directory( i, path, sizeof(path) ) >= 0; i++)
++        if (path[0]) ReadFontDir( path, TRUE );
+ #endif
+ }
+ 
+--- /dev/null
++++ b/dlls/win32u/haiku_fonts.c
+@@ -0,0 +1,49 @@
++/*
++ * Haiku's font directories, for freetype.c
++ *
++ * Kept apart from freetype.c: Haiku's headers clash with Wine's (system_info).
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#if 0
++#pragma makedep unix
++#endif
++
++#ifdef __HAIKU__
++
++#include <stddef.h>
++#include <FindDirectory.h>
++
++int haiku_font_directory( unsigned int index, char *path, size_t size );
++
++/* the index-th font directory, the user's first: 0 and the path (empty if it has none),
++ * -1 past the last */
++int haiku_font_directory( unsigned int index, char *path, size_t size )
++{
++    static const directory_which dirs[] =
++    {
++        B_USER_NONPACKAGED_FONTS_DIRECTORY,
++        B_USER_FONTS_DIRECTORY,
++        B_SYSTEM_NONPACKAGED_FONTS_DIRECTORY,
++        B_SYSTEM_FONTS_DIRECTORY,
++    };
++
++    if (index >= sizeof(dirs) / sizeof(dirs[0])) return -1;
++    if (find_directory( dirs[index], -1, false, path, size ) != B_OK) path[0] = 0;
++    return 0;
++}
++
++#endif /* __HAIKU__ */

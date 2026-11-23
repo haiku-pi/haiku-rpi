@@ -74,7 +74,7 @@ case "$wineVersion" in
 	;;
 11.21)
 	wineSha=046cb0519b7d385be7912304910ccde9e3c0268ebdce7ef35a3c14446cfb8029
-	wineRevision=3	# 1: 11.20's 0001-0029 rebased (11-01); 2: Wine 0030 (Diablo II full screen, KNOWN-ISSUES W12); 3: 0031-0033 (NFS Porsche races: Haiku routes, interface table, local IPs, W11)
+	wineRevision=4	# 1: 11.20's 0001-0029 rebased (11-01); 2: Wine 0030 (Diablo II full screen, KNOWN-ISSUES W12); 3: 0031-0033 (NFS Porsche races: Haiku routes, interface table, local IPs, W11); 4: 0034-0035 (menu bar laid out again at resize, Haiku's fonts and app_server's fallbacks; W15, W16)
 	;;
 *) echo "build-wine: no pinned archive for Wine $wineVersion" >&2; exit 1 ;;
 esac

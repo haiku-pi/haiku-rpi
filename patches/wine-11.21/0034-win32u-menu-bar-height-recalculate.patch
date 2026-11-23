@@ -1,0 +1,27 @@
+win32u: force recalculating the menu bar height in get_menu_bar_height
+
+Upstream Wine b94b54c62b (2026-11-03, after 11.21), backported unchanged.
+Wine 11.20's f3de8edf99 made get_menu_bar_height() go through
+NtUserDrawMenuBarTemp(), which lays the menu bar out only when its cached
+height is 0. WM_NCCALCSIZE therefore kept the layout of the first width the
+menu bar was measured at: a window whose menu was set while it was small
+kept its menu wrapped into many rows after it grew (Notepad++: the menu bar
+in 8 rows of 2 items in a 1100 px wide window).
+
+--- a/dlls/win32u/menu.c
++++ b/dlls/win32u/menu.c
+@@ -2240,11 +2240,14 @@
+ UINT get_menu_bar_height( HWND hwnd, UINT width, INT org_x, INT org_y )
+ {
+     RECT rect = { org_x, org_y, org_x + width, 0 };
++    struct menu *menu;
+     UINT height;
+     HDC hdc;
+ 
+     TRACE( "hwnd %p, width %d, at (%d, %d).\n", hwnd, width, org_x, org_y );
+ 
++    if ((menu = unsafe_menu_ptr( get_menu( hwnd )))) menu->Height = 0; /* force size recalculate */
++
+     hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_WINDOW );
+     height = NtUserDrawMenuBarTemp( hwnd, hdc, &rect, 0, 0 );
+     NtUserReleaseDC( hwnd, hdc );

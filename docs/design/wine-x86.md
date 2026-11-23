@@ -260,6 +260,84 @@ address are left as `malloc` gave them (the loopback interface is then not typed
 later patch. Merge gate for 0031–0033: a full `build-wine.sh` package build and mega-smoke (only the two libraries
 were tried); the shared cross tree (artifacts/wine-11.21/cross) and the patched source tree already carry them.
 
+## W14–W16: Haiku's cursor over full-screen games, Notepad++'s menu bar, boxes for symbols (2026-11-23, WC1)
+
+Owner reports (mega36 on the card): in full-screen Wine games (Warcraft III, Diablo II) Haiku's arrow stays on top of
+the game's own cursor; Notepad++'s menu bar wraps into 8 rows of ~2 items and ends with three boxes.
+Reproduced and checked in one network session (`wc1`, 01:22–01:49, mega36 = hrev60450+373 on a netboot copy; card
+and USB untouched; 0 PANIC), the pointer moved with `tools/haiku-tests/mouseto.cpp` (the real pointer, so app_server
+picks the cursor of the window under it — `uiinject` posts to a window and leaves the pointer where it is), HDMI frames
+in `artifacts/wc1/` (not in git; `montage-*.webp` crop the pointer's neighbourhood).
+
+### W14: `wl_pointer.set_cursor(NULL)` was ignored (wayland_server)
+
+- **Path.** A game hides the cursor with `ShowCursor(FALSE)` (wineserver: cursor count < 0) or `SetCursor(NULL)` (or
+  a fully transparent cursor). wineserver posts `WM_WINE_SETCURSOR` with handle 0 to the window under the pointer
+  (`server/queue.c` `update_desktop_cursor_window`/`_handle`), win32u calls the driver's `SetCursor`, and winewayland
+  (`wayland_pointer.c` `wayland_set_cursor`) drops its cursor surface and sends `wl_pointer.set_cursor(enter serial,
+  NULL, 0, 0)`, which the protocol defines as "hide the pointer image". At every `wl_pointer.enter` it sends the
+  window's stored cursor again (NULL for a new window until win32u sets one, and for a window that hid it).
+- **The server.** `HaikuPointer::HandleSetCursor()` handled a non-NULL surface only: NULL did nothing, so the
+  application cursor stayed the last one set. Serials are not checked at all, so a stale serial was not the cause,
+  and nothing differs in full screen (no other view or plane: the cursor is app_server's per-application cursor).
+  Upstream `master` (8ede02e0e880) now sets `B_CURSOR_SYSTEM_DEFAULT` for NULL: an arrow, still not hidden.
+- **Evidence (before, wayland_server -10).** `cursorhide full` (`tools/wine-tests/cursorhide.c`, a WS_POPUP of the
+  screen's size with `ShowCursor(FALSE)` and `SetCursor(NULL)`): `WAYLAND_DEBUG=1` shows
+  `wl_pointer@3.enter(4, wl_surface@16, …)` then `-> wl_pointer@3.set_cursor(4, nil, 0, 0)` (the enter's serial),
+  `GetCursorInfo` says hidden, and the HDMI frame shows Haiku's hand (`before-full-in`). Warcraft III and Diablo II
+  menus: Haiku's hand beside the game's gauntlet (`before-war3-a`, `before-d2-a`); their logs have 5 and 4 `set_cursor(…
+  nil …)`.
+- **Fix: wayland_server 0.1.20251004-11** (`patches/wayland_server/…-wl-pointer-hide-cursor.patch`): a NULL surface
+  sets the application cursor to `B_CURSOR_ID_NO_CURSOR` (app_server's 1×1 transparent cursor) while one of the
+  client's surfaces has the pointer; `wl_pointer.leave` to no surface restores `B_CURSOR_SYSTEM_DEFAULT` (outside the
+  client's surfaces the cursor is the compositor's; the client sets its own again at the next enter). Not
+  `BApplication::HideCursor()`: that hides the cursor for the whole screen until shown again, while the application
+  cursor is what app_server shows only over that application's windows.
+- **After (same session, -11 installed, nothing else changed):** `cursorhide full` and `hide` (windowed): no cursor
+  over the window; the pointer moved to the desktop: Haiku's hand; back over the window: hidden again; after the
+  program quits: the hand (`montage-cursorhide`). `cursorhide show`: the arrow. Warcraft III and Diablo II: only the
+  game's gauntlet; after quitting, Haiku's hand (`montage-games-before-after`, again on the final wine -4 stack:
+  `montage-games-final`). Windowed programs keep their cursors: Notepad++ (I-beam), Notepad, PuTTY, SumatraPDF
+  (`final-*`). The 1×1 cursor leaves no artefact with the hardware cursor.
+- New windows: winewayland sends NULL at the first enter of a new window (seen 3–4 times per start in Notepad++ and
+  `cursorhide show`), so with -11 a new window shows no cursor until win32u sets the window's cursor
+  (`WM_WINE_SETCURSOR` on the next pointer motion) — on every compositor, not only ours. A program that does not pump
+  messages then shows no cursor over its window; not seen in the programs above.
+
+### W15: Notepad++'s menu bar in 8 rows (Wine 11.20/11.21 regression)
+
+`get_menu_bar_height()` (WM_NCCALCSIZE) lays the menu bar out through `NtUserDrawMenuBarTemp()` since Wine 11.20
+(f3de8edf99), which lays it out only when the cached height is 0, so the first layout's width stayed. Upstream fixed it
+after 11.21 (b94b54c62b, "Force recalculating menu bar height in get_menu_bar_height"); **Wine 0034** is that commit.
+Before: 8 rows (`before-npp-a`, as the owner's frame); after (wine 11.21-4): one row (`final-npp-a`); Notepad and
+Notepad++ x86 one row too.
+
+### W16: boxes for symbols (Haiku's fonts invisible to Wine)
+
+- Notepad++ ends its menu bar with U+FF0B ＋, U+25BC ▼ and U+2715 ✕ (strings in `notepad++.exe`). Wine's Tahoma
+  has none; its default font links (Tahoma → MS UI Gothic, …, Segoe UI Symbol) name Windows fonts; and without
+  fontconfig Wine on Haiku loaded no system fonts at all (its `freetype_load_fonts` reads fontconfig, macOS's or
+  Android's /system/fonts only): the registry's External Fonts listed Wine's own fonts only.
+- **Wine 0035** (`patches/wine-11.21/0035-win32u-haiku-system-fonts-fallbacks.patch`): Haiku's font directories
+  (`find_directory()`, in a file of its own: Haiku's headers clash with Wine's `system_info`) are read like Android's;
+  the fonts app_server falls back to (GlyphLayoutEngine.h) are linked, at run time, after Tahoma's, Microsoft Sans
+  Serif's and Lucida Sans Unicode's links — every non-symbol font falls back through Tahoma and Microsoft Sans Serif.
+  On mega36 that is Noto Sans and Noto Sans Symbols (Thai, Cherokee and Symbols 2 are not installed).
+- **Noto Sans CJK JP is left out:** a trial with it linked (11.21-5, not kept) drew ▼ only — ＋ and ✕ came out blank.
+  Haiku ships it as a CFF2 variable font (`NotoSansCJKjp-VF.otf`: CFF2, fvar, HVAR); the FreeType Wine loads at run
+  time is app_server's 2.6.3, which predates CFF2. Without it (11.21-4): ▼ and ✕ drawn, ＋ a box
+  (`npp-glyphs-before-after4`, `npp-glyphs-with-cjk-link`, `npp-glyphs-final`). Fullwidth forms and CJK need a newer
+  FreeType for Wine or a static CJK font.
+- With Haiku's fonts visible, a program asking for a font that is not installed may now get a Noto face instead of
+  Wine's Tahoma (as Wine with fontconfig on Linux does); the programs above looked as before. Not measured: Wine's
+  start time with ~15 more fonts to scan (the prefix update took 40–53 s, as before).
+
+**Test packages** (`artifacts/packages-test/wc1/`, not published, not in the image): wayland_server
+0.1.20251004-11; wine, wine_data, wine_directx, wine_x86, wine_x86_64 11.21-4 (GCC 16.2, `WINE_PACKAGES_SHARED=no
+scripts/build-wine.sh`; 0 new warnings in the changed files). **Not checked:** PhotoCraft (the other client of the
+server) with -11; a Wine program that hides the cursor without pumping messages; StarCraft and Age of Empires II
+(their intro and EULA were up during the frames); the x86-64 build; a real mouse by hand.
+
 ## Test programs (to be chosen and license-checked at the start)
 
 The owner's guidance (2026-10-21 00:13): test with older, very popular Windows games that are known to run under

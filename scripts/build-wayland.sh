@@ -182,10 +182,12 @@ PY
 	echo "build-wayland: x11_locale: $(find "$dest" -name Compose | wc -l) Compose files, $(du -sh "$dest" | cut -f1) in $dest"
 }
 
+# revision 11: set_cursor(NULL) hides the cursor, leave restores the default (KNOWN-ISSUES W14).
+# WAYLAND_SERVER_OUT=DIR: the package into DIR, not artifacts/packages (a test revision not yet published)
 step_wayland_server() {
 	"$cross" --patches "$root/patches/wayland_server" "$serverRecipe" meson "${paths[@]}"
-	"$package" "$serverRecipe" --system-prefix --no-devel --revision 10 --requires lib:libwayland_client \
-		--requires lib:libwayland_server
+	"$package" "$serverRecipe" --system-prefix --no-devel --revision 11 --requires lib:libwayland_client \
+		--requires lib:libwayland_server ${WAYLAND_SERVER_OUT:+--out "$WAYLAND_SERVER_OUT"}
 	no_build_paths wayland_server
 }
 

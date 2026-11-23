@@ -20,7 +20,8 @@ unpacked in ~/Downloads); **Firefox YouTube in a window and full screen: smooth*
 Terminal: the "Classroom" demo scene loaded quickly, the viewport preview correct, an F12 render started and its first
 iterations looked fine — not waited for to the end). Defects found: Test Apps and Deskbar
 entries without a window (C18, fixed in image-2026-11-23) and, in full-screen Windows games under Wine (Warcraft III,
-Diablo II), Haiku's mouse cursor drawn over the game's own cursor (being looked at in task WC1; no KNOWN-ISSUES row yet).
+Diablo II), Haiku's mouse cursor drawn over the game's own cursor (KNOWN-ISSUES W14: fix ready in wayland_server
+0.1.20251004-11, not yet released).
 
 Before it, **image-2026-11-22** (2026-11-22): image-2026-11-21b plus **no kernel panic "Failed to unwire
 page"** (it could stop the Pi a moment after MediaPlayer started an H.264 video), **MediaPlayer opening URLs without

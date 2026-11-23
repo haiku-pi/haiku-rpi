@@ -27,7 +27,7 @@ authors, and marked "not ours to attach".
 *arm64* (any arm64 board); *non-snooping DMA* (platforms whose devices do not snoop CPU caches); *Pi 4* (BCM2711
 hardware only).
 
-**Two forms.** 85 entries are full reports in the project's format. 56 are in **short form** (what, severity,
+**Two forms.** 86 entries are full reports in the project's format. 56 are in **short form** (what, severity,
 our fix, upstream status, and why it is short): fixes found by others (RenkuOS), findings from code reading that
 were never reproduced, bugs latent at upstream's default settings or exposed only by our fork's code, entries for
 an archived repository, duplicates of existing upstream reports, and minor items. The summary table's "Form"
@@ -78,7 +78,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 
 ## Summary
 
-141 entries: 86 full reports and 55 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
+142 entries: 87 full reports and 55 in short form (see "Form"). Severity uses six classes (crash, hang, data corruption, wrong output, performance, build); "(security)" marks entries an unprivileged program or a remote peer can trigger. Scope: *general* = all architectures or any OS; *arm64* = any arm64 board; *non-snooping* = DMA without cache snooping; *weak-memory* = weakly ordered CPUs; *Haiku-platform* = code that only runs on Haiku but ships upstream. Upstream status was checked on 2026-11-20; "open" means the faulty code is unchanged in current upstream sources.
 
 | ID | Project | Component | Title | Severity | Scope | Our fix | Upstream | Patch | Form |
 |---|---|---|---|---|---|---|---|---|---|
@@ -206,6 +206,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [WAYLAND-02](#wayland-02) | wayland_server (X547) | exit handling | Loopers run during exit() static destructors (crash/hang) | crash | Haiku | `patches/wayland_server/…-wl-window-hold-at-exit.patch`, `…-wl-window-stop-at-exit.patch` | open | no | full |
 | [WAYLAND-03](#wayland-03) | wayland_server (X547) | xdg fullscreen | Smaller fullscreen surface not centered | wrong output | Haiku | `patches/wayland_server/wayland_server-0.1.20251004-fullscreen-center.patch` | open | notes | short |
 | [WAYLAND-04](#wayland-04) | wayland_server (X547) | meson | build_machine arch + absolute private headers break cross builds | build | Haiku | `patches/wayland_server/wayland_server-0.1.20251004-cross.patch` | open | yes | short |
+| [WAYLAND-05](#wayland-05) | wayland_server (X547) | HaikuSeat | wl_pointer.set_cursor with a NULL surface does not hide the cursor (games show two cursors) | wrong output | Haiku | `patches/wayland_server/wayland_server-0.1.20251004-wl-pointer-hide-cursor.patch` | open | notes | full |
 | [LIBGLVND-01](#libglvnd-01) | libglvnd | HGL | Build fails on current Haiku: PTHREAD_RECURSIVE_MUTEX_INITIALIZER now _NP | build | Haiku | haiku-pi/libglvnd 33d3b66 | open | yes | full |
 | [LIBGLVND-02](#libglvnd-02) | libglvnd | HGL | Exit with live BGLViews stops in debugger (BReferenceable) | crash | Haiku | haiku-pi/libglvnd ed01b68 | open | yes | full |
 | [LIBGLVND-03](#libglvnd-03) | libglvnd | HGL | BGLView::SwapBuffers(bool vSync) ignores vSync | performance | Haiku | haiku-pi/libglvnd be20124 (vSync part) | open | no | short |
@@ -3664,6 +3665,40 @@ Real case: Wine (winewayland) running a fullscreen Half-Life, which hides and sh
 
 Upstream alone has not been measured.
 
+<a id="wayland-05"></a>
+
+#### WAYLAND-05 — wayland_server (X547): wl_pointer.set_cursor with a NULL surface does not hide the cursor
+
+- **Tracker fields:** GitHub issue/PR on X547/wayland-server. Title: "wl_pointer.set_cursor(NULL) shows the system arrow instead of hiding the cursor (games under Wine show two cursors)".
+- **Severity:** wrong output (a second cursor over every program that hides the pointer).
+- **Scope:** Haiku, all architectures.
+- **Our fix:** `patches/wayland_server/wayland_server-0.1.20251004-wl-pointer-hide-cursor.patch`
+- **Patch:** with notes. Written against the 0.1.20251004 revision (0364da32); on `master` the `else` branch it replaces now exists (it sets `B_CURSOR_SYSTEM_DEFAULT`), so the hunk needs a trivial rebase.
+- **Upstream status (2026-11-23):** open. `master` 8ede02e0e880 `HaikuSeat.cpp:229-240`: `HandleSetCursor()` with a NULL surface calls `be_app->SetCursor(B_CURSOR_SYSTEM_DEFAULT, true)` (the arrow); the HaikuPorts revision 0364da32 does nothing at all. Tracker: searched "cursor" in X547/wayland-server issues: #10, #17 and #18 are other matters.
+
+**Environment.** wayland_server 0.1.20251004 (HaikuPorts revision, git 0364da32), Wine 11.21's winewayland.drv; Raspberry Pi 4, arm64 (the code is architecture-independent).
+
+**Description.** The protocol says of `wl_pointer.set_cursor`: "If surface is NULL, the pointer image is hidden." Clients send it to hide the pointer: Wine's Wayland driver for `ShowCursor(FALSE)`, `SetCursor(NULL)` or a fully transparent cursor, which most games that draw their own cursor use. The server keeps showing a cursor instead, so such games show the system arrow on top of their own cursor.
+
+**Steps to reproduce.**
+1. A client creates a toplevel; when it gets `wl_pointer.enter(serial, …)` it sends `wl_pointer.set_cursor(serial, NULL, 0, 0)`.
+2. Move the mouse over the window.
+
+Real case: Warcraft III or the Diablo II demo under Wine; or a Windows test program that calls `ShowCursor(FALSE)` and returns `SetCursor(NULL)` for `WM_SETCURSOR` (ours: `tools/wine-tests/cursorhide.c`).
+
+**Expected / Actual.**
+- Expected: no cursor over the client's surfaces; the normal cursor again outside them.
+- Actual: the arrow (master) or the last cursor the client set (0364da32) stays over the window.
+
+**Root cause.** `HaikuPointer::HandleSetCursor()` (`HaikuSeat.cpp:229-240`, master 8ede02e0e880) handles a non-NULL surface only.
+
+**Fix.** For a NULL surface, set the application cursor to `B_CURSOR_ID_NO_CURSOR` while one of the client's surfaces has the pointer focus. Not `BApplication::HideCursor()`, which hides the cursor everywhere until it is shown again; the application cursor is shown only over the application's windows. And when the pointer leaves the client's surfaces (`wl_pointer.leave` with no new focus), set `B_CURSOR_SYSTEM_DEFAULT`: outside its surfaces (decorator, borders) the cursor is the compositor's, and clients set their cursor again at every enter, as the protocol expects.
+
+**Evidence.** With `WAYLAND_DEBUG=1`, Wine's request is `wl_pointer@3.set_cursor(4, nil, 0, 0)` with the serial of the preceding `enter`. HDMI frames from the Pi, before and after the patch (same session, only the package changed):
+- full-screen test window and the Warcraft III and Diablo II menus: before, the system cursor next to the game's; after, only the game's;
+- after the pointer leaves the window, or the program quits: the normal cursor;
+- windowed programs that do not hide the cursor (Notepad++, Notepad, PuTTY, SumatraPDF under Wine): unchanged.
+
 ### 10.2 Short form
 
 <a id="wayland-03"></a>
@@ -4068,6 +4103,10 @@ Bugs we found and fixed that upstream has fixed since (often its own way), with 
   - **Cause:** a regression from 6b486ec7830a (first released in wine-11.11). It broke the Diablo II demo with "Error 22" on any GL driver, including x86-64 Linux with llvmpipe.
   - **Fix:** c209164dafff "ddraw: Do not force render target for surface formats which do not support it." (2026-11-06). It is in **wine-11.22**, not in 11.21.
   - **To do:** drop our patch when we move to 11.22. We have not re-tested upstream's fix.
+- **0034 — win32u: menu bar laid out once** (`patches/wine-11.21/0034-win32u-menu-bar-height-recalculate.patch`; KNOWN-ISSUES W15).
+  - **Cause:** a regression from f3de8edf99 (first released in wine-11.20): `get_menu_bar_height()` keeps the menu bar's first layout, so Notepad++'s menu bar stays wrapped into 8 rows.
+  - **Fix:** b94b54c62b "win32u: Force recalculating menu bar height in get_menu_bar_height." (2026-11-03). It is in **wine-11.22** (GitHub compare: the tag is 277 commits ahead of it, 0 behind), not in 11.21. Our patch is that commit, unchanged.
+  - **To do:** drop our patch when we move to 11.22.
 - **Box64 0002 — the x86-state half** (`patches/box64/0002-wowbox64-exception-state.patch`: the x86 Eip and registers in the exception context for faults in JIT code).
   - **Fixed by:** Box64 PR #4550 / a489cfe7d03f "[WOWBOX64] Fix exceptions in JIT code above 4GB and pass the fault state to the guest" (2026-10-09; issue #4549), after our v0.4.4 base. Upstream fills `wctx->Eip`/registers/EFlags/FPU in `BTCpuResetToConsistentState`.
   - **Not checked:** our patch also sets `rec->ExceptionAddress`, which upstream does not. Whether Wine's WoW64 derives the 32-bit exception address from the context was not checked.
