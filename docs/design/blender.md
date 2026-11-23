@@ -1577,6 +1577,114 @@ with a relinked binary; deleted) and publish it.
   (2026-11-22, started from a Terminal): the "Classroom" demo scene loads quickly, the viewport preview is correct, an
   F12 render starts and its first iterations look right.
 
+### 7.20 BR1: the render window's tab above the screen; the zoom button "goes full screen" (libsdl2 -9, 2026-11-23; sessions br1)
+
+- **Owner reports (mega36, 2026-11-22):**
+  1. F12 opens the "Blender Render" window about as large as the screen, so high that its tab is above the top
+     edge. Dragging an edge fixes it.
+  2. The main window's zoom button made Blender "full screen". Window > Toggle Window Fullscreen then did nothing,
+     and there was no way back.
+- **One cause, in our libsdl2's Haiku backend** (also upstream SDL2's, `src/video/haiku`).
+  - SDL places a window by its content area, and `_InitWindow()` makes that the BWindow's frame unchanged. The tab
+    and border lie outside the frame, and Haiku moves no window by itself.
+  - So a window at y = 0, or one as large as the screen, has its tab above the screen.
+- **Blender asks for such windows twice:**
+  - **The render window:** `render_view_open()` asks for the render size + 30 × 60 (1950 × 1140 at the default
+    1920 × 1080). `wm_window_check_size()` clamps that to the *screen* size, centred on the mouse, and
+    `wm_window_ghostwindow_add()` passes the result to `SDL_CreateWindow()`.
+    - With the mouse at (700, 450) in the main window, the content frame is (-255, -60)–(1664, 1019).
+  - **The main window:** with no geometry stored, it is created at 0,0 with the screen size
+    (`wm_window_ghostwindows_ensure()`), then maximized. SDL_MaximizeWindow → `BWindow::Zoom()` zooms it to the
+    screen minus the Deskbar, and **remembers the 0,0 screen-size frame as the one to zoom back to.**
+    - The zoom button then un-zooms to that frame. It looks exactly like full screen: no tab, the Deskbar covered.
+- **Why the toggle "did nothing":**
+  - The `Zoom()` hook of `SDL_BWin` posted `BAPP_MAXIMIZE` for both directions. `BAPP_RESTORE` was never
+    handled, so SDL_WINDOW_MAXIMIZED never cleared.
+  - Toggle Window Fullscreen → `SDL_SetWindowFullscreen(1)` gives the same frame without a border. Toggling back
+    restores the same 0,0 screen-size frame (`_non_fullscreen_frame`, then `_Restore()` to `_prev_frame`, also
+    that frame). Three states, one picture.
+  - A second `SDL_MaximizeWindow()` would also have un-zoomed: `BWindow::Zoom()` toggles.
+- **Measured on -8** (mega36, session br1 00:51–00:58; window frames by scripting with `tools/haiku-tests/winframes`,
+  HDMI frames in `artifacts/br1/`):
+
+  | Step | Main window frame (content) | Look |
+  |---|---|---|
+  | start (maximized) | 5,29 – 1778,1074 | titled |
+  | zoom button | **0,0 – 1919,1079**, tab off screen (`a3-zoom.webp`) | titled |
+  | Toggle Window Fullscreen | 0,0 – 1919,1079 | no border |
+  | toggle again | 0,0 – 1919,1079 | titled |
+  | zoom button | 5,29 – 1778,1074 | titled |
+
+  F12: "Blender Render" at **-255,-60 – 1664,1019**: tab and left edge off screen (`a2-render.webp`).
+- **Fix: `patches/libsdl2/libsdl2-2.32.10-haiku-window-placement.patch`, libsdl2 -9.**
+  - `SDL_BWin::KeepTabOnScreen()` uses `DecoratorFrame()` for the border and tab sizes. It moves a window whose tab
+    or left border would be off the top or left edge, and shrinks a window that cannot fit if it is resizable.
+    Other overhangs stay where the program put them.
+  - It runs at creation (before `SDL_CreateWindow()` returns, with SDL's x/y/w/h updated, because Blender reads
+    them at once), after `SDL_SetWindowPosition()`, and on leaving full screen.
+  - Borderless and fullscreen windows are left alone.
+  - The `Zoom()` hook posts `BAPP_RESTORE` for the un-zoom (it mirrors BWindow's remembered frame), and
+    `SDL_RestoreWindow()` of a zoomed window does the same. The handler maps it to SDL_WINDOWEVENT_RESTORED, which
+    also gives unminimizing its missing event.
+  - `SDL_MaximizeWindow()` zooms only a window that is not zoomed.
+  - Not used: `BWindow::MoveOnScreen(B_MOVE_IF_PARTIALLY_OFFSCREEN)`. It also pulls in windows that only overhang
+    the right or bottom edge, and centres windows placed fully off screen.
+- **After, -9** (same session, the test library first in LIBRARY_PATH, `listimage` shows
+  `/boot/home/br1/lib/libSDL2-2.0.so.0`):
+  - F12: "Blender Render" at **5,29 – 1914,1074**. The tab is visible, the window fits the screen and the render
+    completed (`b2-render.webp`).
+  - Zoom and fullscreen sequence (`b-*.webp`):
+
+    | Step | Frame | Look |
+    |---|---|---|
+    | start | 5,29 – 1778,1074 | titled |
+    | zoom (un-zoom) | 5,29 – 1914,1074 (tab visible) | titled |
+    | Toggle Window Fullscreen | 0,0 – 1919,1079 | no border |
+    | toggle back | 5,29 – 1914,1074 | titled |
+    | zoom | 5,29 – 1778,1074 | titled |
+
+    - From the zoomed state: full screen, then back, gives the un-zoomed frame, because Blender sets "normal"
+      (SDL_RestoreWindow). Zoom then gives the zoomed frame again.
+  - Edit > Preferences: 375,186 – 1034,705, where Blender put it (`b-prefs.webp`). The main window opens maximized,
+    as before (`b1-main.webp`).
+  - 0 PANIC.
+- **Other SDL programs** (mega37 = image-2026-11-23 + mega, session br1 01:50–01:58; the control is the image's
+  libsdl2 -8, by `listimage`):
+
+  | Program, request | -8 frame | -9 frame |
+  |---|---|---|
+  | sdl-winpos, centred 1920×1080, resizable | 0,0 – 1919,1079 (tab off) | 5,29 – 1914,1074 (shrunk to fit) |
+  | sdl-winpos, centred 1920×1080, fixed size | 0,0 – 1919,1079 (tab off) | 5,29 – 1924,1108 (moved, size kept, bottom and right overhang) |
+  | sdl-winpos at 200,150, then moved to 300,200 / 0,0 / 1700,900 | as asked | as asked, except 0,0 → 5,29 |
+  | sdl-winpos borderless at 0,0 | 0,0 | 0,0 |
+  | Quake II, 1920×1080 window | 0,0 – 1919,1079 (tab off) | 5,29 – 1924,1108: tab visible, HUD's bottom ~28 px below the screen (`q2-1920x1080-s9.webp`) |
+  | Quake II, 1280×720 window | — | 320,180 – 1599,899 (centred, as before) |
+  | Quake II, full screen | — | 0,0 – 1919,1079, no border |
+  | SuperTuxKart, 1280×720 window | — | 320,180 – 1599,899 (`stk-1280x720-s9.webp`) |
+
+  - SDL state (`tools/gl-tests/sdl-winpos`, `max max restore max`):
+    - -8: after `SDL_RestoreWindow()` SDL still says "maximized", so the next `SDL_MaximizeWindow()` does nothing.
+    - -9: "restored" is reported, and the next maximize zooms again.
+  - Maximize → full screen → windowed returns to the zoomed frame on both.
+  - A window *created* full screen and then made windowed: -8 at 0,0 (tab off), -9 at 5,29. Both keep the screen
+    size, because SDL's backend takes the creation frame (already the screen) as its windowed frame. That part is
+    unchanged.
+  - Blender -11 on mega37 with -9: the same F12 and zoom/fullscreen frames as on mega36. 0 PANIC.
+- **Unchecked:**
+  - a real mouse click on the zoom button (B_ZOOM was sent by `winmsg`, the message the decorator sends);
+  - a second monitor;
+  - a Deskbar placed at the top or on the left;
+  - vkQuake and the other Quakes;
+  - Wine (not SDL).
+- **Not released:** the test package is `artifacts/packages-test/br1/libsdl2{,_devel}-2.32.10-9-arm64.hpkg`.
+  `build/jam/repositories/HaikuPorts/arm64` still names -8.
+- **Tool caveats:**
+  - `hey` cannot script an application started with B_ARGV_ONLY. `winframes` reached the copy without resources.
+  - A program finds a `lib/` next to itself first (`%A/lib`), so the -8 control runs a copy elsewhere
+    (`br1-win.sh`).
+- **Blender is unchanged (no -12).** It asks for the same frames on Linux. There the window manager decides where
+  the title bar goes; on Haiku nothing moves a window the program placed, so the SDL backend has to.
+
 ## 8. Files
 
 - New, for step 0:
@@ -1586,6 +1694,9 @@ with a relinked binary; deleted) and publish it.
 - BW1 (§7.17): `tools/haiku-tests/axibw/` (bus monitor), `tools/gl-tests/glbw.c` (GPU traffic of known size),
   `tools/pi-tests/blender-bw.{sh,py}`, `blender-bw-table.py`, `blender-bw-look.sh`; raw logs and HDMI frames in
   `artifacts/bw1/` (not in git).
+- BR1 (§7.20): `tools/pi-tests/br1-win.sh` (the Pi steps), `tools/haiku-tests/winframes.cpp` (window frames by
+  scripting), `tools/gl-tests/sdl-winpos.c` (SDL window placement), `patches/libsdl2/…-haiku-window-placement.patch`;
+  HDMI frames in `artifacts/br1/` (not in git).
 - Kept: `artifacts/downloads/blender/blender-3.6.23/` (286 MB, the source tree M2 builds) and
   `artifacts/downloads/blender/sp-v5.3.0/` (31 MB, track B reference). Deleted: the 3.6.23 tarball (65 MB, on
   download.blender.org), the 4.0/4.1/4.2/4.5 sparse checkouts, the oneTBB headers and the scratch sysroot/builds.

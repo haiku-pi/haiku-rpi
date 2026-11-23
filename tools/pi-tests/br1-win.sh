@@ -7,6 +7,7 @@
 #                                    prints the libSDL2 it loaded
 #   sh br1-win.sh q2 SIZE|full [LIBDIR]   Yamagi Quake II's demo in a SIZE (e.g. 1920x1080) window, or full screen
 #   sh br1-win.sh stk [LIBDIR]       SuperTuxKart in a 1280x720 window
+#   sh br1-win.sh winpos LIBDIR|- ARGS...   sdl-winpos ARGS in the background (its lines: sh br1-win.sh log)
 #   sh br1-win.sh frames             every window of the program started last: index, title, frame, hidden
 #   sh br1-win.sh keys K...          activate the main window, mouse to its middle, then uiinject commands
 #   sh br1-win.sh zoom [TITLE]       the window's zoom button (B_ZOOM; TITLE default "Blender")
@@ -56,6 +57,21 @@ stk)
 	./SuperTuxKart --windowed --screensize=1280x720 > /tmp/br1-stk.txt 2>&1 &
 	started 30
 	;;
+winpos)
+	# "-": the system's libSDL2: a copy away from here (the loader looks in the program's own lib/ first, %A/lib)
+	prog="$here/sdl-winpos"
+	if [ "$2" = - ]; then
+		mkdir -p /tmp/br1-ctl && cp "$prog" /tmp/br1-ctl/ && prog=/tmp/br1-ctl/sdl-winpos
+	else
+		libpath "$2"
+	fi
+	shift 2
+	"$prog" "$@" > /tmp/br1-swp.txt 2>&1 &
+	started 2
+	;;
+log)
+	cat /tmp/br1-swp.txt
+	;;
 frames)
 	"$here/winframes" "$pid" | sed 's/^WF /BR1 window /'
 	;;
@@ -86,7 +102,7 @@ stop)
 	echo "BR1 stopped"
 	;;
 *)
-	sed -n '5,15p' "$0" >&2
+	sed -n '5,16p' "$0" >&2
 	exit 2
 	;;
 esac
