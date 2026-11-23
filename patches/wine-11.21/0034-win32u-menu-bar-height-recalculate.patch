@@ -1,7 +1,7 @@
 win32u: force recalculating the menu bar height in get_menu_bar_height
 
 Upstream Wine b94b54c62b (2026-11-03, after 11.21), backported unchanged.
-Wine 11.20's f3de8edf99 made get_menu_bar_height() go through
+f3de8edf99 (new in Wine 11.21) made get_menu_bar_height() go through
 NtUserDrawMenuBarTemp(), which lays the menu bar out only when its cached
 height is 0. WM_NCCALCSIZE therefore kept the layout of the first width the
 menu bar was measured at: a window whose menu was set while it was small

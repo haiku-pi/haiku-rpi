@@ -24,6 +24,11 @@ U+2715).
   (app_server's 2.6.3) does not draw; linked, it covered U+FF0B with a blank
   glyph and the symbols after it came out blank too. Fullwidth forms such
   as U+FF0B stay boxes.
+- A face that is not installed (Arial, Courier New...) is looked up by
+  class (enum_family_fallbacks, fontconfig's job elsewhere): fixed pitch
+  Noto Sans Mono or Noto Mono, serif Noto Serif, sans-serif Wine's Tahoma.
+  Otherwise the first family in name order is taken, which with Haiku's
+  fonts loaded is Noto Mono (it was Tahoma).
 
 --- a/dlls/win32u/Makefile.in
 +++ b/dlls/win32u/Makefile.in
@@ -108,6 +113,32 @@ U+2715).
  #endif
  }
  
+@@ -2023,6 +2033,25 @@
+     RtlUTF8ToUnicodeN( buffer, (LF_FACESIZE - 1) * sizeof(WCHAR), &len, str, strlen(str) );
+     buffer[len / sizeof(WCHAR)] = 0;
+     return TRUE;
++#elif defined(__HAIKU__)
++    /* Haiku's fonts by class, for a face that is not installed. Before them, the first family
++       in name order (Noto Mono, once Haiku's fonts are loaded) would be taken; sans-serif stays
++       Wine's Tahoma, as before Haiku's fonts were loaded */
++    static const char * const fixed[] = { "Noto Sans Mono", "Noto Mono" };
++    static const char * const serif[] = { "Noto Serif" };
++    static const char * const sans[] = { "Tahoma" };
++    const char * const *names;
++    int count;
++
++    if ((pitch_and_family & FIXED_PITCH) || (pitch_and_family & 0xf0) == FF_MODERN)
++        names = fixed, count = ARRAY_SIZE(fixed);
++    else if ((pitch_and_family & 0xf0) == FF_ROMAN)
++        names = serif, count = ARRAY_SIZE(serif);
++    else
++        names = sans, count = ARRAY_SIZE(sans);
++    if (index >= count) return FALSE;
++    asciiz_to_unicode( buffer, names[index] );
++    return TRUE;
+ #endif
+     return FALSE;
+ }
 --- /dev/null
 +++ b/dlls/win32u/haiku_fonts.c
 @@ -0,0 +1,49 @@

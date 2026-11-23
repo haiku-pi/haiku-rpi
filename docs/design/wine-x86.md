@@ -299,15 +299,17 @@ in `artifacts/wc1/` (not in git; `montage-*.webp` crop the pointer's neighbourho
   game's gauntlet; after quitting, Haiku's hand (`montage-games-before-after`, again on the final wine -4 stack:
   `montage-games-final`). Windowed programs keep their cursors: Notepad++ (I-beam), Notepad, PuTTY, SumatraPDF
   (`final-*`). The 1×1 cursor leaves no artefact with the hardware cursor.
+- A popup (Notepad++'s File menu, opened with `uiinject`, the pointer moved onto it): the arrow is drawn over it
+  (`s2-npp-menu-popup`).
 - New windows: winewayland sends NULL at the first enter of a new window (seen 3–4 times per start in Notepad++ and
   `cursorhide show`), so with -11 a new window shows no cursor until win32u sets the window's cursor
   (`WM_WINE_SETCURSOR` on the next pointer motion) — on every compositor, not only ours. A program that does not pump
   messages then shows no cursor over its window; not seen in the programs above.
 
-### W15: Notepad++'s menu bar in 8 rows (Wine 11.20/11.21 regression)
+### W15: Notepad++'s menu bar in 8 rows (Wine 11.21 regression)
 
-`get_menu_bar_height()` (WM_NCCALCSIZE) lays the menu bar out through `NtUserDrawMenuBarTemp()` since Wine 11.20
-(f3de8edf99), which lays it out only when the cached height is 0, so the first layout's width stayed. Upstream fixed it
+`get_menu_bar_height()` (WM_NCCALCSIZE) lays the menu bar out through `NtUserDrawMenuBarTemp()` since Wine 11.21
+(f3de8edf99; 11.20's `get_menu_bar_height()` still laid it out every time), which lays it out only when the cached height is 0, so the first layout's width stayed. Upstream fixed it
 after 11.21 (b94b54c62b, "Force recalculating menu bar height in get_menu_bar_height"); **Wine 0034** is that commit.
 Before: 8 rows (`before-npp-a`, as the owner's frame); after (wine 11.21-4): one row (`final-npp-a`); Notepad and
 Notepad++ x86 one row too.
@@ -328,13 +330,23 @@ Notepad++ x86 one row too.
   time is app_server's 2.6.3, which predates CFF2. Without it (11.21-4): ▼ and ✕ drawn, ＋ a box
   (`npp-glyphs-before-after4`, `npp-glyphs-with-cjk-link`, `npp-glyphs-final`). Fullwidth forms and CJK need a newer
   FreeType for Wine or a static CJK font.
-- With Haiku's fonts visible, a program asking for a font that is not installed may now get a Noto face instead of
-  Wine's Tahoma (as Wine with fontconfig on Linux does); the programs above looked as before. Not measured: Wine's
-  start time with ~15 more fonts to scan (the prefix update took 40–53 s, as before).
+- **A face that is not installed** (Arial, Courier New, Segoe UI…): Wine tries Arial/Liberation/Bitstream Vera by
+  class, then its font backend's fallbacks (fontconfig elsewhere; none on Haiku), then the first family in name
+  order — Tahoma before, **Noto Mono** once Haiku's fonts are loaded. So 0035 also answers the backend's fallbacks on
+  Haiku: fixed pitch Noto Sans Mono / Noto Mono, serif Noto Serif, sans-serif Wine's Tahoma (as before).
+  `tools/wine-tests/fontmap.exe` (GetTextFace of 12 requests) in a second session (`wc1`, 02:01–02:14, mega37 =
+  hrev60450+375, the same wine -3 / wayland_server -10; 0 PANIC), stock → final -4: unchanged (Tahoma) for Arial,
+  Segoe UI, Verdana, Times New Roman and Courier New without a class, MS Shell Dlg, Tahoma, no name; **changed** only
+  where the program asks for the class: Times New Roman `VARIABLE_PITCH|FF_ROMAN` Tahoma → Noto Serif, Courier New and
+  Consolas `FIXED_PITCH|FF_MODERN` Tahoma → Noto Mono. Notepad++ with its readme: editor text identical, menu 8 rows → 1
+  (`montage-npp-text-before-after`); SumatraPDF identical to mega-smoke's stock screenshot (its bookmark pane of "0"
+  rows is the test PDF's, also on stock). Not measured: Wine's start time with ~15 more fonts to scan (the prefix
+  updates took 40–53 s; no baseline taken).
 
 **Test packages** (`artifacts/packages-test/wc1/`, not published, not in the image): wayland_server
 0.1.20251004-11; wine, wine_data, wine_directx, wine_x86, wine_x86_64 11.21-4 (GCC 16.2, `WINE_PACKAGES_SHARED=no
-scripts/build-wine.sh`; 0 new warnings in the changed files). **Not checked:** PhotoCraft (the other client of the
+scripts/build-wine.sh`; no warnings in the changed files; the committed series applied to a clean 11.21 gives the
+built tree's `dlls/` and `server/` exactly). **Not checked:** PhotoCraft (the other client of the
 server) with -11; a Wine program that hides the cursor without pumping messages; StarCraft and Age of Empires II
 (their intro and EULA were up during the frames); the x86-64 build; a real mouse by hand.
 

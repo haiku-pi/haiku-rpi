@@ -3688,7 +3688,7 @@ Real case: Warcraft III or the Diablo II demo under Wine; or a Windows test prog
 
 **Expected / Actual.**
 - Expected: no cursor over the client's surfaces; the normal cursor again outside them.
-- Actual: the arrow (master) or the last cursor the client set (0364da32) stays over the window.
+- Actual: the last cursor the client set stays over the window (0364da32, seen on the Pi); on master, from the code (not run), the system arrow.
 
 **Root cause.** `HaikuPointer::HandleSetCursor()` (`HaikuSeat.cpp:229-240`, master 8ede02e0e880) handles a non-NULL surface only.
 
@@ -4104,7 +4104,7 @@ Bugs we found and fixed that upstream has fixed since (often its own way), with 
   - **Fix:** c209164dafff "ddraw: Do not force render target for surface formats which do not support it." (2026-11-06). It is in **wine-11.22**, not in 11.21.
   - **To do:** drop our patch when we move to 11.22. We have not re-tested upstream's fix.
 - **0034 — win32u: menu bar laid out once** (`patches/wine-11.21/0034-win32u-menu-bar-height-recalculate.patch`; KNOWN-ISSUES W15).
-  - **Cause:** a regression from f3de8edf99 (first released in wine-11.20): `get_menu_bar_height()` keeps the menu bar's first layout, so Notepad++'s menu bar stays wrapped into 8 rows.
+  - **Cause:** a regression from f3de8edf99 (first released in wine-11.21; 11.20's `get_menu_bar_height()` lays the menu bar out every time): `get_menu_bar_height()` keeps the menu bar's first layout, so Notepad++'s menu bar stays wrapped into 8 rows.
   - **Fix:** b94b54c62b "win32u: Force recalculating menu bar height in get_menu_bar_height." (2026-11-03). It is in **wine-11.22** (GitHub compare: the tag is 277 commits ahead of it, 0 behind), not in 11.21. Our patch is that commit, unchanged.
   - **To do:** drop our patch when we move to 11.22.
 - **Box64 0002 — the x86-state half** (`patches/box64/0002-wowbox64-exception-state.patch`: the x86 Eip and registers in the exception context for faults in JIT code).
