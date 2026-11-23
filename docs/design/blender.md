@@ -1673,8 +1673,28 @@ with a relinked binary; deleted) and publish it.
     size, because SDL's backend takes the creation frame (already the screen) as its windowed frame. That part is
     unchanged.
   - Blender -11 on mega37 with -9: the same F12 and zoom/fullscreen frames as on mega36. 0 PANIC.
+- **Session br1 02:14–02:21 (mega37):** -9 rebuilt with `-DSDL_SYSTEM_ICONV=OFF`. The first -9 build had found the
+  sysroot's libiconv, which has been there since the Blender build, and linked `libiconv.so.2`, which the package
+  did not require; -8 has SDL's own iconv. `NEEDED` is now the same as -8's and `package-diff.sh` shows no change in
+  provides, requires or files. Results:
+  - The same Blender frames as above, with the rebuilt library.
+  - The -9 package activated in `~/config/packages` behaves the same (5,29; maximize/restore events).
+  - **Real full screen and minimizing.** SDL minimizes a real fullscreen window when it loses the focus, and
+    leaves full screen first:
+
+    | Case | -8 | -9 |
+    |---|---|---|
+    | sdl-winpos `full min restore` | stays "minimized fullscreen" for ever | "restored", back in full screen |
+    | Quake II full screen, another window takes the focus | minimized | minimized |
+    | Quake II re-activated by scripting | windowed at 0,0, tab off | windowed at 5,29 with the tab |
+
+    Neither version re-enters full screen after scripting activation: no unminimize reaches the program
+    (`q2-refocus-s9.webp`). A resizable fullscreen window of screen size is shrunk to fit below the tab while it
+    is minimized (RESIZED 1910×1046), and gets 1920×1080 back on restore.
+  - 0 PANIC.
 - **Unchecked:**
   - a real mouse click on the zoom button (B_ZOOM was sent by `winmsg`, the message the decorator sends);
+  - unminimizing a fullscreen game from the Deskbar;
   - a second monitor;
   - a Deskbar placed at the top or on the left;
   - vkQuake and the other Quakes;
