@@ -27,7 +27,7 @@ authors, and marked "not ours to attach".
 *arm64* (any arm64 board); *non-snooping DMA* (platforms whose devices do not snoop CPU caches); *Pi 4* (BCM2711
 hardware only).
 
-**Two forms.** 85 entries are full reports in the project's format. 55 are in **short form** (what, severity,
+**Two forms.** 85 entries are full reports in the project's format. 56 are in **short form** (what, severity,
 our fix, upstream status, and why it is short): fixes found by others (RenkuOS), findings from code reading that
 were never reproduced, bugs latent at upstream's default settings or exposed only by our fork's code, entries for
 an archived repository, duplicates of existing upstream reports, and minor items. The summary table's "Form"
@@ -201,6 +201,7 @@ also checked on x86_64 under KVM ([design/x86-64-check.md](design/x86-64-check.m
 | [SDL-02](#sdl-02) | SDL | video/haiku GL | Process-wide current GL context; MakeCurrent on a 2nd thread unlocks another thread's BGLView | crash | Haiku | `patches/libsdl2/libsdl2-2.32.10-haiku-gl-thread-context.patch` | open | notes | full |
 | [SDL-03](#sdl-03) | SDL | video/haiku modes | Mode data points into freed GetModeList() array (SDL3: stack) | crash | Haiku | `patches/libsdl2/libsdl2-2.32.10-haiku-modes.patch` | open | yes | full |
 | [SDL-04](#sdl-04) | SDL | video/haiku GL | SDL_GL_SetSwapInterval refused; never vsync | performance | Haiku | `patches/libsdl2/libsdl2-2.32.10-haiku-swap-interval.patch` | open | notes | short |
+| [SDL-05](#sdl-05) | SDL | video/haiku windows | Window frame = content area: tab above the screen; un-zoom reported as maximized, RESTORED never sent | usability | Haiku | `patches/libsdl2/libsdl2-2.32.10-haiku-window-placement.patch` | open | notes | short |
 | [WAYLAND-01](#wayland-01) | wayland_server (X547) | HaikuXdgToplevel | NULL fToplevel deref in WindowActivated/FrameResized | crash | Haiku | `patches/wayland_server/wayland_server-0.1.20251004-window-without-toplevel.patch` | open | yes | full |
 | [WAYLAND-02](#wayland-02) | wayland_server (X547) | exit handling | Loopers run during exit() static destructors (crash/hang) | crash | Haiku | `patches/wayland_server/…-wl-window-hold-at-exit.patch`, `…-wl-window-stop-at-exit.patch` | open | no | full |
 | [WAYLAND-03](#wayland-03) | wayland_server (X547) | xdg fullscreen | Smaller fullscreen surface not centered | wrong output | Haiku | `patches/wayland_server/wayland_server-0.1.20251004-fullscreen-center.patch` | open | notes | short |
@@ -3550,6 +3551,35 @@ Quake II GL1/GL3 (60.0/60.0 and 58.5/58.6 fps), SuperTuxKart and our desktop GL 
 - **Patch:** with notes. It applies to the `SDL2` branch (offsets only). It only has an effect with a GL kit whose `BGLView::SwapBuffers(bool vSync)` honours the flag. The upstream libglvnd HGL ignores it, so file LIBGLVND-03 together with this one.
 - **Upstream status:** open. `SDL2` `src/video/haiku/SDL_bopengl.cc:157-165` (`SDL_Unsupported()`, `TODO`) and `src/video/haiku/SDL_BWin.h:221-223` (`SwapBuffers()` with no flag). `main` `src/video/haiku/SDL_bopengl.cc:164-173`. Tracker: searched "haiku swap interval", none.
 - **Short form because:** minor, and SDL forbids AI-assisted reports: notes only.
+
+<a id="sdl-05"></a>
+
+#### SDL-05 — SDL video/haiku: a window's tab can be placed above the screen; the zoom button's un-zoom is reported as a maximization
+
+- **What:**
+  - `_InitWindow()` makes the window's x/y/w/h the BWindow's frame. On Haiku that frame is the content area, and the
+    tab and border lie outside it, and Haiku moves no window by itself. A window at y = 0, or as high as the screen
+    (`SDL_WINDOWPOS_CENTERED` gives y = 0 for that), has its tab above the screen: it cannot be moved, zoomed or closed
+    by the mouse.
+  - The `Zoom()` hook posts `BAPP_MAXIMIZE` both when `BWindow::Zoom()` zooms and when it zooms back. `BAPP_RESTORE`
+    (posted on unminimize too) has no handler. So SDL_WINDOW_MAXIMIZED never clears, and `SDL_MaximizeWindow()`
+    (which calls the toggling `BWindow::Zoom()`) un-zooms a zoomed window. `_prev_frame` is recorded once and never
+    reset.
+- **Severity / scope:** usability, Haiku, all architectures. Seen with Blender 3.6's GHOST_SDL (render window and the
+  main window's zoom button, [design/blender.md](design/blender.md) §7.20); any program that asks for a
+  screen-sized window.
+- **Our fix:** `patches/libsdl2/libsdl2-2.32.10-haiku-window-placement.patch`
+  - Keep the tab on screen (from `DecoratorFrame()`) at creation, after a move and on leaving full screen; shrink a
+    resizable window that cannot fit.
+  - Report the un-zoom and a restore of a zoomed window as `SDL_WINDOWEVENT_RESTORED`, and handle `BAPP_RESTORE`.
+  - Zoom only a window that is not zoomed.
+- **Patch:** with notes. SDL3's backend moved to `pending.x/y` and `SDL_EVENT_WINDOW_*`; the logic carries over.
+- **Upstream status (2026-11-23):** open, by reading the SDL3 `main` files on GitHub (no commit hash recorded):
+  - `src/video/haiku/SDL_bwindow.cc` builds the frame from x/y/w/h with no screen check;
+  - `SDL_BWin.h`'s `Zoom()` posts `BAPP_MAXIMIZE` only, and `BWIN_MAXIMIZE_WINDOW` calls `BWindow::Zoom()`.
+
+  SDL2 2.32.10 is the same. Tracker: not searched.
+- **Short form because:** SDL forbids AI-assisted reports: notes only.
 
 ## 10. Haiku's Wayland server (X547/wayland-server)
 
