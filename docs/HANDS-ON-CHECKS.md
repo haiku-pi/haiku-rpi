@@ -23,6 +23,7 @@ and the packages published the same day: libsdl2 2.32.10-9, wayland_server 0.1.2
 - **Blender's render window:** F12 opens it with its tab on the screen (it was above the top edge).
 - **Blender's zoom button:** zooms and un-zooms like other windows (un-zooming no longer gives a tab-less window that
   looks like full screen); Window ▸ Toggle Window Fullscreen goes to full screen and back.
+
 On image-2026-11-23 itself `pkgman update` brings the same packages.
 
 **Owner's results on mega36 (2026-11-22), all passed:** typing in Firefox; keys and mouse in a game; the USB keyboard
